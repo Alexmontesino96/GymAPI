@@ -38,6 +38,9 @@ class Event(Base):
         cascade="all, delete-orphan"
     )
     
+    # Relación con las salas de chat
+    chat_rooms = relationship("ChatRoom", back_populates="event")
+    
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

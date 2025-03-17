@@ -4,6 +4,7 @@ from app.db.session import engine
 from app.models.user import User
 from app.models.trainer_member import TrainerMemberRelationship
 from app.models.event import Event, EventParticipation
+from app.models.chat import ChatRoom, ChatMember
 
 
 def create_tables():
