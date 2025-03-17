@@ -1,0 +1,150 @@
+from typing import Dict, List, Optional, Any
+import json
+
+import jwt
+from fastapi import Depends, HTTPException, status
+from fastapi.security import OAuth2, OAuth2PasswordBearer
+from fastapi.openapi.models import OAuthFlows as OAuthFlowsModel
+from auth0.authentication import GetToken
+from auth0.authentication.token_verifier import TokenVerifier, AsymmetricSignatureVerifier
+from auth0.management import Auth0
+
+from app.core.config import settings
+
+# Esquema OAuth2 personalizado para flujo de código de autorización con PKCE
+class OAuth2AuthorizationCodePKCE(OAuth2):
+    def __init__(
+        self,
+        authorizationUrl: str,
+        tokenUrl: str,
+        scopes: dict = None,
+        auto_error: bool = True,
+    ):
+        if scopes is None:
+            scopes = {}
+        flows = OAuthFlowsModel(
+            authorizationCode={
+                "authorizationUrl": authorizationUrl,
+                "tokenUrl": tokenUrl,
+                "scopes": scopes
+            }
+        )
+        super().__init__(flows=flows, scheme_name="oauth2", auto_error=auto_error)
+
+# Esquema OAuth2 para flujo de código con PKCE (para Swagger UI)
+oauth2_scheme = OAuth2AuthorizationCodePKCE(
+    authorizationUrl=f"https://{settings.AUTH0_DOMAIN}/authorize?audience={settings.AUTH0_API_AUDIENCE}",
+    tokenUrl=f"https://{settings.AUTH0_DOMAIN}/oauth/token",
+    scopes={
+        "openid": "OpenID profile",
+        "profile": "Profile information",
+        "email": "Email information",
+    }
+)
+
+# Inicializar el token verifier de Auth0
+signature_verifier = AsymmetricSignatureVerifier(
+    f"https://{settings.AUTH0_DOMAIN}/.well-known/jwks.json"
+)
+
+token_verifier = TokenVerifier(
+    signature_verifier=signature_verifier,
+    issuer=settings.AUTH0_ISSUER,
+    audience=settings.AUTH0_API_AUDIENCE
+)
+
+# Cliente de autenticación de Auth0
+auth0_client = GetToken(settings.AUTH0_DOMAIN, settings.AUTH0_CLIENT_ID, client_secret=settings.AUTH0_CLIENT_SECRET)
+
+# Variable para almacenar el cliente de gestión (inicialización diferida)
+_mgmt_api_client = None
+
+async def get_management_client():
+    """
+    Obtiene un cliente de gestión de Auth0, creándolo si no existe.
+    """
+    global _mgmt_api_client
+    if _mgmt_api_client is None:
+        token_response = auth0_client.client_credentials(f'https://{settings.AUTH0_DOMAIN}/api/v2/')
+        mgmt_api_token = token_response['access_token']
+        _mgmt_api_client = Auth0(settings.AUTH0_DOMAIN, mgmt_api_token)
+    return _mgmt_api_client
+
+async def verify_token(token: str) -> Dict:
+    """
+    Verifica el token JWT usando el verificador de Auth0.
+    """
+    try:
+        # Quitar el prefijo "Bearer " si existe
+        if token.startswith("Bearer "):
+            token = token[7:]
+            
+        # Verificar el token
+        token_verifier.verify(token)
+        
+        # Decodificar el token para obtener los claims
+        payload = jwt.decode(
+            token,
+            options={"verify_signature": False},  # Ya verificamos con Auth0
+        )
+        
+        return payload
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Credenciales de autenticación inválidas: {str(e)}",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+async def get_current_user(token: str = Depends(oauth2_scheme)) -> Dict[str, Any]:
+    """
+    Obtiene el usuario actual a partir del token de autenticación.
+    """
+    try:
+        payload = await verify_token(token)
+        return payload
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"No se pudieron validar las credenciales: {str(e)}",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+async def get_current_user_with_permissions(
+    required_permissions: List[str] = [],
+    token: str = Depends(oauth2_scheme),
+) -> Dict[str, Any]:
+    """
+    Verifica que el usuario actual tenga los permisos requeridos.
+    """
+    payload = await get_current_user(token=token)
+    
+    if not required_permissions:
+        return payload
+    
+    token_permissions = payload.get("permissions", [])
+    
+    for permission in required_permissions:
+        if permission not in token_permissions:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"No tienes permiso para realizar esta acción: {permission}",
+            )
+    
+    return payload
+
+def exchange_code_for_token(code: str, redirect_uri: str) -> Dict[str, Any]:
+    """
+    Intercambia un código de autorización por un token de acceso.
+    """
+    try:
+        token_response = auth0_client.authorization_code(
+            code=code,
+            redirect_uri=redirect_uri
+        )
+        return token_response
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Error al intercambiar el código por token: {str(e)}"
+        ) 
