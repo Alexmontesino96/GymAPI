@@ -1,0 +1,1095 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GymAPI - Documentation</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            padding-top: 2rem;
+            padding-bottom: 3rem;
+        }
+        pre {
+            background-color: #f5f5f5;
+            padding: 1rem;
+            border-radius: 5px;
+            overflow-x: auto;
+        }
+        .nav-pills .nav-link.active {
+            background-color: #0d6efd;
+        }
+        .bd-callout {
+            padding: 1.25rem;
+            margin-top: 1.25rem;
+            margin-bottom: 1.25rem;
+            border: 1px solid #eee;
+            border-left-width: .25rem;
+            border-radius: .25rem;
+        }
+        .bd-callout-info {
+            border-left-color: #5bc0de;
+        }
+        .bd-callout-warning {
+            border-left-color: #f0ad4e;
+        }
+        .bd-callout-danger {
+            border-left-color: #d9534f;
+        }
+        .method {
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-weight: bold;
+            color: white;
+            font-size: 0.85rem;
+        }
+        .method-get {
+            background-color: #61affe;
+        }
+        .method-post {
+            background-color: #49cc90;
+        }
+        .method-put {
+            background-color: #fca130;
+        }
+        .method-delete {
+            background-color: #f93e3e;
+        }
+        .endpoint {
+            font-family: monospace;
+            background-color: #f5f5f5;
+            padding: 2px 4px;
+            border-radius: 4px;
+        }
+        .card-header {
+            font-weight: 600;
+        }
+        .sticky-top {
+            top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="row mb-5">
+            <div class="col">
+                <h1 class="display-4 mb-3">GymAPI - Documentation</h1>
+                <p class="lead">A complete API for managing gyms, trainers, members, and events.</p>
+                <div class="d-flex gap-3 mb-4">
+                    <a href="/api/v1/docs" class="btn btn-primary">Swagger UI</a>
+                    <a href="/api/v1/redoc" class="btn btn-secondary">ReDoc</a>
+                    <a href="/api/v1/openapi.json" class="btn btn-outline-dark">OpenAPI JSON</a>
+                </div>
+            </div>
+        </div>
+
+        <div class="row">
+            <!-- Side Menu -->
+            <div class="col-lg-3">
+                <div class="sticky-top">
+                    <div class="card mb-4">
+                        <div class="card-header">Navigation</div>
+                        <div class="card-body p-0">
+                            <nav class="nav nav-pills flex-column p-3">
+                                <a class="nav-link active mb-2" href="#introduction">Introduction</a>
+                                <a class="nav-link mb-2" href="#authentication">Authentication</a>
+                                <a class="nav-link mb-2" href="#users">Users</a>
+                                <a class="nav-link mb-2" href="#chat">Chat</a>
+                                <a class="nav-link mb-2" href="#events">Events</a>
+                                <a class="nav-link mb-2" href="#trainers-members">Trainers and Members</a>
+                                <a class="nav-link mb-2" href="#webhooks">Webhooks</a>
+                            </nav>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <div class="card-header">Resources</div>
+                        <div class="card-body">
+                            <ul class="list-unstyled mb-0">
+                                <li><a href="https://getstream.io/chat/docs/">Stream Chat Docs</a></li>
+                                <li><a href="https://auth0.com/docs">Auth0 Docs</a></li>
+                                <li><a href="https://fastapi.tiangolo.com/">FastAPI Docs</a></li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Main content -->
+            <div class="col-lg-9">
+                <!-- Introduction -->
+                <section id="introduction" class="mb-5">
+                    <h2 class="border-bottom pb-2">Introduction</h2>
+                    <p>GymAPI is a RESTful API for gym management. It enables user administration, events, relationships between trainers and members, and real-time communication through a chat system.</p>
+                    
+                    <h4 class="mt-4">Base URL</h4>
+                    <pre><code>http://localhost:8080/api/v1</code></pre>
+                    
+                    <h4 class="mt-4">Technologies</h4>
+                    <ul>
+                        <li><strong>Backend:</strong> FastAPI with Python 3.11+</li>
+                        <li><strong>Database:</strong> PostgreSQL (Supabase)</li>
+                        <li><strong>Authentication:</strong> Auth0</li>
+                        <li><strong>Real-time Chat:</strong> Stream.io</li>
+                        <li><strong>Cache and Presence:</strong> Redis</li>
+                    </ul>
+                </section>
+                
+                <!-- Authentication -->
+                <section id="authentication" class="mb-5">
+                    <h2 class="border-bottom pb-2">Authentication</h2>
+                    <p>GymAPI uses Auth0 for user authentication and authorization. JWT tokens are used to access protected endpoints.</p>
+                    
+                    <div class="bd-callout bd-callout-info">
+                        <h5>Authentication Flow</h5>
+                        <ol>
+                            <li>The user navigates to <code>/api/v1/auth/login-redirect</code> or obtains the authentication URL from <code>/api/v1/auth/login</code></li>
+                            <li>The user is redirected to Auth0 to log in</li>
+                            <li>After authentication, Auth0 redirects the user to <code>/api/v1/auth/callback</code></li>
+                            <li>The server exchanges the code for a JWT token</li>
+                            <li>The token must be included in the <code>Authorization: Bearer {token}</code> header to access protected endpoints</li>
+                        </ol>
+                    </div>
+
+                    <h4 class="mt-4">Main Endpoints</h4>
+                    
+                    <div class="card mb-3">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <span>Get Login URL</span>
+                            <span class="method method-get">GET</span>
+                        </div>
+                        <div class="card-body">
+                            <p><span class="endpoint">/api/v1/auth/login</span></p>
+                            <p>Returns the URL to start the Auth0 authentication process.</p>
+                            <h6>Query Parameters:</h6>
+                            <ul>
+                                <li><code>redirect_uri</code> (optional): Redirect URL after authentication</li>
+                            </ul>
+                            <h6>Response:</h6>
+                            <pre><code>{
+  "auth_url": "https://dev-gd5crfe6qbqlu23p.us.auth0.com/authorize?audience=https%3A%2F%2Fgymapi&scope=openid+profile+email&response_type=code&client_id=OuJ6IKE0lJSdaMG6jaW04jfptsMRbyvp&redirect_uri=http%3A%2F%2F127.0.0.1%3A8080%2Fapi%2Fv1%2Fauth%2Fcallback"
+}</code></pre>
+                        </div>
+                    </div>
+
+                    <div class="card mb-3">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <span>Automatic Login Redirect</span>
+                            <span class="method method-get">GET</span>
+                        </div>
+                        <div class="card-body">
+                            <p><span class="endpoint">/api/v1/auth/login-redirect</span></p>
+                            <p>Automatically redirects the user to the Auth0 login page.</p>
+                            <h6>Query Parameters:</h6>
+                            <ul>
+                                <li><code>redirect_uri</code> (optional): Redirect URL after authentication</li>
+                            </ul>
+                            <h6>Response:</h6>
+                            <p>HTTP 302 Redirect to Auth0</p>
+                        </div>
+                    </div>
+
+                    <div class="card mb-3">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <span>Authentication Callback</span>
+                            <span class="method method-get">GET</span>
+                        </div>
+                        <div class="card-body">
+                            <p><span class="endpoint">/api/v1/auth/callback</span></p>
+                            <p>Callback for the Auth0 authentication process. This endpoint receives the authorization code and exchanges it for access tokens.</p>
+                            <h6>Query Parameters:</h6>
+                            <ul>
+                                <li><code>code</code> (required): Authorization code provided by Auth0</li>
+                                <li><code>state</code> (required): State for CSRF verification</li>
+                            </ul>
+                            <h6>Response:</h6>
+                            <p>Redirect to the frontend with authentication tokens</p>
+                        </div>
+                    </div>
+
+                    <div class="card mb-3">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <span>Logout</span>
+                            <span class="method method-get">GET</span>
+                        </div>
+                        <div class="card-body">
+                            <p><span class="endpoint">/api/v1/auth/logout</span></p>
+                            <p>Gets the URL to log out from Auth0.</p>
+                            <h6>Query Parameters:</h6>
+                            <ul>
+                                <li><code>returnTo</code> (optional): Redirect URL after logout</li>
+                            </ul>
+                            <h6>Response:</h6>
+                            <pre><code>{
+  "logout_url": "https://dev-gd5crfe6qbqlu23p.us.auth0.com/v2/logout?client_id=OuJ6IKE0lJSdaMG6jaW04jfptsMRbyvp&returnTo=http%3A%2F%2F127.0.0.1%3A8080"
+}</code></pre>
+                        </div>
+                    </div>
+
+                    <div class="card mb-3">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <span>Current User Information</span>
+                            <span class="method method-get">GET</span>
+                        </div>
+                        <div class="card-body">
+                            <p><span class="endpoint">/api/v1/auth/me</span></p>
+                            <p>Gets information about the currently authenticated user.</p>
+                            <p><strong>Authentication required:</strong> Yes</p>
+                            <h6>Response:</h6>
+                            <pre><code>{
+  "id": "auth0|12345abcdef",
+  "email": "user@example.com",
+  "name": "Sample User",
+  "picture": "https://example.com/photo.jpg",
+  "roles": ["MEMBER"],
+  "permissions": ["read:profile"]
+}</code></pre>
+                        </div>
+                    </div>
+
+                    <div class="card mb-3">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <span>Get Auth0 Configuration</span>
+                            <span class="method method-get">GET</span>
+                        </div>
+                        <div class="card-body">
+                            <p><span class="endpoint">/api/v1/auth/config</span></p>
+                            <p>Provides authentication configuration for the frontend.</p>
+                            <h6>Response:</h6>
+                            <pre><code>{
+  "auth0": {
+    "domain": "dev-gd5crfe6qbqlu23p.us.auth0.com",
+    "clientId": "OuJ6IKE0lJSdaMG6jaW04jfptsMRbyvp",
+    "audience": "https://gymapi"
+  },
+  "apiUrl": "http://127.0.0.1:8080/api/v1",
+  "allowedRedirectUris": [
+    "http://localhost:3000",
+    "http://localhost:3001"
+  ]
+}</code></pre>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Users -->
+                <section id="users" class="mb-5">
+                    <h2 class="border-bottom pb-2">Users</h2>
+                    <p>Endpoints for user and profile management.</p>
+                    
+                    <div class="card mb-3">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <span>List Users</span>
+                            <span class="method method-get">GET</span>
+                        </div>
+                        <div class="card-body">
+                            <p><span class="endpoint">/api/v1/users/</span></p>
+                            <p>Gets the list of registered users.</p>
+                            <p><strong>Authentication required:</strong> Yes</p>
+                            <h6>Query Parameters:</h6>
+                            <ul>
+                                <li><code>skip</code> (int, optional): Number of records to skip (pagination)</li>
+                                <li><code>limit</code> (int, optional): Maximum number of records to return</li>
+                            </ul>
+                            <h6>Response:</h6>
+                            <pre><code>[
+  {
+    "id": "auth0|12345",
+    "email": "user1@example.com",
+    "roles": ["MEMBER"],
+    "name": "Sample User",
+    "picture": "https://example.com/photo.jpg",
+    "created_at": "2024-03-25T10:00:00"
+  },
+  {
+    "id": "auth0|67890",
+    "email": "user2@example.com",
+    "roles": ["TRAINER"],
+    "name": "Trainer Example",
+    "picture": "https://example.com/photo2.jpg",
+    "created_at": "2024-03-24T15:30:00"
+  }
+]</code></pre>
+                        </div>
+                    </div>
+
+                    <div class="card mb-3">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <span>Get User</span>
+                            <span class="method method-get">GET</span>
+                        </div>
+                        <div class="card-body">
+                            <p><span class="endpoint">/api/v1/users/{user_id}</span></p>
+                            <p>Gets detailed information about a specific user.</p>
+                            <p><strong>Authentication required:</strong> Yes</p>
+                            <h6>Path Parameters:</h6>
+                            <ul>
+                                <li><code>user_id</code> (string, required): Auth0 ID of the user</li>
+                            </ul>
+                            <h6>Response:</h6>
+                            <pre><code>{
+  "id": "auth0|12345",
+  "email": "user@example.com",
+  "roles": ["MEMBER"],
+  "name": "Sample User",
+  "picture": "https://example.com/photo.jpg",
+  "created_at": "2024-03-25T10:00:00",
+  "last_login": "2024-03-25T15:45:00",
+  "metadata": {
+    "phone": "+123456789"
+  }
+}</code></pre>
+                        </div>
+                    </div>
+                    
+                    <div class="card mb-3">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <span>Update User Role</span>
+                            <span class="method method-put">PUT</span>
+                        </div>
+                        <div class="card-body">
+                            <p><span class="endpoint">/api/v1/users/{user_id}/role</span></p>
+                            <p>Updates a user's role (ADMIN, TRAINER, MEMBER).</p>
+                            <p><strong>Authentication required:</strong> Yes</p>
+                            <p><strong>Permissions required:</strong> admin:all</p>
+                            <h6>Path Parameters:</h6>
+                            <ul>
+                                <li><code>user_id</code> (string, required): Auth0 ID of the user</li>
+                            </ul>
+                            <h6>Body:</h6>
+                            <pre><code>{
+  "role": "TRAINER"
+}</code></pre>
+                            <h6>Response:</h6>
+                            <pre><code>{
+  "id": "auth0|12345",
+  "email": "user@example.com",
+  "roles": ["TRAINER"],
+  "message": "Role updated successfully"
+}</code></pre>
+                        </div>
+                    </div>
+                    
+                    <div class="card mb-3">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <span>Get Users by Role</span>
+                            <span class="method method-get">GET</span>
+                        </div>
+                        <div class="card-body">
+                            <p><span class="endpoint">/api/v1/users/by-role/{role}</span></p>
+                            <p>Gets the list of users who have a specific role.</p>
+                            <p><strong>Authentication required:</strong> Yes</p>
+                            <h6>Path Parameters:</h6>
+                            <ul>
+                                <li><code>role</code> (string, required): Role to filter by (ADMIN, TRAINER, MEMBER)</li>
+                            </ul>
+                            <h6>Query Parameters:</h6>
+                            <ul>
+                                <li><code>skip</code> (int, optional): Number of records to skip</li>
+                                <li><code>limit</code> (int, optional): Maximum number of records</li>
+                            </ul>
+                            <h6>Response:</h6>
+                            <pre><code>[
+  {
+    "id": "auth0|12345",
+    "email": "user@example.com",
+    "roles": ["TRAINER"],
+    "name": "Trainer Example"
+  },
+  {
+    "id": "auth0|67890",
+    "email": "user2@example.com",
+    "roles": ["TRAINER"],
+    "name": "Trainer Two"
+  }
+]</code></pre>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Chat -->
+                <section id="chat" class="mb-5">
+                    <h2 class="border-bottom pb-2">Real-Time Chat</h2>
+                    <p>GymAPI uses Stream.io to provide real-time chat functionality. The endpoints in this section allow you to obtain tokens, create conversations, and manage user presence.</p>
+                    
+                    <div class="bd-callout bd-callout-info">
+                        <h5>Chat Flow</h5>
+                        <ol>
+                            <li>Get Stream.io token from <code>/api/v1/chat/token</code></li>
+                            <li>Create or join a chat room (direct, group, or event)</li>
+                            <li>Use the Stream.io client in the frontend to send/receive messages</li>
+                        </ol>
+                    </div>
+                    
+                    <div class="card mb-3">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <span>Get Stream Token</span>
+                            <span class="method method-get">GET</span>
+                        </div>
+                        <div class="card-body">
+                            <p><span class="endpoint">/api/v1/chat/token</span></p>
+                            <p>Gets a token to authenticate with Stream.io.</p>
+                            <p><strong>Authentication required:</strong> Yes</p>
+                            <h6>Response:</h6>
+                            <pre><code>{
+  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "api_key": "xptswctbxzsw",
+  "user_id": "auth0|12345"
+}</code></pre>
+                        </div>
+                    </div>
+
+                    <div class="card mb-3">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <span>Create Chat Room</span>
+                            <span class="method method-post">POST</span>
+                        </div>
+                        <div class="card-body">
+                            <p><span class="endpoint">/api/v1/chat/rooms</span></p>
+                            <p>Creates a new chat room (group or direct).</p>
+                            <p><strong>Authentication required:</strong> Yes</p>
+                            <h6>Body:</h6>
+                            <pre><code>{
+  "name": "Training Group",
+  "is_direct": false,
+  "member_ids": ["auth0|12345", "auth0|67890"],
+  "event_id": 123  // Optional, associates the room with an event
+}</code></pre>
+                            <h6>Response:</h6>
+                            <pre><code>{
+  "id": 1,
+  "stream_channel_id": "messaging:room-training-group-auth0-12345",
+  "stream_channel_type": "messaging",
+  "name": "Training Group",
+  "members": ["auth0-12345", "auth0-67890"]
+}</code></pre>
+                        </div>
+                    </div>
+
+                    <div class="card mb-3">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <span>Create/Get Direct Chat</span>
+                            <span class="method method-get">GET</span>
+                        </div>
+                        <div class="card-body">
+                            <p><span class="endpoint">/api/v1/chat/rooms/direct/{user_id}</span></p>
+                            <p>Creates or gets a direct chat with another user.</p>
+                            <p><strong>Authentication required:</strong> Yes</p>
+                            <h6>Path Parameters:</h6>
+                            <ul>
+                                <li><code>user_id</code> (string, required): Auth0 ID of the other user</li>
+                            </ul>
+                            <h6>Response:</h6>
+                            <pre><code>{
+  "id": 2,
+  "stream_channel_id": "messaging:dm-auth0-12345-auth0-67890",
+  "stream_channel_type": "messaging",
+  "name": "Chat auth0-12345-auth0-67890",
+  "is_direct": true,
+  "members": ["auth0-12345", "auth0-67890"]
+}</code></pre>
+                        </div>
+                    </div>
+                    
+                    <div class="card mb-3">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <span>Get/Create Event Chat</span>
+                            <span class="method method-get">GET</span>
+                        </div>
+                        <div class="card-body">
+                            <p><span class="endpoint">/api/v1/chat/rooms/event/{event_id}</span></p>
+                            <p>Gets or creates a chat for a specific event.</p>
+                            <p><strong>Authentication required:</strong> Yes</p>
+                            <h6>Path Parameters:</h6>
+                            <ul>
+                                <li><code>event_id</code> (int, required): ID of the event</li>
+                            </ul>
+                            <h6>Response:</h6>
+                            <pre><code>{
+  "id": 3,
+  "stream_channel_id": "messaging:room-Event #123-auth0-12345",
+  "stream_channel_type": "messaging",
+  "event_id": 123,
+  "members": ["auth0-12345"]
+}</code></pre>
+                        </div>
+                    </div>
+                    
+                    <div class="card mb-3">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <span>Mark User as Online</span>
+                            <span class="method method-post">POST</span>
+                        </div>
+                        <div class="card-body">
+                            <p><span class="endpoint">/api/v1/chat/presence/online</span></p>
+                            <p>Marks the current user as online in the presence system.</p>
+                            <p><strong>Authentication required:</strong> Yes</p>
+                            <h6>Response:</h6>
+                            <pre><code>{
+  "status": "online",
+  "user_id": "auth0|12345"
+}</code></pre>
+                        </div>
+                    </div>
+                    
+                    <div class="card mb-3">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <span>Mark User as Offline</span>
+                            <span class="method method-post">POST</span>
+                        </div>
+                        <div class="card-body">
+                            <p><span class="endpoint">/api/v1/chat/presence/offline</span></p>
+                            <p>Marks the current user as offline.</p>
+                            <p><strong>Authentication required:</strong> Yes</p>
+                            <h6>Response:</h6>
+                            <pre><code>{
+  "status": "offline",
+  "user_id": "auth0|12345"
+}</code></pre>
+                        </div>
+                    </div>
+                    
+                    <div class="card mb-3">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <span>Get Online Users</span>
+                            <span class="method method-get">GET</span>
+                        </div>
+                        <div class="card-body">
+                            <p><span class="endpoint">/api/v1/chat/presence/online-users</span></p>
+                            <p>Gets the list of currently online users.</p>
+                            <p><strong>Authentication required:</strong> Yes</p>
+                            <h6>Response:</h6>
+                            <pre><code>{
+  "online_users": ["auth0|12345", "auth0|67890"]
+}</code></pre>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Events -->
+                <section id="events" class="mb-5">
+                    <h2 class="border-bottom pb-2">Events</h2>
+                    <p>Events API allows you to create, retrieve, and manage events like fitness classes, workshops, or special activities. Users can participate in events and get notifications.</p>
+                    
+                    <div class="card mb-3">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <span>Create Event</span>
+                            <span class="method method-post">POST</span>
+                        </div>
+                        <div class="card-body">
+                            <p><span class="endpoint">/api/v1/events</span></p>
+                            <p>Creates a new event.</p>
+                            <p><strong>Authentication required:</strong> Yes</p>
+                            <p><strong>Permissions required:</strong> <code>create:events</code> (Role: TRAINER or ADMIN)</p>
+                            <h6>Body:</h6>
+                            <pre><code>{
+  "title": "Morning Yoga Session",
+  "description": "Start your day with an energizing yoga class.",
+  "start_time": "2023-12-01T08:00:00Z",
+  "end_time": "2023-12-01T09:00:00Z",
+  "location": "Yoga Studio 2",
+  "capacity": 15,
+  "event_type": "class",
+  "trainer_id": "auth0|12345"
+}</code></pre>
+                            <h6>Response:</h6>
+                            <pre><code>{
+  "id": 1,
+  "title": "Morning Yoga Session",
+  "description": "Start your day with an energizing yoga class.",
+  "start_time": "2023-12-01T08:00:00Z",
+  "end_time": "2023-12-01T09:00:00Z",
+  "location": "Yoga Studio 2",
+  "capacity": 15,
+  "current_participants": 0,
+  "event_type": "class",
+  "trainer_id": "auth0|12345",
+  "created_at": "2023-11-22T14:30:00Z"
+}</code></pre>
+                        </div>
+                    </div>
+
+                    <div class="card mb-3">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <span>Get All Events</span>
+                            <span class="method method-get">GET</span>
+                        </div>
+                        <div class="card-body">
+                            <p><span class="endpoint">/api/v1/events</span></p>
+                            <p>Gets a list of all events, with optional filtering.</p>
+                            <p><strong>Authentication required:</strong> Yes</p>
+                            <h6>Query Parameters:</h6>
+                            <ul>
+                                <li><code>skip</code> (int, optional): Number of records to skip. Default: 0</li>
+                                <li><code>limit</code> (int, optional): Maximum number of records to return. Default: 100</li>
+                                <li><code>start_date</code> (date, optional): Filter events starting from this date</li>
+                                <li><code>end_date</code> (date, optional): Filter events until this date</li>
+                                <li><code>event_type</code> (string, optional): Filter by event type (class, workshop, etc.)</li>
+                                <li><code>trainer_id</code> (string, optional): Filter by trainer</li>
+                            </ul>
+                            <h6>Response:</h6>
+                            <pre><code>[
+  {
+    "id": 1,
+    "title": "Morning Yoga Session",
+    "description": "Start your day with an energizing yoga class.",
+    "start_time": "2023-12-01T08:00:00Z",
+    "end_time": "2023-12-01T09:00:00Z",
+    "location": "Yoga Studio 2",
+    "capacity": 15,
+    "current_participants": 0,
+    "event_type": "class",
+    "trainer_id": "auth0|12345",
+    "created_at": "2023-11-22T14:30:00Z"
+  },
+  // More events...
+]</code></pre>
+                        </div>
+                    </div>
+
+                    <div class="card mb-3">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <span>Get Event by ID</span>
+                            <span class="method method-get">GET</span>
+                        </div>
+                        <div class="card-body">
+                            <p><span class="endpoint">/api/v1/events/{event_id}</span></p>
+                            <p>Gets detailed information about a specific event.</p>
+                            <p><strong>Authentication required:</strong> Yes</p>
+                            <h6>Path Parameters:</h6>
+                            <ul>
+                                <li><code>event_id</code> (int, required): ID of the event</li>
+                            </ul>
+                            <h6>Response:</h6>
+                            <pre><code>{
+  "id": 1,
+  "title": "Morning Yoga Session",
+  "description": "Start your day with an energizing yoga class.",
+  "start_time": "2023-12-01T08:00:00Z",
+  "end_time": "2023-12-01T09:00:00Z",
+  "location": "Yoga Studio 2",
+  "capacity": 15,
+  "current_participants": 3,
+  "event_type": "class",
+  "trainer_id": "auth0|12345",
+  "trainer_name": "Jane Smith",
+  "created_at": "2023-11-22T14:30:00Z",
+  "participants": [
+    {
+      "user_id": "auth0|67890",
+      "name": "John Doe",
+      "joined_at": "2023-11-22T15:00:00Z"
+    },
+    // More participants...
+  ]
+}</code></pre>
+                        </div>
+                    </div>
+
+                    <div class="card mb-3">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <span>Update Event</span>
+                            <span class="method method-put">PUT</span>
+                        </div>
+                        <div class="card-body">
+                            <p><span class="endpoint">/api/v1/events/{event_id}</span></p>
+                            <p>Updates an existing event.</p>
+                            <p><strong>Authentication required:</strong> Yes</p>
+                            <p><strong>Permissions required:</strong> Must be the event creator or an ADMIN</p>
+                            <h6>Path Parameters:</h6>
+                            <ul>
+                                <li><code>event_id</code> (int, required): ID of the event to update</li>
+                            </ul>
+                            <h6>Body:</h6>
+                            <pre><code>{
+  "title": "Updated Yoga Session",
+  "description": "Start your day with an energizing yoga class.",
+  "start_time": "2023-12-01T08:30:00Z", // Updated time
+  "end_time": "2023-12-01T09:30:00Z",
+  "location": "Yoga Studio 3", // Updated location
+  "capacity": 20 // Updated capacity
+}</code></pre>
+                            <h6>Response:</h6>
+                            <pre><code>{
+  "id": 1,
+  "title": "Updated Yoga Session",
+  "description": "Start your day with an energizing yoga class.",
+  "start_time": "2023-12-01T08:30:00Z",
+  "end_time": "2023-12-01T09:30:00Z",
+  "location": "Yoga Studio 3",
+  "capacity": 20,
+  "current_participants": 3,
+  "event_type": "class",
+  "trainer_id": "auth0|12345",
+  "created_at": "2023-11-22T14:30:00Z",
+  "updated_at": "2023-11-22T16:30:00Z"
+}</code></pre>
+                        </div>
+                    </div>
+
+                    <div class="card mb-3">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <span>Delete Event</span>
+                            <span class="method method-delete">DELETE</span>
+                        </div>
+                        <div class="card-body">
+                            <p><span class="endpoint">/api/v1/events/{event_id}</span></p>
+                            <p>Deletes an event.</p>
+                            <p><strong>Authentication required:</strong> Yes</p>
+                            <p><strong>Permissions required:</strong> Must be the event creator or an ADMIN</p>
+                            <h6>Path Parameters:</h6>
+                            <ul>
+                                <li><code>event_id</code> (int, required): ID of the event to delete</li>
+                            </ul>
+                            <h6>Response:</h6>
+                            <pre><code>{
+  "message": "Event deleted successfully",
+  "event_id": 1
+}</code></pre>
+                        </div>
+                    </div>
+
+                    <div class="card mb-3">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <span>Participate in Event</span>
+                            <span class="method method-post">POST</span>
+                        </div>
+                        <div class="card-body">
+                            <p><span class="endpoint">/api/v1/events/{event_id}/participate</span></p>
+                            <p>Registers the current user as a participant for the specified event.</p>
+                            <p><strong>Authentication required:</strong> Yes</p>
+                            <h6>Path Parameters:</h6>
+                            <ul>
+                                <li><code>event_id</code> (int, required): ID of the event to participate in</li>
+                            </ul>
+                            <h6>Response:</h6>
+                            <pre><code>{
+  "message": "Successfully registered for the event",
+  "event_id": 1,
+  "user_id": "auth0|67890"
+}</code></pre>
+                        </div>
+                    </div>
+
+                    <div class="card mb-3">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <span>Cancel Participation</span>
+                            <span class="method method-delete">DELETE</span>
+                        </div>
+                        <div class="card-body">
+                            <p><span class="endpoint">/api/v1/events/{event_id}/participate</span></p>
+                            <p>Cancels the current user's participation in the specified event.</p>
+                            <p><strong>Authentication required:</strong> Yes</p>
+                            <h6>Path Parameters:</h6>
+                            <ul>
+                                <li><code>event_id</code> (int, required): ID of the event to cancel participation for</li>
+                            </ul>
+                            <h6>Response:</h6>
+                            <pre><code>{
+  "message": "Successfully canceled event participation",
+  "event_id": 1,
+  "user_id": "auth0|67890"
+}</code></pre>
+                        </div>
+                    </div>
+
+                    <div class="card mb-3">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <span>Get Upcoming Events for User</span>
+                            <span class="method method-get">GET</span>
+                        </div>
+                        <div class="card-body">
+                            <p><span class="endpoint">/api/v1/events/me/upcoming</span></p>
+                            <p>Gets the list of upcoming events for which the current user is registered.</p>
+                            <p><strong>Authentication required:</strong> Yes</p>
+                            <h6>Response:</h6>
+                            <pre><code>[
+  {
+    "id": 1,
+    "title": "Morning Yoga Session",
+    "description": "Start your day with an energizing yoga class.",
+    "start_time": "2023-12-01T08:00:00Z",
+    "end_time": "2023-12-01T09:00:00Z",
+    "location": "Yoga Studio 2",
+    "trainer_name": "Jane Smith",
+    "event_type": "class"
+  },
+  // More events...
+]</code></pre>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Trainers and Members -->
+                <section id="trainers-members" class="mb-5">
+                    <h2 class="border-bottom pb-2">Trainers and Members</h2>
+                    <p>This section covers endpoints for managing the relationships between trainers and gym members, allowing trainers to be assigned to members and vice versa.</p>
+                    
+                    <div class="card mb-3">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <span>Assign Member to Trainer</span>
+                            <span class="method method-post">POST</span>
+                        </div>
+                        <div class="card-body">
+                            <p><span class="endpoint">/api/v1/trainer-member/assign</span></p>
+                            <p>Creates a relationship between a trainer and a member.</p>
+                            <p><strong>Authentication required:</strong> Yes</p>
+                            <p><strong>Permissions required:</strong> <code>admin:all</code> or must be the trainer</p>
+                            <h6>Body:</h6>
+                            <pre><code>{
+  "trainer_id": "auth0|12345",
+  "member_id": "auth0|67890"
+}</code></pre>
+                            <h6>Response:</h6>
+                            <pre><code>{
+  "id": 1,
+  "trainer_id": "auth0|12345",
+  "member_id": "auth0|67890",
+  "created_at": "2023-11-22T14:30:00Z"
+}</code></pre>
+                        </div>
+                    </div>
+
+                    <div class="card mb-3">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <span>Unassign Member from Trainer</span>
+                            <span class="method method-delete">DELETE</span>
+                        </div>
+                        <div class="card-body">
+                            <p><span class="endpoint">/api/v1/trainer-member/unassign</span></p>
+                            <p>Removes a relationship between a trainer and a member.</p>
+                            <p><strong>Authentication required:</strong> Yes</p>
+                            <p><strong>Permissions required:</strong> <code>admin:all</code> or must be the trainer</p>
+                            <h6>Body:</h6>
+                            <pre><code>{
+  "trainer_id": "auth0|12345",
+  "member_id": "auth0|67890"
+}</code></pre>
+                            <h6>Response:</h6>
+                            <pre><code>{
+  "message": "Relationship removed successfully",
+  "trainer_id": "auth0|12345",
+  "member_id": "auth0|67890"
+}</code></pre>
+                        </div>
+                    </div>
+
+                    <div class="card mb-3">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <span>Get Trainer's Members</span>
+                            <span class="method method-get">GET</span>
+                        </div>
+                        <div class="card-body">
+                            <p><span class="endpoint">/api/v1/trainer-member/trainer/{trainer_id}/members</span></p>
+                            <p>Gets all members assigned to a specific trainer.</p>
+                            <p><strong>Authentication required:</strong> Yes</p>
+                            <p><strong>Permissions required:</strong> <code>admin:all</code> or must be the trainer</p>
+                            <h6>Path Parameters:</h6>
+                            <ul>
+                                <li><code>trainer_id</code> (string, required): Auth0 ID of the trainer</li>
+                            </ul>
+                            <h6>Query Parameters:</h6>
+                            <ul>
+                                <li><code>skip</code> (int, optional): Number of records to skip. Default: 0</li>
+                                <li><code>limit</code> (int, optional): Maximum number of records to return. Default: 100</li>
+                            </ul>
+                            <h6>Response:</h6>
+                            <pre><code>[
+  {
+    "id": "auth0|67890",
+    "name": "John Doe",
+    "email": "john.doe@example.com",
+    "picture": "https://example.com/profile.jpg",
+    "last_login": "2023-11-20T10:30:00Z",
+    "assigned_since": "2023-10-15T09:00:00Z"
+  },
+  // More members...
+]</code></pre>
+                        </div>
+                    </div>
+
+                    <div class="card mb-3">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <span>Get Member's Trainers</span>
+                            <span class="method method-get">GET</span>
+                        </div>
+                        <div class="card-body">
+                            <p><span class="endpoint">/api/v1/trainer-member/member/{member_id}/trainers</span></p>
+                            <p>Gets all trainers assigned to a specific member.</p>
+                            <p><strong>Authentication required:</strong> Yes</p>
+                            <p><strong>Permissions required:</strong> <code>admin:all</code> or must be the member</p>
+                            <h6>Path Parameters:</h6>
+                            <ul>
+                                <li><code>member_id</code> (string, required): Auth0 ID of the member</li>
+                            </ul>
+                            <h6>Query Parameters:</h6>
+                            <ul>
+                                <li><code>skip</code> (int, optional): Number of records to skip. Default: 0</li>
+                                <li><code>limit</code> (int, optional): Maximum number of records to return. Default: 100</li>
+                            </ul>
+                            <h6>Response:</h6>
+                            <pre><code>[
+  {
+    "id": "auth0|12345",
+    "name": "Jane Smith",
+    "email": "jane.smith@example.com",
+    "picture": "https://example.com/trainer_profile.jpg",
+    "specialization": "Yoga, Pilates",
+    "assigned_since": "2023-10-15T09:00:00Z"
+  },
+  // More trainers...
+]</code></pre>
+                        </div>
+                    </div>
+
+                    <div class="card mb-3">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <span>Get My Members</span>
+                            <span class="method method-get">GET</span>
+                        </div>
+                        <div class="card-body">
+                            <p><span class="endpoint">/api/v1/trainer-member/my-members</span></p>
+                            <p>Gets all members assigned to the current authenticated trainer.</p>
+                            <p><strong>Authentication required:</strong> Yes</p>
+                            <p><strong>Permissions required:</strong> Role must be TRAINER</p>
+                            <h6>Query Parameters:</h6>
+                            <ul>
+                                <li><code>skip</code> (int, optional): Number of records to skip. Default: 0</li>
+                                <li><code>limit</code> (int, optional): Maximum number of records to return. Default: 100</li>
+                            </ul>
+                            <h6>Response:</h6>
+                            <pre><code>[
+  {
+    "id": "auth0|67890",
+    "name": "John Doe",
+    "email": "john.doe@example.com",
+    "picture": "https://example.com/profile.jpg",
+    "last_login": "2023-11-20T10:30:00Z",
+    "assigned_since": "2023-10-15T09:00:00Z"
+  },
+  // More members...
+]</code></pre>
+                        </div>
+                    </div>
+
+                    <div class="card mb-3">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <span>Get My Trainers</span>
+                            <span class="method method-get">GET</span>
+                        </div>
+                        <div class="card-body">
+                            <p><span class="endpoint">/api/v1/trainer-member/my-trainers</span></p>
+                            <p>Gets all trainers assigned to the current authenticated member.</p>
+                            <p><strong>Authentication required:</strong> Yes</p>
+                            <p><strong>Permissions required:</strong> Role must be MEMBER</p>
+                            <h6>Query Parameters:</h6>
+                            <ul>
+                                <li><code>skip</code> (int, optional): Number of records to skip. Default: 0</li>
+                                <li><code>limit</code> (int, optional): Maximum number of records to return. Default: 100</li>
+                            </ul>
+                            <h6>Response:</h6>
+                            <pre><code>[
+  {
+    "id": "auth0|12345",
+    "name": "Jane Smith",
+    "email": "jane.smith@example.com",
+    "picture": "https://example.com/trainer_profile.jpg",
+    "specialization": "Yoga, Pilates",
+    "assigned_since": "2023-10-15T09:00:00Z"
+  },
+  // More trainers...
+]</code></pre>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Webhooks -->
+                <section id="webhooks" class="mb-5">
+                    <h2 class="border-bottom pb-2">Webhooks</h2>
+                    <p>Webhooks support integration with external systems like Auth0 for user provisioning and event notifications.</p>
+                    
+                    <div class="card mb-3">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <span>Auth0 User Creation Webhook</span>
+                            <span class="method method-post">POST</span>
+                        </div>
+                        <div class="card-body">
+                            <p><span class="endpoint">/api/v1/auth/webhook/user-created</span></p>
+                            <p>Receives user creation events from Auth0 and provisions users in the local database.</p>
+                            <p><strong>Authentication required:</strong> No (secured by webhook secret)</p>
+                            <h6>Headers:</h6>
+                            <ul>
+                                <li><code>X-Auth0-Webhook-Secret</code>: Secret token configured in Auth0</li>
+                            </ul>
+                            <h6>Body (from Auth0):</h6>
+                            <pre><code>{
+  "user_id": "auth0|12345",
+  "email": "user@example.com",
+  "name": "John Doe",
+  "picture": "https://example.com/profile.jpg",
+  "created_at": "2023-11-20T10:30:00Z",
+  "app_metadata": {},
+  "user_metadata": {}
+}</code></pre>
+                            <h6>Response:</h6>
+                            <pre><code>{
+  "message": "User created successfully",
+  "user_id": "auth0|12345"
+}</code></pre>
+                        </div>
+                    </div>
+                    
+                    <div class="card mb-3">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <span>Auth0 User Update Webhook</span>
+                            <span class="method method-post">POST</span>
+                        </div>
+                        <div class="card-body">
+                            <p><span class="endpoint">/api/v1/auth/webhook/user-updated</span></p>
+                            <p>Receives user update events from Auth0 and synchronizes user data in the local database.</p>
+                            <p><strong>Authentication required:</strong> No (secured by webhook secret)</p>
+                            <h6>Headers:</h6>
+                            <ul>
+                                <li><code>X-Auth0-Webhook-Secret</code>: Secret token configured in Auth0</li>
+                            </ul>
+                            <h6>Body (from Auth0):</h6>
+                            <pre><code>{
+  "user_id": "auth0|12345",
+  "email": "updated.email@example.com",
+  "name": "John Doe Updated",
+  "picture": "https://example.com/updated_profile.jpg",
+  "updated_at": "2023-11-22T14:30:00Z",
+  "app_metadata": {},
+  "user_metadata": {}
+}</code></pre>
+                            <h6>Response:</h6>
+                            <pre><code>{
+  "message": "User updated successfully",
+  "user_id": "auth0|12345"
+}</code></pre>
+                        </div>
+                    </div>
+                </section>
+
+                <div class="mt-5 pt-3 border-top">
+                    <p>For more interactive documentation, visit:</p>
+                    <ul>
+                        <li><a href="/api/v1/docs">Swagger UI</a> - Interactive API documentation</li>
+                        <li><a href="/api/v1/redoc">ReDoc</a> - Alternative API documentation</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <footer class="bg-light mt-5 py-3">
+        <div class="container text-center">
+            <p class="mb-0">GymAPI - Documentation &copy; 2025</p>
+        </div>
+    </footer>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html> 
