@@ -1,10 +1,26 @@
+"""
+Events Module - API Endpoints
+
+This module handles the creation, management, and participation in gym events.
+Events can be workshops, special classes, competitions, or any other activities
+organized by the gym. The module provides endpoints for:
+
+- Creating and managing events (trainers and admins)
+- Viewing event details (all users)
+- Registering for events (members)
+- Managing event participation (trainers and event creators)
+- Administrative operations (admins only)
+
+All endpoints are protected with appropriate permission scopes.
+"""
+
 from typing import List, Optional, Any
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query, Body, Path, status, Security
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
-from app.core.auth0_fastapi import get_current_user, get_current_user_with_permissions, Auth0User
+from app.core.auth0_fastapi import get_current_user, get_current_user_with_permissions, Auth0User, auth
 from app.schemas.event import (
     Event, 
     EventCreate, 
@@ -24,35 +40,36 @@ from app.repositories.event import event_repository, event_participation_reposit
 router = APIRouter()
 
 
-# Endpoints para Eventos
+# Event Endpoints
 @router.post("/", response_model=Event, status_code=status.HTTP_201_CREATED)
 async def create_event(
     *,
     db: Session = Depends(get_db),
     event_in: EventCreate,
-    current_user: Auth0User = Depends(get_current_user)
+    current_user: Auth0User = Security(auth.get_user, scopes=["create:events"])
 ) -> Any:
     """
-    Crear un nuevo evento.
-    Sólo entrenadores o administradores pueden crear eventos.
+    Create a new event.
+    
+    This endpoint allows trainers and administrators to create new events
+    for the gym. Events can be workshops, special classes, competitions,
+    or any other activities that members can participate in.
+    
+    Permissions:
+        - Requires 'create:events' scope (trainers and administrators)
+        
+    Args:
+        db: Database session
+        event_in: Event data to create
+        current_user: Authenticated user with appropriate permissions
+        
+    Returns:
+        Event: The newly created event
     """
-    # Verificar que current_user.permissions existe antes de verificar permisos
-    user_permissions = getattr(current_user, "permissions", []) or []
-    
-    # Verificar permisos para crear eventos (aceptar tanto singular como plural)
-    has_permission = any(perm in user_permissions for perm in ["create:events", "create:event", "admin:all"])
-    
-    if not has_permission:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="No tienes permiso para crear eventos"
-        )
-    
-    # Obtener el ID del usuario en la base de datos
-    # Modificación: Usar el ID completo de Auth0 en lugar de intentar extraer un número
+    # Get Auth0 user ID
     user_id = current_user.id
     
-    # Crear el evento
+    # Create the event
     event = event_repository.create_event(db=db, event_in=event_in, creator_id=user_id)
     return event
 
@@ -70,10 +87,33 @@ async def read_events(
     location_contains: Optional[str] = None,
     created_by: Optional[int] = None,
     only_available: bool = False,
-    current_user: Auth0User = Depends(get_current_user)
+    current_user: Auth0User = Security(auth.get_user, scopes=["read:events"])
 ) -> Any:
     """
-    Obtener lista de eventos con filtros opcionales.
+    Retrieve a list of events with optional filters.
+    
+    This endpoint returns a paginated list of events that can be filtered
+    by various criteria such as status, date range, title, location, and 
+    availability. Each event includes a count of current participants.
+    
+    Permissions:
+        - Requires 'read:events' scope (all authenticated users)
+        
+    Args:
+        db: Database session
+        skip: Number of records to skip (pagination)
+        limit: Maximum number of records to return (pagination)
+        status: Filter by event status (SCHEDULED, CANCELLED, COMPLETED)
+        start_date: Filter events starting on or after this date
+        end_date: Filter events ending on or before this date
+        title_contains: Filter events with titles containing this string
+        location_contains: Filter events with locations containing this string
+        created_by: Filter events created by a specific user ID
+        only_available: If true, only return events with available spots
+        current_user: Authenticated user
+        
+    Returns:
+        List[EventWithParticipantCount]: List of events with participant counts
     """
     events = event_repository.get_events(
         db=db,
@@ -88,16 +128,16 @@ async def read_events(
         only_available=only_available
     )
     
-    # Añadir conteo de participantes a cada evento
+    # Add participant count to each event
     result = []
     for event in events:
-        # Contar participantes registrados
+        # Count registered participants
         participants_count = len([
             p for p in event.participants 
             if p.status == EventParticipationStatus.REGISTERED
         ])
         
-        # Crear objeto con conteo
+        # Create object with count
         event_dict = Event.from_orm(event).dict()
         event_dict["participants_count"] = participants_count
         result.append(EventWithParticipantCount(**event_dict))
@@ -111,12 +151,27 @@ async def read_my_events(
     db: Session = Depends(get_db),
     skip: int = 0,
     limit: int = 100,
-    current_user: Auth0User = Depends(get_current_user)
+    current_user: Auth0User = Security(auth.get_user, scopes=["read:own_events"])
 ) -> Any:
     """
-    Obtener eventos creados por el usuario autenticado.
+    Retrieve events created by the authenticated user.
+    
+    This endpoint allows trainers and administrators to view the events
+    they have created. It provides a convenient way to manage one's own events.
+    
+    Permissions:
+        - Requires 'read:own_events' scope (all authenticated users)
+        
+    Args:
+        db: Database session
+        skip: Number of records to skip (pagination)
+        limit: Maximum number of records to return (pagination)
+        current_user: Authenticated user
+        
+    Returns:
+        List[Event]: List of events created by the user
     """
-    # Modificación: Usar el ID completo de Auth0
+    # Get Auth0 user ID
     user_id = current_user.id
     events = event_repository.get_events_by_creator(
         db=db, creator_id=user_id, skip=skip, limit=limit
@@ -128,38 +183,55 @@ async def read_my_events(
 async def read_event(
     *,
     db: Session = Depends(get_db),
-    event_id: int = Path(..., title="ID del evento"),
-    current_user: Auth0User = Depends(get_current_user)
+    event_id: int = Path(..., title="Event ID"),
+    current_user: Auth0User = Security(auth.get_user, scopes=["read:events"])
 ) -> Any:
     """
-    Obtener detalles de un evento por ID.
+    Retrieve details of a specific event by ID.
+    
+    This endpoint returns detailed information about an event, including
+    its title, description, date/time, location, and capacity. The participants
+    list is only included if the requesting user is the event creator or an admin.
+    
+    Permissions:
+        - Requires 'read:events' scope (all authenticated users)
+        - Viewing participant list requires event ownership or admin privileges
+        
+    Args:
+        db: Database session
+        event_id: ID of the event to retrieve
+        current_user: Authenticated user
+        
+    Returns:
+        EventDetail: Detailed event information
+        
+    Raises:
+        HTTPException: 404 if event not found
     """
     event = event_repository.get_event(db=db, event_id=event_id)
     if not event:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Evento no encontrado"
+            detail="Event not found"
         )
     
-    # Verificar que current_user.permissions existe antes de verificar permisos
-    user_permissions = getattr(current_user, "permissions", []) or []
-    
-    # Verificar si el usuario tiene permisos para ver los participantes
-    # Modificación: Usar el ID completo de Auth0
+    # Check permissions to view participants
+    # Get Auth0 user ID
     user_id = current_user.id
-    is_admin = "admin:all" in user_permissions
+    user_permissions = getattr(current_user, "permissions", []) or []
+    is_admin = "admin:all" in user_permissions or "admin:events" in user_permissions
     is_creator = event.creator_id == user_id
     
-    # Crear objeto detallado
+    # Create detailed object
     event_dict = Event.from_orm(event).dict()
     
-    # Incluir participantes solo si es admin o creador
+    # Include participants only if admin or creator
     if is_admin or is_creator:
         event_dict["participants"] = [
             EventParticipation.from_orm(p) for p in event.participants
         ]
     else:
-        # Para usuarios normales, solo incluir conteo
+        # For normal users, include only count
         event_dict["participants"] = []
         event_dict["participants_count"] = len([
             p for p in event.participants 
@@ -173,43 +245,55 @@ async def read_event(
 async def update_event(
     *,
     db: Session = Depends(get_db),
-    event_id: int = Path(..., title="ID del evento"),
+    event_id: int = Path(..., title="Event ID"),
     event_in: EventUpdate,
-    current_user: Auth0User = Depends(get_current_user)
+    current_user: Auth0User = Security(auth.get_user, scopes=["update:events"])
 ) -> Any:
     """
-    Actualizar un evento.
-    Solo el creador o un administrador puede actualizar el evento.
+    Update an existing event.
+    
+    This endpoint allows the event creator or administrators to update
+    event details such as title, description, time, location, capacity,
+    and status. Only the creator of the event or administrators can perform
+    this operation.
+    
+    Permissions:
+        - Requires 'update:events' scope (trainers and administrators)
+        - Also requires ownership of the event or admin privileges
+        
+    Args:
+        db: Database session
+        event_id: ID of the event to update
+        event_in: Updated event data
+        current_user: Authenticated user with appropriate permissions
+        
+    Returns:
+        Event: The updated event
+        
+    Raises:
+        HTTPException: 404 if event not found, 403 if insufficient permissions
     """
-    # Verificar que current_user.permissions existe antes de verificar permisos
-    user_permissions = getattr(current_user, "permissions", []) or []
-    
-    if "update:events" not in user_permissions and "admin:all" not in user_permissions:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="No tienes permiso para actualizar eventos"
-        )
-    
     event = event_repository.get_event(db=db, event_id=event_id)
     if not event:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Evento no encontrado"
+            detail="Event not found"
         )
     
-    # Verificar permisos
-    # Modificación: Usar el ID completo de Auth0
+    # Verify permissions
+    # Get Auth0 user ID
     user_id = current_user.id
-    is_admin = "admin:all" in user_permissions
+    user_permissions = getattr(current_user, "permissions", []) or []
+    is_admin = "admin:all" in user_permissions or "admin:events" in user_permissions
     
-    # Solo el creador o un admin puede actualizar
+    # Only the creator or an admin can update
     if not (is_admin or event.creator_id == user_id):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="No tienes permiso para actualizar este evento"
+            detail="You don't have permission to update this event"
         )
     
-    # Actualizar evento
+    # Update event
     updated_event = event_repository.update_event(
         db=db, event_id=event_id, event_in=event_in
     )
@@ -220,95 +304,171 @@ async def update_event(
 async def delete_event(
     *,
     db: Session = Depends(get_db),
-    event_id: int = Path(..., title="ID del evento"),
-    current_user: Auth0User = Depends(get_current_user)
+    event_id: int = Path(..., title="Event ID"),
+    current_user: Auth0User = Security(auth.get_user, scopes=["delete:events"])
 ) -> None:
     """
-    Eliminar un evento.
-    Solo el creador o un administrador puede eliminar el evento.
+    Delete an event.
+    
+    This endpoint allows the event creator or administrators to delete
+    an event. This will also remove all associated participations.
+    Only the creator of the event or administrators can perform this operation.
+    
+    Permissions:
+        - Requires 'delete:events' scope (trainers and administrators)
+        - Also requires ownership of the event or admin privileges
+        
+    Args:
+        db: Database session
+        event_id: ID of the event to delete
+        current_user: Authenticated user with appropriate permissions
+        
+    Raises:
+        HTTPException: 404 if event not found, 403 if insufficient permissions
     """
-    # Verificar que current_user.permissions existe antes de verificar permisos
-    user_permissions = getattr(current_user, "permissions", []) or []
-    
-    if "delete:events" not in user_permissions and "admin:all" not in user_permissions:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="No tienes permiso para eliminar eventos"
-        )
-    
     event = event_repository.get_event(db=db, event_id=event_id)
     if not event:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Evento no encontrado"
+            detail="Event not found"
         )
     
-    # Verificar permisos
-    # Modificación: Usar el ID completo de Auth0
+    # Verify permissions
+    # Get Auth0 user ID
     user_id = current_user.id
-    is_admin = "admin:all" in user_permissions
+    user_permissions = getattr(current_user, "permissions", []) or []
+    is_admin = "admin:all" in user_permissions or "admin:events" in user_permissions
     
-    # Solo el creador o un admin puede eliminar
+    # Only the creator or an admin can delete
     if not (is_admin or event.creator_id == user_id):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="No tienes permiso para eliminar este evento"
+            detail="You don't have permission to delete this event"
         )
     
-    # Eliminar evento
+    # Delete event
     event_repository.delete_event(db=db, event_id=event_id)
+    return None
 
 
-# Endpoints para Participaciones en Eventos
+@router.delete("/admin/{event_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def admin_delete_event(
+    *,
+    db: Session = Depends(get_db),
+    event_id: int = Path(..., title="Event ID"),
+    current_user: Auth0User = Security(auth.get_user, scopes=["admin:events"])
+) -> None:
+    """
+    Administrative endpoint to delete any event regardless of ownership.
+    
+    This is a specialized admin-only endpoint that allows administrators to
+    delete any event without ownership verification. It's useful for content
+    moderation and managing events when the original creator is unavailable.
+    
+    Permissions:
+        - Requires 'admin:events' scope (administrators only)
+        - This is a protected administrative operation
+        
+    Args:
+        db: Database session
+        event_id: ID of the event to delete
+        current_user: Authenticated administrator
+        
+    Raises:
+        HTTPException: 404 if event not found, 500 for other errors
+    """
+    event = event_repository.get_event(db=db, event_id=event_id)
+    if not event:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Event not found"
+        )
+    
+    # Delete event without ownership verification
+    try:
+        event_repository.delete_event(db=db, event_id=event_id)
+        return None
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error deleting event: {str(e)}"
+        )
+
+
+# Event Participation Endpoints
 @router.post("/participation", response_model=EventParticipation, status_code=status.HTTP_201_CREATED)
 async def register_for_event(
     *,
     db: Session = Depends(get_db),
     participation_in: EventParticipationCreate,
-    current_user: Auth0User = Depends(get_current_user)
+    current_user: Auth0User = Security(auth.get_user, scopes=["create:participations"])
 ) -> Any:
     """
-    Registrar al usuario actual como participante en un evento.
+    Register for an event.
+    
+    This endpoint allows members to register for events. It performs various
+    checks to ensure the event is available, has capacity, and the user isn't
+    already registered. If successful, the user is added to the event's participants.
+    
+    Permissions:
+        - Requires 'create:participations' scope (all authenticated users)
+        
+    Args:
+        db: Database session
+        participation_in: Participation data including event ID
+        current_user: Authenticated user
+        
+    Returns:
+        EventParticipation: The created participation record
+        
+    Raises:
+        HTTPException: 404 if event not found, 400 for validation errors
     """
-    # Modificación: Usar el ID completo de Auth0
+    # Get Auth0 user ID
     user_id = current_user.id
     
-    # Verificar que el evento existe
+    # Check if event exists and is available
     event = event_repository.get_event(db=db, event_id=participation_in.event_id)
     if not event:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Evento no encontrado"
+            detail="Event not found"
         )
     
-    # Verificar que el evento no está cancelado o completado
-    if event.status != EventStatus.SCHEDULED:
+    # Check if event is open for registration
+    if event.status != EventStatus.OPEN:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"No puedes registrarte a un evento con estado {event.status}"
+            detail="Event is not open for registration"
         )
     
-    # Crear participación
-    participation = event_participation_repository.create_participation(
-        db=db, participation_in=participation_in, member_id=user_id
+    # Check if there are spaces available
+    current_participants = len([
+        p for p in event.participants 
+        if p.status == EventParticipationStatus.REGISTERED
+    ])
+    
+    if event.capacity and current_participants >= event.capacity:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Event is at full capacity"
+        )
+    
+    # Check if user is already registered
+    existing = event_participation_repository.get_participant(
+        db=db, event_id=participation_in.event_id, user_id=user_id
     )
     
-    if not participation:
-        # Si ya existe una participación
-        existing = event_participation_repository.get_participation_by_member_and_event(
-            db=db, member_id=user_id, event_id=participation_in.event_id
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="You are already registered for this event"
         )
-        
-        if existing and existing.status != EventParticipationStatus.CANCELLED:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Ya estás registrado en este evento"
-            )
-        else:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="No se pudo registrar la participación"
-            )
+    
+    # Create participation
+    participation = event_participation_repository.create_participation(
+        db=db, participation_in=participation_in, user_id=user_id
+    )
     
     return participation
 
@@ -318,15 +478,29 @@ async def read_my_participations(
     *,
     db: Session = Depends(get_db),
     status: Optional[EventParticipationStatus] = None,
-    current_user: Auth0User = Depends(get_current_user)
+    current_user: Auth0User = Security(auth.get_user, scopes=["read:own_participations"])
 ) -> Any:
     """
-    Obtener las participaciones del usuario autenticado.
+    Retrieve participations of the authenticated user.
+    
+    This endpoint allows users to view the events they have registered for,
+    optionally filtered by status (registered, cancelled, waiting list).
+    
+    Permissions:
+        - Requires 'read:own_participations' scope (all authenticated users)
+        
+    Args:
+        db: Database session
+        status: Optional filter by participation status
+        current_user: Authenticated user
+        
+    Returns:
+        List[EventParticipation]: User's event participations
     """
-    # Modificación: Usar el ID completo de Auth0
+    # Get Auth0 user ID
     user_id = current_user.id
-    participations = event_participation_repository.get_member_events(
-        db=db, member_id=user_id, status=status
+    participations = event_participation_repository.get_user_participations(
+        db=db, user_id=user_id, status=status
     )
     return participations
 
@@ -335,45 +509,55 @@ async def read_my_participations(
 async def read_event_participations(
     *,
     db: Session = Depends(get_db),
-    event_id: int = Path(..., title="ID del evento"),
+    event_id: int = Path(..., title="Event ID"),
     status: Optional[EventParticipationStatus] = None,
-    current_user: Auth0User = Depends(get_current_user)
+    current_user: Auth0User = Security(auth.get_user, scopes=["read:participations"])
 ) -> Any:
     """
-    Obtener participaciones de un evento.
-    Solo el creador del evento o un administrador puede ver las participaciones.
+    Retrieve participations for a specific event.
+    
+    This endpoint allows event creators and administrators to view all
+    participants for a specific event, optionally filtered by status.
+    Only the event creator or administrators can access this information.
+    
+    Permissions:
+        - Requires 'read:participations' scope (trainers and administrators)
+        - Also requires ownership of the event or admin privileges
+        
+    Args:
+        db: Database session
+        event_id: ID of the event
+        status: Optional filter by participation status
+        current_user: Authenticated user with appropriate permissions
+        
+    Returns:
+        List[EventParticipation]: List of event participations
+        
+    Raises:
+        HTTPException: 404 if event not found, 403 if insufficient permissions
     """
-    # Verificar que current_user.permissions existe antes de verificar permisos
-    user_permissions = getattr(current_user, "permissions", []) or []
-    
-    if "read:participations" not in user_permissions and "admin:all" not in user_permissions:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="No tienes permiso para ver las participaciones de este evento"
-        )
-    
-    # Verificar que el evento existe
     event = event_repository.get_event(db=db, event_id=event_id)
     if not event:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Evento no encontrado"
+            detail="Event not found"
         )
     
-    # Verificar permisos
-    # Modificación: Usar el ID completo de Auth0
+    # Verify permissions
+    # Get Auth0 user ID
     user_id = current_user.id
-    is_admin = "admin:all" in user_permissions
+    user_permissions = getattr(current_user, "permissions", []) or []
+    is_admin = "admin:all" in user_permissions or "admin:events" in user_permissions
     
-    # Solo el creador o un admin puede ver las participaciones
+    # Only the creator or an admin can see all participants
     if not (is_admin or event.creator_id == user_id):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="No tienes permiso para ver las participaciones de este evento"
+            detail="You don't have permission to view participants for this event"
         )
     
-    # Obtener participaciones
-    participations = event_participation_repository.get_event_participants(
+    # Get participants
+    participations = event_participation_repository.get_event_participations(
         db=db, event_id=event_id, status=status
     )
     return participations
@@ -383,75 +567,106 @@ async def read_event_participations(
 async def cancel_participation(
     *,
     db: Session = Depends(get_db),
-    event_id: int = Path(..., title="ID del evento"),
-    current_user: Auth0User = Depends(get_current_user)
+    event_id: int = Path(..., title="Event ID"),
+    current_user: Auth0User = Security(auth.get_user, scopes=["delete:own_participations"])
 ) -> None:
     """
-    Cancelar la participación del usuario actual en un evento.
+    Cancel participation in an event.
+    
+    This endpoint allows users to cancel their registration for an event.
+    Users can only cancel their own participations.
+    
+    Permissions:
+        - Requires 'delete:own_participations' scope (all authenticated users)
+        
+    Args:
+        db: Database session
+        event_id: ID of the event to cancel participation for
+        current_user: Authenticated user
+        
+    Raises:
+        HTTPException: 404 if participation not found
     """
-    # Modificación: Usar el ID completo de Auth0
+    # Get Auth0 user ID
     user_id = current_user.id
     
-    # Cancelar participación
-    participation = event_participation_repository.cancel_participation(
-        db=db, member_id=user_id, event_id=event_id
+    # Check if participation exists
+    participation = event_participation_repository.get_participant(
+        db=db, event_id=event_id, user_id=user_id
     )
     
     if not participation:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="No tienes una participación activa en este evento"
+            detail="Participation not found"
         )
+    
+    # Delete participation
+    event_participation_repository.delete_participation(db=db, participation_id=participation.id)
+    return None
 
 
 @router.put("/participation/{participation_id}", response_model=EventParticipation)
 async def update_participation(
     *,
     db: Session = Depends(get_db),
-    participation_id: int = Path(..., title="ID de la participación"),
+    participation_id: int = Path(..., title="Participation ID"),
     participation_in: EventParticipationUpdate,
-    current_user: Auth0User = Depends(get_current_user)
+    current_user: Auth0User = Security(auth.get_user, scopes=["update:participations"])
 ) -> Any:
     """
-    Actualizar una participación en un evento.
-    Solo el creador del evento o un administrador puede actualizar participaciones.
+    Update participation status.
+    
+    This endpoint allows event creators and administrators to update
+    the status of a participant, such as marking attendance or changing
+    their status. Only the event creator or administrators can perform
+    this operation.
+    
+    Permissions:
+        - Requires 'update:participations' scope (trainers and administrators)
+        - Also requires event ownership or admin privileges
+        
+    Args:
+        db: Database session
+        participation_id: ID of the participation to update
+        participation_in: Updated participation data
+        current_user: Authenticated user with appropriate permissions
+        
+    Returns:
+        EventParticipation: The updated participation record
+        
+    Raises:
+        HTTPException: 404 if participation not found, 403 if insufficient permissions
     """
-    # Verificar que current_user.permissions existe antes de verificar permisos
-    user_permissions = getattr(current_user, "permissions", []) or []
-    
-    if "update:participations" not in user_permissions and "admin:all" not in user_permissions:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="No tienes permiso para actualizar participaciones"
-        )
-    
-    # Verificar que la participación existe
+    # Get participation
     participation = event_participation_repository.get_participation(
         db=db, participation_id=participation_id
     )
+    
     if not participation:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Participación no encontrada"
+            detail="Participation not found"
         )
     
-    # Verificar permisos
-    # Modificación: Usar el ID completo de Auth0
-    user_id = current_user.id
-    is_admin = "admin:all" in user_permissions
-    
-    # Obtener el evento para verificar si el usuario es el creador
+    # Get event
     event = event_repository.get_event(db=db, event_id=participation.event_id)
     
-    # Solo el creador del evento o un admin puede actualizar participaciones
-    if not (is_admin or (event and event.creator_id == user_id)):
+    # Verify permissions
+    # Get Auth0 user ID
+    user_id = current_user.id
+    user_permissions = getattr(current_user, "permissions", []) or []
+    is_admin = "admin:all" in user_permissions or "admin:events" in user_permissions
+    
+    # Only the event creator or an admin can update participation
+    if not (is_admin or event.creator_id == user_id):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="No tienes permiso para actualizar esta participación"
+            detail="You don't have permission to update this participation"
         )
     
-    # Actualizar participación
-    updated_participation = event_participation_repository.update_participation(
+    # Update participation
+    updated = event_participation_repository.update_participation(
         db=db, participation_id=participation_id, participation_in=participation_in
     )
-    return updated_participation 
+    return updated 

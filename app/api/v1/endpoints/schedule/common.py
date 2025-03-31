@@ -1,0 +1,38 @@
+"""
+Common imports and dependencies for the schedule module.
+
+This module centralizes shared imports and dependencies used across
+all schedule-related endpoints, including authentication, database access,
+models, services, and schemas. Importing from this module helps maintain
+consistency and reduces duplication across the schedule API endpoints.
+"""
+
+from typing import Any, Dict, List, Optional
+from datetime import datetime, date, timedelta
+from fastapi import APIRouter, Depends, HTTPException, Query, Path, Body, Security, status
+from sqlalchemy.orm import Session
+
+from app.core.auth0_fastapi import auth, get_current_user, Auth0User
+from app.db.session import get_db
+from app.models.schedule import (
+    DayOfWeek,
+    ClassDifficultyLevel,
+    ClassCategory,
+    ClassSessionStatus,
+    ClassParticipationStatus
+)
+from app.services.schedule import (
+    gym_hours_service,
+    gym_special_hours_service,
+    class_service,
+    class_session_service,
+    class_participation_service
+)
+from app.services.user import user_service
+from app.schemas.schedule import (
+    GymHours, GymHoursCreate, GymHoursUpdate,
+    GymSpecialHours, GymSpecialHoursCreate, GymSpecialHoursUpdate,
+    Class, ClassCreate, ClassUpdate, ClassWithSessions,
+    ClassSession, ClassSessionCreate, ClassSessionUpdate, ClassSessionWithParticipations,
+    ClassParticipation, ClassParticipationCreate, ClassParticipationUpdate
+) 
