@@ -68,4 +68,16 @@ class UserInDB(UserInDBBase):
 
 # Esquema para cambiar el rol de un usuario
 class UserRoleUpdate(BaseModel):
-    role: UserRole 
+    role: UserRole
+
+
+# Esquema para búsqueda avanzada de usuarios
+class UserSearchParams(BaseModel):
+    name: Optional[str] = Field(None, description="Búsqueda parcial por nombre")
+    email: Optional[str] = Field(None, description="Búsqueda parcial por email")
+    role: Optional[UserRole] = Field(None, description="Filtrar por rol")
+    is_active: Optional[bool] = Field(None, description="Filtrar por estado activo/inactivo")
+    created_before: Optional[datetime] = Field(None, description="Usuarios creados antes de esta fecha")
+    created_after: Optional[datetime] = Field(None, description="Usuarios creados después de esta fecha")
+    skip: int = Field(0, description="Número de registros a saltar (paginación)")
+    limit: int = Field(100, description="Número máximo de registros a devolver (paginación)") 

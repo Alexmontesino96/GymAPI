@@ -1,7 +1,9 @@
 import json
 from typing import Any, Dict, Optional, Union, List
+from datetime import datetime
 
 from sqlalchemy.orm import Session
+from sqlalchemy import or_, and_
 from passlib.context import CryptContext
 from fastapi.encoders import jsonable_encoder
 
@@ -43,6 +45,60 @@ class UserRepository(BaseRepository[User, UserCreate, UserUpdate]):
         Obtener usuarios filtrados por rol.
         """
         return db.query(User).filter(User.role == role).offset(skip).limit(limit).all()
+        
+    def search(
+        self, 
+        db: Session, 
+        *, 
+        name: Optional[str] = None,
+        email: Optional[str] = None,
+        role: Optional[UserRole] = None,
+        is_active: Optional[bool] = None,
+        created_before: Optional[datetime] = None,
+        created_after: Optional[datetime] = None,
+        skip: int = 0, 
+        limit: int = 100
+    ) -> List[User]:
+        """
+        Búsqueda avanzada de usuarios con múltiples criterios.
+        
+        Args:
+            db: Sesión de base de datos
+            name: Búsqueda parcial por nombre
+            email: Búsqueda parcial por email
+            role: Filtrar por rol específico
+            is_active: Filtrar por usuarios activos/inactivos
+            created_before: Usuarios creados antes de esta fecha
+            created_after: Usuarios creados después de esta fecha
+            skip: Número de registros a saltar (paginación)
+            limit: Número máximo de registros a devolver
+            
+        Returns:
+            List[User]: Lista de usuarios que coinciden con los criterios
+        """
+        query = db.query(User)
+        
+        # Aplicar filtros si están presentes
+        if name:
+            query = query.filter(User.full_name.ilike(f"%{name}%"))
+            
+        if email:
+            query = query.filter(User.email.ilike(f"%{email}%"))
+            
+        if role:
+            query = query.filter(User.role == role)
+            
+        if is_active is not None:
+            query = query.filter(User.is_active == is_active)
+            
+        if created_before:
+            query = query.filter(User.created_at <= created_before)
+            
+        if created_after:
+            query = query.filter(User.created_at >= created_after)
+        
+        # Aplicar paginación
+        return query.offset(skip).limit(limit).all()
 
     def create(self, db: Session, *, obj_in: UserCreate) -> User:
         """

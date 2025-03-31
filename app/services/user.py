@@ -4,7 +4,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.repositories.user import user_repository
-from app.schemas.user import UserCreate, UserUpdate, User, UserRoleUpdate, UserProfileUpdate
+from app.schemas.user import UserCreate, UserUpdate, User, UserRoleUpdate, UserProfileUpdate, UserSearchParams
 from app.models.user import UserRole
 
 
@@ -41,6 +41,29 @@ class UserService:
         Obtener usuarios filtrados por rol.
         """
         return user_repository.get_by_role(db, role=role, skip=skip, limit=limit)
+
+    def search_users(self, db: Session, search_params: UserSearchParams) -> List[User]:
+        """
+        Búsqueda avanzada de usuarios con múltiples criterios.
+        
+        Args:
+            db: Sesión de base de datos
+            search_params: Parámetros de búsqueda (nombre, email, rol, etc.)
+            
+        Returns:
+            List[User]: Lista de usuarios que coinciden con los criterios
+        """
+        return user_repository.search(
+            db,
+            name=search_params.name,
+            email=search_params.email,
+            role=search_params.role,
+            is_active=search_params.is_active,
+            created_before=search_params.created_before,
+            created_after=search_params.created_after,
+            skip=search_params.skip,
+            limit=search_params.limit
+        )
 
     def create_user(self, db: Session, user_in: UserCreate) -> User:
         """
