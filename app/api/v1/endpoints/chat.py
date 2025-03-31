@@ -1,9 +1,23 @@
+"""
+Chat Module - API Endpoints
+
+This module provides real-time chat functionality for the gym application using Stream Chat as 
+the underlying service. It enables:
+
+- Direct messaging between users (member-to-trainer communication)
+- Group chats for events (event participants communication)
+- Room management (creating rooms, adding/removing members)
+
+The chat system is integrated with the user authentication system and uses Stream Chat tokens
+for secure access. Each endpoint is protected with appropriate permission scopes.
+"""
+
 from typing import List, Dict, Any
-from fastapi import APIRouter, Depends, HTTPException, Body, Path, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Body, Path, Query, status, Security
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
-from app.core.auth0_fastapi import get_current_user, Auth0User
+from app.core.auth0_fastapi import get_current_user, Auth0User, auth
 from app.core.config import settings
 from app.services.chat import chat_service
 from app.schemas.chat import (
@@ -17,9 +31,21 @@ router = APIRouter()
 
 @router.get("/token", response_model=StreamTokenResponse)
 async def get_stream_token(
-    current_user: Auth0User = Depends(get_current_user)
+    current_user: Auth0User = Security(auth.get_user, scopes=["use:chat"])
 ):
-    """Generar token de autenticación para Stream Chat"""
+    """
+    Generate authentication token for Stream Chat.
+    
+    This endpoint creates a secure token that allows the client to connect to the 
+    Stream Chat service with the user's identity. The token includes user data like
+    name, email, and profile picture to display in the chat interface.
+    
+    Permissions:
+        - Requires 'use:chat' scope (all authenticated users)
+        
+    Returns:
+        StreamTokenResponse: Contains the Stream token, API key, and user ID
+    """
     user_id = current_user.id
     user_data = {
         "name": getattr(current_user, "name", None),
@@ -40,23 +66,60 @@ async def create_chat_room(
     *,
     db: Session = Depends(get_db),
     room_data: ChatRoomCreate,
-    current_user: Auth0User = Depends(get_current_user)
+    current_user: Auth0User = Security(auth.get_user, scopes=["create:chat_rooms"])
 ):
-    """Crear una nueva sala de chat"""
+    """
+    Create a new chat room.
+    
+    This endpoint allows trainers and administrators to create group chat rooms
+    for specific purposes. The room creator is automatically added as a member
+    and channel admin. Additional members can be specified in the request.
+    
+    Permissions:
+        - Requires 'create:chat_rooms' scope (trainers and administrators)
+        
+    Args:
+        db: Database session
+        room_data: Room details including name and member IDs
+        current_user: Authenticated user with appropriate permissions
+        
+    Returns:
+        ChatRoom: The newly created chat room
+    """
     return chat_service.create_room(db, current_user.id, room_data)
 
 @router.get("/rooms/direct/{user_id}")
 async def get_direct_chat(
     *,
     db: Session = Depends(get_db),
-    user_id: str = Path(..., title="ID del usuario para chat directo"),
-    current_user: Auth0User = Depends(get_current_user)
+    user_id: str = Path(..., title="User ID for direct chat"),
+    current_user: Auth0User = Security(auth.get_user, scopes=["use:chat"])
 ):
-    """Obtener o crear un chat directo con otro usuario"""
+    """
+    Get or create a direct chat with another user.
+    
+    This endpoint establishes a 1-on-1 chat channel between the current user and
+    the specified user. If a direct chat already exists, it returns the existing
+    channel; otherwise, it creates a new one.
+    
+    Permissions:
+        - Requires 'use:chat' scope (all authenticated users)
+        
+    Args:
+        db: Database session
+        user_id: The ID of the user to chat with
+        current_user: Authenticated user
+        
+    Returns:
+        ChatRoom: The direct chat room between the two users
+        
+    Raises:
+        HTTPException: 400 if attempting to create a chat with oneself
+    """
     if user_id == current_user.id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="No puedes crear un chat contigo mismo"
+            detail="You cannot create a chat with yourself"
         )
     
     return chat_service.get_or_create_direct_chat(db, current_user.id, user_id)
@@ -65,21 +128,60 @@ async def get_direct_chat(
 async def get_event_chat(
     *,
     db: Session = Depends(get_db),
-    event_id: int = Path(..., title="ID del evento"),
-    current_user: Auth0User = Depends(get_current_user)
+    event_id: int = Path(..., title="Event ID"),
+    current_user: Auth0User = Security(auth.get_user, scopes=["use:chat"])
 ):
-    """Obtener o crear el chat para un evento"""
+    """
+    Get or create the chat for an event.
+    
+    This endpoint retrieves or creates a group chat associated with a specific event.
+    Event chats are accessible to all event participants and allow for group 
+    communication before, during, and after the event.
+    
+    Permissions:
+        - Requires 'use:chat' scope (all authenticated users)
+        - User must be registered for the event to access its chat
+        
+    Args:
+        db: Database session
+        event_id: ID of the event
+        current_user: Authenticated user
+        
+    Returns:
+        ChatRoom: The event's chat room
+    """
     return chat_service.get_or_create_event_chat(db, event_id, current_user.id)
 
 @router.post("/rooms/{room_id}/members/{user_id}")
 async def add_member_to_room(
     *,
     db: Session = Depends(get_db),
-    room_id: int = Path(..., title="ID de la sala de chat"),
-    user_id: str = Path(..., title="ID del usuario a añadir"),
-    current_user: Auth0User = Depends(get_current_user)
+    room_id: int = Path(..., title="Chat room ID"),
+    user_id: str = Path(..., title="User ID to add"),
+    current_user: Auth0User = Security(auth.get_user, scopes=["manage:chat_rooms"])
 ):
-    """Añadir un miembro a una sala de chat"""
+    """
+    Add a member to a chat room.
+    
+    This endpoint allows administrators and trainers to add a user to an existing
+    chat room. This is useful for bringing new members into group discussions
+    or for adding users to event chats when they register for an event.
+    
+    Permissions:
+        - Requires 'manage:chat_rooms' scope (trainers and administrators)
+        
+    Args:
+        db: Database session
+        room_id: ID of the chat room
+        user_id: ID of the user to add
+        current_user: Authenticated user with appropriate permissions
+        
+    Returns:
+        dict: Status of the operation with user and room details
+        
+    Raises:
+        HTTPException: 404 if room or user not found
+    """
     try:
         return chat_service.add_user_to_channel(db, room_id, user_id)
     except ValueError as e:
@@ -92,11 +194,32 @@ async def add_member_to_room(
 async def remove_member_from_room(
     *,
     db: Session = Depends(get_db),
-    room_id: int = Path(..., title="ID de la sala de chat"),
-    user_id: str = Path(..., title="ID del usuario a eliminar"),
-    current_user: Auth0User = Depends(get_current_user)
+    room_id: int = Path(..., title="Chat room ID"),
+    user_id: str = Path(..., title="User ID to remove"),
+    current_user: Auth0User = Security(auth.get_user, scopes=["manage:chat_rooms"])
 ):
-    """Eliminar un miembro de una sala de chat"""
+    """
+    Remove a member from a chat room.
+    
+    This endpoint allows administrators and trainers to remove a user from a chat room.
+    This is useful when a user is no longer participating in an event or when
+    moderation is needed.
+    
+    Permissions:
+        - Requires 'manage:chat_rooms' scope (trainers and administrators)
+        
+    Args:
+        db: Database session
+        room_id: ID of the chat room
+        user_id: ID of the user to remove
+        current_user: Authenticated user with appropriate permissions
+        
+    Returns:
+        dict: Status of the operation with user and room details
+        
+    Raises:
+        HTTPException: 404 if room or user not found
+    """
     try:
         return chat_service.remove_user_from_channel(db, room_id, user_id)
     except ValueError as e:

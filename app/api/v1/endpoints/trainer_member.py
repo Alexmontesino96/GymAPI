@@ -1,3 +1,23 @@
+"""
+Trainer-Member Relationship Module - API Endpoints
+
+This module manages the relationships between trainers and members in the gym system.
+It provides functionality for:
+
+- Creating and managing trainer-member assignments
+- Listing members assigned to specific trainers
+- Listing trainers assigned to specific members
+- Accessing relationship details for both roles
+
+The relationship system is designed to support various training scenarios, including:
+- One trainer with multiple members (standard personal training)
+- One member with multiple trainers (specialized training in different areas)
+- Administrative oversight of all relationships
+
+Each endpoint is protected with appropriate permission scopes to ensure data security
+and proper access control based on user roles.
+"""
+
 from typing import Any, Dict, List
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Security
@@ -22,27 +42,45 @@ router = APIRouter()
 async def create_trainer_member_relationship(
     relationship_in: TrainerMemberRelationshipCreate,
     db: Session = Depends(get_db),
-    user: Auth0User = Depends(get_current_user),
+    user: Auth0User = Security(auth.get_user, scopes=["create:relationships"]),
 ) -> Any:
     """
-    Crear una nueva relación entre un entrenador y un miembro.
+    Create a new relationship between a trainer and a member.
+    
+    This endpoint establishes an official training relationship between a trainer
+    and a member, enabling specialized communication and tracking. The relationship
+    can include training goals, notes, and custom attributes.
+    
+    Permissions:
+        - Requires 'create:relationships' scope (trainers and administrators)
+        
+    Args:
+        relationship_in: Relationship data including trainer_id and member_id
+        db: Database session
+        user: Authenticated user with appropriate permissions
+        
+    Returns:
+        TrainerMemberRelationship: The newly created relationship
+        
+    Raises:
+        HTTPException: 400 if token doesn't contain user info, 404 if user not found
     """
-    # Obtener el usuario actual de la base de datos
+    # Get current user from database
     auth0_id = user.id
     if not auth0_id:
         raise HTTPException(
             status_code=400,
-            detail="El token no contiene información de usuario (sub)",
+            detail="Token does not contain user information (sub)",
         )
     
     db_user = user_service.get_user_by_auth0_id(db, auth0_id=auth0_id)
     if not db_user:
         raise HTTPException(
             status_code=404,
-            detail="Usuario no encontrado en la base de datos local",
+            detail="User not found in local database",
         )
     
-    # Crear la relación
+    # Create the relationship
     relationship = trainer_member_service.create_relationship(
         db, relationship_in=relationship_in, created_by_id=db_user.id
     )
@@ -54,22 +92,26 @@ async def read_relationships(
     skip: int = 0,
     limit: int = 100,
     db: Session = Depends(get_db),
-    user: Auth0User = Depends(get_current_user),
+    user: Auth0User = Security(auth.get_user, scopes=["admin:relationships"]),
 ) -> Any:
     """
-    Recuperar todas las relaciones (solo para administradores).
+    Retrieve all trainer-member relationships.
+    
+    This administrative endpoint provides a complete view of all training
+    relationships in the system, supporting oversight and management functions.
+    
+    Permissions:
+        - Requires 'admin:relationships' scope (administrators only)
+        
+    Args:
+        skip: Number of records to skip (pagination)
+        limit: Maximum number of records to return (pagination)
+        db: Database session
+        user: Authenticated administrator
+        
+    Returns:
+        List[TrainerMemberRelationship]: List of all relationships
     """
-    # Obtener el usuario actual de la base de datos
-    auth0_id = user.id
-    db_user = user_service.get_user_by_auth0_id(db, auth0_id=auth0_id)
-    
-    if not db_user or db_user.role != UserRole.ADMIN:
-        raise HTTPException(
-            status_code=403,
-            detail="No tienes permisos para acceder a esta información",
-        )
-    
-    # Esta vista es solo para administradores
     relationships = trainer_member_service.get_all_relationships(db, skip=skip, limit=limit)
     return relationships
 
@@ -80,28 +122,49 @@ async def read_members_by_trainer(
     skip: int = 0,
     limit: int = 100,
     db: Session = Depends(get_db),
-    user: Auth0User = Depends(get_current_user),
+    user: Auth0User = Security(auth.get_user, scopes=["read:relationships"]),
 ) -> Any:
     """
-    Recuperar todos los miembros asignados a un entrenador.
+    Retrieve all members assigned to a specific trainer.
+    
+    This endpoint returns the list of members being trained by a specific trainer,
+    including relationship details. Access is restricted to the trainer themselves
+    or administrators.
+    
+    Permissions:
+        - Requires 'read:relationships' scope
+        - Must be the specified trainer or an administrator
+        
+    Args:
+        trainer_id: ID of the trainer
+        skip: Number of records to skip (pagination)
+        limit: Maximum number of records to return (pagination)
+        db: Database session
+        user: Authenticated user with appropriate permissions
+        
+    Returns:
+        List[Dict]: List of members with relationship details
+        
+    Raises:
+        HTTPException: 404 if user not found, 403 if unauthorized
     """
-    # Verificar permisos (solo el propio entrenador o un admin pueden ver esto)
+    # Still verify if the user is the trainer or an admin
     auth0_id = user.id
     db_user = user_service.get_user_by_auth0_id(db, auth0_id=auth0_id)
     
     if not db_user:
         raise HTTPException(
             status_code=404,
-            detail="Usuario no encontrado en la base de datos local",
+            detail="User not found in local database",
         )
     
     if db_user.id != trainer_id and db_user.role != UserRole.ADMIN:
         raise HTTPException(
             status_code=403,
-            detail="No tienes permisos para acceder a esta información",
+            detail="You don't have permission to access this information",
         )
     
-    # Obtener los miembros del entrenador
+    # Get trainer's members
     members = trainer_member_service.get_members_by_trainer(
         db, trainer_id=trainer_id, skip=skip, limit=limit
     )
@@ -114,28 +177,49 @@ async def read_trainers_by_member(
     skip: int = 0,
     limit: int = 100,
     db: Session = Depends(get_db),
-    user: Auth0User = Depends(get_current_user),
+    user: Auth0User = Security(auth.get_user, scopes=["read:relationships"]),
 ) -> Any:
     """
-    Recuperar todos los entrenadores asignados a un miembro.
+    Retrieve all trainers assigned to a specific member.
+    
+    This endpoint returns the list of trainers working with a specific member,
+    including relationship details. Access is restricted to the member themselves
+    or administrators.
+    
+    Permissions:
+        - Requires 'read:relationships' scope
+        - Must be the specified member or an administrator
+        
+    Args:
+        member_id: ID of the member
+        skip: Number of records to skip (pagination)
+        limit: Maximum number of records to return (pagination)
+        db: Database session
+        user: Authenticated user with appropriate permissions
+        
+    Returns:
+        List[Dict]: List of trainers with relationship details
+        
+    Raises:
+        HTTPException: 404 if user not found, 403 if unauthorized
     """
-    # Verificar permisos (solo el propio miembro o un admin pueden ver esto)
+    # Still verify if the user is the member or an admin
     auth0_id = user.id
     db_user = user_service.get_user_by_auth0_id(db, auth0_id=auth0_id)
     
     if not db_user:
         raise HTTPException(
             status_code=404,
-            detail="Usuario no encontrado en la base de datos local",
+            detail="User not found in local database",
         )
     
     if db_user.id != member_id and db_user.role != UserRole.ADMIN:
         raise HTTPException(
             status_code=403,
-            detail="No tienes permisos para acceder a esta información",
+            detail="You don't have permission to access this information",
         )
     
-    # Obtener los entrenadores del miembro
+    # Get member's trainers
     trainers = trainer_member_service.get_trainers_by_member(
         db, member_id=member_id, skip=skip, limit=limit
     )
@@ -147,10 +231,29 @@ async def read_my_trainers(
     skip: int = 0,
     limit: int = 100,
     db: Session = Depends(get_db),
-    user: Auth0User = Depends(get_current_user),
+    user: Auth0User = Security(auth.get_user, scopes=["read:own_relationships"]),
 ) -> Any:
     """
-    Recuperar todos los entrenadores del usuario autenticado.
+    Retrieve all trainers of the authenticated member.
+    
+    This convenience endpoint allows members to view all of their assigned trainers
+    and training relationships without needing to know their own user ID.
+    
+    Permissions:
+        - Requires 'read:own_relationships' scope (all authenticated users)
+        - Must have MEMBER role
+        
+    Args:
+        skip: Number of records to skip (pagination)
+        limit: Maximum number of records to return (pagination)
+        db: Database session
+        user: Authenticated member
+        
+    Returns:
+        List[Dict]: List of the member's trainers with relationship details
+        
+    Raises:
+        HTTPException: 404 if user not found, 400 if not a member
     """
     auth0_id = user.id
     db_user = user_service.get_user_by_auth0_id(db, auth0_id=auth0_id)
@@ -158,17 +261,17 @@ async def read_my_trainers(
     if not db_user:
         raise HTTPException(
             status_code=404,
-            detail="Usuario no encontrado en la base de datos local",
+            detail="User not found in local database",
         )
     
-    # Verificar si el usuario es un miembro
+    # Verify if the user is a member
     if db_user.role != UserRole.MEMBER:
         raise HTTPException(
             status_code=400,
-            detail="Esta función solo está disponible para miembros",
+            detail="This function is only available for members",
         )
     
-    # Obtener los entrenadores del miembro
+    # Get member's trainers
     trainers = trainer_member_service.get_trainers_by_member(
         db, member_id=db_user.id, skip=skip, limit=limit
     )
@@ -180,10 +283,29 @@ async def read_my_members(
     skip: int = 0,
     limit: int = 100,
     db: Session = Depends(get_db),
-    user: Auth0User = Depends(get_current_user),
+    user: Auth0User = Security(auth.get_user, scopes=["read:own_relationships"]),
 ) -> Any:
     """
-    Recuperar todos los miembros del entrenador autenticado.
+    Retrieve all members of the authenticated trainer.
+    
+    This convenience endpoint allows trainers to view all of their assigned members
+    and training relationships without needing to know their own user ID.
+    
+    Permissions:
+        - Requires 'read:own_relationships' scope (all authenticated users)
+        - Must have TRAINER role
+        
+    Args:
+        skip: Number of records to skip (pagination)
+        limit: Maximum number of records to return (pagination)
+        db: Database session
+        user: Authenticated trainer
+        
+    Returns:
+        List[Dict]: List of the trainer's members with relationship details
+        
+    Raises:
+        HTTPException: 404 if user not found, 400 if not a trainer
     """
     auth0_id = user.id
     db_user = user_service.get_user_by_auth0_id(db, auth0_id=auth0_id)
@@ -191,17 +313,17 @@ async def read_my_members(
     if not db_user:
         raise HTTPException(
             status_code=404,
-            detail="Usuario no encontrado en la base de datos local",
+            detail="User not found in local database",
         )
     
-    # Verificar si el usuario es un entrenador
+    # Verify if the user is a trainer
     if db_user.role != UserRole.TRAINER:
         raise HTTPException(
             status_code=400,
-            detail="Esta función solo está disponible para entrenadores",
+            detail="This function is only available for trainers",
         )
     
-    # Obtener los miembros del entrenador
+    # Get trainer's members
     members = trainer_member_service.get_members_by_trainer(
         db, trainer_id=db_user.id, skip=skip, limit=limit
     )
@@ -212,21 +334,40 @@ async def read_my_members(
 async def read_relationship(
     relationship_id: int,
     db: Session = Depends(get_db),
-    user: Auth0User = Depends(get_current_user),
+    user: Auth0User = Security(auth.get_user, scopes=["read:relationships"]),
 ) -> Any:
     """
-    Recuperar una relación específica por ID.
+    Retrieve a specific trainer-member relationship by ID.
+    
+    This endpoint provides detailed information about a specific training relationship,
+    including notes, goals, and metadata. Access is restricted to users who are
+    part of the relationship or administrators.
+    
+    Permissions:
+        - Requires 'read:relationships' scope
+        - Must be part of the relationship or an administrator
+        
+    Args:
+        relationship_id: ID of the relationship to retrieve
+        db: Database session
+        user: Authenticated user with appropriate permissions
+        
+    Returns:
+        TrainerMemberRelationship: The requested relationship details
+        
+    Raises:
+        HTTPException: 404 if user not found, 403 if unauthorized
     """
     relationship = trainer_member_service.get_relationship(db, relationship_id=relationship_id)
     
-    # Verificar permisos (solo los involucrados o un admin pueden ver esto)
+    # Still verify if the user is part of the relationship or an admin
     auth0_id = user.id
     db_user = user_service.get_user_by_auth0_id(db, auth0_id=auth0_id)
     
     if not db_user:
         raise HTTPException(
             status_code=404,
-            detail="Usuario no encontrado en la base de datos local",
+            detail="User not found in local database",
         )
     
     if (db_user.id != relationship.trainer_id and 
@@ -234,7 +375,7 @@ async def read_relationship(
         db_user.role != UserRole.ADMIN):
         raise HTTPException(
             status_code=403,
-            detail="No tienes permisos para acceder a esta información",
+            detail="You don't have permission to access this information",
         )
     
     return relationship
@@ -245,35 +386,59 @@ async def update_relationship(
     relationship_id: int,
     relationship_update: TrainerMemberRelationshipUpdate,
     db: Session = Depends(get_db),
-    user: Auth0User = Depends(get_current_user),
+    user: Auth0User = Security(auth.get_user, scopes=["update:relationships"]),
 ) -> Any:
     """
-    Actualizar una relación específica.
-    """
-    # Obtener la relación actual
-    relationship = trainer_member_service.get_relationship(db, relationship_id=relationship_id)
+    Update an existing trainer-member relationship.
     
-    # Verificar permisos (solo los involucrados o un admin pueden actualizar esto)
+    This endpoint allows updating relationship details such as notes, status,
+    goals, and other attributes. Access is restricted to the trainer in the
+    relationship or administrators.
+    
+    Permissions:
+        - Requires 'update:relationships' scope
+        - Must be the trainer in the relationship or an administrator
+        
+    Args:
+        relationship_id: ID of the relationship to update
+        relationship_update: Updated relationship data
+        db: Database session
+        user: Authenticated user with appropriate permissions
+        
+    Returns:
+        TrainerMemberRelationship: The updated relationship
+        
+    Raises:
+        HTTPException: 404 if relationship or user not found, 403 if unauthorized
+    """
+    # Get the relationship
+    relationship = trainer_member_service.get_relationship(db, relationship_id=relationship_id)
+    if not relationship:
+        raise HTTPException(
+            status_code=404,
+            detail="Relationship not found",
+        )
+    
+    # Still verify if the user is the trainer or an admin
     auth0_id = user.id
     db_user = user_service.get_user_by_auth0_id(db, auth0_id=auth0_id)
     
     if not db_user:
         raise HTTPException(
             status_code=404,
-            detail="Usuario no encontrado en la base de datos local",
+            detail="User not found in local database",
         )
     
-    if (db_user.id != relationship.trainer_id and 
-        db_user.id != relationship.member_id and 
-        db_user.role != UserRole.ADMIN):
+    # Only the trainer or an admin can update the relationship
+    if db_user.id != relationship.trainer_id and db_user.role != UserRole.ADMIN:
         raise HTTPException(
             status_code=403,
-            detail="No tienes permisos para modificar esta relación",
+            detail="You don't have permission to update this relationship",
         )
     
-    # Actualizar la relación
+    # Update the relationship
     updated_relationship = trainer_member_service.update_relationship(
-        db, relationship_id=relationship_id, relationship_update=relationship_update
+        db, relationship_id=relationship_id, relationship_in=relationship_update
     )
     return updated_relationship
 
@@ -282,33 +447,57 @@ async def update_relationship(
 async def delete_relationship(
     relationship_id: int,
     db: Session = Depends(get_db),
-    user: Auth0User = Depends(get_current_user),
+    user: Auth0User = Security(auth.get_user, scopes=["delete:relationships"]),
 ) -> Any:
     """
-    Eliminar una relación específica.
-    """
-    # Obtener la relación actual
-    relationship = trainer_member_service.get_relationship(db, relationship_id=relationship_id)
+    Delete a trainer-member relationship.
     
-    # Verificar permisos (solo los involucrados o un admin pueden eliminar esto)
+    This endpoint ends a training relationship between a trainer and a member.
+    Access is restricted to users who are part of the relationship or administrators.
+    
+    Permissions:
+        - Requires 'delete:relationships' scope
+        - Must be part of the relationship or an administrator
+        
+    Args:
+        relationship_id: ID of the relationship to delete
+        db: Database session
+        user: Authenticated user with appropriate permissions
+        
+    Returns:
+        TrainerMemberRelationship: The deleted relationship
+        
+    Raises:
+        HTTPException: 404 if relationship or user not found, 403 if unauthorized
+    """
+    # Get the relationship
+    relationship = trainer_member_service.get_relationship(db, relationship_id=relationship_id)
+    if not relationship:
+        raise HTTPException(
+            status_code=404,
+            detail="Relationship not found",
+        )
+    
+    # Still verify if the user is part of the relationship or an admin
     auth0_id = user.id
     db_user = user_service.get_user_by_auth0_id(db, auth0_id=auth0_id)
     
     if not db_user:
         raise HTTPException(
             status_code=404,
-            detail="Usuario no encontrado en la base de datos local",
+            detail="User not found in local database",
         )
     
+    # Only users who are part of the relationship or admins can delete it
     if (db_user.id != relationship.trainer_id and 
         db_user.id != relationship.member_id and 
         db_user.role != UserRole.ADMIN):
         raise HTTPException(
             status_code=403,
-            detail="No tienes permisos para eliminar esta relación",
+            detail="You don't have permission to delete this relationship",
         )
     
-    # Eliminar la relación
+    # Delete the relationship
     deleted_relationship = trainer_member_service.delete_relationship(
         db, relationship_id=relationship_id
     )
