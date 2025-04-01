@@ -1,0 +1,205 @@
+# Auth0 Scopes Configuration for GymAPI
+
+Este documento enumera todos los scopes utilizados por la API, organizados por router/endpoint,
+para facilitar la configuración en Auth0.
+
+## Estructura de Permisos por Rol
+
+### Members (Miembros)
+- read:profile
+- read:members
+- read:own_events
+- read:events
+- read:own_participations
+- delete:own_participations
+- create:participations
+- read:own_relationships
+- use:chat
+- create:chat_rooms
+- read:schedules
+- read:own_schedules
+- register:classes
+
+### Trainers (Entrenadores)
+- read:profile
+- read:members
+- read:own_events
+- read:events
+- create:events
+- update:events
+- read:own_participations
+- read:participations
+- update:participations
+- delete:own_participations
+- create:participations
+- read:own_relationships
+- read:relationships
+- create:relationships
+- update:relationships
+- use:chat
+- create:chat_rooms
+- manage:chat_rooms
+- read:schedules
+- read:own_schedules
+- create:schedules
+- update:schedules
+- register:classes
+- manage:class_registrations
+
+### Admin (Administradores)
+- read:profile
+- read:users
+- read:members
+- admin:users
+- read:own_events
+- read:events
+- create:events
+- update:events
+- delete:events
+- admin:events
+- read:own_participations
+- read:participations
+- update:participations
+- delete:own_participations
+- create:participations
+- read:own_relationships
+- read:relationships
+- create:relationships
+- update:relationships
+- delete:relationships
+- admin:relationships
+- use:chat
+- create:chat_rooms
+- manage:chat_rooms
+- read:schedules
+- read:own_schedules
+- create:schedules
+- update:schedules
+- delete:schedules
+- register:classes
+- manage:class_registrations
+
+## Detalle de Scopes por Router/Endpoint
+
+### Router: /api/v1/users
+
+| Endpoint                  | Método | Scope           | Descripción                                        |
+|---------------------------|--------|-----------------|---------------------------------------------------|
+| /                         | GET    | read:users      | Listar todos los usuarios                         |
+| /by-role/{role}           | GET    | read:users      | Listar usuarios por rol                           |
+| /trainers                 | GET    | read:users      | Listar todos los entrenadores                     |
+| /members                  | GET    | read:members    | Listar todos los miembros                         |
+| /                         | POST   | admin:users     | Crear usuario (admin)                             |
+| /profile                  | GET    | (Autenticado)   | Obtener el perfil propio                          |
+| /profile                  | PUT    | (Autenticado)   | Actualizar el perfil propio                       |
+| /{user_id}/role           | PUT    | admin:users     | Cambiar el rol de un usuario                      |
+| /{user_id}                | GET    | read:users      | Obtener un usuario por ID                         |
+| /{user_id}                | PUT    | admin:users     | Actualizar un usuario                             |
+| /{user_id}                | DELETE | admin:users     | Eliminar un usuario                               |
+| /register                 | POST   | (Público)       | Registrar un nuevo usuario (siempre como miembro) |
+
+### Router: /api/v1/trainer-member
+
+| Endpoint                      | Método | Scope                  | Descripción                                 |
+|-------------------------------|--------|------------------------|--------------------------------------------|
+| /                             | POST   | create:relationships   | Crear relación entrenador-miembro          |
+| /                             | GET    | admin:relationships    | Listar todas las relaciones (solo admin)   |
+| /trainer/{id}/members         | GET    | read:relationships     | Listar miembros de un entrenador           |
+| /member/{id}/trainers         | GET    | read:relationships     | Listar entrenadores de un miembro          |
+| /my-trainers                  | GET    | read:own_relationships | Listar entrenadores propios (solo miembros)|
+| /my-members                   | GET    | read:own_relationships | Listar miembros propios (solo entrenadores)|
+| /{id}                         | GET    | read:relationships     | Obtener una relación por ID                |
+| /{id}                         | PUT    | update:relationships   | Actualizar una relación                    |
+| /{id}                         | DELETE | delete:relationships   | Eliminar una relación                      |
+
+### Router: /api/v1/auth
+
+| Endpoint              | Método | Scope         | Descripción                                      |
+|-----------------------|--------|---------------|--------------------------------------------------|
+| /login                | GET    | (Público)     | Obtener URL para iniciar sesión                  |
+| /login-redirect       | GET    | (Público)     | Redirigir a Auth0 para iniciar sesión            |
+| /callback             | GET    | (Público)     | Callback tras autenticación                      |
+| /config               | GET    | (Público)     | Obtener configuración de autenticación           |
+| /token                | POST   | (Público)     | Intercambiar código por tokens                   |
+| /me                   | GET    | read:profile  | Obtener información del usuario autenticado      |
+| /test-email           | GET    | read:profile  | Verificar presencia de email en token            |
+| /logout               | GET    | (Público)     | Cerrar sesión                                    |
+| /create-admin         | POST   | admin:users   | Convertir usuario en administrador               |
+| /get-user-email       | GET    | read:profile  | Obtener email del usuario                        |
+| /check-permissions    | GET    | read:profile  | Verificar permisos del usuario                  |
+
+### Router: /api/v1/events
+
+| Endpoint                       | Método | Scope                    | Descripción                                 |
+|--------------------------------|--------|--------------------------|---------------------------------------------|
+| /                              | POST   | create:events            | Crear un nuevo evento                       |
+| /                              | GET    | read:events              | Listar eventos con filtros                  |
+| /me                            | GET    | read:own_events          | Listar eventos creados por el usuario       |
+| /{id}                          | GET    | read:events              | Obtener detalles de un evento               |
+| /{id}                          | PUT    | update:events            | Actualizar un evento                        |
+| /{id}                          | DELETE | delete:events            | Eliminar un evento                          |
+| /admin/{id}                    | DELETE | admin:events             | Eliminar cualquier evento (solo admin)      |
+| /participation                 | POST   | create:participations    | Registrarse en un evento                    |
+| /participation/me              | GET    | read:own_participations  | Listar participaciones propias              |
+| /participation/event/{id}      | GET    | read:participations      | Listar participantes de un evento           |
+| /participation/{id}            | DELETE | delete:own_participations| Cancelar participación en un evento         |
+| /participation/{id}            | PUT    | update:participations    | Actualizar estado de participación          |
+
+### Router: /api/v1/chat
+
+| Endpoint                   | Método | Scope              | Descripción                              |
+|----------------------------|--------|--------------------|------------------------------------------|
+| /token                     | GET    | use:chat           | Obtener token para Stream Chat           |
+| /rooms                     | POST   | create:chat_rooms  | Crear una nueva sala de chat             |
+| /rooms/direct/{id}         | GET    | use:chat           | Obtener/crear chat directo con un usuario|
+| /rooms/event/{id}          | GET    | use:chat           | Obtener/crear chat para un evento        |
+| /rooms/{id}/members/{id}   | POST   | manage:chat_rooms  | Añadir miembro a sala de chat            |
+| /rooms/{id}/members/{id}   | DELETE | manage:chat_rooms  | Eliminar miembro de sala de chat         |
+
+### Router: /api/v1/schedule
+
+| Endpoint                              | Método | Scope                    | Descripción                                |
+|---------------------------------------|--------|--------------------------|-------------------------------------------|
+| /gym-hours                            | GET    | read:schedules           | Obtener horarios para todos los días       |
+| /gym-hours/{day}                      | GET    | read:schedules           | Obtener horarios de un día específico      |
+| /gym-hours/{day}                      | PUT    | update:schedules         | Actualizar horarios de un día específico   |
+| /gym-hours/initialize                 | POST   | update:schedules         | Inicializar horarios predeterminados       |
+| /gym-hours/date/{date}                | GET    | read:schedules           | Obtener horarios para una fecha específica |
+| /special-days                         | GET    | read:schedules           | Obtener días especiales                    |
+| /special-days/{id}                    | GET    | read:schedules           | Obtener un día especial por ID             |
+| /special-days                         | POST   | update:schedules         | Crear un nuevo día especial                |
+| /special-days/{id}                    | PUT    | update:schedules         | Actualizar un día especial                 |
+| /special-days/{id}                    | DELETE | update:schedules         | Eliminar un día especial                   |
+| /classes                              | GET    | read:schedules           | Obtener todas las clases                   |
+| /classes/{id}                         | GET    | read:schedules           | Obtener una clase específica con sesiones  |
+| /classes                              | POST   | create:schedules         | Crear una nueva clase                      |
+| /classes/{id}                         | PUT    | update:schedules         | Actualizar una clase existente             |
+| /classes/{id}                         | DELETE | delete:schedules         | Eliminar una clase                         |
+| /classes/category/{category}          | GET    | read:schedules           | Obtener clases por categoría               |
+| /classes/difficulty/{difficulty}      | GET    | read:schedules           | Obtener clases por nivel de dificultad     |
+| /classes/search                       | GET    | read:schedules           | Buscar clases por nombre o descripción     |
+| /sessions                             | GET    | read:schedules           | Obtener próximas sesiones                  |
+| /sessions/{id}                        | GET    | read:schedules           | Obtener una sesión con detalles            |
+| /sessions                             | POST   | create:schedules         | Crear una nueva sesión                     |
+| /sessions/recurring                   | POST   | create:schedules         | Crear sesiones recurrentes                 |
+| /sessions/{id}                        | PUT    | update:schedules         | Actualizar una sesión                      |
+| /sessions/{id}/cancel                 | POST   | update:schedules         | Cancelar una sesión                        |
+| /sessions/date-range                  | GET    | read:schedules           | Obtener sesiones en un rango de fechas     |
+| /sessions/trainer/{id}                | GET    | read:schedules           | Obtener sesiones de un entrenador          |
+| /my-sessions                          | GET    | read:own_schedules       | Obtener sesiones del entrenador actual     |
+| /register/{session_id}                | POST   | register:classes         | Registrarse en una clase                   |
+| /register/{session_id}/{member_id}    | POST   | manage:class_registrations | Registrar a un miembro en una clase     |
+| /cancel-registration/{session_id}     | POST   | register:classes         | Cancelar propio registro en una clase      |
+| /cancel-registration/{session_id}/{member_id} | POST | manage:class_registrations | Cancelar registro de un miembro  |
+| /mark-attendance/{session_id}/{member_id} | POST | manage:class_registrations | Marcar asistencia de un miembro      |
+| /mark-no-show/{session_id}/{member_id} | POST  | manage:class_registrations | Marcar falta de asistencia             |
+| /session-participants/{session_id}    | GET    | manage:class_registrations | Obtener participantes de una sesión     |
+| /my-classes                           | GET    | read:own_schedules       | Obtener clases registradas del usuario     |
+| /member-classes/{member_id}           | GET    | manage:class_registrations | Obtener clases de un miembro específico |
+
+## Notas para la implementación en Auth0
+
+1. Crear los scopes en Auth0 según esta lista
+2. Asignar los scopes a cada rol (MEMBER, TRAINER, ADMIN) según la sección "Estructura de Permisos por Rol"
+3. Asegurarse de que las API Permissions en Auth0 incluyan todos estos scopes
+4. Configurar la API en Auth0 para que incluya estos scopes en los tokens 

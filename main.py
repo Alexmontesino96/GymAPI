@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 
 from app.api.v1.api import api_router
 from app.core.config import settings
+from app.middleware.timing import TimingMiddleware
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -31,13 +32,35 @@ app = FastAPI(
     }
 )
 
-# Configurar CORS
+# Añadir middleware para medir el tiempo de respuesta
+app.add_middleware(TimingMiddleware)
+
+# Lista de orígenes permitidos para CORS
+origins = [str(origin) for origin in settings.BACKEND_CORS_ORIGINS]
+if "*" in origins:
+    # Si se permite cualquier origen, usar una lista más amplia de dominios comunes
+    origins = [
+        "http://localhost",
+        "http://localhost:3000",
+        "http://localhost:3001",
+        "http://localhost:3005",
+        "http://127.0.0.1:8080",
+        # Puedes agregar más dominios según sea necesario
+    ]
+else:
+    # Asegurarse de que http://localhost:3001 esté siempre incluido
+    if "http://localhost:3001" not in origins:
+        origins.append("http://localhost:3001")
+
+# Configurar CORS para toda la aplicación
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.BACKEND_CORS_ORIGINS,
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
+    max_age=86400,  # 24 horas en segundos
 )
 
 # Incluir routers

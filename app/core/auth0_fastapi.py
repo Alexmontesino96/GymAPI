@@ -210,18 +210,25 @@ class Auth0:
 
         if self.scope_auto_error:
             token_scope_str: str = payload.get('scope', '')
-
+            token_scopes = []
+            
             if isinstance(token_scope_str, str):
                 token_scopes = token_scope_str.split()
-
-                for scope in security_scopes.scopes:
-                    if scope not in token_scopes:
-                        raise Auth0UnauthorizedException(detail=f'Missing "{scope}" scope',
-                                                       headers={'WWW-Authenticate': f'Bearer scope="{security_scopes.scope_str}"'})
             else:
-                # This is an unlikely case but handle it just to be safe (perhaps auth0 will change the scope format)
+                # Este caso es poco probable, pero lo manejamos por seguridad
+                # (quizás auth0 cambie el formato del scope)
                 raise Auth0UnauthorizedException(detail='Token "scope" field must be a string')
-
+            
+            # Comprobar también en permissions (como array)
+            token_permissions = payload.get('permissions', [])
+            if isinstance(token_permissions, list):
+                token_scopes.extend(token_permissions)
+            
+            for scope in security_scopes.scopes:
+                if scope not in token_scopes:
+                    raise Auth0UnauthorizedException(detail=f'Missing "{scope}" scope',
+                                                   headers={'WWW-Authenticate': f'Bearer scope="{security_scopes.scope_str}"'})
+        
         try:
             # Extraer el email de diferentes posibles lugares en el payload
             email = None
@@ -346,4 +353,4 @@ async def get_current_user_with_permissions(required_permissions: List[str] = []
         if permission not in user_permissions:
             raise Auth0UnauthorizedException(detail=f"No tienes permiso para realizar esta acción: {permission}")
     
-    return user 
+    return user

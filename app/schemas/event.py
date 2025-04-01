@@ -80,8 +80,13 @@ class EventDetail(Event):
 
 
 class EventWithParticipantCount(Event):
-    """Esquema para listar eventos con conteo de participantes."""
+    """Esquema para evento con conteo de participantes."""
     participants_count: int
+    
+    class Config:
+        orm_mode = True
+        from_attributes = True
+        arbitrary_types_allowed = True
 
 
 # Schemas for filtering and pagination
