@@ -150,7 +150,64 @@ async def get_event_chat(
     Returns:
         ChatRoom: The event's chat room
     """
-    return chat_service.get_or_create_event_chat(db, event_id, current_user.id)
+    # Monitoreo de rendimiento
+    import time
+    import logging
+    logger = logging.getLogger("chat_api")
+    start_time = time.time()
+    
+    logger.info(f"Solicitud de chat para evento {event_id} por usuario {current_user.id}")
+    
+    try:
+        # Verificación rápida si el evento existe
+        from app.models.event import Event
+        event_exists = db.query(Event.id).filter(Event.id == event_id).first() is not None
+        
+        if not event_exists:
+            logger.warning(f"Evento {event_id} no encontrado")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Event {event_id} not found"
+            )
+        
+        # Intento crear/obtener la sala con tiempo de respuesta limitado
+        try:
+            result = chat_service.get_or_create_event_chat(db, event_id, current_user.id)
+            
+            total_time = time.time() - start_time
+            logger.info(f"Chat del evento {event_id} procesado en {total_time:.2f}s")
+            
+            return result
+        except ValueError as e:
+            logger.warning(f"Error de acceso: {str(e)}")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=str(e)
+            )
+        except Exception as e:
+            logger.error(f"Error obteniendo chat de evento: {str(e)}", exc_info=True)
+            # Si tarda demasiado, responder con error específico
+            total_time = time.time() - start_time
+            if total_time > 5.0:  # Si tardó más de 5 segundos, probablemente hay un problema
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="Chat service is currently experiencing high latency, please try again later"
+                )
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Error processing event chat: {str(e)}"
+                )
+                
+    except HTTPException:
+        raise
+    except Exception as e:
+        # Capturar otros errores inesperados
+        logger.error(f"Error inesperado: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred"
+        )
 
 @router.post("/rooms/{room_id}/members/{user_id}")
 async def add_member_to_room(

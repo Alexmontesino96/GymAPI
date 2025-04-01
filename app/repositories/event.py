@@ -1,7 +1,7 @@
 from typing import List, Optional, Dict, Any, Union
 from datetime import datetime
-from sqlalchemy.orm import Session
-from sqlalchemy import func, and_, or_
+from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import func, and_, or_, select, update
 
 from app.models.event import Event, EventParticipation, EventStatus, EventParticipationStatus
 from app.models.user import User, UserRole
@@ -11,24 +11,27 @@ from app.schemas.event import EventCreate, EventUpdate, EventParticipationCreate
 class EventRepository:
     """Repositorio para operaciones con eventos."""
     
-    def create_event(self, db: Session, *, event_in: EventCreate, creator_id: Union[int, str]) -> Event:
+    def create_event(self, db: Session, *, event_in: EventCreate, creator_id: Union[int, str], gym_id: int = 1) -> Event:
         """Crear un nuevo evento."""
         event_data = event_in.dict()
         
-        # Si creator_id es un string, buscar el usuario por auth0_id
+        # Si creator_id es un string, buscar el usuario por auth0_id de manera más eficiente
         if isinstance(creator_id, str):
-            user = db.query(User).filter(User.auth0_id == creator_id).first()
-            if user:
-                creator_id = user.id
+            # Usar una sola consulta con select específico en lugar de cargar todo el objeto
+            user_id = db.query(User.id).filter(User.auth0_id == creator_id).scalar()
+            
+            if user_id:
+                creator_id = user_id
             else:
                 # Si no se encuentra el usuario, crear uno nuevo con el auth0_id
+                # Creación más optimizada evitando refresh innecesario
                 user = User(auth0_id=creator_id, email=f"temp_{creator_id}@example.com", role=UserRole.MEMBER)
                 db.add(user)
-                db.commit()
-                db.refresh(user)
+                db.flush()  # Flush en lugar de commit para mantener la transacción abierta
                 creator_id = user.id
         
-        db_event = Event(**event_data, creator_id=creator_id)
+        # Crear el evento directamente sin consultas adicionales
+        db_event = Event(**event_data, creator_id=creator_id, gym_id=gym_id)
         db.add(db_event)
         db.commit()
         db.refresh(db_event)
@@ -46,98 +49,142 @@ class EventRepository:
         title_contains: Optional[str] = None,
         location_contains: Optional[str] = None,
         created_by: Optional[Union[int, str]] = None,
-        only_available: bool = False
+        only_available: bool = False,
+        gym_id: Optional[int] = None
     ) -> List[Event]:
         """Obtener eventos con filtros opcionales."""
+        # Optimización: Construir la consulta de manera incremental basada en los criterios
+        # y aprovechar los índices compuestos creados
+        
+        # Seleccionar las columnas específicas necesarias en lugar de cargar todos los datos
         query = db.query(Event)
         
-        # Aplicar filtros si existen
-        if status:
-            query = query.filter(Event.status == status)
+        # Aplicar joinedload solo cuando sea necesario
+        # Esto es fundamental para el rendimiento
+        query = query.options(joinedload(Event.participants))
         
+        # Construir filtros de manera eficiente usando los índices compuestos cuando sea posible
+        filters = []
+        
+        # Filtrar por gimnasio - usa índice ix_events_gym_id
+        if gym_id is not None:
+            filters.append(Event.gym_id == gym_id)
+        
+        # Filtrar por estado - aprovechar índice compuesto ix_events_gym_status si también hay gym_id
+        if status:
+            filters.append(Event.status == status)
+        
+        # Filtrar por fechas - aprovechar índice ix_events_date_range
         if start_date:
-            query = query.filter(Event.end_time >= start_date)
+            filters.append(Event.end_time >= start_date)
             
         if end_date:
-            query = query.filter(Event.start_time <= end_date)
+            filters.append(Event.start_time <= end_date)
             
+        # Filtros de texto - estos suelen ser más costosos
         if title_contains:
-            query = query.filter(Event.title.ilike(f"%{title_contains}%"))
+            filters.append(Event.title.ilike(f"%{title_contains}%"))
             
         if location_contains:
-            query = query.filter(Event.location.ilike(f"%{location_contains}%"))
-            
+            filters.append(Event.location.ilike(f"%{location_contains}%"))
+        
+        # Filtrar por creador - aprovechar índice ix_events_creator_gym si también hay gym_id
         if created_by:
-            # Si created_by es un string, buscar el usuario por auth0_id
+            # Optimización: si created_by es un string (auth0_id), usamos una subconsulta
+            # en lugar de cargar todo el usuario
             if isinstance(created_by, str):
-                user = db.query(User).filter(User.auth0_id == created_by).first()
-                if user:
-                    query = query.filter(Event.creator_id == user.id)
+                user_id = db.query(User.id).filter(User.auth0_id == created_by).scalar()
+                if user_id:
+                    filters.append(Event.creator_id == user_id)
                 else:
-                    # Si no se encuentra el usuario, no se mostrará ningún evento
+                    # Si no se encuentra el usuario, no hay eventos que mostrar
                     return []
             else:
-                query = query.filter(Event.creator_id == created_by)
+                filters.append(Event.creator_id == created_by)
         
-        # Filtrar para eventos con cupo disponible
+        # Aplicar todos los filtros normales
+        if filters:
+            query = query.filter(and_(*filters))
+        
+        # Optimización: manejar filtrado por disponibilidad de manera más eficiente
         if only_available:
-            # Subconsulta para contar participantes registrados por evento
-            subquery = (
-                db.query(
-                    EventParticipation.event_id,
-                    func.count(EventParticipation.id).label("participant_count")
+            # Usar EXISTS para mayor rendimiento en comparación con subconsultas
+            # y LEFT JOIN con conteo
+            registered_count_subq = (
+                db.query(func.count(EventParticipation.id))
+                .filter(
+                    EventParticipation.event_id == Event.id,
+                    EventParticipation.status == EventParticipationStatus.REGISTERED
                 )
-                .filter(EventParticipation.status == EventParticipationStatus.REGISTERED)
-                .group_by(EventParticipation.event_id)
-                .subquery()
+                .scalar_subquery()
+                .correlate(Event)
             )
             
-            # Eventos que tienen cupo disponible o sin límite (max_participants = 0)
-            query = (
-                query
-                .outerjoin(subquery, Event.id == subquery.c.event_id)
-                .filter(
-                    or_(
-                        # Sin límite de participantes
-                        Event.max_participants == 0,
-                        # Con cupo disponible
-                        and_(
-                            Event.max_participants > 0,
-                            or_(
-                                # No hay participantes aún
-                                subquery.c.participant_count.is_(None),
-                                # Hay cupo disponible
-                                Event.max_participants > subquery.c.participant_count
-                            )
-                        )
-                    )
+            query = query.filter(
+                or_(
+                    # Sin límite de participantes
+                    Event.max_participants == 0,
+                    # Con cupo disponible
+                    Event.max_participants > registered_count_subq
                 )
             )
         
         # Aplicar paginación
-        return query.order_by(Event.start_time).offset(skip).limit(limit).all()
+        query = query.order_by(Event.start_time)
+        
+        # Optimización: Use LIMIT/OFFSET solo cuando sea necesario
+        if limit > 0:
+            query = query.limit(limit)
+            
+        if skip > 0:
+            query = query.offset(skip)
+            
+        # Ejecutar la consulta
+        return query.all()
     
     def get_event(self, db: Session, event_id: int) -> Optional[Event]:
         """Obtener un evento por ID."""
-        return db.query(Event).filter(Event.id == event_id).first()
+        return db.query(Event).options(joinedload(Event.participants)).filter(Event.id == event_id).first()
     
     def update_event(
         self, db: Session, *, event_id: int, event_in: EventUpdate
     ) -> Optional[Event]:
-        """Actualizar un evento."""
-        db_event = self.get_event(db, event_id=event_id)
+        """Actualizar un evento de manera optimizada."""
+        # Carga del evento sin precargar participantes para mejorar rendimiento
+        db_event = db.query(Event).filter(Event.id == event_id).first()
         if not db_event:
             return None
         
+        # Optimización 1: Usar actualización directa para datos simples
         update_data = event_in.dict(exclude_unset=True)
         
-        # Actualizar cada campo si está presente
+        # Optimización 2: Actualizar solo si hay cambios
+        if not update_data:
+            return db_event
+            
+        # Optimización 3: Actualizar en memoria primero para evitar cambios innecesarios
+        modified = False
         for field, value in update_data.items():
-            setattr(db_event, field, value)
+            if getattr(db_event, field) != value:
+                setattr(db_event, field, value)
+                modified = True
         
-        db.add(db_event)
-        db.commit()
-        db.refresh(db_event)
+        # Solo persistir si hubo cambios reales
+        if modified:
+            # Optimización 4: Establecer updated_at manualmente para evitar triggers
+            db_event.updated_at = datetime.utcnow()
+            db.add(db_event)
+            db.commit()
+        
+        # Cargar los participantes solo si son necesarios para la respuesta
+        if hasattr(db_event, 'participants') and db_event.participants is None:
+            db.refresh(db_event)
+        else:
+            # Optimización 5: Carga selectiva de relaciones si es necesario
+            db_event.participants = db.query(EventParticipation).filter(
+                EventParticipation.event_id == event_id
+            ).all()
+            
         return db_event
     
     def delete_event(self, db: Session, *, event_id: int) -> bool:
@@ -151,7 +198,7 @@ class EventRepository:
         return True
     
     def get_events_by_creator(
-        self, db: Session, *, creator_id: Union[int, str], skip: int = 0, limit: int = 100
+        self, db: Session, *, creator_id: Union[int, str], skip: int = 0, limit: int = 100, gym_id: Optional[int] = None
     ) -> List[Event]:
         """Obtener todos los eventos creados por un usuario específico."""
         if isinstance(creator_id, str):
@@ -163,14 +210,14 @@ class EventRepository:
                 # Si no se encuentra el usuario, no hay eventos
                 return []
             
-        return (
-            db.query(Event)
-            .filter(Event.creator_id == creator_id)
-            .order_by(Event.start_time)
-            .offset(skip)
-            .limit(limit)
-            .all()
-        )
+        # Usar joinedload para cargar las relaciones en una sola consulta
+        query = db.query(Event).options(joinedload(Event.participants)).filter(Event.creator_id == creator_id)
+        
+        # Filtrar por gimnasio si se proporciona
+        if gym_id is not None:
+            query = query.filter(Event.gym_id == gym_id)
+            
+        return query.order_by(Event.start_time).offset(skip).limit(limit).all()
     
     def is_event_creator(self, db: Session, *, event_id: int, user_id: Union[int, str]) -> bool:
         """Verificar si un usuario es el creador de un evento."""
@@ -188,6 +235,167 @@ class EventRepository:
         
         return event.creator_id == user_id
 
+    def get_events_with_counts(
+        self, 
+        db: Session, 
+        *, 
+        skip: int = 0, 
+        limit: int = 100,
+        status: Optional[EventStatus] = None,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+        title_contains: Optional[str] = None,
+        location_contains: Optional[str] = None,
+        created_by: Optional[Union[int, str]] = None,
+        only_available: bool = False,
+        gym_id: Optional[int] = None
+    ) -> List[dict]:
+        """
+        Obtener eventos con filtros opcionales y el conteo de participantes calculado directamente en SQL.
+        Esta versión es más eficiente que get_events al calcular los conteos en SQL en vez de Python.
+        """
+        from sqlalchemy import select, func, literal_column
+
+        # Subconsulta para contar participantes registrados por evento - sintaxis corregida
+        participants_count = (
+            select(
+                EventParticipation.event_id.label('event_id'),
+                func.count(EventParticipation.id).label('count')
+            )
+            .where(EventParticipation.status == EventParticipationStatus.REGISTERED)
+            .group_by(EventParticipation.event_id)
+            .alias('participants_count')
+        )
+        
+        # Construir los filtros de manera eficiente
+        filters = []
+        
+        # Filtrar por gimnasio - usar índice ix_events_gym_id
+        if gym_id is not None:
+            filters.append(Event.gym_id == gym_id)
+        
+        # Filtrar por estado - aprovechar índice compuesto ix_events_gym_status
+        if status:
+            filters.append(Event.status == status)
+        
+        # Filtros de fechas - aprovechar índice ix_events_date_range
+        if start_date:
+            filters.append(Event.end_time >= start_date)
+            
+        if end_date:
+            filters.append(Event.start_time <= end_date)
+            
+        # Filtros de texto
+        if title_contains:
+            filters.append(Event.title.ilike(f"%{title_contains}%"))
+            
+        if location_contains:
+            filters.append(Event.location.ilike(f"%{location_contains}%"))
+        
+        # Filtrar por creador
+        if created_by:
+            if isinstance(created_by, str):
+                # Usar una subconsulta para auth0_id
+                user_id = db.query(User.id).filter(User.auth0_id == created_by).scalar()
+                if user_id:
+                    filters.append(Event.creator_id == user_id)
+                else:
+                    return []
+            else:
+                filters.append(Event.creator_id == created_by)
+                
+        # Consulta principal para eventos con JOIN para conteo de participantes
+        query = (
+            db.query(
+                Event,
+                func.coalesce(participants_count.c.count, 0).label('participants_count')
+            )
+            .outerjoin(participants_count, Event.id == participants_count.c.event_id)
+        )
+        
+        # Aplicar filtros
+        if filters:
+            query = query.filter(and_(*filters))
+            
+        # Filtrar por disponibilidad
+        if only_available:
+            query = query.filter(
+                or_(
+                    # Sin límite de participantes
+                    Event.max_participants == 0,
+                    # Con cupo disponible
+                    Event.max_participants > func.coalesce(participants_count.c.count, 0)
+                )
+            )
+        
+        # Ordenar y paginar
+        query = query.order_by(Event.start_time)
+        
+        if limit > 0:
+            query = query.limit(limit)
+            
+        if skip > 0:
+            query = query.offset(skip)
+            
+        # Ejecutar la consulta y formatear resultados
+        results = []
+        for event, count in query.all():
+            # Convertir a diccionario eficientemente
+            event_dict = {c.name: getattr(event, c.name) for c in event.__table__.columns}
+            # Añadir conteo de participantes
+            event_dict['participants_count'] = count
+            results.append(event_dict)
+            
+        return results
+
+    def update_event_efficient(
+        self, db: Session, *, event_id: int, event_in: EventUpdate
+    ) -> Optional[Event]:
+        """
+        Actualizar un evento usando UPDATE directo para máxima eficiencia.
+        Esta versión evita cargar el objeto completo si solo se necesita actualizar algunos campos.
+        """
+        # Verificar si el evento existe sin cargar el objeto completo
+        exists = db.query(db.query(Event.id).filter(Event.id == event_id).exists()).scalar()
+        if not exists:
+            return None
+            
+        # Extraer sólo los campos con valores para actualizar
+        update_data = event_in.dict(exclude_unset=True)
+        if not update_data:
+            # Si no hay datos para actualizar, obtener solo datos básicos del evento sin participantes
+            return db.query(Event).filter(Event.id == event_id).first()
+            
+        # Añadir timestamp de actualización
+        update_data['updated_at'] = datetime.utcnow()
+        
+        try:
+            # En lugar de hacer un UPDATE con RETURNING, que puede tener problemas de mapeo,
+            # actualizamos el objeto y lo devolvemos de manera más segura
+            
+            # 1. Primero obtenemos el evento existente
+            db_event = db.query(Event).filter(Event.id == event_id).first()
+            if not db_event:
+                return None
+                
+            # 2. Aplicamos los cambios al objeto
+            for field, value in update_data.items():
+                setattr(db_event, field, value)
+                
+            # 3. Guardamos los cambios
+            db.add(db_event)
+            db.commit()
+            
+            # 4. Devolvemos el objeto actualizado (sin participantes para mayor eficiencia)
+            # No hacemos refresh para evitar cargar relaciones innecesarias
+            return db_event
+            
+        except Exception as e:
+            # Registrar error, hacer rollback y devolver None en caso de fallo
+            db.rollback()
+            print(f"Error al actualizar evento: {e}")
+            return None
+
 
 class EventParticipationRepository:
     """Repositorio para operaciones con participaciones en eventos."""
@@ -195,88 +403,113 @@ class EventParticipationRepository:
     def create_participation(
         self, db: Session, *, participation_in: EventParticipationCreate, member_id: Union[int, str]
     ) -> Optional[EventParticipation]:
-        """Crear una nueva participación en un evento."""
-        # Primero verificar si ya existe una participación para este miembro y evento
-        event_id = participation_in.event_id
-        
-        if isinstance(member_id, str):
-            # Buscar usuario por auth0_id
-            user = db.query(User).filter(User.auth0_id == member_id).first()
-            if user:
-                member_id = user.id
-            else:
-                # Si no se encuentra el usuario, crear uno nuevo con el auth0_id
-                user = User(auth0_id=member_id, email=f"temp_{member_id}@example.com", role=UserRole.MEMBER)
-                db.add(user)
-                db.commit()
-                db.refresh(user)
-                member_id = user.id
-        
-        existing = db.query(EventParticipation).filter(
-            EventParticipation.event_id == event_id,
-            EventParticipation.member_id == member_id
-        ).first()
-        
-        if existing:
-            # Si ya existe una participación y está cancelada, la reactivamos
-            if existing.status == EventParticipationStatus.CANCELLED:
-                # Verificar si hay espacio disponible
-                event = db.query(Event).filter(Event.id == event_id).first()
-                if not event:
-                    return None
-                
-                # Si no hay límite de participantes, o hay espacio disponible
-                registered_count = db.query(func.count(EventParticipation.id)).filter(
-                    EventParticipation.event_id == event_id,
-                    EventParticipation.status == EventParticipationStatus.REGISTERED
-                ).scalar()
-                
-                if event.max_participants == 0 or registered_count < event.max_participants:
-                    existing.status = EventParticipationStatus.REGISTERED
-                else:
-                    # Si no hay espacio, lo ponemos en lista de espera
-                    existing.status = EventParticipationStatus.WAITING_LIST
-                
-                existing.notes = participation_in.notes
-                db.add(existing)
-                db.commit()
-                db.refresh(existing)
-                return existing
-            else:
-                # Si ya existe y no está cancelada, no permitimos duplicados
-                return None
-        
-        # Verificar si hay espacio disponible
-        event = db.query(Event).filter(Event.id == event_id).first()
-        if not event:
-            return None
-        
-        # Determinar el estado inicial de la participación
-        participation_status = EventParticipationStatus.REGISTERED
-        
-        # Si hay límite de participantes, verificar si hay espacio
-        if event.max_participants > 0:
-            registered_count = db.query(func.count(EventParticipation.id)).filter(
-                EventParticipation.event_id == event_id,
-                EventParticipation.status == EventParticipationStatus.REGISTERED
-            ).scalar()
+        """Crear una nueva participación en un evento de manera optimizada."""
+        try:
+            event_id = participation_in.event_id
             
-            if registered_count >= event.max_participants:
-                # Si no hay espacio, lo ponemos en lista de espera
+            # Optimización 1: Consulta única para obtener evento y contar participantes
+            # Usar una subconsulta más eficiente para contar participantes
+            from sqlalchemy import select, func, and_
+            
+            # Subconsulta para contar participantes registrados
+            registered_count_subq = (
+                select(func.count(EventParticipation.id))
+                .where(
+                    and_(
+                        EventParticipation.event_id == event_id,
+                        EventParticipation.status == EventParticipationStatus.REGISTERED
+                    )
+                )
+                .scalar_subquery()
+            )
+            
+            # Consulta optimizada que obtiene evento y cuenta participantes en una sola operación
+            query_result = db.query(
+                Event,
+                registered_count_subq.label('registered_count')
+            ).filter(Event.id == event_id).first()
+            
+            if not query_result:
+                return None
+                
+            event, registered_count = query_result
+            gym_id = event.gym_id
+            
+            # Optimización 2: Evitar múltiples consultas para el mismo usuario
+            user_id = None
+            if isinstance(member_id, str):
+                # Intentar convertir auth0_id a user_id en una sola consulta
+                user_id = db.query(User.id).filter(User.auth0_id == member_id).scalar()
+                
+                if not user_id:
+                    # Si no existe, crear usuario (solo si es necesario)
+                    user = User(
+                        auth0_id=member_id, 
+                        email=f"temp_{member_id}@example.com", 
+                        role=UserRole.MEMBER
+                    )
+                    db.add(user)
+                    db.flush()  # Flush en lugar de commit para mantener la transacción
+                    user_id = user.id
+            else:
+                user_id = member_id
+            
+            # Optimización 3: Verificar participación existente con consulta directa
+            # Obtener participación existente si existe, para verificar su estado
+            existing = db.query(EventParticipation).filter(
+                EventParticipation.event_id == event_id,
+                EventParticipation.member_id == user_id
+            ).first()
+            
+            if existing:
+                # Si ya existe pero está cancelada, reactivarla
+                if existing.status == EventParticipationStatus.CANCELLED:
+                    # Determinar estado basado en capacidad disponible
+                    if event.max_participants == 0 or registered_count < event.max_participants:
+                        existing.status = EventParticipationStatus.REGISTERED
+                    else:
+                        existing.status = EventParticipationStatus.WAITING_LIST
+                    
+                    existing.notes = participation_in.notes
+                    db.add(existing)
+                    db.commit()
+                    return existing
+                else:
+                    # Ya registrado (no cancelado), retornar la participación existente
+                    return existing
+            
+            # Determinar el estado inicial (registrado o en lista de espera)
+            participation_status = EventParticipationStatus.REGISTERED
+            if event.max_participants > 0 and registered_count >= event.max_participants:
                 participation_status = EventParticipationStatus.WAITING_LIST
-        
-        # Crear la nueva participación
-        db_participation = EventParticipation(
-            event_id=event_id,
-            member_id=member_id,
-            status=participation_status,
-            notes=participation_in.notes
-        )
-        
-        db.add(db_participation)
-        db.commit()
-        db.refresh(db_participation)
-        return db_participation
+            
+            # Crear la participación con todos los datos necesarios
+            now = datetime.utcnow()  # Usar la misma marca de tiempo para ambos campos
+            db_participation = EventParticipation(
+                event_id=event_id,
+                member_id=user_id,
+                gym_id=gym_id,
+                status=participation_status,
+                notes=participation_in.notes,
+                registered_at=now,
+                updated_at=now,
+                attended=False
+            )
+            
+            # Usar una sola transacción para todas las operaciones
+            db.add(db_participation)
+            db.commit()
+            
+            # Evitar refresh completo y solo devolver el objeto creado
+            return db_participation
+            
+        except Exception as e:
+            # Manejar excepciones específicas
+            db.rollback()
+            print(f"Error al crear participación: {e}")
+            # En vez de devolver None, que puede ser interpretado como "ya registrado",
+            # propagamos la excepción para que sea manejada apropiadamente
+            raise
     
     def get_participation(
         self, db: Session, *, participation_id: int
