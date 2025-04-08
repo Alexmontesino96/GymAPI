@@ -1,0 +1,1 @@
+from sqlalchemy import create_engine, inspect, text; engine = create_engine('postgresql://postgres:Jazdi0-cyhvan-pofduz@db.ueijlkythlkqadxymzqd.supabase.co:5432/postgres'); insp = inspect(engine); print(insp.get_indexes('event_participations'))

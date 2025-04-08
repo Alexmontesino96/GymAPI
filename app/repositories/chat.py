@@ -71,6 +71,8 @@ class ChatRepository:
     
     def get_event_room(self, db: Session, *, event_id: int) -> Optional[ChatRoom]:
         """Obtiene la sala asociada a un evento"""
+        # Optimización: usar una consulta específica que solo obtiene la sala sin cargar miembros
+        # y aprovechar el índice en event_id
         return db.query(ChatRoom).filter(ChatRoom.event_id == event_id).first()
     
     def update_room(

@@ -1,3 +1,6 @@
+# Environment variables
+.env
+
 # Python
 __pycache__/
 *.py[cod]
@@ -21,12 +24,6 @@ wheels/
 *.egg
 MANIFEST
 
-# Environment variables
-.env
-.env.local
-.env.*
-!.env.example
-
 # Virtual Environment
 venv/
 env/
@@ -37,6 +34,8 @@ ENV/
 .vscode/
 *.sublime-project
 *.sublime-workspace
+*.swp
+*.swo
 
 # Logs
 *.log

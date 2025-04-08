@@ -13,7 +13,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Path, Body, Securi
 from sqlalchemy.orm import Session
 
 from app.core.auth0_fastapi import auth, get_current_user, Auth0User
+from app.core.tenant import get_current_gym, verify_gym_access, verify_trainer_role, verify_admin_role
 from app.db.session import get_db
+from app.models.gym import Gym
 from app.models.schedule import (
     DayOfWeek,
     ClassDifficultyLevel,
@@ -34,5 +36,11 @@ from app.schemas.schedule import (
     GymSpecialHours, GymSpecialHoursCreate, GymSpecialHoursUpdate,
     Class, ClassCreate, ClassUpdate, ClassWithSessions,
     ClassSession, ClassSessionCreate, ClassSessionUpdate, ClassSessionWithParticipations,
-    ClassParticipation, ClassParticipationCreate, ClassParticipationUpdate
+    ClassParticipation, ClassParticipationCreate, ClassParticipationUpdate,
+    Class as ClassSchema
+)
+from app.repositories.schedule import (
+    class_repository,
+    class_session_repository,
+    class_participation_repository
 ) 

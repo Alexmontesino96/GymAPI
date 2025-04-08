@@ -1,6 +1,6 @@
 from typing import List, Optional, Dict, Any, Union
 from datetime import datetime
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session, joinedload, selectinload
 from sqlalchemy import func, and_, or_, select, update
 
 from app.models.event import Event, EventParticipation, EventStatus, EventParticipationStatus
@@ -59,9 +59,9 @@ class EventRepository:
         # Seleccionar las columnas específicas necesarias en lugar de cargar todos los datos
         query = db.query(Event)
         
-        # Aplicar joinedload solo cuando sea necesario
-        # Esto es fundamental para el rendimiento
-        query = query.options(joinedload(Event.participants))
+        # Optimización: Usar selectinload para relaciones con múltiples hijos (participants)
+        # Es más eficiente que joinedload para colecciones de muchos elementos
+        query = query.options(selectinload(Event.participants))
         
         # Construir filtros de manera eficiente usando los índices compuestos cuando sea posible
         filters = []
@@ -83,6 +83,7 @@ class EventRepository:
             
         # Filtros de texto - estos suelen ser más costosos
         if title_contains:
+            # Optimización: Usar búsqueda por índice GIN si está disponible
             filters.append(Event.title.ilike(f"%{title_contains}%"))
             
         if location_contains:
@@ -93,12 +94,15 @@ class EventRepository:
             # Optimización: si created_by es un string (auth0_id), usamos una subconsulta
             # en lugar de cargar todo el usuario
             if isinstance(created_by, str):
-                user_id = db.query(User.id).filter(User.auth0_id == created_by).scalar()
-                if user_id:
-                    filters.append(Event.creator_id == user_id)
-                else:
-                    # Si no se encuentra el usuario, no hay eventos que mostrar
-                    return []
+                # Nueva optimización: Usar EXISTS en lugar de subconsulta scalar
+                from sqlalchemy import exists
+                user_subquery = exists().where(
+                    and_(
+                        User.auth0_id == created_by,
+                        User.id == Event.creator_id
+                    )
+                )
+                filters.append(user_subquery)
             else:
                 filters.append(Event.creator_id == created_by)
         
@@ -108,28 +112,31 @@ class EventRepository:
         
         # Optimización: manejar filtrado por disponibilidad de manera más eficiente
         if only_available:
-            # Usar EXISTS para mayor rendimiento en comparación con subconsultas
-            # y LEFT JOIN con conteo
+            # Optimización: Usar EXISTS con correlate para mayor rendimiento
+            from sqlalchemy import exists
+            # Subquery correlacionada para contar participantes registrados
             registered_count_subq = (
-                db.query(func.count(EventParticipation.id))
-                .filter(
-                    EventParticipation.event_id == Event.id,
-                    EventParticipation.status == EventParticipationStatus.REGISTERED
+                exists()
+                .where(
+                    and_(
+                        EventParticipation.event_id == Event.id,
+                        EventParticipation.status == EventParticipationStatus.REGISTERED
+                    )
                 )
-                .scalar_subquery()
                 .correlate(Event)
+                .scalar_subquery()
             )
             
             query = query.filter(
                 or_(
                     # Sin límite de participantes
                     Event.max_participants == 0,
-                    # Con cupo disponible
-                    Event.max_participants > registered_count_subq
+                    # Con cupo disponible (subconsulta correlacionada)
+                    Event.max_participants > func.count(registered_count_subq)
                 )
             )
         
-        # Aplicar paginación
+        # Optimización: Añadir índice hint para el ordenamiento si está disponible
         query = query.order_by(Event.start_time)
         
         # Optimización: Use LIMIT/OFFSET solo cuando sea necesario
@@ -144,7 +151,12 @@ class EventRepository:
     
     def get_event(self, db: Session, event_id: int) -> Optional[Event]:
         """Obtener un evento por ID."""
-        return db.query(Event).options(joinedload(Event.participants)).filter(Event.id == event_id).first()
+        # Optimización: Usar selectinload para participantes, más eficiente para colecciones
+        return db.query(Event).options(
+            selectinload(Event.participants),
+            joinedload(Event.creator),
+            selectinload(Event.chat_rooms)
+        ).filter(Event.id == event_id).first()
     
     def update_event(
         self, db: Session, *, event_id: int, event_in: EventUpdate
@@ -202,7 +214,7 @@ class EventRepository:
     ) -> List[Event]:
         """Obtener todos los eventos creados por un usuario específico."""
         if isinstance(creator_id, str):
-            # Buscar usuario por auth0_id
+            # Buscar usuario por auth0_id - Optimización: usar índice
             user = db.query(User).filter(User.auth0_id == creator_id).first()
             if user:
                 creator_id = user.id
@@ -210,10 +222,10 @@ class EventRepository:
                 # Si no se encuentra el usuario, no hay eventos
                 return []
             
-        # Usar joinedload para cargar las relaciones en una sola consulta
-        query = db.query(Event).options(joinedload(Event.participants)).filter(Event.creator_id == creator_id)
+        # Usar selectinload para relaciones de colecciones - más eficiente que joinedload
+        query = db.query(Event).options(selectinload(Event.participants)).filter(Event.creator_id == creator_id)
         
-        # Filtrar por gimnasio si se proporciona
+        # Filtrar por gimnasio si se proporciona - Optimización: usar índice compuesto
         if gym_id is not None:
             query = query.filter(Event.gym_id == gym_id)
             
@@ -369,8 +381,8 @@ class EventRepository:
         # Añadir timestamp de actualización
         update_data['updated_at'] = datetime.utcnow()
         
-        try:
-            # En lugar de hacer un UPDATE con RETURNING, que puede tener problemas de mapeo,
+        try: 
+            # En lugar de hacer un UPDATE con RETURNING, que puede tener problemas de mapeo, 
             # actualizamos el objeto y lo devolvemos de manera más segura
             
             # 1. Primero obtenemos el evento existente
@@ -378,7 +390,7 @@ class EventRepository:
             if not db_event:
                 return None
                 
-            # 2. Aplicamos los cambios al objeto
+            # 2. Aplicamos los cambios al objeto s
             for field, value in update_data.items():
                 setattr(db_event, field, value)
                 

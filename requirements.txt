@@ -13,4 +13,8 @@ python-dotenv==1.0.0
 tenacity==8.2.3
 pytest==7.4.3
 httpx==0.25.2
-authlib==1.2.1 
+authlib==1.2.1
+# Dependencias para optimizaciones
+schedule==1.2.1
+psutil==5.9.6
+requests==2.31.0 

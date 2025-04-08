@@ -1,0 +1,56 @@
+# Auth0 Scopes Configuration for GymAPI - Actualizado
+
+Este documento enumera todos los scopes implementados en Auth0, organizados por categoría.
+
+## Permisos Implementados en Auth0
+
+### Perfil y Usuarios
+- [IMPLEMENTADO] read:profile - Leer perfil propio
+- [IMPLEMENTADO] admin:users - Administrar usuarios
+- [IMPLEMENTADO] read:users - Leer información de usuarios
+- [IMPLEMENTADO] update:users - Actualizar usuarios
+- [IMPLEMENTADO] delete:users - Eliminar usuarios
+
+### Eventos
+- [IMPLEMENTADO] read:own_events - Leer eventos propios
+- [IMPLEMENTADO] read_events - Leer todos los eventos
+- [IMPLEMENTADO] create:events - Crear eventos
+- [IMPLEMENTADO] update:events - Actualizar eventos
+- [IMPLEMENTADO] delete:events - Eliminar eventos propios
+- [IMPLEMENTADO] admin:events - Administrar eventos (solo admin)
+
+### Participaciones
+- [IMPLEMENTADO] read:own_participations - Leer participaciones propias
+- [IMPLEMENTADO] read:participations - Leer todas las participaciones
+- [IMPLEMENTADO] create:participations - Suscribirse a eventos
+- [IMPLEMENTADO] update:participations - Actualizar participaciones
+- [IMPLEMENTADO] delete:own_participations - Eliminar participaciones propias
+
+### Relaciones
+- [IMPLEMENTADO] read:own_relationships - Leer relaciones propias
+- [IMPLEMENTADO] read:relationships - Leer todas las relaciones
+- [IMPLEMENTADO] create:relationships - Crear relaciones
+- [IMPLEMENTADO] update:relationships - Editar relaciones
+- [IMPLEMENTADO] delete:relationships - Eliminar relaciones
+- [IMPLEMENTADO] admin:relationships - Administrar relaciones
+
+### Chat
+- [IMPLEMENTADO] use:chat - Usar chat
+- [IMPLEMENTADO] create:chat_rooms - Crear salas de chat
+- [IMPLEMENTADO] manage:chat_rooms - Gestionar salas de chat
+
+### Miembros
+- [IMPLEMENTADO] read:members - Leer lista de miembros
+
+### Gimnasios
+- [IMPLEMENTADO] admin:gyms - Administrar gimnasios
+- [IMPLEMENTADO] read:gyms - Leer información de gimnasios
+- [IMPLEMENTADO] read:gym_users - Leer usuarios de gimnasios
+
+## Notas Importantes
+
+1. Hay una inconsistencia en el permiso `read_events` vs `read:events`. En algunos endpoints se usa `read_events` y en otros `read:events`. Se recomienda unificar a `read:events`.
+
+2. El permiso `update:events` está implementado en Auth0 pero no se está utilizando correctamente en el endpoint PUT de eventos (actualmente usa create:events).
+
+3. Se recomienda revisar y actualizar el código para asegurar que los permisos se utilizan de manera consistente en toda la aplicación. 

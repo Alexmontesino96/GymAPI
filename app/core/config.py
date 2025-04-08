@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     VERSION: str = "0.1.0"
     
     # CORS
-    BACKEND_CORS_ORIGINS: List[AnyHttpUrl] = []
+    BACKEND_CORS_ORIGINS: List[str] = ["*"]
 
     @field_validator("BACKEND_CORS_ORIGINS", mode="before")
     def assemble_cors_origins(cls, v: Union[str, List[str]]) -> Union[List[str], str]:
@@ -74,9 +74,7 @@ class Settings(BaseSettings):
     AUTH0_CLIENT_ID: str
     AUTH0_CLIENT_SECRET: str
     AUTH0_CALLBACK_URL: str
-    # Clave secreta para verificar los webhooks de Auth0 (debe coincidir con el secreto en Auth0 Actions)
-    AUTH0_WEBHOOK_SECRET: str = ""
-    # Clave secreta para crear administradores
+    AUTH0_WEBHOOK_SECRET: str
     ADMIN_SECRET_KEY: str
 
     @field_validator("AUTH0_ISSUER", mode="before")
@@ -91,6 +89,60 @@ class Settings(BaseSettings):
     # Configuración de Stream.io para el chat
     STREAM_API_KEY: str
     STREAM_API_SECRET: str
+
+    # Configuración de OneSignal para notificaciones push
+    ONESIGNAL_APP_ID: str = "57c2285f-1a1a-4431-a5db-7ecd0bab4c5f"
+    ONESIGNAL_REST_API_KEY: str = "os_v2_app_k7bcqxy2djcddjo3p3gqxk2ml5yilwxkkezur7mhf2ofworqrxvejkvtmywal5lniukbix5ugvyqoka5adzapeuu5f5nxzfparez6lq"
+
+    # Lista de URLs de redirección permitidas
+    AUTH0_ALLOWED_REDIRECT_URIS: List[str]
+
+    @field_validator("AUTH0_ALLOWED_REDIRECT_URIS", mode="before")
+    def assemble_redirect_uris(cls, v: Union[str, List[str]]) -> List[str]:
+        if isinstance(v, list):
+            # Asegurar que http://localhost:3001 siempre esté en la lista
+            result = v.copy()
+            if "http://localhost:3001" not in result:
+                result.append("http://localhost:3001")
+            return result
+        elif isinstance(v, str):
+            try:
+                # Intentar analizar como JSON (formato ["url1", "url2", ...])
+                import json
+                result = json.loads(v)
+                if "http://localhost:3001" not in result:
+                    result.append("http://localhost:3001")
+                return result
+            except json.JSONDecodeError:
+                # Si no es JSON válido, verificar si es una cadena separada por comas
+                if ',' in v:
+                    # Si es una cadena separada por comas, dividirla
+                    result = [uri.strip() for uri in v.split(',')]
+                    if "http://localhost:3001" not in result:
+                        result.append("http://localhost:3001")
+                    return result
+                else:
+                    # Si es una sola URL, asegurar que http://localhost:3001 esté incluido
+                    result = [v]
+                    if "http://localhost:3001" not in result:
+                        result.append("http://localhost:3001")
+                    return result
+
+    # Configuración de Redis
+    REDIS_HOST: str = "localhost"
+    REDIS_PORT: int = 6379
+    REDIS_DB: int = 0
+    REDIS_PASSWORD: Optional[str] = None
+    REDIS_URL: Optional[str] = None
+
+    @field_validator("REDIS_URL", mode="before")
+    def assemble_redis_connection(cls, v: Optional[str], info) -> Any:
+        if isinstance(v, str):
+            return v
+        
+        values = info.data
+        password_part = f":{values.get('REDIS_PASSWORD')}@" if values.get('REDIS_PASSWORD') else ""
+        return f"redis://{password_part}{values.get('REDIS_HOST', 'localhost')}:{values.get('REDIS_PORT', 6379)}/{values.get('REDIS_DB', 0)}"
 
 
 settings = Settings() 

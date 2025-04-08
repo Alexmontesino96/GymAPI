@@ -18,6 +18,7 @@ from app.api.v1.endpoints.schedule.special_days import router as special_days_ro
 from app.api.v1.endpoints.schedule.classes import router as classes_router
 from app.api.v1.endpoints.schedule.sessions import router as sessions_router
 from app.api.v1.endpoints.schedule.participation import router as participation_router
+from app.api.v1.endpoints.schedule.categories import router as categories_router
 
 router = APIRouter()
 
@@ -26,4 +27,5 @@ router.include_router(gym_hours_router, prefix="", tags=["gym-hours"])
 router.include_router(special_days_router, prefix="", tags=["special-days"])
 router.include_router(classes_router, prefix="", tags=["classes"])
 router.include_router(sessions_router, prefix="", tags=["sessions"])
-router.include_router(participation_router, prefix="", tags=["participation"]) 
+router.include_router(participation_router, prefix="", tags=["participation"])
+router.include_router(categories_router, prefix="", tags=["categories"]) 

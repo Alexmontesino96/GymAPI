@@ -136,7 +136,7 @@ async def read_events(
     availability. Each event includes a count of current participants.
     
     Permissions:
-        - Requires 'read_events' scope (all authenticated users)
+        - Requires 'read:events' scope (all authenticated users)
         - User must be a member of the specified gym
         
     Args:
@@ -226,7 +226,7 @@ async def read_event(
     list is only included if the requesting user is the event creator or an admin.
     
     Permissions:
-        - Requires 'read_events' scope (all authenticated users)
+        - Requires 'read:events' scope (all authenticated users)
         - Viewing participant list requires event ownership or admin privileges
         
     Args:
@@ -280,7 +280,7 @@ async def update_event(
     db: Session = Depends(get_db),
     event_id: int = Path(..., title="Event ID"),
     event_in: EventUpdate,
-    current_user: Auth0User = Security(auth.get_user, scopes=["create:events"])
+    current_user: Auth0User = Security(auth.get_user, scopes=["admin:events"])
 ) -> Any:
     """
     Update an existing event.
@@ -671,7 +671,7 @@ async def read_my_participations(
     *,
     db: Session = Depends(get_db),
     status: Optional[EventParticipationStatus] = None,
-    current_user: Auth0User = Security(auth.get_user, scopes=["read_own_participations"])
+    current_user: Auth0User = Security(auth.get_user, scopes=["read:own_participations"])
 ) -> Any:
     """
     Retrieve participations of the authenticated user.
@@ -740,7 +740,7 @@ async def read_event_participations(
     db: Session = Depends(get_db),
     event_id: int = Path(..., title="Event ID"),
     status: Optional[EventParticipationStatus] = None,
-    current_user: Auth0User = Security(auth.get_user, scopes=["read_participations"])
+    current_user: Auth0User = Security(auth.get_user, scopes=["read:participations"])
 ) -> Any:
     """
     Retrieve participations for a specific event.
@@ -750,7 +750,7 @@ async def read_event_participations(
     Only the event creator or administrators can access this information.
     
     Permissions:
-        - Requires 'read_participations' scope (trainers and administrators)
+        - Requires 'read:participations' scope (trainers and administrators)
         - Also requires ownership of the event or admin privileges
         
     Args:

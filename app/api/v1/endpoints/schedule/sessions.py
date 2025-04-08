@@ -1,4 +1,6 @@
 from app.api.v1.endpoints.schedule.common import *
+from app.core.tenant import get_current_gym
+from app.models.gym import Gym
 
 router = APIRouter()
 
@@ -33,7 +35,8 @@ async def get_session_with_details(
 async def create_session(
     session_data: ClassSessionCreate = Body(...),
     db: Session = Depends(get_db),
-    user: Auth0User = Security(auth.get_user, scopes=["create:schedules"])
+    user: Auth0User = Security(auth.get_user, scopes=["create:schedules"]),
+    current_gym: Gym = Depends(get_current_gym)  # Obtener el gimnasio actual del tenant
 ) -> Any:
     """
     Crear una nueva sesión de clase.
@@ -45,8 +48,15 @@ async def create_session(
     
     created_by_id = db_user.id if db_user else None
     
+    # Asignar el gym_id desde el tenant actual
+    session_obj = session_data.model_dump()
+    session_obj["gym_id"] = current_gym.id
+    
+    # Crear un nuevo objeto ClassSessionCreate con el gym_id establecido
+    updated_session_data = ClassSessionCreate(**session_obj)
+    
     return class_session_service.create_session(
-        db, session_data=session_data, created_by_id=created_by_id
+        db, session_data=updated_session_data, created_by_id=created_by_id
     )
 
 
@@ -59,7 +69,8 @@ async def create_recurring_sessions(
         ..., description="Días de la semana (0=Lunes, 6=Domingo)"
     ),
     db: Session = Depends(get_db),
-    user: Auth0User = Security(auth.get_user, scopes=["create:schedules"])
+    user: Auth0User = Security(auth.get_user, scopes=["create:schedules"]),
+    current_gym: Gym = Depends(get_current_gym)  # Obtener el gimnasio actual del tenant
 ) -> Any:
     """
     Crear sesiones recurrentes en un rango de fechas.
@@ -71,9 +82,16 @@ async def create_recurring_sessions(
     
     created_by_id = db_user.id if db_user else None
     
+    # Asignar el gym_id desde el tenant actual
+    session_obj = base_session.model_dump()
+    session_obj["gym_id"] = current_gym.id
+    
+    # Crear un nuevo objeto ClassSessionCreate con el gym_id establecido
+    updated_base_session = ClassSessionCreate(**session_obj)
+    
     return class_session_service.create_recurring_sessions(
         db, 
-        base_session_data=base_session,
+        base_session_data=updated_base_session,
         start_date=start_date,
         end_date=end_date,
         days_of_week=days_of_week,
@@ -187,4 +205,32 @@ async def get_my_sessions(
     
     return class_session_service.get_sessions_by_trainer(
         db, trainer_id=db_user.id, skip=skip, limit=limit, upcoming_only=upcoming_only
-    ) 
+    )
+
+
+@router.delete("/sessions/{session_id}", response_model=ClassSession)
+async def delete_session(
+    session_id: int = Path(..., description="ID de la sesión"),
+    db: Session = Depends(get_db),
+    user: Auth0User = Security(auth.get_user, scopes=["delete:schedules"])
+) -> Any:
+    """
+    Eliminar una sesión.
+    Requiere el scope 'delete:schedules' asignado a administradores.
+    """
+    # Obtener la sesión
+    session = class_session_service.get_session(db, session_id=session_id)
+    if not session:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Sesión no encontrada"
+        )
+    
+    # Verificar si ya hay participantes registrados
+    participants = class_participation_service.get_session_participants(db, session_id=session_id)
+    if participants:
+        # Si hay participantes, marcar como cancelada en lugar de eliminar
+        return class_session_service.cancel_session(db, session_id=session_id)
+    
+    # Si no hay participantes, eliminar la sesión
+    return class_session_repository.remove(db, id=session_id) 
