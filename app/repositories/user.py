@@ -160,6 +160,30 @@ class UserRepository(BaseRepository[User, UserCreate, UserUpdate]):
         ]
         return participants
 
+    def get_gym_participants(
+        self,
+        db: Session,
+        *,
+        gym_id: int,
+        roles: List[UserRole],
+        skip: int = 0,
+        limit: int = 100
+    ) -> List[User]:
+        """
+        Obtiene usuarios completos (modelo User) de un gym, filtrados por rol y paginados.
+        """
+        query = db.query(User)
+        query = query.join(UserGym, User.id == UserGym.user_id)
+        query = query.filter(UserGym.gym_id == gym_id)
+        query = query.filter(User.role.in_(roles)) # Filtrar por lista de roles
+
+        # Aplicar ordenamiento consistente para paginación (importante)
+        # Ordenar por nombre, apellido e ID para desempate
+        query = query.order_by(User.first_name, User.last_name, User.id)
+
+        # Aplicar paginación directamente en la consulta SQL
+        return query.offset(skip).limit(limit).all()
+
     def create(self, db: Session, *, obj_in: UserCreate) -> User:
         """
         Crear un usuario.

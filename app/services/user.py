@@ -586,104 +586,109 @@ class UserService:
         return updated_user
 
     # --- Métodos con Caché en Redis --- 
-    async def get_users_by_role_cached(
+    # <<< RENOMBRAR Y MODIFICAR get_users_by_role_cached >>>
+    async def get_gym_participants_cached(
         self, 
         db: Session, 
-        role: UserRole, 
+        # role: UserRole, # Ya no es un solo rol
         *,
-        gym_id: Optional[int] = None,
+        gym_id: int, # No es opcional aquí
+        roles: List[UserRole], # Recibe lista de roles
         skip: int = 0, 
         limit: int = 100,
         redis_client: Redis
     ) -> List[UserModel]:
         """
-        Versión cacheada para obtener usuarios por rol.
-        Utiliza Redis para mejorar el rendimiento en consultas frecuentes.
-        
-        Args:
-            db: Sesión de base de datos
-            role: Rol a buscar
-            gym_id: ID opcional del gimnasio para filtrar
-            skip: Omitir registros (paginación)
-            limit: Límite de registros (paginación)
-            redis_client: Cliente Redis para cachear resultados
-            
-        Returns:
-            Lista de usuarios con el rol especificado
+        Versión cacheada para obtener participantes de un gimnasio (modelo User).
+        Utiliza Redis y aplica paginación eficientemente.
         """
         from app.services.cache_service import cache_service
-        from app.schemas.user import User as UserSchema
+        from app.schemas.user import User as UserSchema # El modelo de caché será UserSchema
         
-        # Si no hay Redis disponible, usar método normal
+        # Si no hay Redis disponible, usar método nuevo del repositorio
         if not redis_client:
-            return self.get_users_by_role(db, role=role, skip=skip, limit=limit, gym_id=gym_id)
+            logger.warning(f"Redis no disponible, obteniendo participantes de gym {gym_id} desde BD")
+            return user_repository.get_gym_participants(db, gym_id=gym_id, roles=roles, skip=skip, limit=limit)
         
-        # Crear clave única de caché
-        cache_key = f"users:role:{role.name}"
-        if gym_id:
-            cache_key += f":gym:{gym_id}"
-        cache_key += f":skip:{skip}:limit:{limit}"
+        # Crear clave única de caché combinada
+        # cache_key = f"users:role:{role.name}" # Clave antigua
+        # if gym_id:
+        #     cache_key += f":gym:{gym_id}"
+        # cache_key += f":skip:{skip}:limit:{limit}"
+        role_str = "_".join(sorted([r.name for r in roles]))
+        cache_key = f"users:full_profile:gym:{gym_id}:roles:{role_str}:skip:{skip}:limit:{limit}"
         
-        # Definir función de consulta a la base de datos
+        # Definir función de consulta a la base de datos (asíncrona)
         async def db_fetch():
-            # La versión original no es async, envolverla para compatibilidad
-            return self.get_users_by_role(db, role=role, skip=skip, limit=limit, gym_id=gym_id)
+            logger.info(f"DB Fetch for gym participants cache miss: key={cache_key}")
+            # Llama al nuevo método del repositorio
+            return user_repository.get_gym_participants(
+                db, gym_id=gym_id, roles=roles, skip=skip, limit=limit
+            )
         
         try:
             # Usar el servicio de caché genérico
             users = await cache_service.get_or_set(
                 redis_client=redis_client,
                 cache_key=cache_key,
-                db_fetch_func=db_fetch,
-                model_class=UserSchema,
+                db_fetch_func=db_fetch, # Pasar función async
+                model_class=UserSchema, # Usar UserSchema para caché
                 expiry_seconds=300,  # 5 minutos
                 is_list=True
             )
-            
-            # Convertir de esquema a modelo ORM si es necesario
-            if users and isinstance(users[0], UserSchema):
-                # Aquí deberíamos convertir de UserSchema a UserModel si necesario
-                # Pero en este caso, los esquemas son suficientes para el endpoint
-                pass
-                
             return users
         except Exception as e:
-            logger.error(f"Error al obtener usuarios cacheados para {role.name}: {str(e)}", exc_info=True)
-            # Fallback al método directo en caso de error
-            return self.get_users_by_role(db, role=role, skip=skip, limit=limit, gym_id=gym_id)
+            logger.error(f"Error al obtener participantes cacheados para gym {gym_id} (roles={roles}): {str(e)}", exc_info=True)
+            # Fallback al método directo del repositorio en caso de error
+            logger.info(f"Fallback a BD para gym {gym_id} (roles={roles}) debido a error de caché")
+            return user_repository.get_gym_participants(db, gym_id=gym_id, roles=roles, skip=skip, limit=limit)
             
+    # <<< FIN MODIFICACIÓN >>>
+
     async def invalidate_role_cache(self, redis_client: Redis, role: Optional[UserRole] = None, gym_id: Optional[int] = None) -> None:
         """
         Invalida caché de listados de usuarios por rol.
-        Útil después de añadir/modificar/eliminar usuarios.
-        
-        Args:
-            redis_client: Cliente Redis
-            role: Rol específico a invalidar (o todos si es None)
-            gym_id: ID del gimnasio específico a invalidar (o todos si es None)
+        NECESITA ACTUALIZACIÓN: Debería invalidar las nuevas claves combinadas.
         """
         from app.services.cache_service import cache_service
         
         if not redis_client:
             return
             
+        # --- LÓGICA DE INVALIDACIÓN ANTIGUA (Necesita ajuste) ---
         # Construir patrón de invalidación
-        pattern = "users:role:"
-        if role:
-            pattern += f"{role.name}"
-        else:
-            pattern += "*"
-            
-        if gym_id:
-            pattern += f":gym:{gym_id}"
-        else:
-            pattern += ":gym:*"
-            
-        # Invalidar todas las variantes de paginación
-        pattern += ":skip:*:limit:*"
-        
-        await cache_service.delete_pattern(redis_client, pattern)
-        logger.info(f"Caché de roles invalidada con patrón: {pattern}")
+        # pattern = "users:role:" # Clave antigua
+        # if role:
+        #     pattern += f"{role.name}"
+        # else:
+        #     pattern += "*"
+        #     
+        # if gym_id:
+        #     pattern += f":gym:{gym_id}"
+        # else:
+        #     pattern += ":gym:*"
+        #     
+        # # Invalidar todas las variantes de paginación
+        # pattern += ":skip:*:limit:*"
+        # --- FIN LÓGICA ANTIGUA ---
+
+        # --- NUEVA LÓGICA DE INVALIDACIÓN --- 
+        # Invalidar cachés de perfiles completos para el gym afectado
+        base_pattern = f"users:full_profile:gym:{gym_id if gym_id else '*'}:roles:*"
+        # Invalidar todas las combinaciones de roles y paginación
+        pattern = f"{base_pattern}:skip:*:limit:*"
+        count = await cache_service.delete_pattern(redis_client, pattern)
+        logger.info(f"Caché de participantes de gym invalidada con patrón: {pattern} ({count} claves)")
+
+        # Podríamos ser más específicos si sabemos qué rol cambió, pero
+        # invalidar todo para el gym es más simple y seguro por ahora.
+        # Si el rol específico es conocido:
+        # if role:
+        #     # Invalidar claves que incluyan ESE rol
+        #     specific_pattern = f"users:full_profile:gym:{gym_id}:roles:*_{role.name}_*:skip:*:limit:*"
+        #     await cache_service.delete_pattern(redis_client, specific_pattern)
+        #     specific_pattern_single = f"users:full_profile:gym:{gym_id}:roles:{role.name}:skip:*:limit:*"
+        #     await cache_service.delete_pattern(redis_client, specific_pattern_single)
 
     # <<< NUEVO MÉTODO CACHEADO PARA TODOS LOS USUARIOS >>>
     async def get_users_cached(

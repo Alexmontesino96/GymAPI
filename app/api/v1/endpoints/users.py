@@ -193,26 +193,33 @@ async def read_gym_participants(
     db: Session = Depends(get_db),
     skip: int = 0,
     limit: int = 100,
-    user: Auth0User = Security(auth.get_user, scopes=["read:members"]),
+    current_user: Auth0User = Security(auth.get_user, scopes=["read:members"]),
     redis_client: redis.Redis = Depends(get_redis_client),
     current_gym: Gym = Depends(verify_gym_access)
 ) -> Any:
     """Obtiene miembros y/o entrenadores del gimnasio actual."""
     logger = logging.getLogger("user_endpoint")
-    participants = []
     allowed_roles = [UserRole.MEMBER, UserRole.TRAINER]
-    if role:
-        if role not in allowed_roles:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Rol debe ser {UserRole.MEMBER.name} o {UserRole.TRAINER.name}")
-        logger.info(f"Fetching role {role.name} for gym {current_gym.id}")
-        participants = await user_service.get_users_by_role_cached(db, role=role, skip=skip, limit=limit, gym_id=current_gym.id, redis_client=redis_client)
-    else:
-        logger.info(f"Fetching both MEMBER and TRAINER roles for gym {current_gym.id}")
-        members = await user_service.get_users_by_role_cached(db, role=UserRole.MEMBER, skip=0, limit=1000, gym_id=current_gym.id, redis_client=redis_client)
-        trainers = await user_service.get_users_by_role_cached(db, role=UserRole.TRAINER, skip=0, limit=1000, gym_id=current_gym.id, redis_client=redis_client)
-        combined_list = members + trainers
-        participants = combined_list[skip : skip + limit]
-    return participants
+    roles_to_fetch = [role] if role else allowed_roles
+
+    try:
+        logger.info(f"Fetching gym participants for gym {current_gym.id}, roles: {roles_to_fetch}")
+        # Llamada única al servicio refactorizado
+        participants = await user_service.get_gym_participants_cached(
+            db=db,
+            gym_id=current_gym.id,
+            roles=roles_to_fetch,
+            skip=skip,
+            limit=limit,
+            redis_client=redis_client
+        )
+        return participants
+    except Exception as e:
+        logger.error(f"Error fetching gym participants for gym {current_gym.id}: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error interno al obtener participantes del gimnasio."
+        )
 
 @router.get("/p/gym-participants", response_model=List[UserPublicProfile], tags=["Gym Participants (Public)"])
 async def read_public_gym_participants(
@@ -288,7 +295,9 @@ async def read_gym_users(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario no encontrado")
     if role:
         # Cuando se filtra por rol global, usamos el servicio de usuario cacheado
-        users = await user_service.get_users_by_role_cached(db, role=role, skip=skip, limit=limit, gym_id=current_gym.id, redis_client=redis_client)
+        users = await user_service.get_gym_participants_cached(
+            db=db, gym_id=current_gym.id, roles=[role], skip=skip, limit=limit, redis_client=redis_client
+        )
     else:
         # Cuando NO se filtra por rol global, obtenemos todos los usuarios del gym
         try:
@@ -503,7 +512,11 @@ async def read_users_by_role(
     if role not in valid_roles:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Rol inválido")
     try:
-        users = await user_service.get_users_by_role_cached(db, role=role, skip=skip, limit=limit, gym_id=gym_id, redis_client=redis_client)
+        # Usar el nuevo método get_gym_participants_cached pasando el rol como lista
+        # Necesitamos pasar gym_id si está presente, y la lista de roles
+        users = await user_service.get_gym_participants_cached(
+            db=db, gym_id=gym_id, roles=[role], skip=skip, limit=limit, redis_client=redis_client
+        )
         return users
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
