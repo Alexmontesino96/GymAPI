@@ -14,6 +14,9 @@ from fastapi import HTTPException, status
 
 # Importar UserRole para la comparación
 from app.models.user import UserRole 
+from redis.asyncio import Redis # Importar Redis
+from app.services.cache_service import cache_service # Importar cache_service
+from app.schemas.user import GymUserSummary # Importar schema de respuesta
 
 class GymService:
     def create_gym(self, db: Session, *, gym_in: GymCreate) -> Gym:
@@ -186,6 +189,9 @@ class GymService:
                 role=GymRoleType.MEMBER
             )
             db.add(user_gym)
+            db.commit()  # Confirmar los cambios en la BD
+            db.refresh(user_gym)  # Actualizar el objeto con los valores de BD
+            
             return user_gym
     
     def remove_user_from_gym(self, db: Session, *, gym_id: int, user_id: int) -> None:
@@ -546,5 +552,52 @@ class GymService:
         db.add(user_gym) # Asegurar que se marca para guardar
         # El commit y refresh se manejan fuera
         return user_gym
+
+    # <<< NUEVO MÉTODO CACHEADO PARA USUARIOS DEL GIMNASIO >>>
+    async def get_gym_users_cached(
+        self, 
+        db: Session, 
+        *,
+        gym_id: int, 
+        role: Optional[GymRoleType] = None,
+        skip: int = 0, 
+        limit: int = 100,
+        redis_client: Redis
+    ) -> List[Dict[str, Any]]: # Mantener el tipo de retorno original por ahora
+        """
+        Versión cacheada para obtener todos los usuarios de un gimnasio.
+        """
+        if not redis_client:
+            # Llamar a la versión no cacheada si Redis no está disponible
+            return self.get_gym_users(db=db, gym_id=gym_id, role=role, skip=skip, limit=limit)
+            
+        # Crear clave de caché
+        cache_key = f"gym:{gym_id}:users:role:{role.value if role else 'all'}:skip:{skip}:limit:{limit}"
+        
+        # Función para obtener datos de la BD
+        async def db_fetch():
+            # La función get_gym_users es síncrona
+            return self.get_gym_users(db=db, gym_id=gym_id, role=role, skip=skip, limit=limit)
+            
+        try:
+            # Usar cache_service.get_or_set
+            # IMPORTANTE: get_gym_users devuelve List[Dict], no un modelo Pydantic directamente.
+            # Necesitamos adaptar get_or_set o la deserialización.
+            # Por simplicidad aquí, asumiremos que el cache_service puede manejar List[Dict]
+            # o ajustaremos la serialización/deserialización si es necesario.
+            # Opcionalmente, podríamos definir un modelo Pydantic para esta salida (GymUserSummary ya existe).
+            users = await cache_service.get_or_set(
+                redis_client=redis_client,
+                cache_key=cache_key,
+                db_fetch_func=db_fetch,
+                model_class=GymUserSummary, # Usar el schema correcto para la validación/deserialización
+                expiry_seconds=300, # 5 minutos
+                is_list=True
+            )
+            return users
+        except Exception as e:
+            logger.error(f"Error al obtener usuarios cacheados para gym {gym_id}: {str(e)}", exc_info=True)
+            # Fallback a la versión no cacheada
+            return self.get_gym_users(db=db, gym_id=gym_id, role=role, skip=skip, limit=limit)
 
 gym_service = GymService() 

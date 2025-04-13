@@ -21,6 +21,7 @@ from app.db.session import get_db
 from app.db.redis_client import get_redis_client, redis
 from app.services.cache_service import cache_service
 import logging
+from app.core.config import settings
 
 router = APIRouter()
 
@@ -213,6 +214,8 @@ async def add_user_to_current_gym(
     *,
     db: Session = Depends(get_db),
     user_id: int = Path(..., title="ID del usuario a añadir"),
+    # Inyectar redis_client
+    redis_client: redis.Redis = Depends(get_redis_client), 
     # Permite ADMIN/OWNER del gym actual (obtenido de X-Gym-ID) o SUPER_ADMIN
     current_gym_verified: Gym = Depends(verify_admin_role), 
 ) -> Any:
@@ -228,6 +231,7 @@ async def add_user_to_current_gym(
     Args:
         db: Sesión de base de datos
         user_id: ID del usuario a añadir
+        redis_client: Cliente de Redis inyectado
         current_gym_verified: Gimnasio actual verificado.
         
     Returns:
@@ -258,10 +262,20 @@ async def add_user_to_current_gym(
     # Añadir usuario al gimnasio
     user_gym = gym_service.add_user_to_gym(db, gym_id=gym_id, user_id=user_id)
     
-    # Invalidar caché de miembros
-    redis_client = get_redis_client()
+    # Invalidar/Actualizar caché de membresía y roles (usando el redis_client inyectado)
     if redis_client:
+        # Actualizar caché de membresía específica
+        membership_cache_key = f"user_gym_membership:{user_id}:{gym_id}"
+        try:
+            await redis_client.set(membership_cache_key, user_gym.role.value, ex=settings.CACHE_TTL_USER_MEMBERSHIP)
+            logging.info(f"Cache de membresía {membership_cache_key} actualizada a {user_gym.role.value}")
+        except Exception as e:
+            logging.error(f"Error al actualizar cache de membresía {membership_cache_key}: {e}")
+        
+        # Invalidar cachés de listados de participantes (rol global)
         await user_service.invalidate_role_cache(redis_client, role=target_user.role, gym_id=gym_id)
+        # Invalidar caché de GymUserSummary (si existe)
+        await cache_service.delete_pattern(redis_client, f"gym:{gym_id}:users:*")
     
     return {
         "message": "Usuario añadido al gimnasio correctamente",
@@ -277,6 +291,8 @@ async def remove_user_from_current_gym(
     *,
     db: Session = Depends(get_db),
     user_id: int = Path(..., title="ID del usuario a eliminar"),
+    # Inyectar redis_client
+    redis_client: redis.Redis = Depends(get_redis_client),
     # Verificar que el llamante pertenece al gimnasio actual (X-Gym-ID)
     current_gym_verified: Gym = Depends(verify_gym_access), 
     # Verificar que el usuario actual NO es el que se intenta eliminar (auto-eliminación)
@@ -300,6 +316,7 @@ async def remove_user_from_current_gym(
     Args:
         db: Sesión de base de datos
         user_id: ID del usuario a eliminar
+        redis_client: Cliente de Redis inyectado
         current_gym_verified: Gimnasio actual verificado.
         current_auth_user: Usuario autenticado actual.
         
@@ -367,14 +384,22 @@ async def remove_user_from_current_gym(
     # Eliminar usuario del gimnasio
     try:
         gym_service.remove_user_from_gym(db, gym_id=gym_id, user_id=user_id)
+        db.commit()
         
-        # Invalidar cachés relevantes
-        redis_client = get_redis_client()
+        # Invalidar cachés relevantes (usando el redis_client inyectado)
         if redis_client and target_role:
+            # Invalidar caché de membresía específica
+            membership_cache_key = f"user_gym_membership:{user_id}:{gym_id}"
+            await redis_client.delete(membership_cache_key)
+            logging.info(f"Cache de membresía {membership_cache_key} invalidada")
+            
             # Invalidar caché del usuario específico
             await cache_service.invalidate_user_caches(redis_client, user_id=user_id)
             # Invalidar caché del rol para este gimnasio
             await user_service.invalidate_role_cache(redis_client, role=target_role, gym_id=gym_id)
+            
+            # Invalidar caché de GymUserSummary (si existe)
+            await cache_service.delete_pattern(redis_client, f"gym:{gym_id}:users:*")
             
         return {
             "message": "Usuario eliminado del gimnasio correctamente",
@@ -382,6 +407,7 @@ async def remove_user_from_current_gym(
             "gym_id": gym_id
         }
     except HTTPException as http_exc:
+        db.rollback()
         raise http_exc
     except Exception as e:
          raise HTTPException(
@@ -572,15 +598,26 @@ async def remove_user_from_gym_by_superadmin(
     # Eliminar usuario del gimnasio (el servicio maneja la lógica de no eliminar SUPER_ADMIN)
     try:
         gym_service.remove_user_from_gym(db, gym_id=gym_id, user_id=user_id)
+        db.commit()
+        
+        # Obtener redis_client para poder invalidar
+        redis_client = await get_redis_client()
+        if redis_client:
+            membership_cache_key = f"user_gym_membership:{user_id}:{gym_id}"
+            await redis_client.delete(membership_cache_key)
+            logging.info(f"(Superadmin) Cache de membresía {membership_cache_key} invalidada")
+        
         return {
             "message": "Usuario eliminado del gimnasio correctamente por SUPER_ADMIN",
             "user_id": user_id,
             "gym_id": gym_id
         }
     except HTTPException as http_exc:
+        db.rollback()
         raise http_exc
     except Exception as e:
-         raise HTTPException(
+        db.rollback()
+        raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error interno al eliminar usuario del gimnasio: {e}"
         )
@@ -649,6 +686,8 @@ async def update_user_gym_role(
     db: Session = Depends(get_db),
     user_id: int = Path(..., title="ID del usuario a modificar"),
     role_in: UserGymRoleUpdate,
+    # Inyectar redis_client
+    redis_client: redis.Redis = Depends(get_redis_client),
     # Verificar que el llamante es ADMIN del gym actual o SUPER_ADMIN
     current_gym_verified: Gym = Depends(verify_admin_role), 
 ) -> Any:
@@ -705,16 +744,22 @@ async def update_user_gym_role(
         db.refresh(updated_membership)
         logger.info(f"Rol de gym actualizado para user {user_id} en gym {gym_id} a {updated_membership.role.name}")
         
-        # Invalidar caché (relacionado con la lista de usuarios del gym)
-        redis_client = get_redis_client()
+        # Invalidar/Actualizar caché (usando el redis_client inyectado)
         if redis_client:
+            # Actualizar caché de membresía específica
+            membership_cache_key = f"user_gym_membership:{user_id}:{gym_id}"
+            await redis_client.set(membership_cache_key, updated_membership.role.value, ex=settings.CACHE_TTL_USER_MEMBERSHIP)
+            logging.info(f"Cache de membresía {membership_cache_key} actualizada a {updated_membership.role.value}")
+
             # Invalidar caché general de usuarios del gym
             # Podría ser más específico si tuviéramos caché por rol de gym
-            await cache_service.delete_pattern(redis_client, f"gym:{gym_id}:users:*") 
+            await cache_service.delete_pattern(redis_client, f"gym:{gym_id}:users:*")
+            
             # También invalidar caché de roles globales si el rol global del usuario podría verse afectado
             target_user = user_service.get_user(db, user_id=user_id)
             if target_user:
                  await user_service.invalidate_role_cache(redis_client, role=target_user.role, gym_id=gym_id)
+                 await cache_service.invalidate_user_caches(redis_client, user_id=user_id) # Añadir invalidación de caché de usuario
             
         return updated_membership
         

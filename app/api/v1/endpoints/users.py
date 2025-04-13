@@ -357,8 +357,15 @@ async def remove_user_from_gym(
         db.delete(target_user_membership)
         db.commit()
         if redis_client and target_role:
+            # <<< Invalidar caché de membresía específica >>>
+            membership_cache_key = f"user_gym_membership:{user_id}:{current_gym.id}"
+            await redis_client.delete(membership_cache_key)
+            logging.info(f"Cache de membresía {membership_cache_key} invalidada")
+            
             await cache_service.invalidate_user_caches(redis_client, user_id=user_id)
             await user_service.invalidate_role_cache(redis_client, role=target_role, gym_id=current_gym.id)
+            # Invalidar caché de GymUserSummary (si existe)
+            await cache_service.delete_pattern(redis_client, f"gym:{current_gym.id}:users:*")
         logger.info(f"Usuario {user_id} eliminado exitosamente del gym {current_gym.id}")
     except Exception as e:
         db.rollback()
@@ -574,6 +581,14 @@ async def admin_delete_user(
     try:
         deleted_user = user_service.delete_user(db, user_id=user_id)
         if redis_client:
+            # <<< Invalidar cachés de membresía del usuario eliminado >>>
+            # Necesitamos obtener los gym_ids a los que pertenecía ANTES de eliminar
+            # Esto podría requerir ajustar delete_user o hacer una consulta previa.
+            # Por simplicidad ahora, invalidaremos con patrón (menos eficiente)
+            membership_pattern = f"user_gym_membership:{user_id}:*"
+            await cache_service.delete_pattern(redis_client, membership_pattern)
+            logging.info(f"(Superadmin Delete) Caches de membresía invalidadas para user {user_id} con patrón {membership_pattern}")
+
             await user_service.invalidate_role_cache(redis_client, role=target_role)
             await cache_service.invalidate_user_caches(redis_client, user_id=user_id)
         return UserSchema.from_orm(deleted_user)
