@@ -794,5 +794,50 @@ class UserService:
                 )
     # <<< FIN NUEVO MÉTODO >>>
 
+    # <<< NUEVO MÉTODO PARA PERFIL PÚBLICO CACHEADO >>>
+    async def get_public_profile_cached(
+        self,
+        user_id: int,
+        db: Session,
+        redis_client: Redis
+    ) -> Optional[UserPublicProfile]:
+        """
+        Obtiene el UserPublicProfile de un usuario, utilizando caché Redis.
+        """
+        from app.services.cache_service import cache_service
+
+        if not redis_client:
+            logger.warning(f"Redis no disponible, obteniendo perfil público para user {user_id} desde BD")
+            user_model = user_repository.get(db, id=user_id)
+            return UserPublicProfile.from_orm(user_model) if user_model else None
+
+        cache_key = f"user_public_profile:{user_id}"
+
+        async def db_fetch():
+            logger.info(f"DB Fetch for public profile cache miss: key={cache_key}")
+            user_model = user_repository.get(db, id=user_id)
+            if user_model:
+                # Mapear a UserPublicProfile antes de devolver para caché
+                return UserPublicProfile.from_orm(user_model)
+            return None
+
+        try:
+            public_profile = await cache_service.get_or_set(
+                redis_client=redis_client,
+                cache_key=cache_key,
+                db_fetch_func=db_fetch,
+                model_class=UserPublicProfile, # El modelo Pydantic que queremos cachear/devolver
+                expiry_seconds=settings.CACHE_TTL_USER_MEMBERSHIP, # Reutilizar TTL estándar
+                is_list=False # Es un objeto único
+            )
+            return public_profile
+        except Exception as e:
+            logger.error(f"Error al obtener perfil público cacheado para user {user_id}: {str(e)}", exc_info=True)
+            # Fallback a BD
+            logger.info(f"Fallback a BD para perfil público user {user_id} debido a error de caché")
+            user_model = user_repository.get(db, id=user_id)
+            return UserPublicProfile.from_orm(user_model) if user_model else None
+    # <<< FIN NUEVO MÉTODO >>>
+
 
 user_service = UserService() 

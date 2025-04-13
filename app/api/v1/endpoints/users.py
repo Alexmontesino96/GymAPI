@@ -76,6 +76,11 @@ async def update_user_profile(
         await cache_service.invalidate_user_caches(redis_client, user_id=db_user.id)
         if updated_user.role:
             await user_service.invalidate_role_cache(redis_client, role=updated_user.role)
+        # <<< Invalidar caché de perfil público específico >>>
+        public_profile_cache_key = f"user_public_profile:{db_user.id}"
+        await redis_client.delete(public_profile_cache_key)
+        logger = logging.getLogger("user_endpoint")
+        logger.info(f"Invalidada caché de perfil público: {public_profile_cache_key}")
     return updated_user
 
 @router.post("/profile/image", response_model=UserSchema, tags=["Profile"])
@@ -92,6 +97,15 @@ async def upload_profile_image(
     if not content_type.startswith("image/"):
         raise HTTPException(status_code=400, detail="El archivo debe ser una imagen")
     updated_user = await user_service.update_user_profile_image(db, auth0_id, file)
+    # <<< Invalidar caché de perfil público >>>
+    # Necesitamos el user_id local e inyectar redis_client
+    if updated_user:
+        redis_client = await get_redis_client() # Obtener cliente si no está inyectado
+        if redis_client:
+            public_profile_cache_key = f"user_public_profile:{updated_user.id}"
+            await redis_client.delete(public_profile_cache_key)
+            logger = logging.getLogger("user_endpoint")
+            logger.info(f"Invalidada caché de perfil público tras subir imagen: {public_profile_cache_key}")
     return updated_user
 
 @router.post("/check-email-availability", response_model=dict, tags=["Email Management"])
@@ -265,16 +279,63 @@ async def read_public_user_profile(
     user_id: int,
     db: Session = Depends(get_db),
     current_user: Auth0User = Security(auth.get_user, scopes=["read:members"]),
-    current_gym: Gym = Depends(verify_gym_access)
+    current_gym: Gym = Depends(verify_gym_access),
+    redis_client: redis.Redis = Depends(get_redis_client)
 ) -> Any:
     """Obtiene el perfil público de un usuario específico del gimnasio actual."""
-    user_gym = db.query(UserGym).filter(UserGym.user_id == user_id, UserGym.gym_id == current_gym.id).first()
-    if not user_gym:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario no encontrado en este gimnasio")
-    db_user = user_service.get_user(db, user_id=user_id)
-    if not db_user:
+    logger = logging.getLogger("user_endpoint")
+    gym_id = current_gym.id # ID del gimnasio actual
+
+    # --- Parte A: Verificar si el USUARIO OBJETIVO pertenece al gimnasio (usando caché) ---
+    if not redis_client:
+        logger.warning(f"Redis no disponible, verificando pertenencia de user {user_id} a gym {gym_id} en BD")
+        user_gym_db = db.query(UserGym).filter(UserGym.user_id == user_id, UserGym.gym_id == gym_id).first()
+        if not user_gym_db:
+             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario no encontrado en este gimnasio (BD Check)")
+    else:
+        membership_cache_key = f"user_gym_membership:{user_id}:{gym_id}"
+        try:
+            cached_role_str = await redis_client.get(membership_cache_key)
+            if cached_role_str is not None:
+                # Cache Hit
+                if cached_role_str == "__NONE__":
+                    logger.debug(f"Cache HIT Negativo: Usuario {user_id} NO pertenece a gym {gym_id} (verificación perfil público)")
+                    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario no encontrado en este gimnasio (Cache Check)")
+                # Si existe y no es NONE, pertenece. No necesitamos el rol aquí, solo saber que existe.
+                logger.debug(f"Cache HIT Positivo: Usuario {user_id} pertenece a gym {gym_id} (verificación perfil público)")
+            else:
+                # Cache Miss
+                logger.debug(f"Cache MISS para {membership_cache_key} (verificación perfil público), consultando BD...")
+                user_gym_db = db.query(UserGym).filter(UserGym.user_id == user_id, UserGym.gym_id == gym_id).first()
+                if user_gym_db:
+                    role_str = user_gym_db.role.value
+                    await redis_client.set(membership_cache_key, role_str, ex=settings.CACHE_TTL_USER_MEMBERSHIP)
+                    logger.debug(f"Cache de membresía {membership_cache_key} establecida a {role_str}")
+                else:
+                    await redis_client.set(membership_cache_key, "__NONE__", ex=settings.CACHE_TTL_NEGATIVE)
+                    logger.debug(f"Cache de membresía negativa establecida para {membership_cache_key}")
+                    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario no encontrado en este gimnasio (BD Check + Cache Write)")
+        except Exception as e:
+            logger.error(f"Error consultando caché de membresía ({membership_cache_key}) para perfil público: {e}", exc_info=True)
+            # Fallback a BD en caso de error de Redis
+            user_gym_db = db.query(UserGym).filter(UserGym.user_id == user_id, UserGym.gym_id == gym_id).first()
+            if not user_gym_db:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario no encontrado en este gimnasio (BD Fallback)")
+    # --- Fin Parte A ---
+
+    # --- Parte B: Obtener perfil público (usando caché) --- 
+    try:
+        public_profile = await user_service.get_public_profile_cached(user_id, db, redis_client)
+    except Exception as e:
+        # Error inesperado al obtener el perfil (probablemente del servicio de caché)
+        logger.error(f"Error inesperado obteniendo perfil público cacheado para user {user_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error interno al obtener perfil")
+    
+    if not public_profile:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario no encontrado")
-    return db_user
+        
+    # Devuelve directamente el UserPublicProfile obtenido
+    return public_profile
 
 
 # === Endpoints de Gestión de Gimnasio (Admins de Gym / SuperAdmins) === #
@@ -554,8 +615,11 @@ async def update_user(
             if old_role != updated_user.role:
                 await user_service.invalidate_role_cache(redis_client, role=old_role)
                 await user_service.invalidate_role_cache(redis_client, role=updated_user.role)
-        else:
-                await user_service.invalidate_role_cache(redis_client, role=updated_user.role)
+            # <<< Invalidar caché de perfil público específico >>>
+            public_profile_cache_key = f"user_public_profile:{user_id}"
+            await redis_client.delete(public_profile_cache_key)
+            logger = logging.getLogger("user_endpoint")
+            logger.info(f"(Superadmin Update) Invalidada caché de perfil público: {public_profile_cache_key}")
         return updated_user
     except HTTPException as e:
          raise e
@@ -591,6 +655,10 @@ async def admin_delete_user(
 
             await user_service.invalidate_role_cache(redis_client, role=target_role)
             await cache_service.invalidate_user_caches(redis_client, user_id=user_id)
+            # <<< Invalidar caché de perfil público específico >>>
+            public_profile_cache_key = f"user_public_profile:{user_id}"
+            await redis_client.delete(public_profile_cache_key)
+            logging.info(f"(Superadmin Delete) Invalidada caché de perfil público: {public_profile_cache_key}")
         return UserSchema.from_orm(deleted_user)
     except HTTPException as e:
         raise e
