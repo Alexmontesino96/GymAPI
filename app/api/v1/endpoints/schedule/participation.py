@@ -1,4 +1,6 @@
 from app.api.v1.endpoints.schedule.common import *
+from app.core.tenant import verify_gym_access
+from app.models.gym import Gym
 
 router = APIRouter()
 
@@ -6,6 +8,7 @@ router = APIRouter()
 async def register_for_class(
     session_id: int = Path(..., description="ID de la sesión"),
     db: Session = Depends(get_db),
+    current_gym: Gym = Depends(verify_gym_access),
     user: Auth0User = Security(auth.get_user, scopes=["register:classes"])
 ) -> Any:
     """
@@ -22,6 +25,14 @@ async def register_for_class(
             detail="Usuario no encontrado en la base de datos"
         )
     
+    # Verificar que la sesión pertenezca al gimnasio actual
+    session = class_session_service.get_session(db, session_id=session_id)
+    if not session or session.gym_id != current_gym.id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Sesión no encontrada en este gimnasio"
+        )
+    
     return class_participation_service.register_for_class(
         db, member_id=db_user.id, session_id=session_id
     )
@@ -32,12 +43,29 @@ async def register_member_for_class(
     session_id: int = Path(..., description="ID de la sesión"),
     member_id: int = Path(..., description="ID del miembro"),
     db: Session = Depends(get_db),
+    current_gym: Gym = Depends(verify_gym_access),
     user: Auth0User = Security(auth.get_user, scopes=["manage:class_registrations"])
 ) -> Any:
     """
     Registrar a un miembro específico en una sesión de clase (para administradores).
     Requiere el scope 'manage:class_registrations' asignado a entrenadores y administradores.
     """
+    # Verificar que la sesión pertenezca al gimnasio actual
+    session = class_session_service.get_session(db, session_id=session_id)
+    if not session or session.gym_id != current_gym.id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Sesión no encontrada en este gimnasio"
+        )
+    
+    # Verificar que el miembro pertenezca al gimnasio actual
+    user_gym = user_service.get_user_gym(db, user_id=member_id, gym_id=current_gym.id)
+    if not user_gym:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Miembro no encontrado en este gimnasio"
+        )
+    
     return class_participation_service.register_for_class(
         db, member_id=member_id, session_id=session_id
     )
@@ -48,6 +76,7 @@ async def cancel_my_registration(
     session_id: int = Path(..., description="ID de la sesión"),
     reason: Optional[str] = Query(None, description="Razón de la cancelación"),
     db: Session = Depends(get_db),
+    current_gym: Gym = Depends(verify_gym_access),
     user: Auth0User = Security(auth.get_user, scopes=["register:classes"])
 ) -> Any:
     """
@@ -64,6 +93,14 @@ async def cancel_my_registration(
             detail="Usuario no encontrado en la base de datos"
         )
     
+    # Verificar que la sesión pertenezca al gimnasio actual
+    session = class_session_service.get_session(db, session_id=session_id)
+    if not session or session.gym_id != current_gym.id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Sesión no encontrada en este gimnasio"
+        )
+    
     return class_participation_service.cancel_registration(
         db, member_id=db_user.id, session_id=session_id, reason=reason
     )
@@ -75,12 +112,29 @@ async def cancel_member_registration(
     member_id: int = Path(..., description="ID del miembro"),
     reason: Optional[str] = Query(None, description="Razón de la cancelación"),
     db: Session = Depends(get_db),
+    current_gym: Gym = Depends(verify_gym_access),
     user: Auth0User = Security(auth.get_user, scopes=["manage:class_registrations"])
 ) -> Any:
     """
     Cancelar el registro de un miembro específico en una sesión (para administradores).
     Requiere el scope 'manage:class_registrations' asignado a entrenadores y administradores.
     """
+    # Verificar que la sesión pertenezca al gimnasio actual
+    session = class_session_service.get_session(db, session_id=session_id)
+    if not session or session.gym_id != current_gym.id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Sesión no encontrada en este gimnasio"
+        )
+    
+    # Verificar que el miembro pertenezca al gimnasio actual
+    user_gym = user_service.get_user_gym(db, user_id=member_id, gym_id=current_gym.id)
+    if not user_gym:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Miembro no encontrado en este gimnasio"
+        )
+    
     return class_participation_service.cancel_registration(
         db, member_id=member_id, session_id=session_id, reason=reason
     )
@@ -91,12 +145,21 @@ async def mark_attendance(
     session_id: int = Path(..., description="ID de la sesión"),
     member_id: int = Path(..., description="ID del miembro"),
     db: Session = Depends(get_db),
+    current_gym: Gym = Depends(verify_gym_access),
     user: Auth0User = Security(auth.get_user, scopes=["manage:class_registrations"])
 ) -> Any:
     """
     Marcar la asistencia de un miembro a una sesión.
     Requiere el scope 'manage:class_registrations' asignado a entrenadores y administradores.
     """
+    # Verificar que la sesión pertenezca al gimnasio actual
+    session = class_session_service.get_session(db, session_id=session_id)
+    if not session or session.gym_id != current_gym.id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Sesión no encontrada en este gimnasio"
+        )
+    
     return class_participation_service.mark_attendance(
         db, member_id=member_id, session_id=session_id
     )
@@ -107,12 +170,21 @@ async def mark_no_show(
     session_id: int = Path(..., description="ID de la sesión"),
     member_id: int = Path(..., description="ID del miembro"),
     db: Session = Depends(get_db),
+    current_gym: Gym = Depends(verify_gym_access),
     user: Auth0User = Security(auth.get_user, scopes=["manage:class_registrations"])
 ) -> Any:
     """
     Marcar que un miembro no asistió a una sesión.
     Requiere el scope 'manage:class_registrations' asignado a entrenadores y administradores.
     """
+    # Verificar que la sesión pertenezca al gimnasio actual
+    session = class_session_service.get_session(db, session_id=session_id)
+    if not session or session.gym_id != current_gym.id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Sesión no encontrada en este gimnasio"
+        )
+    
     return class_participation_service.mark_no_show(
         db, member_id=member_id, session_id=session_id
     )
@@ -124,12 +196,21 @@ async def get_session_participants(
     skip: int = 0,
     limit: int = 100,
     db: Session = Depends(get_db),
+    current_gym: Gym = Depends(verify_gym_access),
     user: Auth0User = Security(auth.get_user, scopes=["manage:class_registrations"])
 ) -> Any:
     """
     Obtener todos los participantes de una sesión.
     Requiere el scope 'manage:class_registrations' asignado a entrenadores y administradores.
     """
+    # Verificar que la sesión pertenezca al gimnasio actual
+    session = class_session_service.get_session(db, session_id=session_id)
+    if not session or session.gym_id != current_gym.id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Sesión no encontrada en este gimnasio"
+        )
+    
     return class_participation_service.get_session_participants(
         db, session_id=session_id, skip=skip, limit=limit
     )
@@ -140,6 +221,7 @@ async def get_my_upcoming_classes(
     skip: int = 0,
     limit: int = 100,
     db: Session = Depends(get_db),
+    current_gym: Gym = Depends(verify_gym_access),
     user: Auth0User = Security(auth.get_user, scopes=["read:own_schedules"])
 ) -> Any:
     """
@@ -157,7 +239,7 @@ async def get_my_upcoming_classes(
         )
     
     return class_participation_service.get_member_upcoming_classes(
-        db, member_id=db_user.id, skip=skip, limit=limit
+        db, member_id=db_user.id, skip=skip, limit=limit, gym_id=current_gym.id
     )
 
 
@@ -167,12 +249,21 @@ async def get_member_upcoming_classes(
     skip: int = 0,
     limit: int = 100,
     db: Session = Depends(get_db),
+    current_gym: Gym = Depends(verify_gym_access),
     user: Auth0User = Security(auth.get_user, scopes=["manage:class_registrations"])
 ) -> Any:
     """
     Obtener las próximas clases de un miembro específico.
     Requiere el scope 'manage:class_registrations' asignado a entrenadores y administradores.
     """
+    # Verificar que el miembro pertenezca al gimnasio actual
+    user_gym = user_service.get_user_gym(db, user_id=member_id, gym_id=current_gym.id)
+    if not user_gym:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Miembro no encontrado en este gimnasio"
+        )
+    
     return class_participation_service.get_member_upcoming_classes(
-        db, member_id=member_id, skip=skip, limit=limit
+        db, member_id=member_id, skip=skip, limit=limit, gym_id=current_gym.id
     ) 

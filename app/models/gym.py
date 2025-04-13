@@ -7,7 +7,7 @@ from app.db.base_class import Base
 
 # Imports condicionales para evitar referencias circulares
 if TYPE_CHECKING:
-    from app.models.schedule import ClassSession
+    from app.models.schedule import ClassSession, Class, GymHours, GymSpecialHours, ClassParticipation
     from app.models.user_gym import UserGym
     from app.models.event import Event
 
@@ -33,5 +33,10 @@ class Gym(Base):
     # Relaciones
     users = relationship("UserGym", back_populates="gym")
     events = relationship("Event", back_populates="gym")
-    # Eliminamos relaciones a modelos que no existen
-    class_sessions = relationship("ClassSession", back_populates="gym") 
+    classes = relationship("Class", back_populates="gym")
+    class_sessions = relationship("ClassSession", back_populates="gym")
+    
+    # Nuevas relaciones para multi-tenant
+    gym_hours = relationship("GymHours", back_populates="gym")
+    special_hours = relationship("GymSpecialHours", back_populates="gym")
+    class_participations = relationship("ClassParticipation", back_populates="gym") 

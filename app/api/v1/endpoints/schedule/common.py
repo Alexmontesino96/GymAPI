@@ -34,10 +34,9 @@ from app.services.user import user_service
 from app.schemas.schedule import (
     GymHours, GymHoursCreate, GymHoursUpdate,
     GymSpecialHours, GymSpecialHoursCreate, GymSpecialHoursUpdate,
-    Class, ClassCreate, ClassUpdate, ClassWithSessions,
+    ClassBaseInput, ClassBase, Class, ClassCreate, ClassUpdate, ClassWithSessions,
     ClassSession, ClassSessionCreate, ClassSessionUpdate, ClassSessionWithParticipations,
-    ClassParticipation, ClassParticipationCreate, ClassParticipationUpdate,
-    Class as ClassSchema
+    ClassParticipation, ClassParticipationCreate, ClassParticipationUpdate
 )
 from app.repositories.schedule import (
     class_repository,

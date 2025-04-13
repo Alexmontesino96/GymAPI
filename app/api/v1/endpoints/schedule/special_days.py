@@ -1,169 +1,364 @@
-from app.api.v1.endpoints.schedule.common import *
-from app.repositories.schedule import gym_special_hours_repository
+from typing import Any, List, Optional
+from datetime import date, datetime
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Path, Body, Security
+from sqlalchemy.orm import Session
+
+from app.db.session import get_db
+from app.core.auth0_fastapi import auth, get_current_user, Auth0User
+from app.models.gym import Gym
+from app.core.tenant import verify_gym_access
+from app.schemas.schedule import (
+    GymSpecialHours, 
+    GymSpecialHoursCreate, 
+    GymSpecialHoursUpdate
+)
+from app.services import schedule
+from app.models.user import User, UserRole
+from app.models.user_gym import UserGym, GymRoleType
 
 router = APIRouter()
 
-@router.get("/special-days", response_model=List[GymSpecialHours])
-async def get_special_days(
+
+@router.get("/", response_model=List[GymSpecialHours])
+def get_special_days(
+    *,
+    db: Session = Depends(get_db),
     skip: int = 0,
     limit: int = 100,
-    db: Session = Depends(get_db),
-    user: Auth0User = Security(auth.get_user, scopes=["read:schedules"])
+    upcoming_only: bool = Query(True, description="Si es True, solo devuelve días especiales futuros"),
+    current_user: Auth0User = Depends(get_current_user),
+    current_gym: Gym = Depends(verify_gym_access)
 ) -> Any:
     """
-    Get all upcoming special days with modified operating hours.
-    
-    This endpoint retrieves a list of upcoming dates with non-standard operating hours,
-    such as holidays, special events, or temporary schedule changes. By default,
-    it returns the next 100 special days.
-    
-    Permissions:
-        - Requires 'read:schedules' scope
-        
-    Args:
-        skip: Number of records to skip (for pagination)
-        limit: Maximum number of records to return
-        db: Database session dependency
-        user: Authenticated user with appropriate scope
-        
-    Returns:
-        List[GymSpecialHours]: A list of upcoming special days with their modified hours
+    Obtiene la lista de días especiales.
     """
-    return gym_special_hours_service.get_upcoming_special_days(db, limit=limit)
+    # Obtener el ID del gimnasio
+    gym_id = current_gym.id
+    
+    if upcoming_only:
+        return schedule.gym_special_hours_service.get_upcoming_special_days(
+            db=db, limit=limit, gym_id=gym_id
+        )
+    else:
+        # TODO: Implementar endpoint para obtener todos los días especiales con paginación
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail="Obtener todos los días especiales aún no está implementado"
+        )
 
 
-@router.get("/special-days/{special_day_id}", response_model=GymSpecialHours)
-async def get_special_day(
-    special_day_id: int = Path(..., description="ID of the special day"),
+@router.get("/{special_day_id}", response_model=GymSpecialHours)
+def get_special_day(
+    *,
     db: Session = Depends(get_db),
-    user: Auth0User = Security(auth.get_user, scopes=["read:schedules"])
+    special_day_id: int = Path(..., description="ID del día especial"),
+    current_user: Auth0User = Depends(get_current_user),
+    current_gym: Gym = Depends(verify_gym_access)
 ) -> Any:
     """
-    Get details for a specific special day by ID.
-    
-    This endpoint retrieves the complete information for a particular special day,
-    including its date, modified operating hours, and description of why the
-    schedule is different from normal.
-    
-    Permissions:
-        - Requires 'read:schedules' scope
-        
-    Args:
-        special_day_id: The unique ID of the special day
-        db: Database session dependency
-        user: Authenticated user with appropriate scope
-        
-    Returns:
-        GymSpecialHours: Details of the requested special day
-        
-    Raises:
-        HTTPException: 404 error if the special day does not exist
+    Obtiene un día especial por ID.
     """
-    special_day = gym_special_hours_repository.get(db, id=special_day_id)
+    special_day = schedule.gym_special_hours_service.get_special_hours(
+        db=db, special_day_id=special_day_id
+    )
     if not special_day:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Special day not found"
+            detail="Día especial no encontrado"
         )
+    
+    # Verificar que el usuario tiene acceso al gimnasio
+    gym_id = current_gym.id
+    if special_day.gym_id != gym_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="No tiene acceso a este día especial"
+        )
+    
     return special_day
 
 
-@router.post("/special-days", response_model=GymSpecialHours)
-async def create_special_day(
-    special_day_data: GymSpecialHoursCreate = Body(...),
+@router.get("/date/{date}", response_model=GymSpecialHours)
+def get_special_day_by_date(
+    *,
     db: Session = Depends(get_db),
-    user: Auth0User = Security(auth.get_user, scopes=["update:schedules"])
+    date: date = Path(..., description="Fecha (YYYY-MM-DD)"),
+    current_user: Auth0User = Depends(get_current_user),
+    current_gym: Gym = Depends(verify_gym_access)
 ) -> Any:
     """
-    Create a new special day with modified operating hours.
-    
-    This endpoint allows administrators to define dates with non-standard
-    operating hours, such as holidays, early closings, or special events.
-    The system automatically tracks which admin created each special day.
-    
-    Permissions:
-        - Requires 'update:schedules' scope (admin only)
-        
-    Args:
-        special_day_data: The special day details (date, hours, description)
-        db: Database session dependency
-        user: Authenticated admin user
-        
-    Returns:
-        GymSpecialHours: The newly created special day record
+    Obtiene el horario especial para una fecha específica.
     """
-    # Get current user ID to record as creator
-    auth0_id = user.id
-    db_user = user_service.get_user_by_auth0_id(db, auth0_id=auth0_id)
+    # Obtener el ID del gimnasio
+    gym_id = current_gym.id
     
-    special_day_dict = special_day_data.model_dump()
-    if db_user:
-        special_day_dict["created_by"] = db_user.id
+    special_day = schedule.gym_special_hours_service.get_special_hours_by_date(
+        db=db, date_value=date, gym_id=gym_id
+    )
     
-    return gym_special_hours_service.create_special_day(
-        db, special_hours_data=GymSpecialHoursCreate(**special_day_dict)
+    if not special_day:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No hay horario especial para la fecha {date}"
+        )
+    
+    return special_day
+
+
+@router.post("/", response_model=GymSpecialHours, status_code=status.HTTP_201_CREATED)
+def create_special_day(
+    *,
+    db: Session = Depends(get_db),
+    special_day_in: GymSpecialHoursCreate,
+    overwrite: bool = Query(False, description="Si es True, sobrescribe el horario especial existente para esta fecha"),
+    current_user: Auth0User = Depends(get_current_user),
+    current_gym: Gym = Depends(verify_gym_access)
+) -> Any:
+    """
+    Crea un nuevo horario especial.
+    El tiempo debe ingresarse en formato HH:MM.
+    El gym_id se obtiene automáticamente del header.
+    
+    Se puede usar el parámetro 'overwrite=true' para sobrescribir un horario especial existente para la misma fecha.
+    """
+    # Verificar si el usuario es admin o super_admin
+    local_user = db.query(User).filter(User.auth0_id == current_user.id).first()
+    if not local_user or (local_user.role != UserRole.ADMIN and local_user.role != UserRole.SUPER_ADMIN):
+        # Verificar si tiene rol de ADMIN en el gimnasio
+        user_gym = db.query(UserGym).filter(
+            UserGym.user_id == local_user.id,
+            UserGym.gym_id == current_gym.id,
+            UserGym.role.in_([GymRoleType.ADMIN, GymRoleType.OWNER])
+        ).first()
+        
+        if not user_gym:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Se requiere rol de administrador para esta acción"
+            )
+    
+    # Obtener el ID del gimnasio desde el header a través de current_gym
+    gym_id = current_gym.id
+    
+    # Verificar si ya existe un horario especial para esta fecha
+    existing = schedule.gym_special_hours_service.get_special_hours_by_date(
+        db=db, date_value=special_day_in.date, gym_id=gym_id
+    )
+    
+    # Crear una copia de los datos de entrada y añadir el gym_id del header
+    obj_in_data = special_day_in.model_dump()
+    
+    # Asignar el ID del gimnasio del header
+    obj_in_data["gym_id"] = gym_id
+    
+    # Asignar el ID del usuario que crea
+    obj_in_data["created_by"] = getattr(local_user, "id", None)
+    
+    # Formatear tiempos si están presentes y no es día cerrado
+    if not obj_in_data.get("is_closed", False):
+        # Asegurarse de que los tiempos sean correctos
+        if "open_time" not in obj_in_data or obj_in_data["open_time"] is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Se requiere hora de apertura cuando el gimnasio no está cerrado"
+            )
+        if "close_time" not in obj_in_data or obj_in_data["close_time"] is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Se requiere hora de cierre cuando el gimnasio no está cerrado"
+            )
+    
+    try:
+        # Si ya existe un horario especial para esta fecha y se permite sobrescribir
+        if existing and overwrite:
+            # Actualizar el horario especial existente
+            update_data = GymSpecialHoursUpdate(
+                open_time=obj_in_data.get("open_time"),
+                close_time=obj_in_data.get("close_time"),
+                is_closed=obj_in_data.get("is_closed"),
+                description=obj_in_data.get("description")
+            )
+            return schedule.gym_special_hours_service.update_special_day(
+                db=db, special_day_id=existing.id, special_hours_data=update_data
+            )
+        # Si ya existe pero no se permite sobrescribir, devolver error
+        elif existing:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Ya existe un horario especial para la fecha {special_day_in.date}. Use overwrite=true para sobrescribirlo."
+            )
+        # Si no existe, crear uno nuevo
+        else:
+            # Crear objeto especial con todos los datos validados, incluyendo gym_id
+            special_hours_data = GymSpecialHoursCreate(
+                date=special_day_in.date,
+                open_time=obj_in_data.get("open_time"),
+                close_time=obj_in_data.get("close_time"),
+                is_closed=obj_in_data.get("is_closed", False),
+                description=obj_in_data.get("description")
+            )
+            # Se agrega el gym_id directamente al crear el objeto en el servicio
+            return schedule.gym_special_hours_service.create_special_day(
+                db=db, 
+                special_hours_data=special_hours_data,
+                gym_id=gym_id
+            )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+
+
+@router.put("/{special_day_id}", response_model=GymSpecialHours)
+def update_special_day(
+    *,
+    db: Session = Depends(get_db),
+    special_day_id: int = Path(..., description="ID del día especial"),
+    special_day_in: GymSpecialHoursUpdate,
+    current_user: Auth0User = Depends(get_current_user),
+    current_gym: Gym = Depends(verify_gym_access)
+) -> Any:
+    """
+    Actualiza un horario especial existente.
+    
+    El tiempo debe ingresarse en formato HH:MM.
+    """
+    # Verificar si el usuario es admin o super_admin
+    local_user = db.query(User).filter(User.auth0_id == current_user.id).first()
+    if not local_user or (local_user.role != UserRole.ADMIN and local_user.role != UserRole.SUPER_ADMIN):
+        # Verificar si tiene rol de ADMIN en el gimnasio
+        user_gym = db.query(UserGym).filter(
+            UserGym.user_id == local_user.id,
+            UserGym.gym_id == current_gym.id,
+            UserGym.role.in_([GymRoleType.ADMIN, GymRoleType.OWNER])
+        ).first()
+        
+        if not user_gym:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Se requiere rol de administrador para esta acción"
+            )
+    
+    # Verificar que el día especial existe y pertenece al gimnasio del usuario
+    special_day = schedule.gym_special_hours_service.get_special_hours(
+        db=db, special_day_id=special_day_id
+    )
+    if not special_day:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Día especial no encontrado"
+        )
+    
+    # Verificar acceso al gimnasio
+    gym_id = current_gym.id
+    if special_day.gym_id != gym_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="No tiene acceso a este día especial"
+        )
+    
+    return schedule.gym_special_hours_service.update_special_day(
+        db=db, special_day_id=special_day_id, special_hours_data=special_day_in
     )
 
 
-@router.put("/special-days/{special_day_id}", response_model=GymSpecialHours)
-async def update_special_day(
-    special_day_id: int = Path(..., description="ID of the special day"),
-    special_day_data: GymSpecialHoursUpdate = Body(...),
+@router.put("/date/{date}", response_model=GymSpecialHours)
+def update_special_day_by_date(
+    *,
     db: Session = Depends(get_db),
-    user: Auth0User = Security(auth.get_user, scopes=["update:schedules"])
+    date: date = Path(..., description="Fecha (YYYY-MM-DD)"),
+    special_day_in: GymSpecialHoursUpdate,
+    current_user: Auth0User = Depends(get_current_user),
+    current_gym: Gym = Depends(verify_gym_access)
 ) -> Any:
     """
-    Update an existing special day.
+    Actualiza un horario especial existente buscándolo por fecha.
     
-    This endpoint allows administrators to modify the details of a previously
-    created special day, such as changing the operating hours or updating
-    the description. The system preserves the original creator information.
-    
-    Permissions:
-        - Requires 'update:schedules' scope (admin only)
-        
-    Args:
-        special_day_id: The unique ID of the special day to update
-        special_day_data: The updated special day details
-        db: Database session dependency
-        user: Authenticated admin user
-        
-    Returns:
-        GymSpecialHours: The updated special day record
-        
-    Raises:
-        HTTPException: 404 error if the special day does not exist (raised by service)
+    El tiempo debe ingresarse en formato HH:MM.
+    Si no existe un horario especial para la fecha indicada, se devuelve un error 404.
     """
-    return gym_special_hours_service.update_special_day(
-        db, special_day_id=special_day_id, special_hours_data=special_day_data
+    # Verificar si el usuario es admin o super_admin
+    local_user = db.query(User).filter(User.auth0_id == current_user.id).first()
+    if not local_user or (local_user.role != UserRole.ADMIN and local_user.role != UserRole.SUPER_ADMIN):
+        # Verificar si tiene rol de ADMIN en el gimnasio
+        user_gym = db.query(UserGym).filter(
+            UserGym.user_id == local_user.id,
+            UserGym.gym_id == current_gym.id,
+            UserGym.role.in_([GymRoleType.ADMIN, GymRoleType.OWNER])
+        ).first()
+        
+        if not user_gym:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Se requiere rol de administrador para esta acción"
+            )
+    
+    # Obtener el ID del gimnasio
+    gym_id = current_gym.id
+    
+    # Buscar el día especial por fecha
+    special_day = schedule.gym_special_hours_service.get_special_hours_by_date(
+        db=db, date_value=date, gym_id=gym_id
+    )
+    
+    if not special_day:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No hay horario especial para la fecha {date}"
+        )
+    
+    # Actualizar el día especial
+    return schedule.gym_special_hours_service.update_special_day(
+        db=db, special_day_id=special_day.id, special_hours_data=special_day_in
     )
 
 
-@router.delete("/special-days/{special_day_id}", response_model=GymSpecialHours)
-async def delete_special_day(
-    special_day_id: int = Path(..., description="ID of the special day"),
+@router.delete("/{special_day_id}", response_model=GymSpecialHours)
+def delete_special_day(
+    *,
     db: Session = Depends(get_db),
-    user: Auth0User = Security(auth.get_user, scopes=["update:schedules"])
+    special_day_id: int = Path(..., description="ID del día especial"),
+    current_user: Auth0User = Depends(get_current_user),
+    current_gym: Gym = Depends(verify_gym_access)
 ) -> Any:
     """
-    Delete a special day.
-    
-    This endpoint allows administrators to remove a special day from the system.
-    This is useful when plans change or a special schedule is no longer needed.
-    The operation returns the deleted record for confirmation purposes.
-    
-    Permissions:
-        - Requires 'update:schedules' scope (admin only)
-        
-    Args:
-        special_day_id: The unique ID of the special day to delete
-        db: Database session dependency
-        user: Authenticated admin user
-        
-    Returns:
-        GymSpecialHours: The deleted special day record
-        
-    Raises:
-        HTTPException: 404 error if the special day does not exist (raised by service)
+    Elimina un horario especial.
     """
-    return gym_special_hours_service.delete_special_day(db, special_day_id=special_day_id) 
+    # Verificar si el usuario es admin o super_admin
+    local_user = db.query(User).filter(User.auth0_id == current_user.id).first()
+    if not local_user or (local_user.role != UserRole.ADMIN and local_user.role != UserRole.SUPER_ADMIN):
+        # Verificar si tiene rol de ADMIN en el gimnasio
+        user_gym = db.query(UserGym).filter(
+            UserGym.user_id == local_user.id,
+            UserGym.gym_id == current_gym.id,
+            UserGym.role.in_([GymRoleType.ADMIN, GymRoleType.OWNER])
+        ).first()
+        
+        if not user_gym:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Se requiere rol de administrador para esta acción"
+            )
+    
+    # Verificar que el día especial existe y pertenece al gimnasio del usuario
+    special_day = schedule.gym_special_hours_service.get_special_hours(
+        db=db, special_day_id=special_day_id
+    )
+    if not special_day:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Día especial no encontrado"
+        )
+    
+    # Verificar acceso al gimnasio
+    gym_id = current_gym.id
+    if special_day.gym_id != gym_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="No tiene acceso a este día especial"
+        )
+    
+    return schedule.gym_special_hours_service.delete_special_day(
+        db=db, special_day_id=special_day_id
+    ) 

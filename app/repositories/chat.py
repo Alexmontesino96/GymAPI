@@ -27,7 +27,7 @@ class ChatRepository:
         db.commit()
         db.refresh(db_room)
         
-        # Añadir miembros
+        # Añadir miembros usando IDs internos
         for member_id in room_data.member_ids:
             db_member = ChatMember(
                 room_id=db_room.id,
@@ -46,8 +46,8 @@ class ChatRepository:
         """Obtiene una sala por su ID de Stream"""
         return db.query(ChatRoom).filter(ChatRoom.stream_channel_id == stream_channel_id).first()
     
-    def get_direct_chat(self, db: Session, *, user1_id: str, user2_id: str) -> Optional[ChatRoom]:
-        """Obtiene un chat directo entre dos usuarios"""
+    def get_direct_chat(self, db: Session, *, user1_id: int, user2_id: int) -> Optional[ChatRoom]:
+        """Obtiene un chat directo entre dos usuarios usando sus IDs internos"""
         # Buscar habitaciones donde ambos usuarios sean miembros
         rooms = db.query(ChatRoom).join(ChatMember).filter(
             ChatRoom.is_direct == True,
@@ -62,8 +62,8 @@ class ChatRepository:
         
         return None
     
-    def get_user_rooms(self, db: Session, *, user_id: str) -> List[ChatRoom]:
-        """Obtiene todas las salas de un usuario"""
+    def get_user_rooms(self, db: Session, *, user_id: int) -> List[ChatRoom]:
+        """Obtiene todas las salas de un usuario usando su ID interno"""
         return db.query(ChatRoom)\
                 .join(ChatMember)\
                 .filter(ChatMember.user_id == user_id)\
@@ -98,9 +98,9 @@ class ChatRepository:
         db: Session,
         *,
         room_id: int,
-        user_id: str
+        user_id: int  # Ahora usando ID interno
     ) -> ChatMember:
-        """Añade un miembro a una sala de chat"""
+        """Añade un miembro a una sala de chat usando su ID interno"""
         # Verificar si ya es miembro
         existing = db.query(ChatMember).filter(
             ChatMember.room_id == room_id,
@@ -125,9 +125,9 @@ class ChatRepository:
         db: Session,
         *,
         room_id: int,
-        user_id: str
+        user_id: int  # Ahora usando ID interno
     ) -> bool:
-        """Elimina un miembro de una sala de chat"""
+        """Elimina un miembro de una sala de chat usando su ID interno"""
         result = db.query(ChatMember).filter(
             ChatMember.room_id == room_id,
             ChatMember.user_id == user_id

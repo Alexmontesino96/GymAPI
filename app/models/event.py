@@ -95,9 +95,6 @@ class EventParticipation(Base):
     # Asistencia al evento
     attended = Column(Boolean, default=False)
     
-    # Notas adicionales (por ejemplo, razón de cancelación)
-    notes = Column(Text, nullable=True)
-    
     registered_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     

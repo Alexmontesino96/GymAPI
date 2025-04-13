@@ -1,5 +1,6 @@
 from fastapi import Header, HTTPException, Depends, Request, status, Query
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import SQLAlchemyError
 from typing import Optional, List, Dict, Tuple
 from functools import wraps
 import time
@@ -7,7 +8,7 @@ import time
 from app.db.session import get_db
 from app.models.gym import Gym
 from app.models.user_gym import UserGym, GymRoleType
-from app.models.user import User
+from app.models.user import User, UserRole
 from app.core.auth0_fastapi import Auth0User, get_current_user
 from app.repositories.gym import gym_repository
 
@@ -134,189 +135,402 @@ class TenantMiddleware:
     ) -> Gym:
         """
         Verifica que el usuario tiene el rol requerido en el gimnasio.
+        Lanza HTTPException 403 si el rol no coincide.
+        Lanza HTTPException 404 si el usuario no se encuentra.
+        Los SUPER_ADMIN siempre tienen acceso.
         """
         try:
             user = db.query(User).filter_by(auth0_id=current_user.id).first()
             if not user:
-                print(f"Usuario {current_user.id} no encontrado - permitiendo acceso temporal")
+                # Usuario de Auth0 existe pero no en la BD local
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND, 
+                    detail="Usuario no encontrado en la base de datos local"
+                )
+            
+            # Super Admin siempre tiene acceso
+            if user.role == UserRole.SUPER_ADMIN:
                 return gym
                 
+            # Verificar si el usuario tiene el rol específico en este gimnasio
             user_gym = db.query(UserGym).filter(
                 UserGym.user_id == user.id,
                 UserGym.gym_id == gym.id
             ).first()
             
             if not user_gym or user_gym.role.value not in required_roles:
-                print(f"Usuario {user.id} no tiene el rol requerido - permitiendo acceso temporal")
-                return gym
+                # Usuario encontrado, pertenece al gym pero no tiene el rol
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN, 
+                    detail=f"El usuario no tiene el rol requerido ({', '.join(required_roles)}) en este gimnasio"
+                )
                 
+            # Si todo está bien, devolver el gimnasio
             return gym
+        except HTTPException as http_exc: # Relanzar excepciones HTTP específicas
+            raise http_exc
         except Exception as e:
-            print(f"Error verificando rol en gimnasio: {e}")
-            # Permitir acceso temporal
-            return gym
+            # Error inesperado durante la verificación
+            print(f"Error inesperado verificando rol en gimnasio: {e}") # Mantener log para depuración
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error interno al verificar el rol del usuario: {e}"
+            )
+
+async def get_tenant_id(
+    x_gym_id: Optional[str] = Header(None, alias="X-Gym-ID")
+) -> Optional[int]:
+    """
+    Obtiene el ID del tenant (gimnasio) únicamente del header X-Gym-ID.
+    """
+    if x_gym_id:
+        try:
+            tenant_id_int = int(x_gym_id)
+            # Opcional: Añadir validación extra si los IDs tienen un rango esperado
+            # if tenant_id_int <= 0:
+            #     return None 
+            return tenant_id_int
+        except (ValueError, TypeError):
+            # Si el header no es un entero válido, se ignora y devuelve None
+            # Podríamos lanzar un 400 Bad Request aquí si preferimos ser más estrictos
+            # raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid X-Gym-ID header format")
+            return None
+        
+    # Si no se proporciona el header o no es válido, devolver None
+    return None
 
 async def get_current_gym(
-    x_tenant_id: Optional[int] = Header(None, alias="x-tenant-id", description="ID del gimnasio actual (requerido)"),
-    db: Session = Depends(get_db)
-) -> Gym:
+    db: Session = Depends(get_db),
+    tenant_id: Optional[int] = Depends(get_tenant_id)
+) -> Optional[Gym]:
     """
-    Determina el gimnasio actual basado en el header X-Tenant-ID.
-    Devuelve el objeto Gym completo, no solo el ID.
+    Obtiene el gimnasio actual basado en el tenant ID.
     
     Args:
-        x_tenant_id: ID del gimnasio en el header (requerido)
         db: Sesión de base de datos
+        tenant_id: ID del tenant (gimnasio)
         
     Returns:
-        Gym: El objeto gimnasio completo
+        Optional[Gym]: El gimnasio solicitado o None si no se proporciona tenant_id
         
     Raises:
-        HTTPException: Si no se proporciona un ID de gimnasio válido
+        HTTPException: Si el gimnasio solicitado no existe
     """
-    if not x_tenant_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Header 'x-tenant-id' es obligatorio. Por favor especifica el ID del gimnasio."
-        )
-    
-    # Obtener el objeto gimnasio completo usando el método correcto
-    gym = gym_repository.get(db, id=x_tenant_id)
+    if not tenant_id:
+        return None
+        
+    gym = db.query(Gym).filter(Gym.id == tenant_id).first()
     
     if not gym:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Gym with ID {x_tenant_id} not found"
+            detail=f"El gimnasio con ID {tenant_id} no existe"
         )
-    
+        
     return gym
 
 async def verify_gym_access(
-    gym: Gym = Depends(get_current_gym),
+    db: Session = Depends(get_db),
+    current_gym: Gym = Depends(get_current_gym),
+    current_user: Auth0User = Depends(get_current_user)
+) -> Gym:
+    """
+    Verifica que el usuario actual tenga acceso al gimnasio solicitado.
+    
+    Esta función no solo verifica el acceso, sino que también devuelve
+    el gimnasio para que pueda ser utilizado en los endpoints.
+    
+    Args:
+        db: Sesión de base de datos
+        current_gym: Gimnasio actual
+        current_user: Usuario autenticado
+        
+    Returns:
+        Gym: El gimnasio al que se está accediendo
+    
+    Raises:
+        HTTPException: Si no se proporciona tenant_id o el usuario no tiene acceso
+    """
+    if not current_gym:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Se requiere especificar el ID del gimnasio (tenant)"
+        )
+    
+    # Obtener ID de Auth0 del usuario actual
+    auth0_id = current_user.id
+    
+    if not auth0_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Token no contiene información de usuario"
+        )
+    
+    # Buscar el usuario en nuestra base de datos
+    user = db.query(User).filter(User.auth0_id == auth0_id).first()
+    
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Usuario no encontrado en la base de datos local"
+        )
+    
+    # Los super administradores tienen acceso a todos los gimnasios
+    if user.role == UserRole.SUPER_ADMIN:
+        return current_gym
+    
+    # Verificar si el usuario pertenece al gimnasio
+    user_gym = db.query(UserGym).filter(
+        UserGym.user_id == user.id,
+        UserGym.gym_id == current_gym.id
+    ).first()
+    
+    if not user_gym:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"No tienes acceso al gimnasio {current_gym.name}"
+        )
+    
+    return current_gym
+
+async def verify_gym_admin_access(
+    db: Session = Depends(get_db),
+    current_gym: Gym = Depends(get_current_gym),
+    current_user: Auth0User = Depends(get_current_user)
+) -> Gym:
+    """
+    Verifica que el usuario actual tenga acceso de administrador al gimnasio.
+    
+    Args:
+        db: Sesión de base de datos
+        current_gym: Gimnasio actual
+        current_user: Usuario autenticado
+        
+    Returns:
+        Gym: El gimnasio al que se está accediendo como administrador
+
+    Raises:
+        HTTPException: Si el usuario no tiene permisos de administrador
+    """
+    if not current_gym:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Se requiere especificar el ID del gimnasio (tenant)"
+        )
+    
+    # Obtener ID de Auth0 del usuario actual
+    auth0_id = current_user.id
+    
+    if not auth0_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Token no contiene información de usuario"
+        )
+    
+    # Buscar el usuario en nuestra base de datos
+    user = db.query(User).filter(User.auth0_id == auth0_id).first()
+    
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Usuario no encontrado en la base de datos local"
+        )
+    
+    # Los super administradores tienen acceso administrativo a todos los gimnasios
+    if user.role == UserRole.SUPER_ADMIN:
+        return current_gym
+            
+    # Verificar si el usuario es admin del gimnasio
+    user_gym = db.query(UserGym).filter(
+        UserGym.user_id == user.id,
+        UserGym.gym_id == current_gym.id,
+        UserGym.role.in_([GymRoleType.ADMIN, GymRoleType.OWNER])
+    ).first()
+    
+    if not user_gym:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"No tienes permisos de administrador en el gimnasio {current_gym.name}"
+        )
+    
+    return current_gym
+
+async def verify_gym_trainer_access(
+    db: Session = Depends(get_db),
+    current_gym: Gym = Depends(get_current_gym),
+    current_user: Auth0User = Depends(get_current_user)
+) -> Gym:
+    """
+    Verifica que el usuario actual tenga acceso de entrenador (o superior) al gimnasio.
+    
+    Args:
+        db: Sesión de base de datos
+        current_gym: Gimnasio actual
+        current_user: Usuario autenticado
+        
+    Returns:
+        Gym: El gimnasio al que se está accediendo como entrenador
+        
+    Raises:
+        HTTPException: Si el usuario no tiene permisos de entrenador
+    """
+    if not current_gym:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Se requiere especificar el ID del gimnasio (tenant)"
+        )
+    
+    # Obtener ID de Auth0 del usuario actual
+    auth0_id = current_user.id
+    
+    if not auth0_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Token no contiene información de usuario"
+        )
+    
+    # Buscar el usuario en nuestra base de datos
+    user = db.query(User).filter(User.auth0_id == auth0_id).first()
+    
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Usuario no encontrado en la base de datos local"
+        )
+    
+    # Los super administradores tienen acceso de entrenador a todos los gimnasios
+    if user.role == UserRole.SUPER_ADMIN:
+        return current_gym
+    
+    # Verificar si el usuario es entrenador, admin u owner del gimnasio
+    user_gym = db.query(UserGym).filter(
+        UserGym.user_id == user.id,
+        UserGym.gym_id == current_gym.id,
+        UserGym.role.in_([GymRoleType.TRAINER, GymRoleType.ADMIN, GymRoleType.OWNER])
+    ).first()
+    
+    if not user_gym:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"No tienes permisos de entrenador en el gimnasio {current_gym.name}"
+        )
+    
+    return current_gym
+
+async def verify_gym_ownership(
+    db: Session = Depends(get_db),
+    current_gym: Gym = Depends(get_current_gym),
+    current_user: Auth0User = Depends(get_current_user)
+) -> Gym:
+    """
+    Verifica que el usuario actual sea propietario del gimnasio.
+    
+    Args:
+        db: Sesión de base de datos
+        current_gym: Gimnasio actual
+        current_user: Usuario autenticado
+        
+    Returns:
+        Gym: El gimnasio del que el usuario es propietario
+    
+    Raises:
+        HTTPException: Si el usuario no es propietario del gimnasio
+    """
+    if not current_gym:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Se requiere especificar el ID del gimnasio (tenant)"
+        )
+    
+    # Obtener ID de Auth0 del usuario actual
+    auth0_id = current_user.id
+    
+    if not auth0_id:
+             raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Token no contiene información de usuario"
+            )
+
+    # Buscar el usuario en nuestra base de datos
+    user = db.query(User).filter(User.auth0_id == auth0_id).first()
+        
+    if not user:
+            raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Usuario no encontrado en la base de datos local"
+            )
+        
+    # Los super administradores tienen privilegios de propietario en todos los gimnasios
+    if user.role == UserRole.SUPER_ADMIN:
+        return current_gym
+    
+    # Verificar si el usuario es propietario del gimnasio
+    user_gym = db.query(UserGym).filter(
+        UserGym.user_id == user.id,
+        UserGym.gym_id == current_gym.id,
+        UserGym.role == GymRoleType.OWNER
+    ).first()
+    
+    if not user_gym:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"No eres propietario del gimnasio {current_gym.name}"
+        )
+    
+    return current_gym
+
+# --- Dependencias Específicas por Rol (para usar directamente en endpoints) ---
+
+async def verify_admin_role(
+    gym: Gym = Depends(verify_gym_access),
     current_user: Auth0User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ) -> Gym:
     """
-    Verifica el acceso al gimnasio actual.
-    Comprueba que el gimnasio exista y que el usuario tenga acceso a él.
-    No verifica roles específicos, solo la pertenencia al gimnasio.
-    
-    Args:
-        gym: Objeto gimnasio obtenido de get_current_gym
-        current_user: Usuario autenticado actual
-        db: Sesión de base de datos
-        
-    Returns:
-        Gym: El mismo objeto gimnasio si el acceso es válido
-        
-    Raises:
-        HTTPException: Si el acceso al gimnasio no es válido
+    Dependencia FastAPI: Verifica rol ADMIN o OWNER en el gimnasio.
     """
-    try:
-        # Buscar el usuario en la base de datos local
-        user = db.query(User).filter_by(auth0_id=current_user.id).first()
-        
-        # Si el usuario no existe en la base de datos local, permitir acceso temporal
-        # Esto debe modificarse en producción para ser más restrictivo
-        if not user:
-            print(f"ADVERTENCIA: Usuario {current_user.id} no encontrado en la base de datos local - permitiendo acceso temporal")
-            return gym
-            
-        # Verificar si el usuario pertenece al gimnasio
-        user_gym = db.query(UserGym).filter(
-            UserGym.user_id == user.id,
-            UserGym.gym_id == gym.id
-        ).first()
-        
-        # Si el usuario no tiene una relación con este gimnasio, denegar acceso
-        if not user_gym:
-            # Comentado temporalmente para facilitar desarrollo, pero en producción debe descomentarse
-            # raise HTTPException(
-            #     status_code=status.HTTP_403_FORBIDDEN,
-            #     detail=f"Usuario no tiene acceso al gimnasio {gym.id}"
-            # )
-            print(f"ADVERTENCIA: Usuario {user.id} no tiene acceso al gimnasio {gym.id} - permitiendo acceso temporal")
-            return gym
-        
-        # Almacenar el rol del usuario en el gimnasio para uso futuro
-        # Esto será útil para verificaciones de permisos más específicas
-        gym.user_role = user_gym.role.value
-            
-        return gym
-    except Exception as e:
-        print(f"Error verificando acceso al gimnasio: {e}")
-        # Permitir acceso temporal durante desarrollo
-        # En producción, esto debería ser más restrictivo
-        return gym
+    return TenantMiddleware.verify_gym_role(
+        required_roles=[GymRoleType.ADMIN, GymRoleType.OWNER],
+        gym=gym,
+        current_user=current_user,
+        db=db
+    )
 
-async def verify_gym_role(
-    required_roles: List[str],
+async def verify_trainer_role(
     gym: Gym = Depends(verify_gym_access),
     current_user: Auth0User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-    strict_mode: bool = False  # Cambiar a True en producción
+    db: Session = Depends(get_db)
 ) -> Gym:
     """
-    Verifica que el usuario tiene uno de los roles requeridos en el gimnasio.
-    
-    Args:
-        required_roles: Lista de roles permitidos para esta operación
-        gym: Objeto gimnasio verificado por verify_gym_access
-        current_user: Usuario autenticado actual
-        db: Sesión de base de datos
-        strict_mode: Si es True, deniega acceso cuando no se cumple con los requisitos
-        
-    Returns:
-        Gym: El mismo objeto gimnasio si el usuario tiene el rol adecuado
-        
-    Raises:
-        HTTPException: Si el usuario no tiene el rol requerido y strict_mode es True
+    Dependencia FastAPI: Verifica rol TRAINER, ADMIN o OWNER en el gimnasio.
     """
-    try:
-        user = db.query(User).filter_by(auth0_id=current_user.id).first()
-        if not user:
-            if strict_mode:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Usuario no encontrado en la base de datos local"
-                )
-            print(f"ADVERTENCIA: Usuario {current_user.id} no encontrado en la base de datos local - permitiendo acceso temporal")
-            return gym
-            
-        user_gym = db.query(UserGym).filter(
-            UserGym.user_id == user.id,
-            UserGym.gym_id == gym.id
-        ).first()
-        
-        if not user_gym or user_gym.role.value not in required_roles:
-            if strict_mode:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail=f"Usuario no tiene el rol requerido para esta operación en el gimnasio {gym.id}"
-                )
-            print(f"ADVERTENCIA: Usuario {user.id} no tiene el rol requerido ({required_roles}) en gimnasio {gym.id} - permitiendo acceso temporal")
-            
-        # Guardar el rol en el objeto gym para referencia
-        if user_gym:
-            gym.user_role = user_gym.role.value
-        
-        return gym
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"Error verificando rol en gimnasio: {e}")
-        if strict_mode:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Error interno al verificar el rol del usuario"
-            )
-        # Permitir acceso temporal durante desarrollo
-        return gym
+    return TenantMiddleware.verify_gym_role(
+        required_roles=[GymRoleType.TRAINER, GymRoleType.ADMIN, GymRoleType.OWNER],
+        gym=gym,
+        current_user=current_user,
+        db=db
+    )
 
-# Decoradores funcionales para requerir roles específicos
+async def verify_member_role(
+    gym: Gym = Depends(verify_gym_access),
+    current_user: Auth0User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+) -> Gym:
+    """
+    Dependencia FastAPI: Verifica rol MEMBER, TRAINER, ADMIN o OWNER en el gimnasio.
+    """
+    return TenantMiddleware.verify_gym_role(
+        required_roles=[GymRoleType.MEMBER, GymRoleType.TRAINER, GymRoleType.ADMIN, GymRoleType.OWNER],
+        gym=gym,
+        current_user=current_user,
+        db=db
+    )
+
+# Decoradores funcionales (Considerar eliminar si no se usan)
 def require_gym_role(required_roles: List[str]):
     """
-    Decorador para verificar que el usuario tiene uno de los roles requeridos en el gimnasio.
+    [OBSOLETO?] Decorador para verificar que el usuario tiene uno de los roles requeridos en el gimnasio.
+    Prefiere usar las dependencias verify_admin_role, verify_trainer_role, etc.
     """
     def decorator(func):
         @wraps(func)
@@ -331,63 +545,14 @@ def require_gym_role(required_roles: List[str]):
                     detail="Dependencias faltantes para verificar rol de gimnasio"
                 )
                 
-            # Verificar rol (ahora no es asíncrona)
+            # Verificar rol usando la lógica del middleware obsoleto
+            # Esto podría tener la lógica insegura
             TenantMiddleware.verify_gym_role(required_roles, gym, current_user, db)
             
-            # Continuar con la función original
             return await func(*args, **kwargs)
         return wrapper
     return decorator
 
-# Funciones helper para roles comunes
+# Funciones helper (Considerar eliminar si no se usan)
 require_gym_admin = lambda: require_gym_role([GymRoleType.ADMIN, GymRoleType.OWNER])
-require_gym_trainer = lambda: require_gym_role([GymRoleType.TRAINER, GymRoleType.ADMIN, GymRoleType.OWNER])
-
-# Dependencias específicas para verificar roles en endpoints
-async def verify_admin_role(
-    gym: Gym = Depends(verify_gym_access),
-    current_user: Auth0User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-) -> Gym:
-    """
-    Verifica que el usuario tiene rol de Administrador o Propietario en el gimnasio.
-    Esta dependencia puede usarse directamente en los endpoints.
-    """
-    return await verify_gym_role(
-        required_roles=[GymRoleType.ADMIN, GymRoleType.OWNER],
-        gym=gym,
-        current_user=current_user,
-        db=db
-    )
-
-async def verify_trainer_role(
-    gym: Gym = Depends(verify_gym_access),
-    current_user: Auth0User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-) -> Gym:
-    """
-    Verifica que el usuario tiene rol de Entrenador, Administrador o Propietario en el gimnasio.
-    Esta dependencia puede usarse directamente en los endpoints.
-    """
-    return await verify_gym_role(
-        required_roles=[GymRoleType.TRAINER, GymRoleType.ADMIN, GymRoleType.OWNER],
-        gym=gym,
-        current_user=current_user,
-        db=db
-    )
-
-async def verify_member_role(
-    gym: Gym = Depends(verify_gym_access),
-    current_user: Auth0User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-) -> Gym:
-    """
-    Verifica que el usuario tiene al menos rol de Miembro en el gimnasio.
-    Esta dependencia puede usarse directamente en los endpoints.
-    """
-    return await verify_gym_role(
-        required_roles=[GymRoleType.MEMBER, GymRoleType.TRAINER, GymRoleType.ADMIN, GymRoleType.OWNER],
-        gym=gym,
-        current_user=current_user,
-        db=db
-    ) 
+require_gym_trainer = lambda: require_gym_role([GymRoleType.TRAINER, GymRoleType.ADMIN, GymRoleType.OWNER]) 

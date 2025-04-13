@@ -1,8 +1,9 @@
-from sqlalchemy import Column, Integer, String, Boolean, ForeignKey, Time, DateTime, Text, Enum, CheckConstraint
+from sqlalchemy import Column, Integer, String, Boolean, ForeignKey, Time, DateTime, Text, Enum, CheckConstraint, Date
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 import enum
 from datetime import time, datetime
+import sqlalchemy as sa
 
 from app.db.base_class import Base
 
@@ -54,9 +55,13 @@ class GymHours(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     day_of_week = Column(Integer, nullable=False)
-    open_time = Column(Time, nullable=False)
-    close_time = Column(Time, nullable=False)
+    open_time = Column(Time, nullable=True) # Permitir NULL si is_closed es True
+    close_time = Column(Time, nullable=True) # Permitir NULL si is_closed es True
     is_closed = Column(Boolean, default=False)
+    gym_id = Column(Integer, ForeignKey("gyms.id"), nullable=False)  # ID del gimnasio al que pertenecen estos horarios
+    
+    # Relación con gimnasio
+    gym = relationship("Gym")
     
     # Campos de auditoría
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -73,16 +78,25 @@ class GymSpecialHours(Base):
     __tablename__ = "gym_special_hours"
     
     id = Column(Integer, primary_key=True, index=True)
-    date = Column(DateTime, nullable=False, index=True)
+    date = Column(Date, nullable=False, index=True) 
     open_time = Column(Time, nullable=True)  # Null si está cerrado
     close_time = Column(Time, nullable=True)  # Null si está cerrado
     is_closed = Column(Boolean, default=False)
-    description = Column(String, nullable=True)  # Descripción del día especial
+    description = Column(String(255), nullable=True)  # Descripción (ej. Festivo, Evento X)
+    gym_id = Column(Integer, ForeignKey("gyms.id"), nullable=False, index=True)
+    
+    # Relación con gimnasio
+    gym = relationship("Gym")
     
     # Campos de auditoría
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     created_by = Column(Integer, ForeignKey("user.id"), nullable=True)
+    
+    # Añadir índice único compuesto
+    __table_args__ = (
+        sa.UniqueConstraint('gym_id', 'date', name='uq_gym_special_hours_gym_date'),
+    )
 
 
 class ClassCategoryCustom(Base):
@@ -121,10 +135,12 @@ class Class(Base):
     category_id = Column(Integer, ForeignKey("class_category_custom.id"), nullable=True)
     category_enum = Column(Enum(ClassCategory), nullable=True)  # Mantener por compatibilidad
     is_active = Column(Boolean, default=True)
+    gym_id = Column(Integer, ForeignKey("gyms.id"), nullable=False)  # Añadir campo gym_id
     
     # Relaciones
     sessions = relationship("ClassSession", back_populates="class_definition")
     custom_category = relationship("ClassCategoryCustom", back_populates="classes")
+    gym = relationship("Gym")  # Añadir relación con el gimnasio
     
     # Campos de auditoría
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -167,6 +183,7 @@ class ClassParticipation(Base):
     id = Column(Integer, primary_key=True, index=True)
     session_id = Column(Integer, ForeignKey("class_session.id"), nullable=False)
     member_id = Column(Integer, ForeignKey("user.id"), nullable=False)
+    gym_id = Column(Integer, ForeignKey("gyms.id"), nullable=False)  # ID del gimnasio para habilitar filtrado multi-tenant
     status = Column(Enum(ClassParticipationStatus), default=ClassParticipationStatus.REGISTERED)
     registration_time = Column(DateTime(timezone=True), server_default=func.now())
     attendance_time = Column(DateTime(timezone=True), nullable=True)  # Cuando se registró la asistencia
@@ -175,6 +192,7 @@ class ClassParticipation(Base):
     
     # Relaciones
     session = relationship("ClassSession", back_populates="participations")
+    gym = relationship("Gym")  # Relación con el gimnasio
     
     # Campos de auditoría
     created_at = Column(DateTime(timezone=True), server_default=func.now())

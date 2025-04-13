@@ -1,4 +1,5 @@
 import secrets
+import os
 from typing import Any, Dict, List, Optional, Union
 
 from pydantic import AnyHttpUrl, EmailStr, PostgresDsn, validator, field_validator
@@ -17,13 +18,13 @@ class Settings(BaseSettings):
     # Información del proyecto
     PROJECT_NAME: str = "GymAPI"
     PROJECT_DESCRIPTION: str = "API con FastAPI para gestión de gimnasios"
-    VERSION: str = "0.1.0"
+    VERSION: str = "0.2.0"
     
     # CORS
-    BACKEND_CORS_ORIGINS: List[str] = ["*"]
+    BACKEND_CORS_ORIGINS: List[AnyHttpUrl] = []
 
-    @field_validator("BACKEND_CORS_ORIGINS", mode="before")
-    def assemble_cors_origins(cls, v: Union[str, List[str]]) -> Union[List[str], str]:
+    @field_validator("BACKEND_CORS_ORIGINS", mode='before')
+    def assemble_cors_origins(cls, v: Union[str, List[str]]) -> List[str]:
         if isinstance(v, str) and not v.startswith("["):
             return [i.strip() for i in v.split(",")]
         elif isinstance(v, (list, str)):
@@ -67,15 +68,15 @@ class Settings(BaseSettings):
     FIRST_SUPERUSER_PASSWORD: str
 
     # Auth0 Configuration
-    AUTH0_DOMAIN: str
-    AUTH0_API_AUDIENCE: str
+    AUTH0_DOMAIN: str = os.getenv("AUTH0_DOMAIN", "dev-gd5crfe6qbqlu23p.us.auth0.com")
+    AUTH0_API_AUDIENCE: str = os.getenv("AUTH0_API_AUDIENCE", "https://gymapi")
     AUTH0_ALGORITHMS: List[str] = ["RS256"]
-    AUTH0_ISSUER: str
+    AUTH0_ISSUER: str = os.getenv("AUTH0_ISSUER", f"https://{AUTH0_DOMAIN}/")
     AUTH0_CLIENT_ID: str
     AUTH0_CLIENT_SECRET: str
     AUTH0_CALLBACK_URL: str
-    AUTH0_WEBHOOK_SECRET: str
-    ADMIN_SECRET_KEY: str
+    AUTH0_WEBHOOK_SECRET: str = os.getenv("AUTH0_WEBHOOK_SECRET", "")
+    ADMIN_SECRET_KEY: str = os.getenv("ADMIN_SECRET_KEY", "admin-secret-key")
 
     @field_validator("AUTH0_ISSUER", mode="before")
     def assemble_auth0_issuer(cls, v: str, info) -> str:
@@ -91,8 +92,8 @@ class Settings(BaseSettings):
     STREAM_API_SECRET: str
 
     # Configuración de OneSignal para notificaciones push
-    ONESIGNAL_APP_ID: str = "57c2285f-1a1a-4431-a5db-7ecd0bab4c5f"
-    ONESIGNAL_REST_API_KEY: str = "os_v2_app_k7bcqxy2djcddjo3p3gqxk2ml5yilwxkkezur7mhf2ofworqrxvejkvtmywal5lniukbix5ugvyqoka5adzapeuu5f5nxzfparez6lq"
+    ONESIGNAL_APP_ID: Optional[str] = None
+    ONESIGNAL_REST_API_KEY: Optional[str] = None
 
     # Lista de URLs de redirección permitidas
     AUTH0_ALLOWED_REDIRECT_URIS: List[str]
@@ -129,11 +130,12 @@ class Settings(BaseSettings):
                     return result
 
     # Configuración de Redis
-    REDIS_HOST: str = "localhost"
-    REDIS_PORT: int = 6379
-    REDIS_DB: int = 0
-    REDIS_PASSWORD: Optional[str] = None
-    REDIS_URL: Optional[str] = None
+    REDIS_HOST: str = os.getenv("REDIS_HOST", "redis")
+    REDIS_PORT: int = int(os.getenv("REDIS_PORT", "6379"))
+    REDIS_DB: int = int(os.getenv("REDIS_DB", "0"))
+    REDIS_USERNAME: Optional[str] = os.getenv("REDIS_USERNAME", None)
+    REDIS_PASSWORD: Optional[str] = os.getenv("REDIS_PASSWORD", None)
+    REDIS_URL: Optional[str] = os.getenv("REDIS_URL", None)
 
     @field_validator("REDIS_URL", mode="before")
     def assemble_redis_connection(cls, v: Optional[str], info) -> Any:
@@ -143,6 +145,23 @@ class Settings(BaseSettings):
         values = info.data
         password_part = f":{values.get('REDIS_PASSWORD')}@" if values.get('REDIS_PASSWORD') else ""
         return f"redis://{password_part}{values.get('REDIS_HOST', 'localhost')}:{values.get('REDIS_PORT', 6379)}/{values.get('REDIS_DB', 0)}"
+
+    # Auth0 Management API
+    AUTH0_MGMT_CLIENT_ID: str = os.getenv("AUTH0_MGMT_CLIENT_ID", "")
+    AUTH0_MGMT_CLIENT_SECRET: str = os.getenv("AUTH0_MGMT_CLIENT_SECRET", "")
+    AUTH0_MGMT_AUDIENCE: str = os.getenv("AUTH0_MGMT_AUDIENCE", f"https://{AUTH0_DOMAIN}/api/v2/")
+
+    # Storage configuration
+    S3_ACCESS_KEY_ID: str = os.getenv("S3_ACCESS_KEY_ID", "")
+    S3_SECRET_ACCESS_KEY: str = os.getenv("S3_SECRET_ACCESS_KEY", "")  # ¡Reemplazar con la clave real en producción!
+
+    # Notification config
+    FCM_PROJECT_ID: str = os.getenv("FCM_PROJECT_ID", "")
+    FCM_PRIVATE_KEY_ID: str = os.getenv("FCM_PRIVATE_KEY_ID", "")
+    FCM_PRIVATE_KEY: str = os.getenv("FCM_PRIVATE_KEY", "").replace("\\n", "\n")
+    FCM_CLIENT_EMAIL: str = os.getenv("FCM_CLIENT_EMAIL", "")
+    FCM_CLIENT_ID: str = os.getenv("FCM_CLIENT_ID", "")
+    FCM_CLIENT_CERT_URL: str = os.getenv("FCM_CLIENT_CERT_URL", "")
 
 
 settings = Settings() 

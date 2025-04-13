@@ -10,7 +10,7 @@ import os
 # Configuración de la prueba
 API_BASE_URL = "http://localhost:8080/api/v1"
 # Token con permisos correctos - usar variable de entorno o un token reciente
-AUTH_TOKEN = os.environ.get("TEST_AUTH_TOKEN", "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6InI2YXBIZVNOUEluaXpaeDlYN1NidyJ9.eyJlbWFpbCI6ImFsZXhtb250ZXNpbm85NkBpY2xvdWQuY29tIiwiaXNzIjoiaHR0cHM6Ly9kZXYtZ2Q1Y3JmZTZxYnFsdTIzcC51cy5hdXRoMC5jb20vIiwic3ViIjoiYXV0aDB8NjdkNWQ2NGQ2NGNjZjFjNTIyYTY5NTBiIiwiYXVkIjpbImh0dHBzOi8vZ3ltYXBpIiwiaHR0cHM6Ly9kZXYtZ2Q1Y3JmZTZxYnFsdTIzcC51cy5hdXRoMC5jb20vdXNlcmluZm8iXSwiaWF0IjoxNzQ0MDg4MDMwLCJleHAiOjE3NDQxNzQ0MzAsInNjb3BlIjoib3BlbmlkIHByb2ZpbGUgZW1haWwiLCJhenAiOiJPdUo2SUtFMGxKU2RhTUc2amFXMDRqZnB0c01SYnl2cCIsInBlcm1pc3Npb25zIjpbImFkbWluOmV2ZW50cyIsImFkbWluOmd5bXMiLCJhZG1pbjpyZWxhdGlvbnNoaXBzIiwiYWRtaW46dXNlcnMiLCJjcmVhdGU6Y2hhdF9yb29tcyIsImNyZWF0ZTpldmVudHMiLCJjcmVhdGU6cGFydGljaXBhdGlvbnMiLCJjcmVhdGU6cmVsYXRpb25zaGlwcyIsImNyZWF0ZTpzY2hlZHVsZXMiLCJkZWxldGU6ZXZlbnRzIiwiZGVsZXRlOm93bl9wYXJ0aWNpcGF0aW9ucyIsImRlbGV0ZTpyZWxhdGlvbnNoaXBzIiwiZGVsZXRlOnNjaGVkdWxlcyIsImRlbGV0ZTp1c2VycyIsIm1hbmFnZTpjaGF0X3Jvb21zIiwibWFuYWdlOmNsYXNzX3JlZ2lzdHJhdGlvbnMiLCJyZWFkX2V2ZW50cyIsInJlYWQ6Z3ltcyIsInJlYWQ6bWVtYmVycyIsInJlYWQ6b3duX2V2ZW50cyIsInJlYWQ6b3duX3BhcnRpY2lwYXRpb25zIiwicmVhZDpvd25fcmVsYXRpb25zaGlwcyIsInJlYWQ6b3duX3NjaGVkdWxlcyIsInJlYWQ6cGFydGljaXBhdGlvbnMiLCJyZWFkOnByb2ZpbGUiLCJyZWFkOnNjaGVkdWxlcyIsInJlYWQ6dXNlcnMiLCJyZWRhOmd5bV91c2VycyIsInJlZ2lzdGVyOmNsYXNzZXMiLCJ1cGRhdGU6cGFydGljaXBhdGlvbnMiLCJ1cGRhdGU6cmVsYXRpb25zaGlwcyIsInVwZGF0ZTpzY2hlZHVsZXMiLCJ1cGRhdGU6dXNlcnMiLCJ1c2U6Y2hhdCJdfQ.GhQJAMp9TVPJTj3rV8X9lplvBu0_mcISv4LHz3Tmtfsw8Iqtym-W_PgXmbAz3vXymX_nroWnv4wORvfNGtXa91AzEMZ8Iqh_XVqt3XgpPXaod7Fl1h-v-_2yQUQFxZWGj83049x9PQgqmb7K4zm_CHc_3VsxM-cpaTNCN6pVTXJqLxJbw00_dxJtr-8-YUx34A3TQf8z0hctgI6UHVQ_foZpLISuHP5i4AGGO1_BGE4Onb5EMp2l3Pj3ZbhPp92SlTuJPjJLigQZPUGg8-XexN9H4SjYnWyvyHrCXbnzpFntQSJU7h1VSveY36p-eJtle3e3xaDVxKk_RH6RMSjYxA")
+AUTH_TOKEN = os.environ.get("TEST_AUTH_TOKEN", "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6InI2YXBIZVNOUEluaXpaeDlYN1NidyJ9.eyJlbWFpbCI6ImFsZXhtb250ZXNpbm85NkBpY2xvdWQuY29tIiwiaXNzIjoiaHR0cHM6Ly9kZXYtZ2Q1Y3JmZTZxYnFsdTIzcC51cy5hdXRoMC5jb20vIiwic3ViIjoiYXV0aDB8NjdkNWQ2NGQ2NGNjZjFjNTIyYTY5NTBiIiwiYXVkIjpbImh0dHBzOi8vZ3ltYXBpIiwiaHR0cHM6Ly9kZXYtZ2Q1Y3JmZTZxYnFsdTIzcC51cy5hdXRoMC5jb20vdXNlcmluZm8iXSwiaWF0IjoxNzQ0MTcyODg3LCJleHAiOjE3NDQyNTkyODcsInNjb3BlIjoib3BlbmlkIHByb2ZpbGUgZW1haWwiLCJhenAiOiJPdUo2SUtFMGxKU2RhTUc2amFXMDRqZnB0c01SYnl2cCIsInBlcm1pc3Npb25zIjpbImFkbWluOmV2ZW50cyIsImFkbWluOmd5bXMiLCJhZG1pbjpyZWxhdGlvbnNoaXBzIiwiYWRtaW46dXNlcnMiLCJjcmVhdGU6Y2hhdF9yb29tcyIsImNyZWF0ZTpldmVudHMiLCJjcmVhdGU6cGFydGljaXBhdGlvbnMiLCJjcmVhdGU6cmVsYXRpb25zaGlwcyIsImNyZWF0ZTpzY2hlZHVsZXMiLCJkZWxldGU6ZXZlbnRzIiwiZGVsZXRlOm93bl9wYXJ0aWNpcGF0aW9ucyIsImRlbGV0ZTpyZWxhdGlvbnNoaXBzIiwiZGVsZXRlOnNjaGVkdWxlcyIsImRlbGV0ZTp1c2VycyIsIm1hbmFnZTpjaGF0X3Jvb21zIiwibWFuYWdlOmNsYXNzX3JlZ2lzdHJhdGlvbnMiLCJyZWFkX2V2ZW50cyIsInJlYWQ6Z3ltcyIsInJlYWQ6bWVtYmVycyIsInJlYWQ6b3duX2V2ZW50cyIsInJlYWQ6b3duX3BhcnRpY2lwYXRpb25zIiwicmVhZDpvd25fcmVsYXRpb25zaGlwcyIsInJlYWQ6b3duX3NjaGVkdWxlcyIsInJlYWQ6cGFydGljaXBhdGlvbnMiLCJyZWFkOnByb2ZpbGUiLCJyZWFkOnNjaGVkdWxlcyIsInJlYWQ6dXNlcnMiLCJyZWRhOmd5bV91c2VycyIsInJlZ2lzdGVyOmNsYXNzZXMiLCJ1cGRhdGU6cGFydGljaXBhdGlvbnMiLCJ1cGRhdGU6cmVsYXRpb25zaGlwcyIsInVwZGF0ZTpzY2hlZHVsZXMiLCJ1cGRhdGU6dXNlcnMiLCJ1c2U6Y2hhdCJdfQ.HI0BQ4H01txsoOmubk5klsO80nNWh5AQSoxHG15AcOkQcGS8pEnMuf_DdIfcUpBYw5TXkfZkFAg007xa7lTUcYkFrUkJczwpS8xRSGIu_qBAzfaPltvERUFlOEIRJQIIOnMWLjTPQssBHBobqfPFVmh-zEeecwq5Nz881wEG87pclxh7od-ifWxemu5fTqGgzFJ7U_2bpXOjuT179Cfz_E-AL_L--PF-n__DGGCHguc87MSCISOjUSSCWGJVrje-cOYQWjkEApwkUGo-4LIM1ynMIERFujTwlrOOIkMWZTT3hRvFuRi3cWO_L6yevH-XG8GLPilDag0W7twiuMmwNw")
 GYM_ID = 1
 
 # Headers comunes para todas las peticiones
@@ -217,8 +217,7 @@ def create_session(class_id, session_date, session_time, duration, trainer_id, l
         "max_participants": max_participants,
         "notes": f"Sesión de {weekday_name}",
         "start_time": start_datetime.isoformat(),
-        "end_time": end_datetime.isoformat(),
-        "gym_id": GYM_ID
+        "end_time": end_datetime.isoformat()
     }
     
     url = f"{API_BASE_URL}/schedule/sessions"
@@ -237,9 +236,43 @@ def create_session(class_id, session_date, session_time, duration, trainer_id, l
         return session
     else:
         print(f"     ❌ Error al crear sesión: {response.status_code}")
+        print(f"     Detalles del error: {response.text}")
+        print(f"     Datos enviados: {json.dumps(session_data, default=str)}")
         if response.status_code == 500:
-            print("       Error del servidor: Posiblemente problema con gym_id")
+            print("       Error del servidor: Revisar logs para más detalles")
         return None
+
+def setup_trainers():
+    """Verifica y asegura que los entrenadores estén asociados al gimnasio del test"""
+    print_separator("VERIFICANDO ASOCIACIÓN DE ENTRENADORES")
+    
+    # Obtener todos los entrenadores únicos utilizados en el test
+    trainer_ids = set(TRAINERS.values())
+    
+    # Para cada entrenador, verificar si ya está asociado al gimnasio
+    for trainer_id in trainer_ids:
+        print(f"Verificando asociación del entrenador ID {trainer_id} con gimnasio ID {GYM_ID}")
+        
+        # Verificar si el entrenador existe y está asociado al gimnasio
+        url = f"{API_BASE_URL}/gyms/{GYM_ID}/users"
+        response = requests.get(url, headers=HEADERS)
+        
+        if response.status_code == 200:
+            users = response.json()
+            trainer_exists = any(user.get('id') == trainer_id for user in users)
+            
+            if trainer_exists:
+                print(f"✅ Entrenador ID {trainer_id} ya está asociado al gimnasio {GYM_ID}")
+                continue
+                
+        # Si no existe relación o no se pudo verificar, intentar asociar al entrenador
+        print(f"⚠️ Entrenador ID {trainer_id} no está asociado al gimnasio {GYM_ID}")
+        print(f"ℹ️ Usando entrenador ID 1 como alternativa")
+        
+        # Actualizar todas las referencias al entrenador
+        for key in TRAINERS:
+            if TRAINERS[key] == trainer_id:
+                TRAINERS[key] = 1  # Usar entrenador con ID 1 que suele existir en todos los gimnasios
 
 def setup_weekly_schedule(start_date=None, days=7):
     """Configura el horario para la próxima semana"""
@@ -530,6 +563,121 @@ def run_weekly_schedule_test():
     finally:
         # Limpiar recursos creados durante la prueba
         cleanup()
+
+def test_apply_defaults_to_range(client: TestClient, superuser_token_headers):
+    """Prueba para aplicar horarios predeterminados a un rango de fechas"""
+    # Primero crear el gym y configurar horarios semanales
+    gym_id = create_test_gym(client, superuser_token_headers)
+    
+    # Configurar un horario semanal personalizado
+    for day in range(7):
+        response = client.put(
+            f"/api/v1/schedule/gym-hours/{day}",
+            headers=superuser_token_headers,
+            json={
+                "is_closed": day >= 5,  # Cerrado en fin de semana (días 5 y 6)
+                "open_time": "08:00:00" if day < 5 else None,
+                "close_time": "22:00:00" if day < 5 else None
+            },
+        )
+        assert response.status_code == 200
+    
+    # Aplicar a un rango de fechas
+    start_date = date.today()
+    end_date = start_date + timedelta(days=14)  # 2 semanas
+    
+    response = client.post(
+        "/api/v1/schedule/gym-hours/apply-defaults",
+        headers=superuser_token_headers,
+        json={
+            "start_date": start_date.isoformat(),
+            "end_date": end_date.isoformat(),
+            "overwrite_existing": False
+        },
+    )
+    assert response.status_code == 200
+    special_days = response.json()
+    
+    # Verificar que se crearon horarios especiales
+    assert len(special_days) > 0
+    
+    # Consultar el rango de fechas
+    response = client.get(
+        "/api/v1/schedule/gym-hours/date-range",
+        headers=superuser_token_headers,
+        params={
+            "start_date": start_date.isoformat(),
+            "end_date": end_date.isoformat()
+        },
+    )
+    assert response.status_code == 200
+    schedule_range = response.json()
+    
+    # Verificar que hay un registro por cada día
+    assert len(schedule_range) == 15  # 15 días (ambos inclusivos)
+    
+    # Verificar que los fines de semana están marcados como cerrados
+    weekend_days = [entry for entry in schedule_range if entry["day_of_week"] >= 5]
+    assert all(entry["is_closed"] for entry in weekend_days)
+    
+    # Verificar que los días laborables están abiertos con los horarios correctos
+    workdays = [entry for entry in schedule_range if entry["day_of_week"] < 5]
+    for entry in workdays:
+        assert not entry["is_closed"]
+        assert entry["open_time"] == "08:00:00"
+        assert entry["close_time"] == "22:00:00"
+
+
+def test_get_hours_for_specific_date_with_special_day(client: TestClient, superuser_token_headers):
+    """Prueba para verificar que los horarios especiales tienen prioridad sobre los regulares"""
+    # Crear gym
+    gym_id = create_test_gym(client, superuser_token_headers)
+    
+    # Configurar un día regular (lunes = día 0)
+    response = client.put(
+        f"/api/v1/schedule/gym-hours/0",
+        headers=superuser_token_headers,
+        json={
+            "is_closed": False,
+            "open_time": "09:00:00",
+            "close_time": "21:00:00"
+        },
+    )
+    assert response.status_code == 200
+    
+    # Encontrar el próximo lunes
+    today = date.today()
+    days_ahead = 0 - today.weekday()
+    if days_ahead <= 0:  # Si hoy es lunes o después
+        days_ahead += 7  # Ir al siguiente lunes
+    next_monday = today + timedelta(days=days_ahead)
+    
+    # Crear un horario especial para ese lunes
+    response = client.post(
+        "/api/v1/schedule/special-days",
+        headers=superuser_token_headers,
+        json={
+            "date": next_monday.isoformat(),
+            "is_closed": True,
+            "description": "Día festivo"
+        },
+    )
+    assert response.status_code == 201
+    
+    # Verificar que al consultar ese día se obtiene el horario especial
+    response = client.get(
+        f"/api/v1/schedule/gym-hours/date/{next_monday.isoformat()}",
+        headers=superuser_token_headers,
+    )
+    assert response.status_code == 200
+    data = response.json()
+    
+    # Verificar que el horario efectivo es el especial
+    assert data["is_special"] == True
+    assert data["effective_hours"]["is_closed"] == True
+    assert data["effective_hours"]["source"] == "special"
+    assert data["special_hours"] is not None
+    assert data["special_hours"]["description"] == "Día festivo"
 
 if __name__ == "__main__":
     run_weekly_schedule_test() 

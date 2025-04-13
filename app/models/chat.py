@@ -30,7 +30,18 @@ class ChatMember(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     room_id = Column(Integer, ForeignKey("chat_rooms.id")) 
-    user_id = Column(String, nullable=False)  # Auth0 ID
+    # Mantener la columna original para migración gradual
+    auth0_user_id = Column(String, nullable=True)  # Auth0 ID (para retrocompatibilidad)
+    user_id = Column(Integer, ForeignKey("user.id"), nullable=True)  # ID interno (nuevo)
     joined_at = Column(DateTime, default=datetime.utcnow)
     
     room = relationship("ChatRoom", back_populates="members") 
+    user = relationship("User")  # Nueva relación al usuario
+
+    # Índices compuestos para búsquedas comunes
+    __table_args__ = (
+        # Para búsquedas de membresías rápidas
+        Index('ix_chat_members_user_id_room_id', 'user_id', 'room_id'),
+        # Para búsqueda temporal por auth0_id hasta completar la migración
+        Index('ix_chat_members_auth0_user_id', 'auth0_user_id'),
+    ) 

@@ -26,11 +26,14 @@ from app.schemas.chat import (
     StreamTokenResponse,
     StreamMessageSend
 )
+from app.models.user import User
 
 router = APIRouter()
 
 @router.get("/token", response_model=StreamTokenResponse)
 async def get_stream_token(
+    *,
+    db: Session = Depends(get_db),
     current_user: Auth0User = Security(auth.get_user, scopes=["use:chat"])
 ):
     """
@@ -44,21 +47,30 @@ async def get_stream_token(
         - Requires 'use:chat' scope (all authenticated users)
         
     Returns:
-        StreamTokenResponse: Contains the Stream token, API key, and user ID
+        StreamTokenResponse: Contains the Stream token, API key, and internal user ID
     """
-    user_id = current_user.id
+    # Obtener el usuario local a partir del auth0_id
+    internal_user = db.query(User).filter(User.auth0_id == current_user.id).first()
+    if not internal_user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User profile not found"
+        )
+    
+    # Datos de usuario para mostrar en el chat
     user_data = {
         "name": getattr(current_user, "name", None),
         "email": current_user.email,
         "picture": getattr(current_user, "picture", None)
     }
     
-    token = chat_service.get_user_token(user_id, user_data)
+    # Usar ID interno para generar el token
+    token = chat_service.get_user_token(internal_user.id, user_data)
     
     return {
         "token": token,
         "api_key": settings.STREAM_API_KEY,
-        "user_id": user_id
+        "internal_user_id": internal_user.id  # Solo devolver el ID interno
     }
 
 @router.post("/rooms", status_code=status.HTTP_201_CREATED)
@@ -86,13 +98,21 @@ async def create_chat_room(
     Returns:
         ChatRoom: The newly created chat room
     """
-    return chat_service.create_room(db, current_user.id, room_data)
+    # Obtener el usuario local a partir del auth0_id
+    internal_user = db.query(User).filter(User.auth0_id == current_user.id).first()
+    if not internal_user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User profile not found"
+        )
+    
+    return chat_service.create_room(db, internal_user.id, room_data)
 
 @router.get("/rooms/direct/{user_id}")
 async def get_direct_chat(
     *,
     db: Session = Depends(get_db),
-    user_id: str = Path(..., title="User ID for direct chat"),
+    user_id: int = Path(..., title="Internal user ID for direct chat"),
     current_user: Auth0User = Security(auth.get_user, scopes=["use:chat"])
 ):
     """
@@ -107,7 +127,7 @@ async def get_direct_chat(
         
     Args:
         db: Database session
-        user_id: The ID of the user to chat with
+        user_id: The internal ID of the user to chat with
         current_user: Authenticated user
         
     Returns:
@@ -116,13 +136,21 @@ async def get_direct_chat(
     Raises:
         HTTPException: 400 if attempting to create a chat with oneself
     """
-    if user_id == current_user.id:
+    # Obtener el usuario local a partir del auth0_id
+    internal_user = db.query(User).filter(User.auth0_id == current_user.id).first()
+    if not internal_user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User profile not found"
+        )
+    
+    if user_id == internal_user.id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="You cannot create a chat with yourself"
         )
     
-    return chat_service.get_or_create_direct_chat(db, current_user.id, user_id)
+    return chat_service.get_or_create_direct_chat(db, internal_user.id, user_id)
 
 @router.get("/rooms/event/{event_id}")
 async def get_event_chat(
@@ -156,7 +184,15 @@ async def get_event_chat(
     logger = logging.getLogger("chat_api")
     start_time = time.time()
     
-    logger.info(f"Solicitud de chat para evento {event_id} por usuario {current_user.id}")
+    # Obtener el usuario local a partir del auth0_id
+    internal_user = db.query(User).filter(User.auth0_id == current_user.id).first()
+    if not internal_user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User profile not found"
+        )
+    
+    logger.info(f"Solicitud de chat para evento {event_id} por usuario interno {internal_user.id}")
     
     try:
         # Verificación rápida si el evento existe
@@ -172,7 +208,7 @@ async def get_event_chat(
         
         # Intento crear/obtener la sala con tiempo de respuesta limitado
         try:
-            result = chat_service.get_or_create_event_chat(db, event_id, current_user.id)
+            result = chat_service.get_or_create_event_chat(db, event_id, internal_user.id)
             
             total_time = time.time() - start_time
             logger.info(f"Chat del evento {event_id} procesado en {total_time:.2f}s")
@@ -214,7 +250,7 @@ async def add_member_to_room(
     *,
     db: Session = Depends(get_db),
     room_id: int = Path(..., title="Chat room ID"),
-    user_id: str = Path(..., title="User ID to add"),
+    user_id: int = Path(..., title="Internal user ID to add"),
     current_user: Auth0User = Security(auth.get_user, scopes=["manage:chat_rooms"])
 ):
     """
@@ -230,7 +266,7 @@ async def add_member_to_room(
     Args:
         db: Database session
         room_id: ID of the chat room
-        user_id: ID of the user to add
+        user_id: Internal ID of the user to add
         current_user: Authenticated user with appropriate permissions
         
     Returns:
@@ -252,7 +288,7 @@ async def remove_member_from_room(
     *,
     db: Session = Depends(get_db),
     room_id: int = Path(..., title="Chat room ID"),
-    user_id: str = Path(..., title="User ID to remove"),
+    user_id: int = Path(..., title="Internal user ID to remove"),
     current_user: Auth0User = Security(auth.get_user, scopes=["manage:chat_rooms"])
 ):
     """
@@ -268,7 +304,7 @@ async def remove_member_from_room(
     Args:
         db: Database session
         room_id: ID of the chat room
-        user_id: ID of the user to remove
+        user_id: Internal ID of the user to remove
         current_user: Authenticated user with appropriate permissions
         
     Returns:

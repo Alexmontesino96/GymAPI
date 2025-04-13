@@ -16,7 +16,7 @@ All endpoints are protected with appropriate permission scopes.
 
 from typing import List, Optional, Any
 from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException, Query, Body, Path, status, Security
+from fastapi import APIRouter, Depends, HTTPException, Query, Body, Path, status, Security, BackgroundTasks
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
@@ -32,15 +32,54 @@ from app.schemas.event import (
     EventParticipationCreate, 
     EventParticipationUpdate,
     EventWithParticipantCount,
-    EventsSearchParams
+    EventParticipationWithEvent
 )
 from app.models.event import EventStatus, EventParticipationStatus, Event, EventParticipation
 from app.models.user import UserRole, User
 from app.repositories.event import event_repository, event_participation_repository
 from fastapi.responses import JSONResponse
+from fastapi.encoders import jsonable_encoder
+import logging
+import time
 
+logger = logging.getLogger("events_api")
 
 router = APIRouter()
+
+# --- Funciones para tareas en segundo plano --- 
+async def create_chat_room_background(db_session_factory, event_id: int, user_id: int, event_title: str):
+    """Tarea en segundo plano para crear/obtener sala de chat para un evento."""
+    db = None
+    try:
+        # Crear una nueva sesión de BD para la tarea en segundo plano
+        db = db_session_factory()
+        from app.services.chat import chat_service
+        from app.schemas.chat import ChatRoomCreate
+        logger.info(f"[BG Task] Iniciando creación de chat para evento {event_id}")
+        
+        # Nota: chat_service.create_room ya maneja la obtención si existe
+        # No necesitamos pasar ChatRoomCreate, solo los datos relevantes
+        chat_service.get_or_create_event_chat(db, event_id, user_id)
+        
+        logger.info(f"[BG Task] Chat para evento {event_id} creado/obtenido.")
+    except Exception as e:
+        logger.error(f"[BG Task] Error creando chat para evento {event_id}: {e}", exc_info=True)
+        # Considera añadir reintentos o notificaciones si falla aquí
+    finally:
+        if db: # Asegurarse de cerrar la sesión de la tarea
+            db.close()
+
+async def schedule_event_completion_background(event_id: int, end_time: datetime):
+    """Tarea en segundo plano para programar la finalización automática de un evento."""
+    try:
+        from app.core.scheduler import schedule_event_completion
+        logger.info(f"[BG Task] Programando finalización para evento {event_id} a las {end_time}")
+        schedule_event_completion(event_id, end_time)
+        logger.info(f"[BG Task] Finalización para evento {event_id} programada.")
+    except Exception as e:
+        logger.error(f"[BG Task] Error programando finalización para evento {event_id}: {e}", exc_info=True)
+        # Considera añadir reintentos o notificaciones
+# --- Fin Funciones Background --- 
 
 
 # Event Endpoints
@@ -49,14 +88,18 @@ async def create_event(
     *,
     db: Session = Depends(get_db),
     event_in: EventCreate,
-    current_gym: Gym = Depends(get_current_gym),  # Obtener gimnasio actual
+    background_tasks: BackgroundTasks,
+    current_gym: Gym = Depends(verify_gym_access),  # Obtener gimnasio actual
     current_user: Auth0User = Security(auth.get_user, scopes=["create:events"])
-) -> Any:
+) -> JSONResponse:
     """
     Create a new event.
     
     This endpoint allows trainers and administrators to create new events
     in the system. The current user is automatically assigned as the creator.
+    If the creator is a trainer, they will be automatically registered as participant.
+    
+    Chat room creation and event completion scheduling are performed in the background.
     
     Permissions:
         - Requires 'create:events' scope (trainers and administrators)
@@ -64,52 +107,106 @@ async def create_event(
     Args:
         db: Database session
         event_in: Event data
+        background_tasks: FastAPI BackgroundTasks instance
         current_gym: Current gym context
         current_user: Authenticated user with appropriate permissions
         
     Returns:
         Event: The created event
     """
-    # Get Auth0 user ID
-    user_id = current_user.id
+    start_time = time.time()
     
-    # Verificar si current_gym es un objeto Gym o un ID (entero)
+    # --- Optimización: Buscar usuario interno UNA SOLA VEZ --- 
+    auth0_user_id = current_user.id
+    internal_user = db.query(User).filter(User.auth0_id == auth0_user_id).first()
+    if not internal_user:
+         logger.error(f"Perfil de usuario no encontrado para Auth0 ID: {auth0_user_id}")
+         raise HTTPException(status_code=404, detail="User profile not found")
+    internal_user_id = internal_user.id
+    logger.info(f"Usuario interno encontrado: {internal_user_id}")
+    # --- Fin Optimización --- 
+    
     gym_id = current_gym.id if hasattr(current_gym, 'id') else current_gym
     
-    # Create event
-    event = event_repository.create_event(
-        db=db, 
-        event_in=event_in, 
-        creator_id=user_id,
-        gym_id=gym_id
-    )
-    
-    # Crear automáticamente sala de chat para el evento
+    # Crear Evento en BD (Pasar ID interno)
     try:
-        # Importar servicio de chat
-        from app.services.chat import chat_service
-        from app.schemas.chat import ChatRoomCreate
-        
-        # Crear sala de chat asociada al evento
-        chat_room_data = ChatRoomCreate(
-            name=f"Evento {event.title}",
-            is_direct=False,
-            event_id=event.id,
-            member_ids=[user_id]  # Inicialmente solo el creador
+        event = event_repository.create_event(
+            db=db, 
+            event_in=event_in, 
+            creator_id=internal_user_id,
+            gym_id=gym_id
         )
-        
-        # Intentar crear la sala de chat (sin esperar respuesta)
-        chat_service.create_room(db, user_id, chat_room_data)
-        
-        # No bloqueamos ni devolvemos error si falla la creación del chat
-        # El chat se puede crear más tarde cuando alguien lo solicite
+        logger.info(f"Evento {event.id} creado en BD por usuario {internal_user_id}")
+    except ValueError as ve:
+        logger.error(f"Error al crear evento en repositorio: {ve}")
+        raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
-        # Solo loggear el error sin interrumpir la creación del evento
-        import logging
-        logger = logging.getLogger("events_api")
-        logger.error(f"Error al crear sala de chat para evento {event.id}: {e}")
+        logger.error(f"Error inesperado al crear evento en BD: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Error creating event in database")
+
+    # Lógica de Auto-Registro para Entrenador (usa internal_user_id)
+    try:
+        # Verificar si el usuario es un entrenador para registrarlo automáticamente
+        from app.models.user_gym import UserGym, GymRoleType
+        
+        user_gym = db.query(UserGym).filter(
+            UserGym.user_id == internal_user_id,
+            UserGym.gym_id == gym_id
+        ).first()
+            
+        is_trainer = user_gym and user_gym.role == GymRoleType.TRAINER
+            
+        # Si es entrenador, registrarlo automáticamente como participante
+        if is_trainer:
+            logger.info(f"Intentando auto-registrar al entrenador {internal_user_id} para evento {event.id}")
+            participation_in = EventParticipationCreate(event_id=event.id)
+            try:
+                # Usar el repositorio para crear la participación
+                participation = event_participation_repository.create_participation(
+                    db=db, 
+                    participation_in=participation_in, 
+                    member_id=internal_user_id
+                )
+                if participation:
+                    logger.info(f"Entrenador {internal_user_id} registrado automáticamente (participación ID: {participation.id})")
+                else:
+                    # Esto no debería ocurrir si la creación del evento fue exitosa
+                    logger.warning(f"Auto-registro del entrenador {internal_user_id} devolvió None para evento {event.id}")
+            except Exception as part_exc:
+                # Capturar errores específicos de la creación de participación
+                logger.error(f"Error en auto-registro de entrenador {internal_user_id} para evento {event.id}: {part_exc}", exc_info=True)
+                # No relanzamos la excepción para no fallar la creación del evento
+
+    except Exception as e:
+        # Si falla la consulta del rol, solo loggeamos el error sin interrumpir
+        logger.error(f"Error verificando rol de entrenador para auto-registro (evento {event.id}): {e}", exc_info=True)
     
-    return event
+    # --- Desacoplar operaciones lentas --- 
+    # Encolar creación de chat en segundo plano
+    # Necesitamos pasar una forma de obtener una sesión de BD a la tarea
+    from app.db.session import SessionLocal
+    background_tasks.add_task(
+        create_chat_room_background, SessionLocal, event.id, internal_user_id, event.title
+    )
+    logger.info(f"Tarea de creación de chat para evento {event.id} encolada.")
+
+    # Encolar programación de finalización en segundo plano
+    background_tasks.add_task(
+        schedule_event_completion_background, event.id, event.end_time
+    )
+    logger.info(f"Tarea de programación de finalización para evento {event.id} encolada.")
+    # --- Fin Desacoplamiento --- 
+    
+    # Calcular tiempo y añadir encabezado antes de retornar
+    process_time = (time.time() - start_time) * 1000 # en ms
+    headers = {"X-Process-Time-ms": f"{process_time:.2f}"} 
+    logger.info(f"Endpoint create_event completado en {process_time:.2f} ms para evento {event.id}")
+    
+    # Retorna la respuesta INMEDIATAMENTE con encabezado de tiempo
+    # Usar jsonable_encoder para convertir datetime a string antes de JSONResponse
+    event_schema = EventSchema.from_orm(event)
+    json_compatible_content = jsonable_encoder(event_schema)
+    return JSONResponse(content=json_compatible_content, headers=headers)
 
 
 @router.get("/", response_model=List[EventWithParticipantCount])
@@ -182,6 +279,7 @@ async def read_my_events(
     db: Session = Depends(get_db),
     skip: int = 0,
     limit: int = 100,
+    current_gym: Gym = Depends(verify_gym_access),  # Añadir verificación de gimnasio
     current_user: Auth0User = Security(auth.get_user, scopes=["read:own_events"])
 ) -> Any:
     """
@@ -197,6 +295,7 @@ async def read_my_events(
         db: Database session
         skip: Number of records to skip (pagination)
         limit: Maximum number of records to return (pagination)
+        current_gym: The current gym (tenant) context
         current_user: Authenticated user
         
     Returns:
@@ -205,7 +304,8 @@ async def read_my_events(
     # Get Auth0 user ID
     user_id = current_user.id
     events = event_repository.get_events_by_creator(
-        db=db, creator_id=user_id, skip=skip, limit=limit
+        db=db, creator_id=user_id, skip=skip, limit=limit,
+        gym_id=current_gym.id  # Filtrar por gimnasio actual
     )
     return events
 
@@ -280,6 +380,7 @@ async def update_event(
     db: Session = Depends(get_db),
     event_id: int = Path(..., title="Event ID"),
     event_in: EventUpdate,
+    current_gym: Gym = Depends(verify_gym_access),  # Añadir verificación de gimnasio
     current_user: Auth0User = Security(auth.get_user, scopes=["admin:events"])
 ) -> Any:
     """
@@ -298,6 +399,7 @@ async def update_event(
         db: Database session
         event_id: ID of the event to update
         event_in: Updated event data
+        current_gym: The current gym (tenant) context
         current_user: Authenticated user with appropriate permissions
         
     Returns:
@@ -312,6 +414,14 @@ async def update_event(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="No update data provided"
+        )
+    
+    # Verificar que el evento pertenezca al gimnasio actual primero
+    event_gym_id = db.query(Event.gym_id).filter(Event.id == event_id).scalar()
+    if not event_gym_id or event_gym_id != current_gym.id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Event not found in current gym"
         )
     
     # Obtener permisos de usuario para verificaciones
@@ -331,6 +441,22 @@ async def update_event(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Event not found"
             )
+            
+        # Si se actualizó la hora de finalización, registramos que se completará automáticamente
+        if 'end_time' in update_data and updated_event.status == EventStatus.SCHEDULED:
+            try:
+                # Programar o reprogramar la tarea
+                from app.core.scheduler import schedule_event_completion
+                schedule_event_completion(event_id, updated_event.end_time)
+                
+                import logging
+                logger = logging.getLogger("events_api")
+                logger.info(f"Evento {updated_event.id} actualizado y reprogramado para completarse automáticamente a las {updated_event.end_time}")
+            except Exception as e:
+                # Si falla la programación, solo loggeamos el error sin interrumpir
+                import logging
+                logger = logging.getLogger("events_api")
+                logger.error(f"Error al reprogramar la finalización automática del evento {updated_event.id}: {e}")
             
         return updated_event
     
@@ -366,6 +492,22 @@ async def update_event(
         db=db, event_id=event_id, event_in=event_in
     )
     
+    # Si se actualizó la hora de finalización, registramos que se completará automáticamente
+    if 'end_time' in update_data and updated_event.status == EventStatus.SCHEDULED:
+        try:
+            # Programar o reprogramar la tarea
+            from app.core.scheduler import schedule_event_completion
+            schedule_event_completion(event_id, updated_event.end_time)
+            
+            import logging
+            logger = logging.getLogger("events_api")
+            logger.info(f"Evento {updated_event.id} actualizado y reprogramado para completarse automáticamente a las {updated_event.end_time}")
+        except Exception as e:
+            # Si falla la programación, solo loggeamos el error sin interrumpir
+            import logging
+            logger = logging.getLogger("events_api")
+            logger.error(f"Error al reprogramar la finalización automática del evento {updated_event.id}: {e}")
+    
     return updated_event
 
 
@@ -374,6 +516,7 @@ async def delete_event(
     *,
     db: Session = Depends(get_db),
     event_id: int = Path(..., title="Event ID"),
+    current_gym: Gym = Depends(verify_gym_access),  # Añadir verificación de gimnasio
     current_user: Auth0User = Security(auth.get_user, scopes=["delete:events"])
 ) -> None:
     """
@@ -390,16 +533,22 @@ async def delete_event(
     Args:
         db: Database session
         event_id: ID of the event to delete
+        current_gym: The current gym (tenant) context
         current_user: Authenticated user with appropriate permissions
         
     Raises:
         HTTPException: 404 if event not found, 403 if insufficient permissions
     """
-    event = event_repository.get_event(db=db, event_id=event_id)
+    # Verificar primero que el evento pertenezca al gimnasio actual
+    event = db.query(Event).filter(
+        Event.id == event_id,
+        Event.gym_id == current_gym.id
+    ).first()
+    
     if not event:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Event not found"
+            detail="Event not found in current gym"
         )
     
     # Verify permissions
@@ -425,6 +574,7 @@ async def admin_delete_event(
     *,
     db: Session = Depends(get_db),
     event_id: int = Path(..., title="Event ID"),
+    current_gym: Gym = Depends(verify_gym_access),  # Añadir verificación de gimnasio
     current_user: Auth0User = Security(auth.get_user, scopes=["admin:events"])
 ) -> None:
     """
@@ -441,16 +591,22 @@ async def admin_delete_event(
     Args:
         db: Database session
         event_id: ID of the event to delete
+        current_gym: The current gym (tenant) context
         current_user: Authenticated administrator
         
     Raises:
         HTTPException: 404 if event not found, 500 for other errors
     """
-    event = event_repository.get_event(db=db, event_id=event_id)
-    if not event:
+    # Verificar primero que el evento pertenezca al gimnasio actual
+    event_exists = db.query(Event.id).filter(
+        Event.id == event_id,
+        Event.gym_id == current_gym.id
+    ).scalar() is not None
+    
+    if not event_exists:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Event not found"
+            detail="Event not found in current gym"
         )
     
     # Delete event without ownership verification
@@ -469,31 +625,57 @@ async def admin_delete_event(
 async def register_for_event(
     *,
     db: Session = Depends(get_db),
-    participation_in: EventParticipationCreate,
-    current_gym: Gym = Depends(verify_gym_access),  # Verificar acceso al gimnasio
+    participation_in: EventParticipationCreate = Body(...),
+    current_gym: Gym = Depends(verify_gym_access),  # Verifica y obtiene el gimnasio actual
     current_user: Auth0User = Security(auth.get_user, scopes=["create:participations"])
-) -> Any:
+) -> EventParticipationSchema:
     """
-    Register for an event.
+    Registra al usuario autenticado para un evento específico.
+
+    Este endpoint permite a los miembros (usuarios autenticados) inscribirse en 
+    eventos disponibles en su gimnasio actual. Realiza varias comprobaciones:
     
-    This endpoint allows members to register for events. It performs various
-    checks to ensure the event is available, has capacity, and the user isn't
-    already registered. If successful, the user is added to the event's participants.
+    1.  **Existencia y Gimnasio**: Verifica que el evento existe y pertenece al gimnasio 
+        actual del usuario.
+    2.  **Estado del Evento**: Confirma que el evento esté programado (`SCHEDULED`) y abierto 
+        para inscripciones.
+    3.  **Perfil de Usuario**: Asegura que el usuario autenticado tenga un perfil 
+        en la base de datos local.
+    4.  **Participación Previa**: Comprueba si el usuario ya está registrado, en 
+        lista de espera o si había cancelado previamente.
+    5.  **Capacidad**: Evalúa si hay plazas disponibles o si el usuario debe ser 
+        añadido a la lista de espera.
     
-    Permissions:
-        - Requires 'create:participations' scope (all authenticated users)
+    Si la inscripción es exitosa (o si se reactiva una inscripción cancelada), 
+    se crea o actualiza el registro de participación.
+    
+    **Permisos Necesarios:**
+    -   Requiere el scope `create:participations` (otorgado a todos los usuarios autenticados).
+    
+    **Parámetros:**
+    -   `db` (Inyección de dependencia): Sesión de la base de datos SQLAlchemy.
+    -   `participation_in` (Cuerpo de la solicitud): Objeto `EventParticipationCreate` 
+        que debe contener:
+        -   `event_id` (int, **Requerido**): ID del evento al que se desea inscribir.
+        *(Nota: El campo `notes` ya no se utiliza. Los campos `status` y `attended` del modelo base 
+        son ignorados en la creación y gestionados por el servidor)*.
+    -   `current_gym` (Inyección de dependencia): Objeto `Gym` que representa el 
+        gimnasio actual del usuario (determinado a partir de la solicitud).
+    -   `current_user` (Inyección de dependencia): Objeto `Auth0User` que representa 
+        al usuario autenticado (obtenido a partir del token JWT).
         
-    Args:
-        db: Database session
-        participation_in: Participation data including event ID
-        current_gym: The current gym context
-        current_user: Authenticated user
+    **Retorna:**
+    -   `EventParticipationSchema`: Un objeto que representa el registro de participación 
+        creado o actualizado, incluyendo su estado (`REGISTERED` o `WAITING_LIST`).
         
-    Returns:
-        EventParticipation: The created participation record
-        
-    Raises:
-        HTTPException: 404 if event not found, 400 for validation errors
+    **Posibles Errores (Excepciones HTTP):**
+    -   `404 Not Found`: Si el evento no se encuentra en el gimnasio actual o si el 
+        perfil del usuario no existe.
+    -   `400 Bad Request`: Si el evento no está abierto para inscripciones (`SCHEDULED`) 
+        o si el usuario ya tiene cualquier tipo de registro previo para este evento 
+        (sea `REGISTERED`, `WAITING_LIST` o `CANCELLED`).
+    -   `500 Internal Server Error`: Si ocurre un error inesperado durante el 
+        proceso de inscripción.
     """
     # Registro para monitoreo de rendimiento
     import time
@@ -569,68 +751,35 @@ async def register_for_event(
         
         internal_user_id = result.user_id
         
-        # 2. Optimización: Verificar participación existente usando índice compuesto
-        existing = db.query(EventParticipation).filter(
+        # 2. Verificar si ya existe una participación para este usuario y evento
+        existing_participation = db.query(EventParticipation).filter(
             EventParticipation.event_id == event_id,
             EventParticipation.member_id == internal_user_id
         ).first()
         
-        # 3. Optimización: Procesar casos de participación existente sin transacciones extra
-        if existing:
-            status_map = {
-                EventParticipationStatus.REGISTERED: "already registered",
-                EventParticipationStatus.WAITING_LIST: "on waiting list",
-                EventParticipationStatus.CANCELLED: "previously cancelled registration"
-            }
-            
-            message = status_map.get(existing.status, "already has a relationship with this event")
-            
-            # Si está cancelada, podemos reactivarla
-            if existing.status == EventParticipationStatus.CANCELLED:
-                logger.info(f"Reactivando participación cancelada - id: {existing.id}")
-                
-                # Determinar nuevo estado según la capacidad
-                has_capacity = (result.max_participants == 0 or 
-                                result.registered_count < result.max_participants)
-                
-                new_status = EventParticipationStatus.REGISTERED if has_capacity else EventParticipationStatus.WAITING_LIST
-                
-                # Actualizar en una transacción eficiente
-                existing.status = new_status
-                existing.notes = participation_in.notes
-                existing.updated_at = datetime.utcnow()
-                
-                db.add(existing)
-                db.commit()
-                
-                logger.info(f"Participación reactivada con éxito - nuevo estado: {new_status}")
-                return existing
-            else:
-                # Ya está registrado con otro estado
-                logger.info(f"Participación ya existe - id: {existing.id}, status: {existing.status}")
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"You are {message} for this event"
-                )
+        # Si ya existe una participación (independientemente del estado),
+        # informar al usuario y no permitir registrarse de nuevo.
+        if existing_participation:
+            status_message = existing_participation.status.value.lower().replace('_', ' ')
+            logger.info(f"Participación ya existe - id: {existing_participation.id}, status: {existing_participation.status.value}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"You already have a registration for this event with status '{status_message}'. Cancel it first if you want to try registering again."
+            )
         
-        # 4. Optimización: Crear participación directamente sin llamadas adicionales
-        
-        # Determinar estado inicial según capacidad
+        # 3. Si no existe participación, determinar estado inicial según capacidad
         has_capacity = (result.max_participants == 0 or 
                         result.registered_count < result.max_participants)
         
-        participation_status = (EventParticipationStatus.REGISTERED 
-                               if has_capacity else 
-                               EventParticipationStatus.WAITING_LIST)
+        new_participation_status = EventParticipationStatus.REGISTERED if has_capacity else EventParticipationStatus.WAITING_LIST
         
-        # Crear participación con transacción eficiente
+        # 4. Crear nueva participación
         now = datetime.utcnow()
         db_participation = EventParticipation(
             event_id=event_id,
             member_id=internal_user_id,
             gym_id=result.gym_id,
-            status=participation_status,
-            notes=participation_in.notes,
+            status=new_participation_status,
             registered_at=now,
             updated_at=now,
             attended=False
@@ -639,9 +788,8 @@ async def register_for_event(
         db.add(db_participation)
         db.commit()
         
-        # Evitar refresh completo que generaría consultas adicionales
         elapsed_time = time.time() - start_time
-        logger.info(f"Inscripción completada exitosamente - tiempo: {elapsed_time:.2f}s, status: {participation_status}")
+        logger.info(f"Inscripción completada exitosamente - tiempo: {elapsed_time:.2f}s, status: {new_participation_status.value}")
         
         return db_participation
         
@@ -666,29 +814,33 @@ async def register_for_event(
             )
 
 
-@router.get("/participation/me", response_model=List[EventParticipationSchema])
+@router.get("/participation/me", response_model=List[EventParticipationWithEvent])
 async def read_my_participations(
     *,
     db: Session = Depends(get_db),
-    status: Optional[EventParticipationStatus] = None,
+    participation_status: Optional[EventParticipationStatus] = None,
+    current_gym: Gym = Depends(verify_gym_access),  # Añadir verificación de gimnasio
     current_user: Auth0User = Security(auth.get_user, scopes=["read:own_participations"])
-) -> Any:
+) -> List[EventParticipationWithEvent]:
     """
-    Retrieve participations of the authenticated user.
+    Retrieve participations of the authenticated user, including event details.
     
     This endpoint allows users to view the events they have registered for,
     optionally filtered by status (registered, cancelled, waiting list).
+    Each participation record now includes the full details of the associated event.
     
     Permissions:
         - Requires 'read_own_participations' scope (all authenticated users)
         
     Args:
         db: Database session
-        status: Optional filter by participation status
+        participation_status: Optional filter by participation status
+        current_gym: The current gym (tenant) context
         current_user: Authenticated user
         
     Returns:
-        List[EventParticipation]: User's event participations
+        List[EventParticipationWithEvent]: User's event participations, each including 
+                                         the full details of the related event.
     """
     # Monitoreo de rendimiento
     import time
@@ -715,12 +867,13 @@ async def read_my_participations(
     query = db.query(EventParticipation).options(
         joinedload(EventParticipation.event)  # Precarga los datos del evento
     ).filter(
-        EventParticipation.member_id == internal_user_id
+        EventParticipation.member_id == internal_user_id,
+        EventParticipation.gym_id == current_gym.id  # Filtrar por gimnasio actual
     )
     
     # Filtrar por estado si es necesario
-    if status:
-        query = query.filter(EventParticipation.status == status)
+    if participation_status:
+        query = query.filter(EventParticipation.status == participation_status)
     
     # 3. Optimización: Ordenar por fecha de registro para obtener las más recientes primero
     query = query.order_by(EventParticipation.registered_at.desc())
@@ -739,7 +892,8 @@ async def read_event_participations(
     *,
     db: Session = Depends(get_db),
     event_id: int = Path(..., title="Event ID"),
-    status: Optional[EventParticipationStatus] = None,
+    participation_status: Optional[EventParticipationStatus] = None,
+    current_gym: Gym = Depends(verify_gym_access),  # Añadir verificación de gimnasio
     current_user: Auth0User = Security(auth.get_user, scopes=["read:participations"])
 ) -> Any:
     """
@@ -756,7 +910,8 @@ async def read_event_participations(
     Args:
         db: Database session
         event_id: ID of the event
-        status: Optional filter by participation status
+        participation_status: Optional filter by participation status
+        current_gym: The current gym (tenant) context
         current_user: Authenticated user with appropriate permissions
         
     Returns:
@@ -791,7 +946,8 @@ async def read_event_participations(
     ).outerjoin(
         User, User.auth0_id == user_id
     ).filter(
-        Event.id == event_id
+        Event.id == event_id,
+        Event.gym_id == current_gym.id  # Verificar pertenencia al gimnasio actual
     )
     
     result = query.first()
@@ -800,7 +956,7 @@ async def read_event_participations(
         logger.warning(f"Evento no encontrado: {event_id}")
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Event not found"
+            detail="Event not found in current gym"
         )
     
     # Verificar permisos de acceso
@@ -821,12 +977,13 @@ async def read_event_participations(
     query = db.query(EventParticipation).options(
         joinedload(EventParticipation.member)  # Precarga datos del miembro
     ).filter(
-        EventParticipation.event_id == event_id
+        EventParticipation.event_id == event_id,
+        EventParticipation.gym_id == current_gym.id  # Filtrar por gimnasio actual
     )
     
     # Aplicar filtro por estado si es necesario
-    if status:
-        query = query.filter(EventParticipation.status == status)
+    if participation_status:
+        query = query.filter(EventParticipation.status == participation_status)
     
     # Ordenar por estado y fecha de registro para mejor usabilidad
     # (primero registrados, luego lista de espera, al final cancelados)
@@ -855,6 +1012,7 @@ async def cancel_participation(
     *,
     db: Session = Depends(get_db),
     event_id: int = Path(..., title="Event ID"),
+    current_gym: Gym = Depends(verify_gym_access),  # Añadir verificación de gimnasio
     current_user: Auth0User = Security(auth.get_user, scopes=["delete:own_participations"])
 ) -> None:
     """
@@ -869,6 +1027,7 @@ async def cancel_participation(
     Args:
         db: Database session
         event_id: ID of the event to cancel participation for
+        current_gym: The current gym (tenant) context
         current_user: Authenticated user
         
     Raises:
@@ -877,8 +1036,6 @@ async def cancel_participation(
     # Get Auth0 user ID and log for debugging
     user_id = current_user.id
     
-    import logging
-    logger = logging.getLogger("events_api")
     logger.info(f"Attempting to cancel participation - auth0_id: {user_id}, event_id: {event_id}")
     
     # Optimización: Buscar el usuario directamente con una sola consulta
@@ -893,26 +1050,33 @@ async def cancel_participation(
     
     logger.info(f"Found internal user ID: {internal_user_id}")
     
+    # Verificar primero que el evento pertenezca al gimnasio actual
+    event_in_gym = db.query(Event.id).filter(
+        Event.id == event_id,
+        Event.gym_id == current_gym.id
+    ).scalar() is not None
+    
+    if not event_in_gym:
+        logger.warning(f"Event not found in current gym - event_id: {event_id}, gym_id: {current_gym.id}")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Event not found in current gym"
+        )
+    
     # Optimización: Buscar participación con una consulta directa usando índices
     participation = db.query(EventParticipation).filter(
         EventParticipation.event_id == event_id,
-        EventParticipation.member_id == internal_user_id
+        EventParticipation.member_id == internal_user_id,
+        EventParticipation.gym_id == current_gym.id  # Filtrar por gimnasio actual
     ).first()
     
     if not participation:
         logger.warning(f"Participation not found - user_id: {internal_user_id}, event_id: {event_id}")
         
-        # Verificar si el evento existe para dar un mensaje más específico
-        event_exists = db.query(Event.id).filter(Event.id == event_id).scalar() is not None
-        if not event_exists:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Event not found"
-            )
-        
         # Verificar si hay otras participaciones del usuario para dar información útil
         other_participations = db.query(EventParticipation).filter(
-            EventParticipation.member_id == internal_user_id
+            EventParticipation.member_id == internal_user_id,
+            EventParticipation.gym_id == current_gym.id
         ).count()
         
         if other_participations > 0:
@@ -937,21 +1101,22 @@ async def cancel_participation(
         )
 
 
-@router.put("/participation/{participation_id}", response_model=EventParticipationSchema)
-async def update_participation(
+@router.put("/participation/event/{event_id}/user/{user_id}", response_model=EventParticipationSchema)
+async def update_attendance(
     *,
     db: Session = Depends(get_db),
-    participation_id: int = Path(..., title="Participation ID"),
-    participation_in: EventParticipationUpdate,
+    event_id: int = Path(..., title="Event ID"),
+    user_id: int = Path(..., title="Internal User ID of the participant"),
+    attendance_data: EventParticipationUpdate = Body(...), # Renombrado para claridad
+    current_gym: Gym = Depends(verify_gym_access),
     current_user: Auth0User = Security(auth.get_user, scopes=["update:participations"])
-) -> Any:
+) -> EventParticipationSchema:
     """
-    Update participation status.
-    
-    This endpoint allows event creators and administrators to update
-    the status of a participant, such as marking attendance or changing
-    their status. Only the event creator or administrators can perform
-    this operation.
+    Update a specific user's attendance for a specific event.
+
+    This endpoint allows event creators and administrators to mark whether a specific 
+    participant (identified by their internal user ID) attended a specific event 
+    (identified by its ID). Only the event creator or administrators can perform this operation.
     
     Permissions:
         - Requires 'update:participations' scope (trainers and administrators)
@@ -959,45 +1124,75 @@ async def update_participation(
         
     Args:
         db: Database session
-        participation_id: ID of the participation to update
-        participation_in: Updated participation data
+        event_id (Path): ID of the event.
+        user_id (Path): Internal ID of the participant whose attendance is being updated.
+        attendance_data (Body): Object containing the `attended` status (boolean).
+        current_gym: The current gym (tenant) context
         current_user: Authenticated user with appropriate permissions
         
     Returns:
-        EventParticipation: The updated participation record
+        EventParticipationSchema: The updated participation record.
         
     Raises:
-        HTTPException: 404 if participation not found, 403 if insufficient permissions
+        HTTPException: 404 if participation, event, or user not found in current gym, 
+                       403 if insufficient permissions.
     """
-    # Get participation
-    participation = event_participation_repository.get_participation(
-        db=db, participation_id=participation_id
+    # Buscar la participación específica usando event_id y user_id
+    participation = event_participation_repository.get_participation_by_member_and_event(
+        db=db, member_id=user_id, event_id=event_id
     )
     
     if not participation:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Participation not found"
+            detail=f"Participation record not found for user {user_id} in event {event_id}"
+        )
+        
+    # Verificar que la participación pertenezca al gimnasio actual
+    if participation.gym_id != current_gym.id:
+         raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, # O 403? 404 parece más adecuado si no debería verlo
+            detail="Participation record not found in current gym"
+        )
+
+    # Obtener evento para verificar creador (si no es admin)
+    event = db.query(Event).filter(
+        Event.id == event_id, 
+        Event.gym_id == current_gym.id # Doble check por si acaso
+    ).first()
+    if not event: # Esto no debería ocurrir si la participación existe, pero por seguridad
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Associated event not found in current gym"
         )
     
-    # Get event
-    event = event_repository.get_event(db=db, event_id=participation.event_id)
-    
     # Verify permissions
-    # Get Auth0 user ID
-    user_id = current_user.id
+    requesting_user_auth0_id = current_user.id
     user_permissions = getattr(current_user, "permissions", []) or []
-    is_admin = "admin:all" in user_permissions or "admin:events" in user_permissions
+    is_admin = any(p in user_permissions for p in ["admin:all", "admin:events"])
+    
+    # Obtener el ID interno del usuario que hace la solicitud para comparar con el creador
+    requesting_internal_user_id = db.query(User.id).filter(User.auth0_id == requesting_user_auth0_id).scalar()
     
     # Only the event creator or an admin can update participation
-    if not (is_admin or event.creator_id == user_id):
+    if not (is_admin or event.creator_id == requesting_internal_user_id):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You don't have permission to update this participation"
         )
     
-    # Update participation
+    # Actualizar participación usando el repositorio
+    # Pasamos el objeto de participación existente para que el repo no tenga que buscarlo de nuevo
     updated = event_participation_repository.update_participation(
-        db=db, participation_id=participation_id, participation_in=participation_in
+        db=db, 
+        db_obj=participation, # Pasar el objeto encontrado 
+        participation_in=attendance_data # attendance_data solo tiene 'attended'
     )
+    
+    if not updated: # Si la actualización fallase por alguna razón en el repo
+         raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update participation record"
+        )
+        
     return updated 

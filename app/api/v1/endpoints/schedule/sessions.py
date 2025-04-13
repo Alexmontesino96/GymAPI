@@ -1,6 +1,7 @@
 from app.api.v1.endpoints.schedule.common import *
-from app.core.tenant import get_current_gym
+from app.core.tenant import verify_gym_access
 from app.models.gym import Gym
+from app.services.gym import gym_service
 
 router = APIRouter()
 
@@ -9,25 +10,40 @@ async def get_upcoming_sessions(
     skip: int = 0,
     limit: int = 100,
     db: Session = Depends(get_db),
+    current_gym: Gym = Depends(verify_gym_access),
     user: Auth0User = Security(auth.get_user, scopes=["read:schedules"])
 ) -> Any:
     """
     Obtener las próximas sesiones de clase programadas.
     Requiere el scope 'read:schedules'.
     """
-    return class_session_service.get_upcoming_sessions(db, skip=skip, limit=limit)
+    return class_session_service.get_upcoming_sessions(
+        db, 
+        skip=skip, 
+        limit=limit, 
+        gym_id=current_gym.id
+    )
 
 
 @router.get("/sessions/{session_id}", response_model=Dict[str, Any])
 async def get_session_with_details(
     session_id: int = Path(..., description="ID de la sesión"),
     db: Session = Depends(get_db),
+    current_gym: Gym = Depends(verify_gym_access),
     user: Auth0User = Security(auth.get_user, scopes=["read:schedules"])
 ) -> Any:
     """
     Obtener una sesión específica con detalles de clase y disponibilidad.
     Requiere el scope 'read:schedules'.
     """
+    # Verificar que la sesión pertenezca al gimnasio actual
+    session = class_session_service.get_session(db, session_id=session_id)
+    if not session or session.gym_id != current_gym.id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Sesión no encontrada en este gimnasio"
+        )
+    
     return class_session_service.get_session_with_details(db, session_id=session_id)
 
 
@@ -35,28 +51,63 @@ async def get_session_with_details(
 async def create_session(
     session_data: ClassSessionCreate = Body(...),
     db: Session = Depends(get_db),
-    user: Auth0User = Security(auth.get_user, scopes=["create:schedules"]),
-    current_gym: Gym = Depends(get_current_gym)  # Obtener el gimnasio actual del tenant
+    current_gym: Gym = Depends(verify_gym_access),
+    user: Auth0User = Security(auth.get_user, scopes=["create:schedules"])
 ) -> Any:
     """
     Crear una nueva sesión de clase.
-    Requiere el scope 'create:schedules' asignado a entrenadores y administradores.
+    
+    Esta ruta permite crear una sesión específica para una clase.
+    Una sesión representa una instancia concreta de la clase en un momento
+    y lugar determinado.
+    
+    Requiere:
+    - Scope 'create:schedules' en Auth0
+    - Pertenencia al gimnasio actual
     """
     # Obtener ID del usuario actual para registrarlo como creador
     auth0_id = user.id
     db_user = user_service.get_user_by_auth0_id(db, auth0_id=auth0_id)
     
+    # Verificar que la clase existe y pertenece al gimnasio actual
+    class_obj = class_service.get_class(db, class_id=session_data.class_id)
+    if not class_obj or class_obj.gym_id != current_gym.id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Clase no encontrada en este gimnasio"
+        )
+    
+    # Si el entrenador es diferente al usuario actual, verificar que existe
+    # y pertenece al gimnasio
+    if db_user and session_data.trainer_id != db_user.id:
+        print(f"DEBUG: Verificando entrenador {session_data.trainer_id} en gimnasio {current_gym.id}")
+        trainer_exists = gym_service.check_user_in_gym(
+            db, user_id=session_data.trainer_id, gym_id=current_gym.id
+        )
+        print(f"DEBUG: Resultado de verificación: {trainer_exists}")
+        if not trainer_exists:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Entrenador no encontrado en este gimnasio"
+            )
+    
+    # Asignar el gimnasio actual de forma explícita 
+    session_dict = session_data.model_dump()
+    session_dict["gym_id"] = current_gym.id
+    
+    # Forzar el gym_id - mostrar para depuración
+    print(f"DEBUG: Asignando gym_id={current_gym.id} a la sesión")
+    
+    # Crear un nuevo objeto con el gym_id explícitamente asignado
+    complete_session_data = ClassSessionCreate(**session_dict)
+    
+    # Doble verificación para asegurar que no se pierde
+    assert complete_session_data.gym_id == current_gym.id, "Error: gym_id no se estableció correctamente"
+    
+    # Crear la sesión
     created_by_id = db_user.id if db_user else None
-    
-    # Asignar el gym_id desde el tenant actual
-    session_obj = session_data.model_dump()
-    session_obj["gym_id"] = current_gym.id
-    
-    # Crear un nuevo objeto ClassSessionCreate con el gym_id establecido
-    updated_session_data = ClassSessionCreate(**session_obj)
-    
     return class_session_service.create_session(
-        db, session_data=updated_session_data, created_by_id=created_by_id
+        db, session_data=complete_session_data, created_by_id=created_by_id
     )
 
 
@@ -70,7 +121,7 @@ async def create_recurring_sessions(
     ),
     db: Session = Depends(get_db),
     user: Auth0User = Security(auth.get_user, scopes=["create:schedules"]),
-    current_gym: Gym = Depends(get_current_gym)  # Obtener el gimnasio actual del tenant
+    current_gym: Gym = Depends(verify_gym_access)
 ) -> Any:
     """
     Crear sesiones recurrentes en un rango de fechas.
@@ -104,12 +155,21 @@ async def update_session(
     session_id: int = Path(..., description="ID de la sesión"),
     session_data: ClassSessionUpdate = Body(...),
     db: Session = Depends(get_db),
+    current_gym: Gym = Depends(verify_gym_access),
     user: Auth0User = Security(auth.get_user, scopes=["update:schedules"])
 ) -> Any:
     """
     Actualizar una sesión existente.
     Requiere el scope 'update:schedules' asignado a entrenadores y administradores.
     """
+    # Verificar que la sesión pertenezca al gimnasio actual
+    session = class_session_service.get_session(db, session_id=session_id)
+    if not session or session.gym_id != current_gym.id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Sesión no encontrada en este gimnasio"
+        )
+    
     return class_session_service.update_session(
         db, session_id=session_id, session_data=session_data
     )
@@ -119,12 +179,21 @@ async def update_session(
 async def cancel_session(
     session_id: int = Path(..., description="ID de la sesión"),
     db: Session = Depends(get_db),
+    current_gym: Gym = Depends(verify_gym_access),
     user: Auth0User = Security(auth.get_user, scopes=["update:schedules"])
 ) -> Any:
     """
     Cancelar una sesión.
     Requiere el scope 'update:schedules' asignado a entrenadores y administradores.
     """
+    # Verificar que la sesión pertenezca al gimnasio actual
+    session = class_session_service.get_session(db, session_id=session_id)
+    if not session or session.gym_id != current_gym.id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Sesión no encontrada en este gimnasio"
+        )
+    
     return class_session_service.cancel_session(db, session_id=session_id)
 
 
@@ -135,6 +204,7 @@ async def get_sessions_by_date_range(
     skip: int = 0,
     limit: int = 100,
     db: Session = Depends(get_db),
+    current_gym: Gym = Depends(verify_gym_access),
     user: Auth0User = Security(auth.get_user, scopes=["read:schedules"])
 ) -> Any:
     """
@@ -142,7 +212,12 @@ async def get_sessions_by_date_range(
     Requiere el scope 'read:schedules'.
     """
     return class_session_service.get_sessions_by_date_range(
-        db, start_date=start_date, end_date=end_date, skip=skip, limit=limit
+        db, 
+        start_date=start_date, 
+        end_date=end_date, 
+        skip=skip, 
+        limit=limit,
+        gym_id=current_gym.id
     )
 
 
@@ -153,6 +228,7 @@ async def get_trainer_sessions(
     skip: int = 0,
     limit: int = 100,
     db: Session = Depends(get_db),
+    current_gym: Gym = Depends(verify_gym_access),
     user: Auth0User = Security(auth.get_user, scopes=["read:schedules"])
 ) -> Any:
     """
@@ -165,7 +241,12 @@ async def get_trainer_sessions(
     
     if db_user and (db_user.id == trainer_id or db_user.is_superuser):
         return class_session_service.get_sessions_by_trainer(
-            db, trainer_id=trainer_id, skip=skip, limit=limit, upcoming_only=upcoming_only
+            db, 
+            trainer_id=trainer_id, 
+            skip=skip, 
+            limit=limit, 
+            upcoming_only=upcoming_only,
+            gym_id=current_gym.id
         )
     
     # Si no es el propio entrenador o un administrador, verificar los permisos adicionales
@@ -177,7 +258,12 @@ async def get_trainer_sessions(
         )
     
     return class_session_service.get_sessions_by_trainer(
-        db, trainer_id=trainer_id, skip=skip, limit=limit, upcoming_only=upcoming_only
+        db, 
+        trainer_id=trainer_id, 
+        skip=skip, 
+        limit=limit, 
+        upcoming_only=upcoming_only,
+        gym_id=current_gym.id
     )
 
 
@@ -187,6 +273,7 @@ async def get_my_sessions(
     skip: int = 0,
     limit: int = 100,
     db: Session = Depends(get_db),
+    current_gym: Gym = Depends(verify_gym_access),
     user: Auth0User = Security(auth.get_user, scopes=["read:own_schedules"])
 ) -> Any:
     """
@@ -204,7 +291,12 @@ async def get_my_sessions(
         )
     
     return class_session_service.get_sessions_by_trainer(
-        db, trainer_id=db_user.id, skip=skip, limit=limit, upcoming_only=upcoming_only
+        db, 
+        trainer_id=db_user.id, 
+        skip=skip, 
+        limit=limit, 
+        upcoming_only=upcoming_only,
+        gym_id=current_gym.id
     )
 
 
@@ -212,6 +304,7 @@ async def get_my_sessions(
 async def delete_session(
     session_id: int = Path(..., description="ID de la sesión"),
     db: Session = Depends(get_db),
+    current_gym: Gym = Depends(verify_gym_access),
     user: Auth0User = Security(auth.get_user, scopes=["delete:schedules"])
 ) -> Any:
     """
@@ -224,6 +317,13 @@ async def delete_session(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Sesión no encontrada"
+        )
+    
+    # Verificar que la sesión pertenezca al gimnasio actual
+    if session.gym_id != current_gym.id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Sesión no encontrada en este gimnasio"
         )
     
     # Verificar si ya hay participantes registrados

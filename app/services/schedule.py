@@ -2,6 +2,7 @@ from typing import List, Optional, Dict, Any, Union
 from datetime import datetime, time, timedelta, date
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
+from sqlalchemy import or_
 
 from app.repositories.schedule import (
     gym_hours_repository,
@@ -13,7 +14,9 @@ from app.repositories.schedule import (
 from app.models.schedule import (
     ClassSessionStatus,
     ClassParticipationStatus,
-    DayOfWeek
+    DayOfWeek,
+    Class,
+    GymSpecialHours
 )
 from app.schemas.schedule import (
     GymHoursCreate, 
@@ -30,141 +33,430 @@ from app.schemas.schedule import (
 
 
 class GymHoursService:
-    def get_gym_hours_by_day(self, db: Session, day: int) -> Any:
-        """Obtener los horarios del gimnasio para un día específico"""
-        return gym_hours_repository.get_by_day(db, day=day)
+    def get_gym_hours_by_day(self, db: Session, day: int, gym_id: int) -> Any:
+        """
+        Obtener los horarios del gimnasio para un día específico.
+        
+        Args:
+            db: Sesión de base de datos
+            day: Día de la semana (0=Lunes, 6=Domingo)
+            gym_id: ID del gimnasio
+        """
+        return gym_hours_repository.get_by_day(db, day=day, gym_id=gym_id)
     
-    def get_all_gym_hours(self, db: Session) -> List[Any]:
-        """Obtener los horarios del gimnasio para todos los días de la semana"""
-        return gym_hours_repository.get_all_days(db)
+    def get_all_gym_hours(self, db: Session, gym_id: int) -> List[Any]:
+        """
+        Obtener los horarios para todos los días de la semana.
+        
+        Args:
+            db: Sesión de base de datos
+            gym_id: ID del gimnasio
+        """
+        return gym_hours_repository.get_all_days(db, gym_id=gym_id)
     
     def create_or_update_gym_hours(
-        self, db: Session, day: int, gym_hours_data: Union[GymHoursCreate, GymHoursUpdate]
+        self, db: Session, day: int, gym_hours_data: Union[GymHoursCreate, GymHoursUpdate],
+        gym_id: int
     ) -> Any:
-        """Crear o actualizar los horarios del gimnasio para un día específico"""
-        existing_hours = gym_hours_repository.get_by_day(db, day=day)
+        """
+        Crear o actualizar los horarios del gimnasio para un día específico.
+        
+        Args:
+            db: Sesión de base de datos
+            day: Día de la semana (0=Lunes, 6=Domingo)
+            gym_hours_data: Datos del horario a crear o actualizar
+            gym_id: ID del gimnasio
+        """
+        # Verificar si ya existen horarios para este día
+        existing_hours = gym_hours_repository.get_by_day(db, day=day, gym_id=gym_id)
+        
         if existing_hours:
-            return gym_hours_repository.update(db, db_obj=existing_hours, obj_in=gym_hours_data)
+            # Actualizar horarios existentes
+            return gym_hours_repository.update(
+                db, db_obj=existing_hours, obj_in=gym_hours_data
+            )
+        else:
+            # Crear nuevos horarios
+            obj_in_data = gym_hours_data.model_dump() if isinstance(gym_hours_data, GymHoursCreate) else gym_hours_data
+            if not isinstance(gym_hours_data, GymHoursCreate):
+                # Convertir GymHoursUpdate a GymHoursCreate
+                obj_in_data["day_of_week"] = day
+                obj_in_data["gym_id"] = gym_id
+                # Usar valores predeterminados si no se proporcionan
+                if "open_time" not in obj_in_data or obj_in_data["open_time"] is None:
+                    obj_in_data["open_time"] = time(9, 0)  # 9:00 AM
+                if "close_time" not in obj_in_data or obj_in_data["close_time"] is None:
+                    obj_in_data["close_time"] = time(21, 0)  # 9:00 PM
+                if "is_closed" not in obj_in_data or obj_in_data["is_closed"] is None:
+                    obj_in_data["is_closed"] = (day == 6)  # Cerrado en domingo
+                
+                obj_in = GymHoursCreate(**obj_in_data)
+            else:
+                # Asegurarse de que el gym_id esté establecido
+                if "gym_id" not in obj_in_data or obj_in_data["gym_id"] is None:
+                    obj_in_data["gym_id"] = gym_id
+                obj_in = GymHoursCreate(**obj_in_data)
+            
+            return gym_hours_repository.create(db, obj_in=obj_in)
+    
+    def _create_default_hours(self, db: Session, gym_id: int) -> List[Any]:
+        """
+        Crea los horarios predeterminados para un gimnasio.
+        Método interno usado para reemplazar initialize_default_hours.
         
-        # Crear nuevos horarios
-        if isinstance(gym_hours_data, GymHoursUpdate):
-            # Convertir GymHoursUpdate a GymHoursCreate con valores predeterminados
-            create_data = {
+        Args:
+            db: Sesión de base de datos
+            gym_id: ID del gimnasio
+        """
+        default_hours = []
+        
+        # Horarios predeterminados (Lunes a Viernes: 9am-9pm, Sábado: 10am-6pm, Domingo: cerrado)
+        default_schedule = {
+            0: (time(9, 0), time(21, 0), False),  # Lunes
+            1: (time(9, 0), time(21, 0), False),  # Martes
+            2: (time(9, 0), time(21, 0), False),  # Miércoles
+            3: (time(9, 0), time(21, 0), False),  # Jueves
+            4: (time(9, 0), time(21, 0), False),  # Viernes
+            5: (time(10, 0), time(18, 0), False), # Sábado
+            6: (None, None, True)                 # Domingo (cerrado)
+        }
+        
+        for day in range(7):
+            open_time, close_time, is_closed = default_schedule[day]
+            
+            # Crear el objeto de datos para el repositorio, incluyendo gym_id
+            obj_in_data = {
                 "day_of_week": day,
-                "open_time": gym_hours_data.open_time or time(9, 0),
-                "close_time": gym_hours_data.close_time or time(21, 0),
-                "is_closed": gym_hours_data.is_closed if gym_hours_data.is_closed is not None else False
+                "open_time": open_time,
+                "close_time": close_time,
+                "is_closed": is_closed,
+                "gym_id": gym_id
             }
-            gym_hours_data = GymHoursCreate(**create_data)
+            
+            # Verificar si ya existen horarios para este día
+            existing_hours = gym_hours_repository.get_by_day(db, day=day, gym_id=gym_id)
+            if existing_hours:
+                # Si ya existen, actualizar solo si es necesario
+                # Crear un objeto de actualización solo con los campos que cambian
+                update_data = {}
+                if existing_hours.open_time != open_time:
+                    update_data['open_time'] = open_time
+                if existing_hours.close_time != close_time:
+                    update_data['close_time'] = close_time
+                if existing_hours.is_closed != is_closed:
+                    update_data['is_closed'] = is_closed
+                    
+                if update_data: # Solo actualizar si hay cambios
+                    hours = gym_hours_repository.update(db, db_obj=existing_hours, obj_in=update_data)
+                else:
+                    hours = existing_hours
+            else:
+                # Si no existen, crear nuevos usando obj_in_data (que ya tiene gym_id)
+                hours = gym_hours_repository.create(db, obj_in=obj_in_data)
+            
+            default_hours.append(hours)
         
-        return gym_hours_repository.create(db, obj_in=gym_hours_data)
+        return default_hours
     
-    def initialize_default_hours(self, db: Session) -> List[Any]:
-        """Inicializar horarios predeterminados para todos los días de la semana"""
-        results = []
+    def get_hours_for_date(self, db: Session, date_value: date, gym_id: int) -> Dict[str, Any]:
+        """
+        Obtener los horarios del gimnasio para una fecha específica.
         
-        for day in range(7):  # 0-6 (Lunes-Domingo)
-            hours = gym_hours_repository.get_or_create_default(db, day=day)
-            results.append(hours)
-        
-        return results
-    
-    def get_hours_for_date(self, db: Session, date_value: date) -> Dict[str, Any]:
-        """Obtener los horarios para una fecha específica, considerando días especiales"""
+        Args:
+            db: Sesión de base de datos
+            date_value: Fecha a consultar
+            gym_id: ID del gimnasio
+        """
         # Verificar si hay horarios especiales para esta fecha
-        special_hours = gym_special_hours_repository.get_by_date(db, date_value=date_value)
+        special_hours = gym_special_hours_repository.get_by_date(db, date_value=date_value, gym_id=gym_id)
         
+        # Obtener día de la semana (0=Lunes, 6=Domingo)
+        day_of_week = date_value.weekday()
+        
+        # Obtener horarios regulares para este día
+        regular_hours = gym_hours_repository.get_by_day(db, day=day_of_week, gym_id=gym_id)
+        if not regular_hours:
+            # Si no hay horarios regulares, crear con valores predeterminados
+            regular_hours = gym_hours_repository.get_or_create_default(db, day=day_of_week, gym_id=gym_id)
+        
+        # Preparar la respuesta con la información completa y mejorada
+        result = {
+            "date": date_value,
+            "day_of_week": day_of_week,
+            "regular_hours": {
+                "id": regular_hours.id,
+                "open_time": regular_hours.open_time,
+                "close_time": regular_hours.close_time,
+                "is_closed": regular_hours.is_closed
+            },
+            "special_hours": None,
+            "is_special": special_hours is not None
+        }
+        
+        # Si hay horarios especiales, incluirlos en la respuesta
         if special_hours:
-            # Si es un día especial, devolver esos horarios
-            return {
-                "date": date_value,
+            result["special_hours"] = {
+                "id": special_hours.id,
                 "open_time": special_hours.open_time,
                 "close_time": special_hours.close_time,
                 "is_closed": special_hours.is_closed,
-                "is_special": True,
                 "description": special_hours.description
             }
+            
+        # Determinar el horario efectivo para esta fecha (especial o regular)
+        if special_hours:
+            result["effective_hours"] = {
+                "open_time": special_hours.open_time,
+                "close_time": special_hours.close_time,
+                "is_closed": special_hours.is_closed,
+                "source": "special",
+                "source_id": special_hours.id
+            }
+        else:
+            result["effective_hours"] = {
+                "open_time": regular_hours.open_time,
+                "close_time": regular_hours.close_time,
+                "is_closed": regular_hours.is_closed,
+                "source": "regular",
+                "source_id": regular_hours.id
+            }
         
-        # Si no es un día especial, obtener los horarios regulares
-        day_of_week = date_value.weekday()
-        regular_hours = gym_hours_repository.get_by_day(db, day=day_of_week)
+        return result
+
+    def apply_defaults_to_range(
+        self, db: Session, start_date: date, end_date: date, gym_id: int, overwrite_existing: bool = False
+    ) -> List[GymSpecialHours]:
+        """
+        Aplica el horario semanal predeterminado a un rango de fechas específicas.
         
-        if not regular_hours:
-            # Si no hay horarios configurados para este día, crear predeterminados
-            regular_hours = gym_hours_repository.get_or_create_default(db, day=day_of_week)
+        Args:
+            db: Sesión de base de datos
+            start_date: Fecha de inicio del rango
+            end_date: Fecha de fin del rango
+            gym_id: ID del gimnasio
+            overwrite_existing: Si es True, sobrescribe las excepciones manuales existentes
+            
+        Returns:
+            Lista de objetos GymSpecialHours creados o actualizados
+        """
+        # Verificar que el rango de fechas sea válido
+        if end_date < start_date:
+            raise ValueError("La fecha de fin no puede ser anterior a la fecha de inicio")
+            
+        # Obtener los horarios semanales predeterminados
+        weekly_hours = self.get_all_gym_hours(db, gym_id=gym_id)
+        if not weekly_hours:
+            # Si no hay horarios semanales, crearlos con valores predeterminados
+            weekly_hours = self._create_default_hours(db, gym_id=gym_id)
+            
+        # Crear un diccionario de horarios por día de la semana para acceso rápido
+        weekly_hours_dict = {hour.day_of_week: hour for hour in weekly_hours}
         
-        return {
-            "date": date_value,
-            "open_time": regular_hours.open_time,
-            "close_time": regular_hours.close_time,
-            "is_closed": regular_hours.is_closed,
-            "is_special": False,
-            "description": None
-        }
+        # Preparar los datos para crear o actualizar horarios especiales
+        schedule_data = {}
+        current_date = start_date
+        
+        while current_date <= end_date:
+            # Obtener el día de la semana (0=Lunes, 6=Domingo)
+            day_of_week = current_date.weekday()
+            
+            # Obtener el horario semanal para este día
+            weekly_hour = weekly_hours_dict.get(day_of_week)
+            if not weekly_hour:
+                # Si no hay horario para este día, usar valores predeterminados
+                is_closed = day_of_week == 6  # Cerrado en domingo
+                open_time = time(9, 0) if not is_closed else None
+                close_time = time(21, 0) if not is_closed else None
+            else:
+                # Usar el horario semanal para este día
+                is_closed = weekly_hour.is_closed
+                open_time = weekly_hour.open_time
+                close_time = weekly_hour.close_time
+                
+            # Verificar si ya existe un horario especial para esta fecha
+            special_hour = gym_special_hours_repository.get_by_date(db, date_value=current_date, gym_id=gym_id)
+            
+            # Si no existe o se debe sobrescribir, agregar a los datos a procesar
+            if not special_hour or overwrite_existing:
+                schedule_data[current_date] = {
+                    "open_time": open_time,
+                    "close_time": close_time,
+                    "is_closed": is_closed,
+                    "description": f"Aplicado desde plantilla ({day_of_week})"
+                }
+                
+            # Avanzar al siguiente día
+            current_date += timedelta(days=1)
+            
+        # Crear o actualizar los horarios especiales en bloque
+        return gym_special_hours_repository.bulk_create_or_update(
+            db, gym_id=gym_id, schedule_data=schedule_data
+        )
+        
+    def get_schedule_for_date_range(
+        self, db: Session, start_date: date, end_date: date, gym_id: int
+    ) -> List[Dict[str, Any]]:
+        """
+        Obtener el horario del gimnasio para un rango de fechas.
+        
+        Args:
+            db: Sesión de base de datos
+            start_date: Fecha de inicio
+            end_date: Fecha de fin
+            gym_id: ID del gimnasio
+        """
+        # Verificar que el rango de fechas sea válido
+        if end_date < start_date:
+            raise ValueError("La fecha de fin no puede ser anterior a la fecha de inicio")
+            
+        # Obtener los horarios especiales para este rango
+        special_hours = gym_special_hours_repository.get_by_date_range(
+            db, start_date=start_date, end_date=end_date, gym_id=gym_id
+        )
+        
+        # Crear un diccionario de horarios especiales por fecha para acceso rápido
+        special_hours_dict = {str(hour.date): hour for hour in special_hours}
+        
+        # Obtener los horarios semanales predeterminados
+        weekly_hours = self.get_all_gym_hours(db, gym_id=gym_id)
+        if not weekly_hours:
+            # Si no hay horarios semanales, crearlos con valores predeterminados
+            weekly_hours = self._create_default_hours(db, gym_id=gym_id)
+            
+        # Crear un diccionario de horarios por día de la semana para acceso rápido
+        weekly_hours_dict = {hour.day_of_week: hour for hour in weekly_hours}
+        
+        # Preparar la respuesta
+        result = []
+        current_date = start_date
+        
+        while current_date <= end_date:
+            # Obtener el día de la semana (0=Lunes, 6=Domingo)
+            day_of_week = current_date.weekday()
+            date_str = str(current_date)
+            
+            # Verificar si hay un horario especial para esta fecha
+            if date_str in special_hours_dict:
+                special_hour = special_hours_dict[date_str]
+                schedule_entry = {
+                    "date": current_date,
+                    "day_of_week": day_of_week,
+                    "open_time": special_hour.open_time,
+                    "close_time": special_hour.close_time,
+                    "is_closed": special_hour.is_closed,
+                    "is_special": True,
+                    "description": special_hour.description,
+                    "source_id": special_hour.id
+                }
+            else:
+                # Usar el horario semanal para este día
+                weekly_hour = weekly_hours_dict.get(day_of_week)
+                if not weekly_hour:
+                    # Si no hay horario para este día, usar valores predeterminados
+                    is_closed = day_of_week == 6  # Cerrado en domingo
+                    open_time = time(9, 0) if not is_closed else None
+                    close_time = time(21, 0) if not is_closed else None
+                    source_id = None
+                else:
+                    # Usar el horario semanal para este día
+                    is_closed = weekly_hour.is_closed
+                    open_time = weekly_hour.open_time
+                    close_time = weekly_hour.close_time
+                    source_id = weekly_hour.id
+                    
+                schedule_entry = {
+                    "date": current_date,
+                    "day_of_week": day_of_week,
+                    "open_time": open_time,
+                    "close_time": close_time,
+                    "is_closed": is_closed,
+                    "is_special": False,
+                    "description": None,
+                    "source_id": source_id
+                }
+                
+            result.append(schedule_entry)
+            
+            # Avanzar al siguiente día
+            current_date += timedelta(days=1)
+            
+        return result
 
 
 class GymSpecialHoursService:
-    def get_special_day(self, db: Session, date_value: date) -> Any:
-        """Obtener un día especial por fecha"""
-        return gym_special_hours_repository.get_by_date(db, date_value=date_value)
+    def get_special_hours(self, db: Session, special_day_id: int) -> Any:
+        """Obtener un día especial por ID"""
+        return gym_special_hours_repository.get(db, id=special_day_id)
     
-    def get_special_days_range(
-        self, db: Session, start_date: date, end_date: date
-    ) -> List[Any]:
-        """Obtener días especiales en un rango de fechas"""
-        return gym_special_hours_repository.get_by_date_range(
-            db, start_date=start_date, end_date=end_date
-        )
-    
-    def create_special_day(
-        self, db: Session, special_hours_data: GymSpecialHoursCreate
-    ) -> Any:
-        """Crear un nuevo día especial"""
-        # Convertir la fecha a datetime.date si es datetime
-        if isinstance(special_hours_data.date, datetime):
-            date_value = special_hours_data.date.date()
-        else:
-            date_value = special_hours_data.date
+    def get_special_hours_by_date(self, db: Session, date_value: date, gym_id: int) -> Any:
+        """
+        Obtener horarios especiales para una fecha específica.
         
-        # Verificar si ya existe un día especial para esta fecha
-        existing = gym_special_hours_repository.get_by_date(db, date_value=date_value)
-        if existing:
+        Args:
+            db: Sesión de base de datos
+            date_value: Fecha a consultar
+            gym_id: ID del gimnasio
+        """
+        return gym_special_hours_repository.get_by_date(db, date_value=date_value, gym_id=gym_id)
+    
+    def get_upcoming_special_days(self, db: Session, limit: int = 10, gym_id: int = None) -> List[Any]:
+        """
+        Obtener los próximos días especiales.
+        
+        Args:
+            db: Sesión de base de datos
+            limit: Número máximo de registros a devolver
+            gym_id: ID del gimnasio para filtrar
+        """
+        return gym_special_hours_repository.get_upcoming_special_days(db, limit=limit, gym_id=gym_id)
+    
+    def create_special_day(self, db: Session, special_hours_data: GymSpecialHoursCreate, gym_id: int = None) -> Any:
+        """
+        Crear un nuevo día especial
+        
+        Args:
+            db: Sesión de base de datos
+            special_hours_data: Datos del día especial a crear
+            gym_id: ID del gimnasio al que pertenece el día especial
+        """
+        if gym_id is None:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Ya existe un día especial para la fecha {date_value}"
+                detail="Se requiere un ID de gimnasio válido"
             )
+            
+        # Crear una copia de los datos para añadir el gym_id
+        obj_in_data = special_hours_data.model_dump()
+        obj_in_data["gym_id"] = gym_id
         
-        return gym_special_hours_repository.create(db, obj_in=special_hours_data)
+        # Crear el objeto usando el repositorio
+        return gym_special_hours_repository.create(db, obj_in=obj_in_data)
     
     def update_special_day(
         self, db: Session, special_day_id: int, special_hours_data: GymSpecialHoursUpdate
     ) -> Any:
         """Actualizar un día especial existente"""
-        existing = gym_special_hours_repository.get(db, id=special_day_id)
-        if not existing:
+        special_day = gym_special_hours_repository.get(db, id=special_day_id)
+        if not special_day:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Día especial no encontrado"
             )
         
         return gym_special_hours_repository.update(
-            db, db_obj=existing, obj_in=special_hours_data
+            db, db_obj=special_day, obj_in=special_hours_data
         )
     
     def delete_special_day(self, db: Session, special_day_id: int) -> Any:
         """Eliminar un día especial"""
-        existing = gym_special_hours_repository.get(db, id=special_day_id)
-        if not existing:
+        special_day = gym_special_hours_repository.get(db, id=special_day_id)
+        if not special_day:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Día especial no encontrado"
             )
         
         return gym_special_hours_repository.remove(db, id=special_day_id)
-    
-    def get_upcoming_special_days(self, db: Session, limit: int = 10) -> List[Any]:
-        """Obtener los próximos días especiales"""
-        return gym_special_hours_repository.get_upcoming_special_days(db, limit=limit)
 
 
 class ClassService:
@@ -179,21 +471,58 @@ class ClassService:
         return class_obj
     
     def get_classes(
-        self, db: Session, skip: int = 0, limit: int = 100, active_only: bool = True
+        self, db: Session, skip: int = 0, limit: int = 100, active_only: bool = True,
+        gym_id: Optional[int] = None
     ) -> List[Any]:
-        """Obtener todas las clases"""
+        """
+        Obtener todas las clases, opcionalmente filtradas por gimnasio.
+        
+        Args:
+            db: Sesión de base de datos
+            skip: Número de registros a omitir (paginación)
+            limit: Número máximo de registros a devolver (paginación)
+            active_only: Si es True, solo devuelve clases activas
+            gym_id: ID del gimnasio para filtrar (opcional)
+        """
+        query = db.query(Class)
+        
         if active_only:
-            return class_repository.get_active_classes(db, skip=skip, limit=limit)
-        return class_repository.get_multi(db, skip=skip, limit=limit)
+            query = query.filter(Class.is_active == True)
+        
+        if gym_id is not None:
+            query = query.filter(Class.gym_id == gym_id)
+        
+        return query.offset(skip).limit(limit).all()
     
-    def create_class(self, db: Session, class_data: ClassCreate, created_by_id: Optional[int] = None) -> Any:
-        """Crear una nueva clase"""
+    def create_class(self, db: Session, class_data: ClassCreate, created_by_id: Optional[int] = None, gym_id: int = None) -> Any:
+        """
+        Crear una nueva clase
+        
+        Args:
+            db: Sesión de base de datos
+            class_data: Datos de la clase a crear
+            created_by_id: ID del usuario que crea la clase (opcional)
+            gym_id: ID del gimnasio al que pertenece la clase
+        """
+        # Preparar los datos para la creación
+        obj_in_data = class_data.model_dump(exclude={"category"})  # Excluir el campo auxiliar category
+        
+        # Asegurarse de que gym_id esté presente
+        if not gym_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Se requiere un ID de gimnasio válido"
+            )
+            
+        # Agregar el gym_id al objeto de datos
+        obj_in_data["gym_id"] = gym_id
+            
         # Agregar ID del creador si se proporciona
-        obj_in_data = class_data.model_dump()
         if created_by_id:
             obj_in_data["created_by"] = created_by_id
         
-        return class_repository.create(db, obj_in=ClassCreate(**obj_in_data))
+        # Crear la clase
+        return class_repository.create(db, obj_in=obj_in_data)
     
     def update_class(self, db: Session, class_id: int, class_data: ClassUpdate) -> Any:
         """Actualizar una clase existente"""
@@ -226,28 +555,74 @@ class ClassService:
         return class_repository.remove(db, id=class_id)
     
     def get_classes_by_category(
-        self, db: Session, category: str, skip: int = 0, limit: int = 100
+        self, db: Session, *, category: str, skip: int = 0, limit: int = 100,
+        gym_id: Optional[int] = None
     ) -> List[Any]:
-        """Obtener clases por categoría"""
-        return class_repository.get_by_category(
-            db, category=category, skip=skip, limit=limit
-        )
+        """
+        Obtener clases por categoría, opcionalmente filtradas por gimnasio.
+        
+        Args:
+            db: Sesión de base de datos
+            category: Categoría de clase a filtrar
+            skip: Número de registros a omitir (paginación)
+            limit: Número máximo de registros a devolver (paginación)
+            gym_id: ID del gimnasio para filtrar (opcional)
+        """
+        query = db.query(Class).filter(Class.category_enum == category, Class.is_active == True)
+        
+        if gym_id is not None:
+            query = query.filter(Class.gym_id == gym_id)
+        
+        return query.offset(skip).limit(limit).all()
     
     def get_classes_by_difficulty(
-        self, db: Session, difficulty: str, skip: int = 0, limit: int = 100
+        self, db: Session, *, difficulty: str, skip: int = 0, limit: int = 100,
+        gym_id: Optional[int] = None
     ) -> List[Any]:
-        """Obtener clases por nivel de dificultad"""
-        return class_repository.get_by_difficulty(
-            db, difficulty=difficulty, skip=skip, limit=limit
-        )
+        """
+        Obtener clases por nivel de dificultad, opcionalmente filtradas por gimnasio.
+        
+        Args:
+            db: Sesión de base de datos
+            difficulty: Nivel de dificultad a filtrar
+            skip: Número de registros a omitir (paginación)
+            limit: Número máximo de registros a devolver (paginación)
+            gym_id: ID del gimnasio para filtrar (opcional)
+        """
+        query = db.query(Class).filter(Class.difficulty_level == difficulty, Class.is_active == True)
+        
+        if gym_id is not None:
+            query = query.filter(Class.gym_id == gym_id)
+        
+        return query.offset(skip).limit(limit).all()
     
     def search_classes(
-        self, db: Session, search: str, skip: int = 0, limit: int = 100
+        self, db: Session, *, search: str, skip: int = 0, limit: int = 100,
+        gym_id: Optional[int] = None
     ) -> List[Any]:
-        """Buscar clases por nombre o descripción"""
-        return class_repository.search_classes(
-            db, search=search, skip=skip, limit=limit
+        """
+        Buscar clases por nombre o descripción, opcionalmente filtradas por gimnasio.
+        
+        Args:
+            db: Sesión de base de datos
+            search: Texto a buscar en nombre o descripción
+            skip: Número de registros a omitir (paginación)
+            limit: Número máximo de registros a devolver (paginación)
+            gym_id: ID del gimnasio para filtrar (opcional)
+        """
+        search_pattern = f"%{search}%"
+        query = db.query(Class).filter(
+            or_(
+                Class.name.ilike(search_pattern),
+                Class.description.ilike(search_pattern)
+            ),
+            Class.is_active == True
         )
+        
+        if gym_id is not None:
+            query = query.filter(Class.gym_id == gym_id)
+        
+        return query.offset(skip).limit(limit).all()
 
 
 class ClassSessionService:
@@ -300,6 +675,19 @@ class ClassSessionService:
         # Agregar ID del creador si se proporciona
         if created_by_id:
             obj_in_data["created_by"] = created_by_id
+        
+        # Asegurarse de que gym_id esté presente
+        if "gym_id" not in obj_in_data or obj_in_data["gym_id"] is None:
+            # Si no está presente, usar el gym_id de la clase
+            obj_in_data["gym_id"] = class_obj.gym_id
+            print(f"DEBUG: Usando gym_id={class_obj.gym_id} de la clase {class_obj.id}")
+        
+        # Confirmar que gym_id no sea None
+        if obj_in_data.get("gym_id") is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="El ID del gimnasio (gym_id) no puede ser nulo"
+            )
         
         # Crear la sesión
         return class_session_repository.create(
@@ -425,45 +813,82 @@ class ClassSessionService:
         )
     
     def get_upcoming_sessions(
-        self, db: Session, skip: int = 0, limit: int = 100
+        self, db: Session, skip: int = 0, limit: int = 100, gym_id: Optional[int] = None
     ) -> List[Any]:
-        """Obtener las próximas sesiones programadas"""
+        """
+        Obtener las próximas sesiones programadas, opcionalmente filtradas por gimnasio.
+        
+        Args:
+            db: Sesión de base de datos
+            skip: Número de registros a omitir (paginación)
+            limit: Número máximo de registros a devolver (paginación)
+            gym_id: ID del gimnasio para filtrar (opcional)
+        """
         return class_session_repository.get_upcoming_sessions(
-            db, skip=skip, limit=limit
+            db, skip=skip, limit=limit, gym_id=gym_id
         )
     
     def get_sessions_by_date_range(
         self, db: Session, start_date: date, end_date: date, 
-        skip: int = 0, limit: int = 100
+        skip: int = 0, limit: int = 100, gym_id: Optional[int] = None
     ) -> List[Any]:
-        """Obtener sesiones en un rango de fechas"""
+        """
+        Obtener sesiones en un rango de fechas, opcionalmente filtradas por gimnasio.
+        
+        Args:
+            db: Sesión de base de datos
+            start_date: Fecha de inicio
+            end_date: Fecha de fin
+            skip: Número de registros a omitir (paginación)
+            limit: Número máximo de registros a devolver (paginación)
+            gym_id: ID del gimnasio para filtrar (opcional)
+        """
         start_datetime = datetime.combine(start_date, time.min)
         end_datetime = datetime.combine(end_date, time.max)
         
         return class_session_repository.get_by_date_range(
             db, start_date=start_datetime, end_date=end_datetime,
-            skip=skip, limit=limit
+            skip=skip, limit=limit, gym_id=gym_id
         )
     
     def get_sessions_by_trainer(
         self, db: Session, trainer_id: int, skip: int = 0, limit: int = 100,
-        upcoming_only: bool = False
+        upcoming_only: bool = False, gym_id: Optional[int] = None
     ) -> List[Any]:
-        """Obtener sesiones de un entrenador específico"""
+        """
+        Obtener sesiones de un entrenador específico, opcionalmente filtradas por gimnasio.
+        
+        Args:
+            db: Sesión de base de datos
+            trainer_id: ID del entrenador
+            skip: Número de registros a omitir (paginación)
+            limit: Número máximo de registros a devolver (paginación)
+            upcoming_only: Si es True, solo devuelve las sesiones futuras
+            gym_id: ID del gimnasio para filtrar (opcional)
+        """
         if upcoming_only:
             return class_session_repository.get_trainer_upcoming_sessions(
-                db, trainer_id=trainer_id, skip=skip, limit=limit
+                db, trainer_id=trainer_id, skip=skip, limit=limit, gym_id=gym_id
             )
         return class_session_repository.get_by_trainer(
-            db, trainer_id=trainer_id, skip=skip, limit=limit
+            db, trainer_id=trainer_id, skip=skip, limit=limit, gym_id=gym_id
         )
     
     def get_sessions_by_class(
-        self, db: Session, class_id: int, skip: int = 0, limit: int = 100
+        self, db: Session, class_id: int, skip: int = 0, limit: int = 100, gym_id: Optional[int] = None
     ) -> List[Any]:
-        """Obtener sesiones de una clase específica"""
+        """
+        Obtener sesiones de una clase específica, opcionalmente filtradas por gimnasio.
+        
+        Args:
+            db: Sesión de base de datos
+            class_id: ID de la clase
+            skip: Número de registros a omitir (paginación)
+            limit: Número máximo de registros a devolver (paginación)
+            gym_id: ID del gimnasio para filtrar (opcional)
+        """
         return class_session_repository.get_by_class(
-            db, class_id=class_id, skip=skip, limit=limit
+            db, class_id=class_id, skip=skip, limit=limit, gym_id=gym_id
         )
 
 
@@ -535,7 +960,8 @@ class ClassParticipationService:
         participation_data = ClassParticipationCreate(
             session_id=session_id,
             member_id=member_id,
-            status=ClassParticipationStatus.REGISTERED
+            status=ClassParticipationStatus.REGISTERED,
+            gym_id=session.gym_id  # Asignar el gym_id de la sesión
         )
         
         participation = class_participation_repository.create(
@@ -650,11 +1076,11 @@ class ClassParticipationService:
         return updated
     
     def get_session_participants(
-        self, db: Session, session_id: int, skip: int = 0, limit: int = 100
+        self, db: Session, session_id: int, skip: int = 0, limit: int = 100, gym_id: Optional[int] = None
     ) -> List[Any]:
         """Obtener todos los participantes de una sesión"""
         return class_participation_repository.get_by_session(
-            db, session_id=session_id, skip=skip, limit=limit
+            db, session_id=session_id, skip=skip, limit=limit, gym_id=gym_id
         )
     
     def get_member_participations(
@@ -666,11 +1092,11 @@ class ClassParticipationService:
         )
     
     def get_member_upcoming_classes(
-        self, db: Session, member_id: int, skip: int = 0, limit: int = 100
+        self, db: Session, member_id: int, skip: int = 0, limit: int = 100, gym_id: Optional[int] = None
     ) -> List[Dict[str, Any]]:
         """Obtener las próximas clases de un miembro"""
         return class_participation_repository.get_member_upcoming_classes(
-            db, member_id=member_id, skip=skip, limit=limit
+            db, member_id=member_id, skip=skip, limit=limit, gym_id=gym_id
         )
 
 

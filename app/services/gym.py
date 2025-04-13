@@ -1,5 +1,5 @@
 from typing import List, Optional, Dict, Any, Union, cast
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func, and_
 
 from app.models.gym import Gym
@@ -10,7 +10,10 @@ from app.models.schedule import ClassSession
 
 from app.schemas.gym import GymCreate, GymUpdate, GymWithStats
 from app.repositories.gym import gym_repository
-from fastapi import HTTPException
+from fastapi import HTTPException, status
+
+# Importar UserRole para la comparación
+from app.models.user import UserRole 
 
 class GymService:
     def create_gym(self, db: Session, *, gym_in: GymCreate) -> Gym:
@@ -132,108 +135,137 @@ class GymService:
         return gym_repository.remove(db, id=gym_id)
     
     def add_user_to_gym(
-        self, db: Session, *, gym_id: int, user_id: int, role: GymRoleType = GymRoleType.MEMBER
+        self, db: Session, *, gym_id: int, user_id: int
     ) -> UserGym:
         """
-        Añadir un usuario a un gimnasio.
-        
+        Añadir un usuario a un gimnasio SIEMPRE con el rol MEMBER.
+        Impide añadir usuarios SUPER_ADMIN.
+        Si el usuario ya existe en el gimnasio, lanza un error 409.
+
         Args:
             db: Sesión de base de datos
             gym_id: ID del gimnasio
-            user_id: ID del usuario
-            role: Rol del usuario en el gimnasio
-            
+            user_id: ID del usuario a añadir
+
         Returns:
-            La asociación usuario-gimnasio creada
-            
+            La asociación UserGym creada (antes de commit).
+
         Raises:
-            ValueError: Si el usuario ya pertenece al gimnasio
+            HTTPException 404: Si el usuario a añadir no existe.
+            HTTPException 400: Si se intenta añadir un SUPER_ADMIN.
+            HTTPException 409: Si el usuario ya pertenece al gimnasio.
         """
+        # Verificar que el usuario a añadir existe Y NO es SUPER_ADMIN
+        user_to_add = db.query(User).filter(User.id == user_id).first()
+        if not user_to_add:
+             raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Usuario con ID {user_id} no encontrado."
+            )
+        if user_to_add.role == UserRole.SUPER_ADMIN:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No se pueden añadir administradores de plataforma a gimnasios."
+            )
+            
         # Verificar si el usuario ya pertenece al gimnasio
-        existing = db.query(UserGym).filter(
+        existing: Optional[UserGym] = db.query(UserGym).filter(
             UserGym.user_id == user_id,
             UserGym.gym_id == gym_id
         ).first()
-        
+
         if existing:
-            # Si ya existe pero con un rol diferente, actualizar el rol
-            if existing.role != role:
-                existing.role = role
-                db.commit()
-                db.refresh(existing)
-            return existing
-        
-        # Crear nueva asociación
-        user_gym = UserGym(
-            user_id=user_id,
-            gym_id=gym_id,
-            role=role
-        )
-        
-        db.add(user_gym)
-        db.commit()
-        db.refresh(user_gym)
-        return user_gym
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"El usuario {user_id} ya pertenece al gimnasio {gym_id}."
+            )
+        else:
+            user_gym = UserGym(
+                user_id=user_id,
+                gym_id=gym_id,
+                role=GymRoleType.MEMBER
+            )
+            db.add(user_gym)
+            return user_gym
     
     def remove_user_from_gym(self, db: Session, *, gym_id: int, user_id: int) -> None:
         """
         Eliminar un usuario de un gimnasio.
-        
-        Args:
-            db: Sesión de base de datos
-            gym_id: ID del gimnasio
-            user_id: ID del usuario
-            
-        Raises:
-            ValueError: Si el usuario no pertenece al gimnasio
+        Impide eliminar usuarios SUPER_ADMIN.
         """
+        # Verificar que el usuario a eliminar existe y NO es SUPER_ADMIN
+        user_to_remove = db.query(User).filter(User.id == user_id).first()
+        if not user_to_remove:
+             raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Usuario con ID {user_id} no encontrado."
+            )
+        if user_to_remove.role == UserRole.SUPER_ADMIN:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN, # Usar 403 Forbidden aquí
+                detail="No se pueden eliminar administradores de plataforma de los gimnasios."
+            )
+            
+        # Buscar la asociación
         user_gym = db.query(UserGym).filter(
             UserGym.user_id == user_id,
             UserGym.gym_id == gym_id
         ).first()
         
         if not user_gym:
-            raise ValueError(f"El usuario {user_id} no pertenece al gimnasio {gym_id}")
+            # Si no existe la asociación, no hay nada que hacer (o lanzar 404)
+             raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"El usuario {user_id} no pertenece al gimnasio {gym_id}"
+            )
             
+        # Eliminar la asociación (sin commit aquí)
         db.delete(user_gym)
-        db.commit()
+        # El commit se maneja fuera
     
     def update_user_role(
         self, db: Session, *, gym_id: int, user_id: int, role: GymRoleType
     ) -> UserGym:
         """
         Actualizar el rol de un usuario en un gimnasio.
-        
-        Args:
-            db: Sesión de base de datos
-            gym_id: ID del gimnasio
-            user_id: ID del usuario
-            role: Nuevo rol
-            
-        Returns:
-            La asociación actualizada
-            
-        Raises:
-            ValueError: Si el usuario no pertenece al gimnasio
+        Impide modificar el rol de usuarios SUPER_ADMIN.
         """
+         # Verificar que el usuario a modificar existe y NO es SUPER_ADMIN
+        user_to_update = db.query(User).filter(User.id == user_id).first()
+        if not user_to_update:
+             raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Usuario con ID {user_id} no encontrado."
+            )
+        if user_to_update.role == UserRole.SUPER_ADMIN:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="No se puede modificar el rol de un administrador de plataforma a nivel de gimnasio."
+            )
+            
+        # Buscar la asociación
         user_gym = db.query(UserGym).filter(
             UserGym.user_id == user_id,
             UserGym.gym_id == gym_id
         ).first()
         
         if not user_gym:
-            raise ValueError(f"El usuario {user_id} no pertenece al gimnasio {gym_id}")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"El usuario {user_id} no pertenece al gimnasio {gym_id}"
+            )
             
+        # Actualizar el rol (sin commit aquí)
         user_gym.role = role
-        db.commit()
-        db.refresh(user_gym)
+        # El commit y refresh se manejan fuera
         return user_gym
     
     def get_user_gyms(
         self, db: Session, *, user_id: int, skip: int = 0, limit: int = 100
     ) -> List[Dict[str, Any]]:
         """
-        Obtener todos los gimnasios a los que pertenece un usuario.
+        Obtener todos los gimnasios a los que pertenece un usuario,
+        incluyendo el email del usuario y su rol en cada gimnasio.
         
         Args:
             db: Sesión de base de datos
@@ -242,26 +274,51 @@ class GymService:
             limit: Máximo de registros a devolver
             
         Returns:
-            Lista de gimnasios con el rol del usuario en cada uno
+            Lista de diccionarios representando la pertenencia del usuario a cada gimnasio.
+            
+        Raises:
+             HTTPException 404: Si el usuario no existe.
         """
+        # Obtener primero el usuario para asegurar que existe y obtener su email
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            # Considerar lanzar una excepción si el usuario no se encuentra
+             raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Usuario con ID {user_id} no encontrado."
+            )
+            # O devolver lista vacía: return [] 
+            
+        user_email = user.email # Guardar el email del usuario
+        
+        # Consultar las asociaciones y los gimnasios
         user_gyms = db.query(UserGym, Gym).join(
             Gym, UserGym.gym_id == Gym.id
         ).filter(
             UserGym.user_id == user_id,
             Gym.is_active == True
-        ).offset(skip).limit(limit).all()
+        ).order_by(Gym.name).offset(skip).limit(limit).all()
         
         result = []
         for user_gym, gym in user_gyms:
-            gym_dict = {
+            gym_membership_dict = {
+                # Campos del Gym
                 "id": gym.id,
                 "name": gym.name,
                 "subdomain": gym.subdomain,
                 "logo_url": gym.logo_url,
+                "address": gym.address,
+                "phone": gym.phone,
+                "email": gym.email, # Email del gimnasio
+                "description": gym.description,
                 "is_active": gym.is_active,
-                "role": user_gym.role.value
+                "created_at": gym.created_at,
+                "updated_at": gym.updated_at,
+                # Campos añadidos
+                "user_email": user_email, # Email del usuario solicitado
+                "user_role_in_gym": user_gym.role # Rol del usuario en ESTE gimnasio
             }
-            result.append(gym_dict)
+            result.append(gym_membership_dict)
             
         return result
     
@@ -300,10 +357,13 @@ class GymService:
         
         result = []
         for user_gym, user in users:
+            # Combinar first_name y last_name para crear el nombre completo
+            full_name = f"{user.first_name or ''} {user.last_name or ''}".strip()
+            
             user_dict = {
                 "id": user.id,
                 "email": user.email,
-                "full_name": user.full_name,
+                "full_name": full_name,
                 "role": user_gym.role.value,
                 "joined_at": user_gym.created_at
             }
@@ -394,10 +454,39 @@ class GymService:
         Returns:
             La asociación usuario-gimnasio o None si no existe
         """
-        return db.query(UserGym).filter(
+        print(f"DEBUG check_user_in_gym: Verificando user_id={user_id}, gym_id={gym_id}")
+        try:
+            # Realizar la consulta y capturar el SQL generado
+            query = db.query(UserGym).filter(
             UserGym.user_id == user_id,
             UserGym.gym_id == gym_id
-        ).first()
+            )
+            print(f"DEBUG check_user_in_gym: SQL Query = {str(query)}")
+            
+            # Ejecutar la consulta
+            result = query.first()
+            print(f"DEBUG check_user_in_gym: Resultado = {result}")
+            
+            # Si existe, mostrar detalles de la relación
+            if result:
+                print(f"DEBUG check_user_in_gym: Encontrada relación - user_id={result.user_id}, gym_id={result.gym_id}, role={result.role}")
+            else:
+                print(f"DEBUG check_user_in_gym: No se encontró relación")
+                
+                # Verificar si el usuario existe
+                user_exists = db.query(User).filter(User.id == user_id).first() is not None
+                print(f"DEBUG check_user_in_gym: ¿Usuario existe? {user_exists}")
+                
+                # Verificar si hay registros para ese usuario en cualquier gimnasio
+                all_user_gyms = db.query(UserGym).filter(UserGym.user_id == user_id).all()
+                print(f"DEBUG check_user_in_gym: Relaciones del usuario con otros gimnasios: {len(all_user_gyms)}")
+                for ug in all_user_gyms:
+                    print(f"DEBUG check_user_in_gym:   - gym_id={ug.gym_id}, role={ug.role}")
+            
+            return result
+        except Exception as e:
+            print(f"DEBUG check_user_in_gym: Error durante la consulta: {str(e)}")
+            return None
     
     def check_user_role_in_gym(
         self, db: Session, *, user_id: int, gym_id: int, required_roles: List[GymRoleType]
@@ -420,5 +509,42 @@ class GymService:
             
         return user_gym.role in required_roles
 
+    def update_user_role_in_gym(
+        self, db: Session, *, gym_id: int, user_id: int, role: GymRoleType
+    ) -> UserGym:
+        """
+        Actualizar el rol de un usuario DENTRO de un gimnasio específico (GymRoleType).
+        Impide modificar el rol de usuarios SUPER_ADMIN.
+        """
+         # Verificar que el usuario a modificar existe y NO es SUPER_ADMIN
+        user_to_update = db.query(User).filter(User.id == user_id).first()
+        if not user_to_update:
+             raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Usuario con ID {user_id} no encontrado."
+            )
+        if user_to_update.role == UserRole.SUPER_ADMIN:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="No se puede modificar el rol de un administrador de plataforma a nivel de gimnasio."
+            )
+            
+        # Buscar la asociación
+        user_gym = db.query(UserGym).filter(
+            UserGym.user_id == user_id,
+            UserGym.gym_id == gym_id
+        ).first()
+        
+        if not user_gym:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"El usuario {user_id} no pertenece al gimnasio {gym_id}"
+            )
+            
+        # Actualizar el rol (sin commit aquí)
+        user_gym.role = role
+        db.add(user_gym) # Asegurar que se marca para guardar
+        # El commit y refresh se manejan fuera
+        return user_gym
 
 gym_service = GymService() 

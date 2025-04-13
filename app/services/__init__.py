@@ -1,3 +1,10 @@
+"""
+Services module for GymAPI app
+
+This module includes all service-related modules, which implement the business logic of the application.
+Services interact with models, repositories, and external systems like Auth0 and Redis.
+"""
+
 # Inicializador del paquete services 
 
 # servicios disponibles
@@ -10,4 +17,7 @@ from app.services.schedule import (
     class_service,
     class_session_service,
     class_participation_service
-) 
+)
+from app.services.gym import gym_service
+from app.services.auth0_mgmt import auth0_mgmt_service
+from app.services.cache_service import cache_service 

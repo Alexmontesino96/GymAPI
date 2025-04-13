@@ -5,6 +5,8 @@ from app.repositories.base import BaseRepository
 from app.models.gym import Gym
 from app.models.user_gym import GymRoleType
 from app.core.tenant import verify_gym_access, verify_trainer_role, verify_admin_role
+from fastapi import APIRouter, Depends, Body, Path, Security, HTTPException, status
+from typing import List, Optional, Any
 
 # Crear un repositorio para ClassCategoryCustom
 class ClassCategoryCustomRepository(BaseRepository[ClassCategoryCustom, ClassCategoryCustomCreate, ClassCategoryCustomUpdate]):
@@ -69,13 +71,27 @@ class ClassCategoryService:
                 detail="Ya existe una categoría con este nombre en este gimnasio"
             )
         
-        # Agregar ID del gimnasio y creador si se proporciona
-        obj_in_data = category_data.model_dump()
-        obj_in_data["gym_id"] = gym_id
-        if created_by_id:
-            obj_in_data["created_by"] = created_by_id
+        # Crear la instancia del modelo SQLAlchemy directamente, incluyendo gym_id y created_by
+        db_obj = ClassCategoryCustom(
+            **category_data.model_dump(), 
+            gym_id=gym_id, 
+            created_by=created_by_id
+        )
         
-        return class_category_repository.create(db, obj_in=ClassCategoryCustomCreate(**obj_in_data))
+        # Añadir, confirmar y refrescar directamente en la sesión
+        db.add(db_obj)
+        try:
+            db.commit()
+            db.refresh(db_obj)
+        except Exception as e:
+            db.rollback()
+            # Aquí podrías querer loggear el error 'e' o relanzarlo de forma más específica
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Error al guardar la categoría en la base de datos"
+            )
+            
+        return db_obj
     
     def update_category(self, db: Session, category_id: int, category_data: ClassCategoryCustomUpdate, gym_id: int) -> Any:
         """Actualizar una categoría existente"""
@@ -95,8 +111,8 @@ class ClassCategoryService:
         
         return class_category_repository.update(db, db_obj=category, obj_in=category_data)
     
-    def delete_category(self, db: Session, category_id: int, gym_id: int) -> Any:
-        """Eliminar una categoría"""
+    def delete_category(self, db: Session, category_id: int, gym_id: int) -> None:
+        """Eliminar una categoría (o marcar como inactiva si está en uso)"""
         # Obtener la categoría y verificar que pertenece al gimnasio correcto
         category = self.get_category(db, category_id=category_id, gym_id=gym_id)
         
@@ -104,11 +120,15 @@ class ClassCategoryService:
         classes_with_category = db.query(Class).filter(Class.category_id == category_id).count()
         if classes_with_category > 0:
             # Si hay clases usando esta categoría, solo marcarla como inactiva
-            return class_category_repository.update(
+            class_category_repository.update(
                 db, db_obj=category, obj_in={"is_active": False}
             )
+        else:
+            # Si no está en uso, eliminarla
+            class_category_repository.remove(db, id=category_id)
         
-        return class_category_repository.remove(db, id=category_id)
+        # El servicio ya no necesita devolver nada
+        return None
 
 # Instanciar el servicio
 category_service = ClassCategoryService()
@@ -214,14 +234,17 @@ async def update_category(
     )
 
 
-@router.delete("/categories/{category_id}", response_model=ClassCategoryCustomSchema)
+@router.delete(
+    "/categories/{category_id}", 
+    status_code=status.HTTP_204_NO_CONTENT
+)
 async def delete_category(
     category_id: int = Path(..., description="ID de la categoría"),
     db: Session = Depends(get_db),
     # Verificar que el usuario tiene rol de administrador en este gimnasio
     current_gym: Gym = Depends(verify_admin_role),
     user: Auth0User = Security(auth.get_user, scopes=["delete:schedules"])
-) -> Any:
+) -> None:
     """
     Eliminar una categoría.
     
@@ -230,9 +253,12 @@ async def delete_category(
     la separación de datos entre diferentes gimnasios.
     
     Si hay clases usando esta categoría, se marcará como inactiva en lugar de eliminarla.
+    Devuelve 204 No Content en caso de éxito.
     
     Requiere:
     - Scope 'delete:schedules' en Auth0
     - Rol de ADMIN o OWNER en el gimnasio actual
     """
-    return category_service.delete_category(db, category_id=category_id, gym_id=current_gym.id) 
+    category_service.delete_category(db, category_id=category_id, gym_id=current_gym.id)
+    # No es necesario devolver nada explícitamente, FastAPI lo manejará
+    return None 

@@ -1,6 +1,7 @@
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 from pydantic import BaseModel, EmailStr, HttpUrl, Field, validator
+from app.models.user_gym import GymRoleType # Importar Enum
 
 class GymBase(BaseModel):
     """Esquema base para gimnasios (tenants)"""
@@ -21,13 +22,6 @@ class GymBase(BaseModel):
 class GymCreate(GymBase):
     """Esquema para crear un nuevo gimnasio"""
     is_active: bool = Field(True, title="Estado del gimnasio")
-    
-    # Opcional: IDs de usuarios iniciales con sus roles (para setup inicial)
-    initial_users: Optional[List[Dict[str, Any]]] = Field(
-        None, 
-        title="Usuarios iniciales con roles",
-        description="Lista de {user_id, role} para asignar usuarios iniciales al gimnasio"
-    )
 
 class GymUpdate(BaseModel):
     """Esquema para actualizar un gimnasio existente"""
@@ -53,10 +47,35 @@ class Gym(GymBase):
     class Config:
         from_attributes = True
 
+class GymSchema(Gym):
+    """Alias para Gym, manteniendo compatibilidad si se usa en otro sitio"""
+    pass
+
+# Nuevo esquema para la respuesta de /gyms/my
+class UserGymMembershipSchema(GymSchema): # Hereda de GymSchema (que hereda de Gym)
+    """Representa la pertenencia de un usuario a un gimnasio, incluyendo su rol"""
+    user_email: EmailStr = Field(..., title="Email del usuario")
+    user_role_in_gym: GymRoleType = Field(..., title="Rol del usuario en este gimnasio")
+
 class GymWithStats(Gym):
     """Gimnasio con estadísticas básicas"""
     members_count: int = Field(0, title="Número de miembros")
     trainers_count: int = Field(0, title="Número de entrenadores")
     admins_count: int = Field(0, title="Número de administradores")
     events_count: int = Field(0, title="Número de eventos")
-    classes_count: int = Field(0, title="Número de clases programadas") 
+    classes_count: int = Field(0, title="Número de clases programadas")
+
+class UserGymRoleUpdate(BaseModel):
+    """Esquema para actualizar el rol de un usuario dentro de un gimnasio"""
+    role: GymRoleType = Field(..., title="Nuevo rol del usuario en el gimnasio")
+
+class UserGymSchema(BaseModel):
+    """Esquema para representar la relación entre usuario y gimnasio."""
+    id: int
+    user_id: int
+    gym_id: int
+    role: GymRoleType
+    created_at: datetime
+
+    class Config:
+        from_attributes = True # Permite crear desde el modelo ORM 

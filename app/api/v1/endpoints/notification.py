@@ -8,7 +8,7 @@ from app.repositories.notification_repository import notification_repository
 from app.services.notification_service import notification_service
 from app.core.auth0_fastapi import auth, Auth0User
 from fastapi import Security
-from app.core.tenant import get_current_gym
+from app.core.tenant import verify_gym_access, verify_admin_role
 from app.models.gym import Gym
 
 
@@ -27,7 +27,7 @@ def register_device(
     token_data: DeviceTokenCreate,
     db: Session = Depends(get_db),
     current_user: Auth0User = Security(auth.get_user),
-    current_gym: Gym = Depends(get_current_gym),
+    gym: Gym = Depends(verify_gym_access),
 ):
     """
     Registra un nuevo dispositivo para recibir notificaciones push
@@ -43,7 +43,7 @@ def register_device(
 def get_user_devices(
     db: Session = Depends(get_db),
     current_user: Auth0User = Security(auth.get_user),
-    current_gym: Gym = Depends(get_current_gym),
+    gym: Gym = Depends(verify_gym_access),
 ):
     """
     Obtiene todos los dispositivos registrados del usuario actual
@@ -54,7 +54,7 @@ def get_user_devices(
 def logout_all_devices(
     db: Session = Depends(get_db),
     current_user: Auth0User = Security(auth.get_user),
-    current_gym: Gym = Depends(get_current_gym),
+    gym: Gym = Depends(verify_gym_access),
 ):
     """
     Desactiva todos los dispositivos del usuario (para logout)
@@ -67,19 +67,11 @@ async def send_notification(
     notification_data: NotificationSend,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    current_user: Auth0User = Security(auth.get_user),
-    current_gym: Gym = Depends(get_current_gym)
+    gym: Gym = Depends(verify_admin_role)
 ):
     """
-    Envía una notificación a usuarios específicos (solo para admins)
+    Envía una notificación a usuarios específicos (solo para admins del gym actual)
     """
-    # Verificar permisos (ajusta según tus roles/permisos)
-    if "admin:users" not in (current_user.permissions or []):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not authorized to send notifications"
-        )
-    
     # Enviar en segundo plano para no bloquear la respuesta
     background_tasks.add_task(
         notification_service.send_to_users,

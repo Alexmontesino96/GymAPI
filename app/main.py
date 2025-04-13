@@ -1,26 +1,73 @@
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
+import logging
+# Quitar import sys si ya no se usa aquí
 
+# Importar la función de configuración de logging
+from app.core.logging_config import setup_logging
+
+# Llamar a la configuración de logging ANTES de importar/crear otros elementos
+setup_logging()
+
+# --- Configuración de Logging Explícita Eliminada --- 
+# (Código anterior eliminado)
+# ----------------------------------------
+
+# Ahora importar el resto
 from app.api.v1.api import api_router
 from app.core.config import settings
 from app.middleware.timing import TimingMiddleware
 from app.core.scheduler import init_scheduler
+from app.db.redis_client import get_redis_client, close_redis_client
+
+logger = logging.getLogger(__name__) # Mantener o ajustar según necesidad
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Código que se ejecuta al inicio
-    # Iniciar el scheduler para tareas programadas (notificaciones)
-    scheduler = init_scheduler()
-    app.state.scheduler = scheduler
+    logger.info("Lifespan: Startup iniciado...")
     
-    yield
+    # Iniciar el scheduler
+    try:
+        scheduler = init_scheduler()
+        app.state.scheduler = scheduler
+        logger.info("Lifespan: Scheduler inicializado.")
+    except Exception as e:
+        logger.error(f"Lifespan: Error al inicializar scheduler: {e}", exc_info=True)
+
+    # Conectar a Redis
+    print("Lifespan: Intentando conectar a Redis...")
+    redis_connected = False
+    try:
+        await get_redis_client() 
+        logger.info("Lifespan: Conexión Redis establecida (o cliente obtenido).")
+        redis_connected = True
+    except Exception as e:
+        logger.error(f"Lifespan: Error al conectar a Redis: {e}", exc_info=True)
+    print(f"Lifespan: Conexión Redis {'EXITOSA' if redis_connected else 'FALLIDA'}.")
     
-    # Código que se ejecuta al cierre
-    # Apagar el scheduler al cerrar la aplicación
-    if hasattr(app.state, "scheduler"):
-        app.state.scheduler.shutdown()
+    yield # Aplicación en ejecución
+    
+    logger.info("Lifespan: Shutdown iniciado...")
+    
+    # Apagar el scheduler
+    if hasattr(app.state, "scheduler") and app.state.scheduler:
+        try:
+            app.state.scheduler.shutdown()
+            logger.info("Scheduler shut down.")
+        except Exception as e:
+            logger.error(f"Error shutting down scheduler: {e}", exc_info=True)
+    
+    # Cerrar conexión Redis
+    print("Lifespan: Intentando cerrar conexión Redis...")
+    try:
+        await close_redis_client()
+        logger.info("Lifespan: Conexión Redis cerrada.")
+        print("Lifespan: Conexión Redis CERRADA exitosamente.")
+    except Exception as e:
+        logger.error(f"Lifespan: Error cerrando Redis: {e}", exc_info=True)
+        print(f"Lifespan: Error al cerrar Redis: {e}")
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -39,30 +86,35 @@ app = FastAPI(
     }
 )
 
+# <<< AÑADIR MIDDLEWARE DE LOGGING AQUÍ >>>
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    # Añadir un print para diagnóstico inmediato
+    print(f"DEBUG: log_requests middleware ejecutado para: {request.method} {request.url}") 
+    # Cambiar a logger.info para mayor visibilidad estándar
+    logger.info(f"Middleware: Recibida petición: {request.method} {request.url}")
+    logger.info(f"Middleware: Headers: {dict(request.headers)}")
+    # El logger ya captura la IP, no es necesario extraerla aquí.
+    
+    response = await call_next(request)
+    
+    # Cambiar a logger.info
+    logger.info(f"Middleware: Enviando respuesta: {response.status_code}")
+    return response
+# <<< FIN MIDDLEWARE DE LOGGING >>>
+
 # Añadir middleware para medir el tiempo de respuesta
+# Asegurarse que este middleware esté DESPUÉS del de logging si quieres loguear antes de medir
 app.add_middleware(TimingMiddleware)
 
 # Lista de orígenes permitidos para CORS
-origins = [str(origin) for origin in settings.BACKEND_CORS_ORIGINS]
-if "*" in origins:
-    # Si se permite cualquier origen, usar una lista más amplia de dominios comunes
-    origins = [
-        "http://localhost",
-        "http://localhost:3000",
-        "http://localhost:3001",
-        "http://localhost:3005",
-        "http://127.0.0.1:8080",
-        # Puedes agregar más dominios según sea necesario
-    ]
-else:
-    # Asegurarse de que http://localhost:3001 esté siempre incluido
-    if "http://localhost:3001" not in origins:
-        origins.append("http://localhost:3001")
+origins = ["*"]
 
 # Configurar CORS para toda la aplicación
+# Asegurarse que este middleware esté DESPUÉS del de logging si quieres loguear la petición antes de CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=origins, # Usar la lista simplificada
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

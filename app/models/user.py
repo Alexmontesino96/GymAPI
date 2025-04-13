@@ -7,9 +7,10 @@ from app.db.base_class import Base
 
 
 class UserRole(str, enum.Enum):
-    ADMIN = "ADMIN"
-    TRAINER = "TRAINER" 
-    MEMBER = "MEMBER"
+    SUPER_ADMIN = "SUPER_ADMIN"  # Administrador de la plataforma con acceso a todos los gimnasios
+    ADMIN = "ADMIN"              # Administrador de un gimnasio específico
+    TRAINER = "TRAINER"          # Entrenador
+    MEMBER = "MEMBER"            # Miembro regular
 
 
 class User(Base):
@@ -17,8 +18,8 @@ class User(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     email = Column(String, unique=True, index=True, nullable=False)
-    hashed_password = Column(String, nullable=True)  # Puede ser nulo si usamos Auth0
-    full_name = Column(String, index=True)
+    first_name = Column(String, index=True, nullable=True)
+    last_name = Column(String, index=True, nullable=True)
     is_active = Column(Boolean(), default=True)
     is_superuser = Column(Boolean(), default=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())

@@ -11,26 +11,19 @@ from app.schemas.event import EventCreate, EventUpdate, EventParticipationCreate
 class EventRepository:
     """Repositorio para operaciones con eventos."""
     
-    def create_event(self, db: Session, *, event_in: EventCreate, creator_id: Union[int, str], gym_id: int = 1) -> Event:
-        """Crear un nuevo evento."""
+    def create_event(self, db: Session, *, event_in: EventCreate, creator_id: int, gym_id: int = 1) -> Event:
+        """Crear un nuevo evento. Espera un ID de creador interno (int)."""
         event_data = event_in.dict()
         
-        # Si creator_id es un string, buscar el usuario por auth0_id de manera más eficiente
-        if isinstance(creator_id, str):
-            # Usar una sola consulta con select específico en lugar de cargar todo el objeto
-            user_id = db.query(User.id).filter(User.auth0_id == creator_id).scalar()
-            
-            if user_id:
-                creator_id = user_id
-            else:
-                # Si no se encuentra el usuario, crear uno nuevo con el auth0_id
-                # Creación más optimizada evitando refresh innecesario
-                user = User(auth0_id=creator_id, email=f"temp_{creator_id}@example.com", role=UserRole.MEMBER)
-                db.add(user)
-                db.flush()  # Flush en lugar de commit para mantener la transacción abierta
-                creator_id = user.id
+        # Ya no se maneja creator_id como string (Auth0 ID) aquí.
+        # Se asume que el creator_id recibido es el ID interno del usuario.
         
-        # Crear el evento directamente sin consultas adicionales
+        # Verificar si el usuario creador existe (opcional pero recomendable)
+        # creator = db.query(User.id).filter(User.id == creator_id).first()
+        # if not creator:
+        #     raise ValueError(f"Creator user with internal ID {creator_id} not found")
+
+        # Crear el evento directamente con el ID interno
         db_event = Event(**event_data, creator_id=creator_id, gym_id=gym_id)
         db.add(db_event)
         db.commit()
@@ -407,6 +400,42 @@ class EventRepository:
             db.rollback()
             print(f"Error al actualizar evento: {e}")
             return None
+            
+    def mark_event_completed(self, db: Session, *, event_id: int) -> Optional[Event]:
+        """
+        Marca un evento como COMPLETED de manera eficiente.
+        
+        Args:
+            db: Sesión de base de datos
+            event_id: ID del evento a marcar como completado
+            
+        Returns:
+            El evento actualizado o None si no existe o hay un error
+        """
+        try:
+            # Verificar si el evento existe y está aún programado
+            event = db.query(Event).filter(
+                Event.id == event_id,
+                Event.status == EventStatus.SCHEDULED
+            ).first()
+            
+            if not event:
+                return None
+                
+            # Actualizar el estado a COMPLETED
+            event.status = EventStatus.COMPLETED
+            event.updated_at = datetime.utcnow()
+            
+            # Guardar los cambios
+            db.add(event)
+            db.commit()
+            
+            return event
+        except Exception as e:
+            # Registrar error, hacer rollback y devolver None en caso de fallo
+            db.rollback()
+            print(f"Error al marcar evento como completado: {e}")
+            return None
 
 
 class EventParticipationRepository:
@@ -549,22 +578,31 @@ class EventParticipationRepository:
         ).first()
     
     def update_participation(
-        self, db: Session, *, participation_id: int, participation_in: EventParticipationUpdate
+        self, db: Session, *, db_obj: EventParticipation, participation_in: EventParticipationUpdate
     ) -> Optional[EventParticipation]:
-        """Actualizar una participación."""
-        db_participation = self.get_participation(db, participation_id=participation_id)
-        if not db_participation:
-            return None
+        """Actualizar una participación (principalmente asistencia)."""
+        # db_participation = self.get_participation(db, participation_id=participation_id)
+        # if not db_participation:
+        #     return None
+        # Se recibe db_obj directamente para evitar búsqueda repetida.
+        db_participation = db_obj 
         
         update_data = participation_in.dict(exclude_unset=True)
         
-        # Actualizar cada campo si está presente
+        # Actualizar cada campo si está presente (ahora solo será 'attended')
+        updated = False
         for field, value in update_data.items():
-            setattr(db_participation, field, value)
+            if hasattr(db_participation, field) and getattr(db_participation, field) != value:
+                setattr(db_participation, field, value)
+                updated = True
         
-        db.add(db_participation)
-        db.commit()
-        db.refresh(db_participation)
+        # Solo hacer commit si hubo cambios
+        if updated:
+            db_participation.updated_at = datetime.utcnow() # Actualizar timestamp
+            db.add(db_participation)
+            db.commit()
+            db.refresh(db_participation)
+            
         return db_participation
     
     def delete_participation(

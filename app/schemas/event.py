@@ -35,20 +35,17 @@ class EventUpdate(BaseModel):
 # Base schemas for EventParticipation
 class EventParticipationBase(BaseModel):
     status: EventParticipationStatus = EventParticipationStatus.REGISTERED
-    notes: Optional[str] = None
     attended: bool = False
 
 
-class EventParticipationCreate(EventParticipationBase):
+class EventParticipationCreate(BaseModel):
     """Esquema para crear una participación en un evento."""
     event_id: int
 
 
 class EventParticipationUpdate(BaseModel):
-    """Esquema para actualizar una participación en un evento."""
-    status: Optional[EventParticipationStatus] = None
-    notes: Optional[str] = None
-    attended: Optional[bool] = None
+    """Esquema para actualizar la asistencia a un evento."""
+    attended: bool = Field(..., description="Indica si el miembro asistió al evento")
 
 
 # Response schemas
@@ -58,6 +55,14 @@ class EventParticipation(EventParticipationBase):
     member_id: int
     registered_at: datetime
     updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+# Nuevo esquema para incluir detalles del evento en la participación
+class EventParticipationWithEvent(EventParticipation): 
+    event: EventBase # Incluir el objeto Event completo
 
     class Config:
         from_attributes = True
@@ -84,7 +89,6 @@ class EventWithParticipantCount(Event):
     participants_count: int
     
     class Config:
-        orm_mode = True
         from_attributes = True
         arbitrary_types_allowed = True
 

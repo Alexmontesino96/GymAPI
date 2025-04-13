@@ -4,27 +4,13 @@ from datetime import datetime
 
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, and_
-from passlib.context import CryptContext
 from fastapi.encoders import jsonable_encoder
 
 from app.models.user import User, UserRole
 from app.repositories.base import BaseRepository
 from app.schemas.user import UserCreate, UserUpdate
-
-# Contexto para encriptar contraseñas
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
-def get_password_hash(password: str) -> str:
-    """
-    Obtener el hash de una contraseña
-    """
-    return pwd_context.hash(password)
-
-def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """
-    Verificar que una contraseña coincida con el hash
-    """
-    return pwd_context.verify(plain_password, hashed_password)
+from app.models.gym import Gym
+from app.models.user_gym import UserGym, GymRoleType
 
 
 class UserRepository(BaseRepository[User, UserCreate, UserUpdate]):
@@ -45,58 +31,80 @@ class UserRepository(BaseRepository[User, UserCreate, UserUpdate]):
         Obtener usuarios filtrados por rol.
         """
         return db.query(User).filter(User.role == role).offset(skip).limit(limit).all()
-        
-    def search(
+
+    def get_by_role_and_gym(
         self, 
         db: Session, 
         *, 
+        role: UserRole,
+        gym_id: int,
+        skip: int = 0, 
+        limit: int = 100
+    ) -> List[User]:
+        """
+        Obtener usuarios de un gimnasio específico, filtrados por su rol GLOBAL.
+        Nota: Esto filtra por el rol definido en la tabla User, no el de UserGym.
+        Si se necesita filtrar por el rol DENTRO del gym (GymRoleType), se necesita otro método.
+        """
+        return (
+            db.query(self.model)
+            .join(UserGym, self.model.id == UserGym.user_id)
+            .filter(UserGym.gym_id == gym_id)
+            .filter(self.model.role == role)
+            .offset(skip)
+            .limit(limit)
+            .all()
+        )
+        
+    def search(
+        self,
+        db: Session,
+        *,
         name: Optional[str] = None,
         email: Optional[str] = None,
         role: Optional[UserRole] = None,
         is_active: Optional[bool] = None,
         created_before: Optional[datetime] = None,
         created_after: Optional[datetime] = None,
-        skip: int = 0, 
+        gym_id: Optional[int] = None,
+        skip: int = 0,
         limit: int = 100
     ) -> List[User]:
         """
         Búsqueda avanzada de usuarios con múltiples criterios.
-        
-        Args:
-            db: Sesión de base de datos
-            name: Búsqueda parcial por nombre
-            email: Búsqueda parcial por email
-            role: Filtrar por rol específico
-            is_active: Filtrar por usuarios activos/inactivos
-            created_before: Usuarios creados antes de esta fecha
-            created_after: Usuarios creados después de esta fecha
-            skip: Número de registros a saltar (paginación)
-            limit: Número máximo de registros a devolver
-            
-        Returns:
-            List[User]: Lista de usuarios que coinciden con los criterios
+        Si se proporciona gym_id, filtra solo usuarios de ese gimnasio.
         """
         query = db.query(User)
-        
+
+        # Unir con UserGym si necesitamos filtrar por gimnasio
+        if gym_id is not None:
+            query = query.join(UserGym, User.id == UserGym.user_id)
+            query = query.filter(UserGym.gym_id == gym_id)
+
         # Aplicar filtros si están presentes
         if name:
-            query = query.filter(User.full_name.ilike(f"%{name}%"))
-            
+            query = query.filter(
+                or_(
+                    User.first_name.ilike(f"%{name}%"),
+                    User.last_name.ilike(f"%{name}%")
+                )
+            )
+
         if email:
             query = query.filter(User.email.ilike(f"%{email}%"))
-            
+
         if role:
             query = query.filter(User.role == role)
-            
+
         if is_active is not None:
             query = query.filter(User.is_active == is_active)
-            
+
         if created_before:
             query = query.filter(User.created_at <= created_before)
-            
+
         if created_after:
             query = query.filter(User.created_at >= created_after)
-        
+
         # Aplicar paginación
         return query.offset(skip).limit(limit).all()
 
@@ -108,10 +116,7 @@ class UserRepository(BaseRepository[User, UserCreate, UserUpdate]):
             obj_in_data = obj_in
         else:
             obj_in_data = obj_in.model_dump(exclude_unset=True)
-        if "password" in obj_in_data and obj_in_data["password"]:
-            hashed_password = pwd_context.hash(obj_in_data["password"])
-            del obj_in_data["password"]
-            obj_in_data["hashed_password"] = hashed_password
+            
         db_obj = User(**obj_in_data)
         db.add(db_obj)
         db.commit()
@@ -133,13 +138,11 @@ class UserRepository(BaseRepository[User, UserCreate, UserUpdate]):
             update_data = obj_in
         else:
             update_data = obj_in.model_dump(exclude_unset=True)
-        if "password" in update_data and update_data["password"]:
-            hashed_password = pwd_context.hash(update_data["password"])
-            del update_data["password"]
-            update_data["hashed_password"] = hashed_password
+            
         for field in obj_data:
             if field in update_data:
                 setattr(db_obj, field, update_data[field])
+                
         db.add(db_obj)
         db.commit()
         db.refresh(db_obj)
@@ -159,11 +162,17 @@ class UserRepository(BaseRepository[User, UserCreate, UserUpdate]):
         if not email and auth0_id:
             email = f"temp_{auth0_id.replace('|', '_')}@example.com"
         
+        # Procesar el nombre completo para obtener first_name y last_name
+        name_parts = name.split(" ", 1) if name else ["", ""]
+        first_name = name_parts[0] if len(name_parts) > 0 else ""
+        last_name = name_parts[1] if len(name_parts) > 1 else ""
+        
         # Crear un nuevo usuario con datos de Auth0
         db_obj = User(
             auth0_id=auth0_id,
             email=email,
-            full_name=name,
+            first_name=first_name,
+            last_name=last_name,
             picture=picture,
             locale=locale,
             auth0_metadata=json.dumps(auth0_user),
@@ -179,15 +188,13 @@ class UserRepository(BaseRepository[User, UserCreate, UserUpdate]):
     def authenticate(self, db: Session, *, email: str, password: str) -> Optional[User]:
         """
         Autenticar un usuario con email y contraseña.
+        Este método ya no realiza una autenticación real, ya que la autenticación
+        se maneja exclusivamente a través de Auth0. Se mantiene por compatibilidad.
         """
-        user = self.get_by_email(db, email=email)
-        if not user:
-            return None
-        if not user.hashed_password:
-            return None
-        if not pwd_context.verify(password, user.hashed_password):
-            return None
-        return user
+        # La autenticación ahora se realiza a través de Auth0
+        # Este método solo devuelve el usuario si existe, ya que la validación
+        # de la contraseña se realiza en Auth0
+        return self.get_by_email(db, email=email)
 
     def is_active(self, user: User) -> bool:
         """

@@ -8,11 +8,14 @@ from fastapi import HTTPException, Depends, Request, Security
 from fastapi.security import SecurityScopes, HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.security import OAuth2, OAuth2PasswordBearer, OAuth2AuthorizationCodeBearer, OpenIdConnect
 from fastapi.openapi.models import OAuthFlows, OAuthFlowImplicit
-from jose import jwt
+from jose import jwt, JWTError
 from pydantic import BaseModel, Field, ValidationError
 from typing_extensions import TypedDict
+from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.services.user import user_service
+from app.db.session import get_db
 
 logger = logging.getLogger('fastapi_auth0')
 
@@ -70,13 +73,13 @@ class OAuth2ImplicitBearer(OAuth2):
         return None
 
 
+# Volver a definir TypedDicts para JWKS
 class JwksKeyDict(TypedDict):
     kid: str
     kty: str
     use: str
     n: str
     e: str
-
 
 class JwksDict(TypedDict):
     keys: List[JwksKeyDict]
@@ -95,9 +98,15 @@ class Auth0:
 
         self.auth0_user_model = auth0user_model
 
+        # Volver a cargar JWKS al inicializar
         self.algorithms = ['RS256']
-        r = urllib.request.urlopen(f'https://{domain}/.well-known/jwks.json')
-        self.jwks: JwksDict = json.loads(r.read())
+        try:
+            r = urllib.request.urlopen(f'https://{domain}/.well-known/jwks.json')
+            self.jwks: JwksDict = json.loads(r.read())
+        except Exception as e:
+            logger.error(f"Failed to fetch JWKS from {domain}: {e}")
+            # Podríamos querer manejar esto más robustamente, p.ej. reintentar o fallar
+            self.jwks = {"keys": []}
 
         authorization_url_qs = urllib.parse.urlencode({'audience': api_audience})
         authorization_url = f'https://{domain}/authorize?{authorization_url_qs}'
@@ -105,7 +114,6 @@ class Auth0:
             authorizationUrl=authorization_url,
             scopes=scopes,
             scheme_name='Auth0ImplicitBearer')
-        self.password_scheme = OAuth2PasswordBearer(tokenUrl=f'https://{domain}/oauth/token', scopes=scopes)
         self.authcode_scheme = OAuth2AuthorizationCodeBearer(
             authorizationUrl=authorization_url,
             tokenUrl=f'https://{domain}/oauth/token',
@@ -118,35 +126,26 @@ class Auth0:
                       ) -> Optional[Auth0User]:
         """
         Verify the Authorization: Bearer token and return the user.
-        If there is any problem and auto_error = True then raise Auth0UnauthenticatedException or Auth0UnauthorizedException,
-        otherwise return None.
-
-        Not to be called directly, but to be placed within a Depends() or Security() wrapper.
-        Example: def path_op_func(user: Auth0User = Security(auth.get_user)).
+        Uses jose.jwt for verification, checking signature, audience, issuer, and expiry.
         """
         if creds is None:
             if self.auto_error:
-                # See HTTPBearer from FastAPI:
-                # latest - https://github.com/tiangolo/fastapi/blob/master/fastapi/security/http.py
-                # 0.65.1 - https://github.com/tiangolo/fastapi/blob/aece74982d7c9c1acac98e2c872c4cb885677fc7/fastapi/security/http.py
-                raise HTTPException(403, detail='Missing bearer token')  # must be 403 until solving https://github.com/tiangolo/fastapi/pull/2120
+                raise HTTPException(403, detail='Missing bearer token')
             else:
                 return None
 
         token = creds.credentials
         payload: Dict = {}
         try:
+            # --- VERIFICACIÓN MANUAL RESTAURADA --- 
             unverified_header = jwt.get_unverified_header(token)
-
             if 'kid' not in unverified_header:
-                msg = 'Malformed token header'
-                if self.auto_error:
-                    raise Auth0UnauthenticatedException(detail=msg)
-                else:
-                    logger.warning(msg)
-                    return None
+                raise Auth0UnauthenticatedException(detail='Malformed token header: missing kid')
 
             rsa_key = {}
+            if not self.jwks or not self.jwks.get("keys"):
+                 raise Auth0UnauthenticatedException(detail='JWKS not loaded or invalid')
+                 
             for key in self.jwks['keys']:
                 if key['kid'] == unverified_header['kid']:
                     rsa_key = {
@@ -157,22 +156,20 @@ class Auth0:
                         'e': key['e']
                     }
                     break
-            if rsa_key:
-                payload = jwt.decode(
-                    token,
-                    rsa_key,
-                    algorithms=self.algorithms,
-                    audience=self.audience,
-                    issuer=f'https://{self.domain}/'
-                )
-            else:
-                msg = 'Invalid kid header (wrong tenant or rotated public key)'
-                if self.auto_error:
-                    raise Auth0UnauthenticatedException(detail=msg)
-                else:
-                    logger.warning(msg)
-                    return None
+            
+            if not rsa_key:
+                 raise Auth0UnauthenticatedException(detail='Invalid kid header (wrong tenant or rotated public key)')
 
+            payload = jwt.decode(
+                token,
+                rsa_key,
+                algorithms=self.algorithms,
+                audience=self.audience,
+                issuer=f'https://{self.domain}/'
+            )
+            # --- FIN VERIFICACIÓN MANUAL RESTAURADA --- 
+
+        # Capturar excepciones específicas de jose.jwt
         except jwt.ExpiredSignatureError:
             msg = 'Expired token'
             if self.auto_error:
@@ -180,31 +177,30 @@ class Auth0:
             else:
                 logger.warning(msg)
                 return None
-
-        except jwt.JWTClaimsError:
-            msg = 'Invalid token claims (wrong issuer or audience)'
+        except jwt.JWTClaimsError as e:
+            # Esto captura errores de audience, issuer, etc.
+            msg = f'Invalid token claims: {str(e)}'
             if self.auto_error:
                 raise Auth0UnauthenticatedException(detail=msg)
             else:
                 logger.warning(msg)
                 return None
-
-        except jwt.JWTError:
-            msg = 'Malformed token'
+        except JWTError as e: # Captura genérica de jose
+            msg = f'Malformed token: {str(e)}'
             if self.auto_error:
                 raise Auth0UnauthenticatedException(detail=msg)
             else:
                 logger.warning(msg)
                 return None
-
-        except Auth0UnauthenticatedException:
-            raise
-
+        # Captura de nuestra excepción si la lanzamos antes
+        except Auth0UnauthenticatedException as e:
+             if self.auto_error: raise e
+             else: logger.warning(e.detail); return None
+        # Captura genérica final por si acaso
         except Exception as e:
-            # This is an unlikely case but handle it just to be safe (maybe the token is specially crafted to bug our code)
-            logger.error(f'Handled exception decoding token: "{e}"', exc_info=True)
+            logger.error(f'Unhandled exception verifying token: "{e}" M', exc_info=True)
             if self.auto_error:
-                raise Auth0UnauthenticatedException(detail='Error decoding token')
+                raise Auth0UnauthenticatedException(detail='Error verifying token')
             else:
                 return None
 
@@ -331,13 +327,45 @@ auth = Auth0(
 )
 
 # Función de ayuda para obtener usuario sin permisos específicos
-async def get_current_user(user: Auth0User = Security(auth.get_user, scopes=[])):
+async def get_current_user(db: Session = Depends(get_db), user: Auth0User = Security(auth.get_user, scopes=[])):
     """
-    Obtiene el usuario actual autenticado.
+    Obtiene el usuario actual autenticado y asegura la sincronización con la BD local.
+    
+    Esta función actúa como la dependencia principal para obtener el usuario.
+    Después de validar el token con Auth0, llama a user_service para crear
+    o actualizar el usuario en la base de datos local (sincronización Just-in-Time).
     """
     if user is None:
         raise Auth0UnauthenticatedException(detail="No se pudieron validar las credenciales")
-    return user
+
+    # --- Sincronización Just-in-Time ---    
+    try:
+        # Prepara los datos mínimos necesarios para la sincronización
+        auth0_user_data = {
+            "sub": user.id,  # 'sub' es el id de Auth0
+            "email": getattr(user, "email", None),
+            "name": getattr(user, "name", None),
+            "picture": getattr(user, "picture", None),
+            "email_verified": getattr(user, "email_verified", None)
+        }
+        
+        # Llama al servicio para crear o actualizar el usuario localmente
+        db_user = user_service.create_or_update_auth0_user(db, auth0_user_data)
+        
+        # Opcional: Podríamos enriquecer el objeto 'user' (Auth0User)
+        # con el ID interno de la BD si fuera necesario en los endpoints.
+        # user.db_id = db_user.id 
+        
+    except ImportError:
+        logger.error("Error al importar user_service para sincronización JIT.")
+        # Decide si lanzar excepción o continuar sin sincronizar
+    except Exception as e:
+        logger.error(f"Error durante la sincronización Just-in-Time del usuario {user.id}: {str(e)}", exc_info=True)
+        # Decide si lanzar excepción o continuar sin sincronizar.
+        # Podría ser problemático si el usuario NO existe localmente y falla la creación.
+        # Considerar lanzar HTTPException si la sincronización es crítica.
+
+    return user # Devolver el usuario original de Auth0 (posiblemente enriquecido)
 
 
 async def get_current_user_with_permissions(required_permissions: List[str] = [], user: Auth0User = Security(auth.get_user)):
