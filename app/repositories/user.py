@@ -8,7 +8,7 @@ from fastapi.encoders import jsonable_encoder
 
 from app.models.user import User, UserRole
 from app.repositories.base import BaseRepository
-from app.schemas.user import UserCreate, UserUpdate
+from app.schemas.user import UserCreate, UserUpdate, UserPublicProfile
 from app.models.gym import Gym
 from app.models.user_gym import UserGym, GymRoleType
 
@@ -107,6 +107,58 @@ class UserRepository(BaseRepository[User, UserCreate, UserUpdate]):
 
         # Aplicar paginación
         return query.offset(skip).limit(limit).all()
+
+    def get_public_participants(
+        self,
+        db: Session,
+        *,
+        gym_id: int,
+        roles: List[UserRole],
+        name: Optional[str] = None,
+        skip: int = 0,
+        limit: int = 100
+    ) -> List[UserPublicProfile]:
+        """
+        Obtiene perfiles públicos de participantes de un gym, filtrados y paginados.
+        Selecciona solo los campos necesarios para UserPublicProfile.
+        """
+        query = db.query(
+            User.id, User.first_name, User.last_name, User.picture,
+            User.role, User.bio, User.is_active
+        )
+        query = query.join(UserGym, User.id == UserGym.user_id)
+        query = query.filter(UserGym.gym_id == gym_id)
+        query = query.filter(User.role.in_(roles)) # Filtrar por lista de roles
+
+        if name:
+            # Filtrar por nombre o apellido (insensible a mayúsculas/minúsculas)
+            query = query.filter(
+                or_(
+                    User.first_name.ilike(f"%{name}%"),
+                    User.last_name.ilike(f"%{name}%")
+                )
+            )
+
+        # Aplicar ordenamiento consistente para paginación
+        # Ordenar por nombre, apellido e ID para desempate
+        query = query.order_by(User.first_name, User.last_name, User.id)
+
+        # Aplicar paginación directamente en la consulta SQL
+        results = query.offset(skip).limit(limit).all()
+
+        # Construir la lista de UserPublicProfile directamente desde los resultados
+        participants = [
+             UserPublicProfile(
+                 id=row[0],
+                 first_name=row[1],
+                 last_name=row[2],
+                 picture=row[3],
+                 role=row[4],
+                 bio=row[5],
+                 is_active=row[6]
+             ) for row in results
+        ]
+        return participants
 
     def create(self, db: Session, *, obj_in: UserCreate) -> User:
         """

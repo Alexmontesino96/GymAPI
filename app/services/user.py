@@ -8,7 +8,7 @@ from jose import JWTError, jwt
 from redis.asyncio import Redis
 
 from app.repositories.user import user_repository
-from app.schemas.user import UserCreate, UserUpdate, User, UserRoleUpdate, UserProfileUpdate, UserSearchParams, UserSyncFromAuth0
+from app.schemas.user import UserCreate, UserUpdate, User, UserRoleUpdate, UserProfileUpdate, UserSearchParams, UserSyncFromAuth0, UserPublicProfile
 from app.models.user import User as UserModel, UserRole
 from app.services.storage import storage_service
 from app.core.config import settings
@@ -684,6 +684,112 @@ class UserService:
         
         await cache_service.delete_pattern(redis_client, pattern)
         logger.info(f"Caché de roles invalidada con patrón: {pattern}")
+
+    # <<< NUEVO MÉTODO CACHEADO PARA TODOS LOS USUARIOS >>>
+    async def get_users_cached(
+        self,
+        db: Session,
+        *,
+        skip: int = 0,
+        limit: int = 100,
+        redis_client: Redis
+    ) -> List[UserModel]:
+        """
+        Versión cacheada para obtener todos los usuarios de la plataforma.
+        """
+        from app.services.cache_service import cache_service
+        from app.schemas.user import User as UserSchema
+
+        if not redis_client:
+            return self.get_users(db, skip=skip, limit=limit)
+
+        cache_key = f"users:all:skip:{skip}:limit:{limit}"
+
+        async def db_fetch():
+            # La función get_users ya es síncrona
+            return self.get_users(db, skip=skip, limit=limit)
+
+        try:
+            users = await cache_service.get_or_set(
+                redis_client=redis_client,
+                cache_key=cache_key,
+                db_fetch_func=db_fetch,
+                model_class=UserSchema,
+                expiry_seconds=300,  # 5 minutos
+                is_list=True
+            )
+            return users
+        except Exception as e:
+            logger.error(f"Error al obtener todos los usuarios cacheados: {str(e)}", exc_info=True)
+            return self.get_users(db, skip=skip, limit=limit) # Fallback
+
+    # <<< AÑADIR NUEVO MÉTODO get_public_gym_participants_combined >>>
+    async def get_public_gym_participants_combined(
+        self,
+        db: Session,
+        *,
+        gym_id: int,
+        roles: List[UserRole],
+        name_contains: Optional[str] = None,
+        skip: int = 0,
+        limit: int = 100,
+        redis_client: Redis
+    ) -> List[UserPublicProfile]:
+        """
+        Obtiene perfiles públicos de participantes de un gym, combinados y cacheados.
+        Aplica filtros y paginación eficientemente.
+        """
+        from app.services.cache_service import cache_service
+
+        if name_contains:
+            # Búsqueda directa en BD sin caché cuando hay filtro de nombre
+            logger.info(f"DB Search for public participants: gym={gym_id}, roles={roles}, name={name_contains}, skip={skip}, limit={limit}")
+            # Llama al nuevo método del repositorio que devuelve UserPublicProfile
+            return user_repository.get_public_participants(
+                db, gym_id=gym_id, roles=roles, name=name_contains, skip=skip, limit=limit
+            )
+        else:
+            # Lógica de caché cuando no hay filtro de nombre
+            if not redis_client:
+                logger.warning("Redis client not available, fetching public participants directly from DB")
+                return user_repository.get_public_participants(
+                    db, gym_id=gym_id, roles=roles, skip=skip, limit=limit
+                )
+
+            # Crear clave de caché consistente
+            role_str = "_".join(sorted([r.name for r in roles])) # Ej: MEMBER_TRAINER o MEMBER
+            cache_key = f"users:public_profile:gym:{gym_id}:roles:{role_str}:skip:{skip}:limit:{limit}"
+
+            # Definir la función (síncrona) para obtener datos de la BD en caso de cache miss
+            def db_fetch_sync():
+                logger.info(f"DB Fetch for public participants cache miss: key={cache_key}")
+                return user_repository.get_public_participants(
+                    db, gym_id=gym_id, roles=roles, skip=skip, limit=limit
+                )
+
+            try:
+                # Usar el servicio de caché genérico
+                # Nota: db_fetch_func debe ser awaitable si la operación subyacente es async
+                # pero user_repository.get_public_participants es síncrono, así que pasamos la función síncrona.
+                # cache_service.get_or_set debe manejar esto internamente o necesitamos envolver db_fetch_sync.
+                # Asumiendo que cache_service puede manejar funciones síncronas:
+                participants = await cache_service.get_or_set(
+                    redis_client=redis_client,
+                    cache_key=cache_key,
+                    db_fetch_func=db_fetch_sync, # Pasar la función síncrona
+                    model_class=UserPublicProfile, # Modelo de destino
+                    expiry_seconds=300,  # 5 minutos
+                    is_list=True
+                )
+                return participants
+            except Exception as e:
+                logger.error(f"Error getting/setting public participants cache (key={cache_key}): {str(e)}", exc_info=True)
+                # Fallback a la BD en caso de error de caché
+                logger.info("Fallback to DB due to cache error")
+                return user_repository.get_public_participants(
+                    db, gym_id=gym_id, roles=roles, skip=skip, limit=limit
+                )
+    # <<< FIN NUEVO MÉTODO >>>
 
 
 user_service = UserService() 

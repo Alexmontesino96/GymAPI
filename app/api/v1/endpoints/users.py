@@ -29,7 +29,7 @@ from app.models.user import User, UserRole
 from app.models.gym import Gym
 from app.models.user_gym import UserGym, GymRoleType
 from app.services.user import user_service
-from app.schemas.user import User as UserSchema, UserCreate, UserUpdate, UserRoleUpdate, UserProfileUpdate, UserSearchParams, EmailAvailabilityCheck, UserPublicProfile, Auth0EmailChangeRequest, UserSyncFromAuth0
+from app.schemas.user import User as UserSchema, UserCreate, UserUpdate, UserRoleUpdate, UserProfileUpdate, UserSearchParams, EmailAvailabilityCheck, UserPublicProfile, Auth0EmailChangeRequest, UserSyncFromAuth0, GymUserSummary
 from app.services.auth0_mgmt import auth0_mgmt_service
 from app.core.tenant import verify_gym_access, verify_gym_admin_access, verify_gym_trainer_access, get_current_gym
 from app.core.auth0_fastapi import auth, get_current_user, Auth0User
@@ -227,29 +227,31 @@ async def read_public_gym_participants(
 ) -> Any:
     """Obtiene perfiles públicos de miembros y/o entrenadores del gimnasio actual."""
     logger = logging.getLogger("user_endpoint")
-    participants = []
     allowed_roles = [UserRole.MEMBER, UserRole.TRAINER]
     roles_to_fetch = [role] if role else allowed_roles
     if role and role not in allowed_roles:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Rol debe ser {UserRole.MEMBER.name} o {UserRole.TRAINER.name}")
 
-    if name_contains:
-        logger.info(f"Searching participants by name '{name_contains}' roles {roles_to_fetch} in gym {current_gym.id}")
-        combined_results = []
-        for r in roles_to_fetch:
-            results = user_service.search_gym_participants_by_name(db, role=r, gym_id=current_gym.id, name_contains=name_contains, skip=skip, limit=limit)
-            combined_results.extend(results)
-            if len(roles_to_fetch) == 1: break
-        participants = combined_results[skip : skip + limit] if len(roles_to_fetch) > 1 else combined_results
-    else:
-        logger.info(f"Fetching participants roles {roles_to_fetch} from cache/db for gym {current_gym.id}")
-        combined_results = []
-        limit_per_role = limit if len(roles_to_fetch) == 1 else 1000
-        for r in roles_to_fetch:
-            users = await user_service.get_users_by_role_cached(db, role=r, skip=0, limit=limit_per_role, gym_id=current_gym.id, redis_client=redis_client)
-            combined_results.extend(users)
-        participants = combined_results[skip : skip + limit] if len(roles_to_fetch) > 1 else combined_results
-    return participants
+    try:
+        logger.info(f"Fetching public participants: gym={current_gym.id}, roles={roles_to_fetch}, name={name_contains}, skip={skip}, limit={limit}")
+        # Llamada única al servicio refactorizado
+        participants = await user_service.get_public_gym_participants_combined(
+            db=db,
+            gym_id=current_gym.id,
+            roles=roles_to_fetch,
+            name_contains=name_contains,
+            skip=skip,
+            limit=limit,
+            redis_client=redis_client
+        )
+        return participants
+    except Exception as e:
+        # Captura general por si algo falla en el servicio/repo
+        logger.error(f"Error fetching public gym participants: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error interno al obtener participantes del gimnasio."
+        )
 
 @router.get("/p/public-profile/{user_id}", response_model=UserPublicProfile, tags=["Gym Participants (Public)"])
 async def read_public_user_profile(
@@ -270,7 +272,7 @@ async def read_public_user_profile(
 
 # === Endpoints de Gestión de Gimnasio (Admins de Gym / SuperAdmins) === #
 
-@router.get("/gym-users", response_model=List[UserSchema], tags=["Gym Management"])
+@router.get("/gym-users", response_model=List[GymUserSummary], tags=["Gym Management"])
 async def read_gym_users(
     db: Session = Depends(get_db),
     skip: int = 0,
@@ -285,13 +287,17 @@ async def read_gym_users(
     if not local_user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario no encontrado")
     if role:
+        # Cuando se filtra por rol global, usamos el servicio de usuario cacheado
         users = await user_service.get_users_by_role_cached(db, role=role, skip=skip, limit=limit, gym_id=current_gym.id, redis_client=redis_client)
     else:
+        # Cuando NO se filtra por rol global, obtenemos todos los usuarios del gym
         try:
             from app.services.gym import gym_service
-            users = await gym_service.get_gym_users(db=db, gym_id=current_gym.id, skip=skip, limit=limit, redis_client=redis_client)
+            # Llamar a la versión cacheada del servicio de gym
+            users = await gym_service.get_gym_users_cached(db=db, gym_id=current_gym.id, skip=skip, limit=limit, redis_client=redis_client)
         except Exception as e:
-            logging.getLogger("user_endpoint").error(f"Error buscando usuarios del gimnasio {current_gym.id}: {str(e)}", exc_info=True)
+            logger = logging.getLogger("user_endpoint")
+            logger.error(f"Error buscando usuarios del gimnasio {current_gym.id}: {str(e)}", exc_info=True)
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error al recuperar usuarios del gimnasio")
     return users
 
@@ -463,14 +469,21 @@ async def read_users(
     if not local_user or local_user.role != UserRole.SUPER_ADMIN:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Requiere rol SUPER_ADMIN.")
     try:
-        cache_key = f"users:all:skip:{skip}:limit:{limit}"
-        async def db_fetch(): return user_service.get_users(db, skip=skip, limit=limit)
-        users = await cache_service.get_or_set(redis_client=redis_client, cache_key=cache_key, db_fetch_func=db_fetch, model_class=UserSchema, expiry_seconds=300, is_list=True)
+        # Llamar al método cacheado del servicio
+        users = await user_service.get_users_cached(db=db, skip=skip, limit=limit, redis_client=redis_client)
+        # Eliminar lógica de caché directa de aquí
+        # cache_key = f"users:all:skip:{skip}:limit:{limit}"
+        # async def db_fetch(): return user_service.get_users(db, skip=skip, limit=limit)
+        # users = await cache_service.get_or_set(redis_client=redis_client, cache_key=cache_key, db_fetch_func=db_fetch, model_class=UserSchema, expiry_seconds=300, is_list=True)
         return users
     except Exception as e:
-        logging.getLogger("user_endpoint").error(f"Error obteniendo todos los usuarios: {str(e)}", exc_info=True)
-        users = user_service.get_users(db, skip=skip, limit=limit)
-        return users
+        # El fallback ya está en el método del servicio, pero podemos loguear aquí si queremos
+        logging.getLogger("user_endpoint").error(f"Error en endpoint read_users: {str(e)}", exc_info=True)
+        # Podríamos relanzar una HTTPException específica o dejar que el servicio devuelva los datos sin caché
+        raise HTTPException(status_code=500, detail="Error interno al obtener usuarios") # Opcional: relanzar error
+        # O simplemente devolver la llamada no cacheada si el servicio la devuelve en caso de error
+        # users = user_service.get_users(db, skip=skip, limit=limit)
+        # return users
 
 @router.get("/by-role/{role}", response_model=List[UserSchema], tags=["Platform Admin"])
 async def read_users_by_role(
@@ -521,11 +534,11 @@ async def update_user(
             if old_role != updated_user.role:
                 await user_service.invalidate_role_cache(redis_client, role=old_role)
                 await user_service.invalidate_role_cache(redis_client, role=updated_user.role)
-            else:
+        else:
                 await user_service.invalidate_role_cache(redis_client, role=updated_user.role)
         return updated_user
     except HTTPException as e:
-        raise e
+         raise e
     except Exception as e:
         logging.getLogger("user_endpoint").error(f"Error inesperado al actualizar usuario {user_id}: {str(e)}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error interno al actualizar usuario.")
