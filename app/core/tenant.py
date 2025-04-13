@@ -14,6 +14,7 @@ from app.repositories.gym import gym_repository
 from app.db.redis_client import get_redis_client, redis
 from app.core.config import settings
 import logging # Para logs
+from app.services.user import user_service
 
 # Cache simple para reducir verificaciones repetidas de acceso a gimnasios
 # Estructura: {gym_id: (timestamp, gym_object)}
@@ -270,15 +271,15 @@ async def verify_gym_access(
             detail="Token no contiene información de usuario"
         )
     
-    # Buscar el usuario en nuestra base de datos
-    user = db.query(User).filter(User.auth0_id == auth0_id).first()
-    
+    # <<< Usar método cacheado para obtener usuario llamante (devuelve UserSchema) >>>
+    user = await user_service.get_user_by_auth0_id_cached(auth0_id, db, redis_client)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Usuario no encontrado en la base de datos local"
         )
     
+    # Acceder a user.id y user.role directamente del UserSchema
     user_id = user.id
     gym_id = current_gym.id
 
@@ -370,9 +371,8 @@ async def verify_gym_admin_access(
             detail="Token no contiene información de usuario"
         )
     
-    # Buscar el usuario en nuestra base de datos
-    user = db.query(User).filter(User.auth0_id == auth0_id).first()
-    
+    # <<< Usar método cacheado para obtener usuario llamante (devuelve UserSchema) >>>
+    user = await user_service.get_user_by_auth0_id_cached(auth0_id, db, redis_client)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -484,9 +484,8 @@ async def verify_gym_trainer_access(
             detail="Token no contiene información de usuario"
         )
     
-    # Buscar el usuario en nuestra base de datos
-    user = db.query(User).filter(User.auth0_id == auth0_id).first()
-    
+    # <<< Usar método cacheado para obtener usuario llamante (devuelve UserSchema) >>>
+    user = await user_service.get_user_by_auth0_id_cached(auth0_id, db, redis_client)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -592,9 +591,8 @@ async def verify_gym_ownership(
             detail="Token no contiene información de usuario"
         )
 
-    # Buscar el usuario en nuestra base de datos
-    user = db.query(User).filter(User.auth0_id == auth0_id).first()
-        
+    # <<< Usar método cacheado para obtener usuario llamante (devuelve UserSchema) >>>
+    user = await user_service.get_user_by_auth0_id_cached(auth0_id, db, redis_client)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

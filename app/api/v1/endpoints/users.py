@@ -658,6 +658,14 @@ async def admin_delete_user(
             # <<< Invalidar caché de perfil público específico >>>
             public_profile_cache_key = f"user_public_profile:{user_id}"
             await redis_client.delete(public_profile_cache_key)
+            # <<< Invalidar caché de usuario por auth0_id >>>
+            # Necesitamos el auth0_id que estaba en deleted_user
+            auth0_id_to_invalidate = deleted_user.auth0_id
+            if auth0_id_to_invalidate:
+                auth0_cache_key = f"user_by_auth0_id:{auth0_id_to_invalidate}"
+                await redis_client.delete(auth0_cache_key)
+                logging.info(f"(Superadmin Delete) Invalidada caché {auth0_cache_key}")
+            
             logging.info(f"(Superadmin Delete) Invalidada caché de perfil público: {public_profile_cache_key}")
         return UserSchema.from_orm(deleted_user)
     except HTTPException as e:

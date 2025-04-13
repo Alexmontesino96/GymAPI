@@ -8,7 +8,7 @@ from jose import JWTError, jwt
 from redis.asyncio import Redis
 
 from app.repositories.user import user_repository
-from app.schemas.user import UserCreate, UserUpdate, User, UserRoleUpdate, UserProfileUpdate, UserSearchParams, UserSyncFromAuth0, UserPublicProfile
+from app.schemas.user import UserCreate, UserUpdate, User, UserRoleUpdate, UserProfileUpdate, UserSearchParams, UserSyncFromAuth0, UserPublicProfile, User as UserSchema
 from app.models.user import User as UserModel, UserRole
 from app.services.storage import storage_service
 from app.core.config import settings
@@ -232,6 +232,16 @@ class UserService:
 
         # Actualizar localmente (síncrono)
         updated_user = user_repository.update(db, db_obj=user, obj_in=user_in)
+        
+        # <<< Invalidar caché user_by_auth0_id si el usuario tiene auth0_id >>>
+        if updated_user.auth0_id and redis_client:
+            auth0_cache_key = f"user_by_auth0_id:{updated_user.auth0_id}"
+            try:
+                await redis_client.delete(auth0_cache_key)
+                logger.info(f"Invalidada caché {auth0_cache_key} tras update_user")
+            except Exception as e:
+                logger.error(f"Error invalidando caché {auth0_cache_key}: {e}")
+        
         return updated_user
 
     def update_user_profile(self, db: Session, user_id: int, profile_in: UserProfileUpdate) -> UserModel:
@@ -318,6 +328,7 @@ class UserService:
             user_to_return = user 
             user_repository.remove(db, id=user_id) # Esto elimina el objeto de la sesión
             logger.info(f"Usuario {user_id} eliminado exitosamente de la base de datos local.")
+            
             # Devolver el objeto que teníamos antes de eliminarlo
             return user_to_return
         except Exception as e:
@@ -570,18 +581,21 @@ class UserService:
         update_payload = {"email": sync_data.email}
         
         # Actualizar el email en la BD local
-        # La función update del repositorio maneja commit y refresh
         updated_user = user_repository.update(db, db_obj=user, obj_in=update_payload)
         logger.info(f"Email sincronizado localmente para usuario ID {updated_user.id}")
         
-        # Invalidar caché si se proporcionó cliente Redis
-        if redis_client:
-            from app.services.cache_service import cache_service # Import local
-            logger.info(f"Invalidando cachés para usuario ID {updated_user.id} tras sincronización de email.")
-            await cache_service.invalidate_user_caches(redis_client, user_id=updated_user.id)
-            # También invalidar caché de roles, ya que a menudo dependen del usuario
-            if updated_user.role:
-                await self.invalidate_role_cache(redis_client, role=updated_user.role)
+        # <<< Invalidar caché user_by_auth0_id >>>
+        auth0_cache_key = f"user_by_auth0_id:{updated_user.auth0_id}"
+        await redis_client.delete(auth0_cache_key)
+        logger.info(f"Invalidada caché {auth0_cache_key} tras sync_user_email")
+        # <<< Invalidar caché de perfil público >>>
+        public_profile_cache_key = f"user_public_profile:{updated_user.id}"
+        await redis_client.delete(public_profile_cache_key)
+        logger.info(f"Invalidada caché {public_profile_cache_key} tras sync_user_email")
+        
+        from app.services.cache_service import cache_service # Import local
+        logger.info(f"Invalidando cachés para usuario ID {updated_user.id} tras sincronización de email.")
+        await cache_service.invalidate_user_caches(redis_client, user_id=updated_user.id)
 
         return updated_user
 
@@ -837,6 +851,73 @@ class UserService:
             logger.info(f"Fallback a BD para perfil público user {user_id} debido a error de caché")
             user_model = user_repository.get(db, id=user_id)
             return UserPublicProfile.from_orm(user_model) if user_model else None
+    # <<< FIN NUEVO MÉTODO >>>
+
+    # <<< NUEVO MÉTODO CACHEADO PARA BUSCAR USER POR AUTH0_ID >>>
+    async def get_user_by_auth0_id_cached(
+        self,
+        auth0_id: str,
+        db: Session,
+        redis_client: Redis
+    ) -> Optional[UserSchema]:
+        """
+        Obtiene un usuario por su Auth0 ID, utilizando caché Redis.
+        Devuelve el objeto UserSchema o None.
+        """
+        from app.services.cache_service import cache_service
+
+        if not redis_client:
+            logger.warning(f"Redis no disponible, obteniendo user por auth0_id {auth0_id} desde BD")
+            return self.get_user_by_auth0_id(db, auth0_id=auth0_id)
+
+        cache_key = f"user_by_auth0_id:{auth0_id}"
+
+        async def db_fetch():
+            logger.info(f"DB Fetch for user by auth0_id cache miss: key={cache_key}")
+            user_model = self.get_user_by_auth0_id(db, auth0_id=auth0_id)
+            # Devolvemos el UserSchema para que se guarde en caché
+            return UserSchema.from_orm(user_model) if user_model else None
+
+        try:
+            # Obtener el UserSchema de la caché
+            user_schema = await cache_service.get_or_set(
+                redis_client=redis_client,
+                cache_key=cache_key,
+                db_fetch_func=db_fetch,
+                model_class=UserSchema,
+                expiry_seconds=settings.CACHE_TTL_USER_MEMBERSHIP, # Reutilizar TTL
+                is_list=False
+            )
+            # Convertir de UserSchema a UserModel si se encontró
+            # Necesitamos el UserModel para las comprobaciones de rol en las dependencias
+            if user_schema:
+                # Podríamos hacer otra consulta a BD para obtener el objeto ORM fresco,
+                # pero eso anularía el propósito de la caché.
+                # Por ahora, construiremos un objeto UserModel básico con los datos clave.
+                # ¡OJO!: Esto puede no tener todos los campos si UserSchema no los incluye.
+                # Sería mejor si las dependencias pudieran usar UserSchema.
+                # Alternativa: Guardar solo ID y Rol en caché?
+                # Por ahora, devolvemos un objeto ORM simulado con datos de UserSchema
+                # Esto ASUME que UserSchema tiene id y role.
+                # return UserModel(id=user_schema.id, role=user_schema.role, auth0_id=auth0_id)
+                # --- MEJOR APROXIMACIÓN: Consultar BD usando el ID obtenido --- 
+                # Esto asegura tener el objeto ORM completo si la caché acierta.
+                # Aún así, es una query extra si hay hit.
+                # return self.get_user(db, user_id=user_schema.id)
+                # --- COMPROMISO: Devolver el schema y adaptar dependencias --- 
+                # Las dependencias necesitarán `user.role` y `user.id`.
+                # Cambiemos el tipo de retorno a UserSchema y adaptemos tenant.py
+                # Esto evita la query extra en caso de HIT.
+                # Cambiando tipo de retorno...
+                 return user_schema # Devolver UserSchema
+            else:
+                return None
+
+        except Exception as e:
+            logger.error(f"Error al obtener usuario cacheado por auth0_id {auth0_id}: {str(e)}", exc_info=True)
+            # Fallback a BD
+            logger.info(f"Fallback a BD para user por auth0_id {auth0_id} debido a error de caché")
+            return self.get_user_by_auth0_id(db, auth0_id=auth0_id)
     # <<< FIN NUEVO MÉTODO >>>
 
 
