@@ -135,7 +135,7 @@ class Settings(BaseSettings):
     REDIS_DB: int = int(os.getenv("REDIS_DB", "0"))
     REDIS_USERNAME: Optional[str] = os.getenv("REDIS_USERNAME", None)
     REDIS_PASSWORD: Optional[str] = os.getenv("REDIS_PASSWORD", None)
-    REDIS_URL: Optional[str] = os.getenv("REDIS_URL", None)
+    REDIS_URL: str = "redis://localhost:6379/0"
 
     @field_validator("REDIS_URL", mode="before")
     def assemble_redis_connection(cls, v: Optional[str], info) -> Any:
@@ -152,6 +152,9 @@ class Settings(BaseSettings):
     AUTH0_MGMT_AUDIENCE: str = os.getenv("AUTH0_MGMT_AUDIENCE", f"https://{AUTH0_DOMAIN}/api/v2/")
 
     # Storage configuration
+    SUPABASE_URL: str
+    SUPABASE_ANON_KEY: str
+    PROFILE_IMAGE_BUCKET: str
     S3_ACCESS_KEY_ID: str = os.getenv("S3_ACCESS_KEY_ID", "")
     S3_SECRET_ACCESS_KEY: str = os.getenv("S3_SECRET_ACCESS_KEY", "")  # ¡Reemplazar con la clave real en producción!
 
@@ -162,6 +165,10 @@ class Settings(BaseSettings):
     FCM_CLIENT_EMAIL: str = os.getenv("FCM_CLIENT_EMAIL", "")
     FCM_CLIENT_ID: str = os.getenv("FCM_CLIENT_ID", "")
     FCM_CLIENT_CERT_URL: str = os.getenv("FCM_CLIENT_CERT_URL", "")
+
+    # Configuración Redis
+    CACHE_TTL_USER_MEMBERSHIP: int = 3600
+    CACHE_TTL_NEGATIVE: int = 60 # 1 minuto
 
 
 settings = Settings() 

@@ -11,6 +11,9 @@ from app.models.user_gym import UserGym, GymRoleType
 from app.models.user import User, UserRole
 from app.core.auth0_fastapi import Auth0User, get_current_user
 from app.repositories.gym import gym_repository
+from app.db.redis_client import get_redis_client, redis
+from app.core.config import settings
+import logging # Para logs
 
 # Cache simple para reducir verificaciones repetidas de acceso a gimnasios
 # Estructura: {gym_id: (timestamp, gym_object)}
@@ -232,18 +235,18 @@ async def get_current_gym(
 async def verify_gym_access(
     db: Session = Depends(get_db),
     current_gym: Gym = Depends(get_current_gym),
-    current_user: Auth0User = Depends(get_current_user)
+    current_user: Auth0User = Depends(get_current_user),
+    redis_client: redis.Redis = Depends(get_redis_client)
 ) -> Gym:
     """
     Verifica que el usuario actual tenga acceso al gimnasio solicitado.
-    
-    Esta función no solo verifica el acceso, sino que también devuelve
-    el gimnasio para que pueda ser utilizado en los endpoints.
+    Utiliza caché de Redis para acelerar la verificación.
     
     Args:
         db: Sesión de base de datos
         current_gym: Gimnasio actual
         current_user: Usuario autenticado
+        redis_client: Cliente Redis para caché
         
     Returns:
         Gym: El gimnasio al que se está accediendo
@@ -251,6 +254,7 @@ async def verify_gym_access(
     Raises:
         HTTPException: Si no se proporciona tenant_id o el usuario no tiene acceso
     """
+    logger = logging.getLogger("tenant_verification")
     if not current_gym:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -275,43 +279,82 @@ async def verify_gym_access(
             detail="Usuario no encontrado en la base de datos local"
         )
     
+    user_id = user.id
+    gym_id = current_gym.id
+
     # Los super administradores tienen acceso a todos los gimnasios
     if user.role == UserRole.SUPER_ADMIN:
+        logger.debug(f"Acceso concedido a gym {gym_id} para SUPER_ADMIN {user_id}")
         return current_gym
     
-    # Verificar si el usuario pertenece al gimnasio
-    user_gym = db.query(UserGym).filter(
-        UserGym.user_id == user.id,
-        UserGym.gym_id == current_gym.id
-    ).first()
-    
-    if not user_gym:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"No tienes acceso al gimnasio {current_gym.name}"
-        )
-    
-    return current_gym
+    # --- Lógica de Caché Redis --- 
+    if not redis_client:
+        logger.warning("Redis client no disponible, verificación de acceso a gym se hará contra BD")
+        # Fallback a la lógica de BD si Redis no está disponible
+        user_gym_db = db.query(UserGym).filter(
+            UserGym.user_id == user_id, UserGym.gym_id == gym_id
+        ).first()
+        if not user_gym_db:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Acceso denegado al gimnasio {current_gym.name} (BD)")
+        return current_gym
+
+    cache_key = f"user_gym_membership:{user_id}:{gym_id}"
+    try:
+        cached_role_str = await redis_client.get(cache_key)
+
+        if cached_role_str is not None:
+            # Cache Hit
+            if cached_role_str == "__NONE__":
+                logger.debug(f"Cache HIT Negativo: Usuario {user_id} NO pertenece a gym {gym_id}")
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Acceso denegado al gimnasio {current_gym.name} (Cache)")
+            else:
+                logger.debug(f"Cache HIT Positivo: Usuario {user_id} pertenece a gym {gym_id} con rol {cached_role_str}")
+                # El usuario pertenece, devolver el gimnasio
+                return current_gym
+        else:
+            # Cache Miss
+            logger.debug(f"Cache MISS para user_gym_membership:{user_id}:{gym_id}, consultando BD...")
+            user_gym_db = db.query(UserGym).filter(
+                UserGym.user_id == user_id, UserGym.gym_id == gym_id
+            ).first()
+
+            if user_gym_db:
+                # Encontrado en BD
+                role_str = user_gym_db.role.value
+                logger.debug(f"Usuario {user_id} encontrado en gym {gym_id} (BD), rol: {role_str}. Guardando en caché...")
+                await redis_client.set(cache_key, role_str, ex=settings.CACHE_TTL_USER_MEMBERSHIP)
+                return current_gym
+            else:
+                # No encontrado en BD
+                logger.debug(f"Usuario {user_id} NO encontrado en gym {gym_id} (BD). Guardando caché negativo...")
+                await redis_client.set(cache_key, "__NONE__", ex=settings.CACHE_TTL_NEGATIVE)
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Acceso denegado al gimnasio {current_gym.name} (BD)")
+
+    except Exception as e:
+        logger.error(f"Error durante verificación de acceso a gym con Redis: {e}", exc_info=True)
+        # En caso de error de Redis, es MÁS SEGURO denegar el acceso que permitirlo por defecto.
+        # Alternativamente, podríamos hacer fallback a la BD, pero eso podría ocultar problemas de Redis.
+        # raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Error al verificar permisos de acceso")
+        # --- Fallback a BD (opción menos segura si Redis es crítico) --- 
+        logger.warning("Fallback a verificación de BD debido a error de Redis")
+        user_gym_db = db.query(UserGym).filter(
+            UserGym.user_id == user_id, UserGym.gym_id == gym_id
+        ).first()
+        if not user_gym_db:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Acceso denegado al gimnasio {current_gym.name} (BD Fallback)")
+        return current_gym
 
 async def verify_gym_admin_access(
     db: Session = Depends(get_db),
     current_gym: Gym = Depends(get_current_gym),
-    current_user: Auth0User = Depends(get_current_user)
+    current_user: Auth0User = Depends(get_current_user),
+    redis_client: redis.Redis = Depends(get_redis_client)
 ) -> Gym:
     """
     Verifica que el usuario actual tenga acceso de administrador al gimnasio.
-    
-    Args:
-        db: Sesión de base de datos
-        current_gym: Gimnasio actual
-        current_user: Usuario autenticado
-        
-    Returns:
-        Gym: El gimnasio al que se está accediendo como administrador
-
-    Raises:
-        HTTPException: Si el usuario no tiene permisos de administrador
+    Utiliza caché de Redis.
     """
+    logger = logging.getLogger("tenant_verification")
     if not current_gym:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -336,44 +379,96 @@ async def verify_gym_admin_access(
             detail="Usuario no encontrado en la base de datos local"
         )
     
+    user_id = user.id
+    gym_id = current_gym.id
+    required_roles = {GymRoleType.ADMIN.value, GymRoleType.OWNER.value} # Roles requeridos
+
     # Los super administradores tienen acceso administrativo a todos los gimnasios
     if user.role == UserRole.SUPER_ADMIN:
+        logger.debug(f"Acceso ADMIN concedido a gym {gym_id} para SUPER_ADMIN {user_id}")
         return current_gym
             
-    # Verificar si el usuario es admin del gimnasio
-    user_gym = db.query(UserGym).filter(
-        UserGym.user_id == user.id,
-        UserGym.gym_id == current_gym.id,
-        UserGym.role.in_([GymRoleType.ADMIN, GymRoleType.OWNER])
-    ).first()
-    
-    if not user_gym:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"No tienes permisos de administrador en el gimnasio {current_gym.name}"
-        )
-    
-    return current_gym
+    # --- Lógica de Caché Redis --- 
+    if not redis_client:
+        logger.warning("Redis client no disponible, verificación ADMIN a gym se hará contra BD")
+        # Fallback a la lógica de BD si Redis no está disponible
+        user_gym_db = db.query(UserGym).filter(
+            UserGym.user_id == user_id, 
+            UserGym.gym_id == gym_id,
+            UserGym.role.in_([GymRoleType.ADMIN, GymRoleType.OWNER])
+        ).first()
+        if not user_gym_db:
+            # Verificar si al menos pertenece al gym para dar un mensaje más específico
+            belongs = db.query(UserGym.id).filter(UserGym.user_id == user_id, UserGym.gym_id == gym_id).scalar()
+            detail_msg = f"No tienes permisos de administrador en el gimnasio {current_gym.name} (BD)" if belongs else f"Acceso denegado al gimnasio {current_gym.name} (BD)"
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=detail_msg)
+        return current_gym
+
+    cache_key = f"user_gym_membership:{user_id}:{gym_id}"
+    try:
+        cached_role_str = await redis_client.get(cache_key)
+
+        if cached_role_str is not None:
+            # Cache Hit
+            if cached_role_str == "__NONE__":
+                logger.debug(f"Cache HIT Negativo (ADMIN check): Usuario {user_id} NO pertenece a gym {gym_id}")
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Acceso denegado al gimnasio {current_gym.name} (Cache)")
+            elif cached_role_str in required_roles:
+                logger.debug(f"Cache HIT Positivo (ADMIN check): Usuario {user_id} tiene rol {cached_role_str} en gym {gym_id}")
+                return current_gym
+            else:
+                # Pertenece pero no tiene el rol requerido
+                logger.debug(f"Cache HIT (ADMIN check): Usuario {user_id} tiene rol {cached_role_str} (insuficiente) en gym {gym_id}")
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"No tienes permisos de administrador en el gimnasio {current_gym.name} (Cache)")
+        else:
+            # Cache Miss
+            logger.debug(f"Cache MISS (ADMIN check) para user_gym_membership:{user_id}:{gym_id}, consultando BD...")
+            user_gym_db = db.query(UserGym).filter(
+                UserGym.user_id == user_id, UserGym.gym_id == gym_id
+            ).first()
+
+            if user_gym_db:
+                # Encontrado en BD
+                role_str = user_gym_db.role.value
+                logger.debug(f"Usuario {user_id} encontrado en gym {gym_id} (BD), rol: {role_str}. Guardando en caché...")
+                await redis_client.set(cache_key, role_str, ex=settings.CACHE_TTL_USER_MEMBERSHIP)
+                # Verificar rol después de cachear
+                if role_str in required_roles:
+                    return current_gym
+                else:
+                    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"No tienes permisos de administrador en el gimnasio {current_gym.name} (BD)")
+            else:
+                # No encontrado en BD
+                logger.debug(f"Usuario {user_id} NO encontrado en gym {gym_id} (BD). Guardando caché negativo...")
+                await redis_client.set(cache_key, "__NONE__", ex=settings.CACHE_TTL_NEGATIVE)
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Acceso denegado al gimnasio {current_gym.name} (BD)")
+
+    except Exception as e:
+        logger.error(f"Error durante verificación ADMIN a gym con Redis: {e}", exc_info=True)
+        # Fallback a BD
+        logger.warning("Fallback a verificación ADMIN de BD debido a error de Redis")
+        user_gym_db = db.query(UserGym).filter(
+            UserGym.user_id == user_id, 
+            UserGym.gym_id == gym_id,
+            UserGym.role.in_([GymRoleType.ADMIN, GymRoleType.OWNER])
+        ).first()
+        if not user_gym_db:
+            belongs = db.query(UserGym.id).filter(UserGym.user_id == user_id, UserGym.gym_id == gym_id).scalar()
+            detail_msg = f"No tienes permisos de administrador en el gimnasio {current_gym.name} (BD Fallback)" if belongs else f"Acceso denegado al gimnasio {current_gym.name} (BD Fallback)"
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=detail_msg)
+        return current_gym
 
 async def verify_gym_trainer_access(
     db: Session = Depends(get_db),
     current_gym: Gym = Depends(get_current_gym),
-    current_user: Auth0User = Depends(get_current_user)
+    current_user: Auth0User = Depends(get_current_user),
+    redis_client: redis.Redis = Depends(get_redis_client)
 ) -> Gym:
     """
     Verifica que el usuario actual tenga acceso de entrenador (o superior) al gimnasio.
-    
-    Args:
-        db: Sesión de base de datos
-        current_gym: Gimnasio actual
-        current_user: Usuario autenticado
-        
-    Returns:
-        Gym: El gimnasio al que se está accediendo como entrenador
-        
-    Raises:
-        HTTPException: Si el usuario no tiene permisos de entrenador
+    Utiliza caché de Redis.
     """
+    logger = logging.getLogger("tenant_verification")
     if not current_gym:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -398,44 +493,90 @@ async def verify_gym_trainer_access(
             detail="Usuario no encontrado en la base de datos local"
         )
     
+    user_id = user.id
+    gym_id = current_gym.id
+    required_roles = {GymRoleType.TRAINER.value, GymRoleType.ADMIN.value, GymRoleType.OWNER.value} # Roles requeridos
+
     # Los super administradores tienen acceso de entrenador a todos los gimnasios
     if user.role == UserRole.SUPER_ADMIN:
+        logger.debug(f"Acceso TRAINER concedido a gym {gym_id} para SUPER_ADMIN {user_id}")
         return current_gym
     
-    # Verificar si el usuario es entrenador, admin u owner del gimnasio
-    user_gym = db.query(UserGym).filter(
-        UserGym.user_id == user.id,
-        UserGym.gym_id == current_gym.id,
-        UserGym.role.in_([GymRoleType.TRAINER, GymRoleType.ADMIN, GymRoleType.OWNER])
-    ).first()
-    
-    if not user_gym:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"No tienes permisos de entrenador en el gimnasio {current_gym.name}"
-        )
-    
-    return current_gym
+    # --- Lógica de Caché Redis --- 
+    if not redis_client:
+        logger.warning("Redis client no disponible, verificación TRAINER a gym se hará contra BD")
+        user_gym_db = db.query(UserGym).filter(
+            UserGym.user_id == user_id, 
+            UserGym.gym_id == gym_id,
+            UserGym.role.in_([GymRoleType.TRAINER, GymRoleType.ADMIN, GymRoleType.OWNER])
+        ).first()
+        if not user_gym_db:
+            belongs = db.query(UserGym.id).filter(UserGym.user_id == user_id, UserGym.gym_id == gym_id).scalar()
+            detail_msg = f"No tienes permisos de entrenador en el gimnasio {current_gym.name} (BD)" if belongs else f"Acceso denegado al gimnasio {current_gym.name} (BD)"
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=detail_msg)
+        return current_gym
+
+    cache_key = f"user_gym_membership:{user_id}:{gym_id}"
+    try:
+        cached_role_str = await redis_client.get(cache_key)
+
+        if cached_role_str is not None:
+            # Cache Hit
+            if cached_role_str == "__NONE__":
+                logger.debug(f"Cache HIT Negativo (TRAINER check): Usuario {user_id} NO pertenece a gym {gym_id}")
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Acceso denegado al gimnasio {current_gym.name} (Cache)")
+            elif cached_role_str in required_roles:
+                logger.debug(f"Cache HIT Positivo (TRAINER check): Usuario {user_id} tiene rol {cached_role_str} en gym {gym_id}")
+                return current_gym
+            else:
+                logger.debug(f"Cache HIT (TRAINER check): Usuario {user_id} tiene rol {cached_role_str} (insuficiente) en gym {gym_id}")
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"No tienes permisos de entrenador en el gimnasio {current_gym.name} (Cache)")
+        else:
+            # Cache Miss
+            logger.debug(f"Cache MISS (TRAINER check) para user_gym_membership:{user_id}:{gym_id}, consultando BD...")
+            user_gym_db = db.query(UserGym).filter(
+                UserGym.user_id == user_id, UserGym.gym_id == gym_id
+            ).first()
+
+            if user_gym_db:
+                role_str = user_gym_db.role.value
+                logger.debug(f"Usuario {user_id} encontrado en gym {gym_id} (BD), rol: {role_str}. Guardando en caché...")
+                await redis_client.set(cache_key, role_str, ex=settings.CACHE_TTL_USER_MEMBERSHIP)
+                if role_str in required_roles:
+                    return current_gym
+                else:
+                    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"No tienes permisos de entrenador en el gimnasio {current_gym.name} (BD)")
+            else:
+                logger.debug(f"Usuario {user_id} NO encontrado en gym {gym_id} (BD). Guardando caché negativo...")
+                await redis_client.set(cache_key, "__NONE__", ex=settings.CACHE_TTL_NEGATIVE)
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Acceso denegado al gimnasio {current_gym.name} (BD)")
+
+    except Exception as e:
+        logger.error(f"Error durante verificación TRAINER a gym con Redis: {e}", exc_info=True)
+        # Fallback a BD
+        logger.warning("Fallback a verificación TRAINER de BD debido a error de Redis")
+        user_gym_db = db.query(UserGym).filter(
+            UserGym.user_id == user_id, 
+            UserGym.gym_id == gym_id,
+            UserGym.role.in_([GymRoleType.TRAINER, GymRoleType.ADMIN, GymRoleType.OWNER])
+        ).first()
+        if not user_gym_db:
+            belongs = db.query(UserGym.id).filter(UserGym.user_id == user_id, UserGym.gym_id == gym_id).scalar()
+            detail_msg = f"No tienes permisos de entrenador en el gimnasio {current_gym.name} (BD Fallback)" if belongs else f"Acceso denegado al gimnasio {current_gym.name} (BD Fallback)"
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=detail_msg)
+        return current_gym
 
 async def verify_gym_ownership(
     db: Session = Depends(get_db),
     current_gym: Gym = Depends(get_current_gym),
-    current_user: Auth0User = Depends(get_current_user)
+    current_user: Auth0User = Depends(get_current_user),
+    redis_client: redis.Redis = Depends(get_redis_client)
 ) -> Gym:
     """
     Verifica que el usuario actual sea propietario del gimnasio.
-    
-    Args:
-        db: Sesión de base de datos
-        current_gym: Gimnasio actual
-        current_user: Usuario autenticado
-        
-    Returns:
-        Gym: El gimnasio del que el usuario es propietario
-    
-    Raises:
-        HTTPException: Si el usuario no es propietario del gimnasio
+    Utiliza caché de Redis.
     """
+    logger = logging.getLogger("tenant_verification")
     if not current_gym:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -446,85 +587,129 @@ async def verify_gym_ownership(
     auth0_id = current_user.id
     
     if not auth0_id:
-             raise HTTPException(
+        raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Token no contiene información de usuario"
-            )
+        )
 
     # Buscar el usuario en nuestra base de datos
     user = db.query(User).filter(User.auth0_id == auth0_id).first()
         
     if not user:
-            raise HTTPException(
+        raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Usuario no encontrado en la base de datos local"
-            )
+        )
         
+    user_id = user.id
+    gym_id = current_gym.id
+    required_role = GymRoleType.OWNER.value # Rol requerido
+
     # Los super administradores tienen privilegios de propietario en todos los gimnasios
     if user.role == UserRole.SUPER_ADMIN:
+        logger.debug(f"Acceso OWNER concedido a gym {gym_id} para SUPER_ADMIN {user_id}")
         return current_gym
     
-    # Verificar si el usuario es propietario del gimnasio
-    user_gym = db.query(UserGym).filter(
-        UserGym.user_id == user.id,
-        UserGym.gym_id == current_gym.id,
-        UserGym.role == GymRoleType.OWNER
-    ).first()
-    
-    if not user_gym:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"No eres propietario del gimnasio {current_gym.name}"
-        )
-    
-    return current_gym
+    # --- Lógica de Caché Redis --- 
+    if not redis_client:
+        logger.warning("Redis client no disponible, verificación OWNER a gym se hará contra BD")
+        user_gym_db = db.query(UserGym).filter(
+            UserGym.user_id == user_id, 
+            UserGym.gym_id == gym_id,
+            UserGym.role == GymRoleType.OWNER
+        ).first()
+        if not user_gym_db:
+            belongs = db.query(UserGym.id).filter(UserGym.user_id == user_id, UserGym.gym_id == gym_id).scalar()
+            detail_msg = f"No eres propietario del gimnasio {current_gym.name} (BD)" if belongs else f"Acceso denegado al gimnasio {current_gym.name} (BD)"
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=detail_msg)
+        return current_gym
+
+    cache_key = f"user_gym_membership:{user_id}:{gym_id}"
+    try:
+        cached_role_str = await redis_client.get(cache_key)
+
+        if cached_role_str is not None:
+            # Cache Hit
+            if cached_role_str == "__NONE__":
+                logger.debug(f"Cache HIT Negativo (OWNER check): Usuario {user_id} NO pertenece a gym {gym_id}")
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Acceso denegado al gimnasio {current_gym.name} (Cache)")
+            elif cached_role_str == required_role:
+                logger.debug(f"Cache HIT Positivo (OWNER check): Usuario {user_id} tiene rol {cached_role_str} en gym {gym_id}")
+                return current_gym
+            else:
+                logger.debug(f"Cache HIT (OWNER check): Usuario {user_id} tiene rol {cached_role_str} (insuficiente) en gym {gym_id}")
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"No eres propietario del gimnasio {current_gym.name} (Cache)")
+        else:
+            # Cache Miss
+            logger.debug(f"Cache MISS (OWNER check) para user_gym_membership:{user_id}:{gym_id}, consultando BD...")
+            user_gym_db = db.query(UserGym).filter(
+                UserGym.user_id == user_id, UserGym.gym_id == gym_id
+            ).first()
+
+            if user_gym_db:
+                role_str = user_gym_db.role.value
+                logger.debug(f"Usuario {user_id} encontrado en gym {gym_id} (BD), rol: {role_str}. Guardando en caché...")
+                await redis_client.set(cache_key, role_str, ex=settings.CACHE_TTL_USER_MEMBERSHIP)
+                if role_str == required_role:
+                    return current_gym
+                else:
+                    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"No eres propietario del gimnasio {current_gym.name} (BD)")
+            else:
+                logger.debug(f"Usuario {user_id} NO encontrado en gym {gym_id} (BD). Guardando caché negativo...")
+                await redis_client.set(cache_key, "__NONE__", ex=settings.CACHE_TTL_NEGATIVE)
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Acceso denegado al gimnasio {current_gym.name} (BD)")
+
+    except Exception as e:
+        logger.error(f"Error durante verificación OWNER a gym con Redis: {e}", exc_info=True)
+        # Fallback a BD
+        logger.warning("Fallback a verificación OWNER de BD debido a error de Redis")
+        user_gym_db = db.query(UserGym).filter(
+            UserGym.user_id == user_id, 
+            UserGym.gym_id == gym_id,
+            UserGym.role == GymRoleType.OWNER
+        ).first()
+        if not user_gym_db:
+            belongs = db.query(UserGym.id).filter(UserGym.user_id == user_id, UserGym.gym_id == gym_id).scalar()
+            detail_msg = f"No eres propietario del gimnasio {current_gym.name} (BD Fallback)" if belongs else f"Acceso denegado al gimnasio {current_gym.name} (BD Fallback)"
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=detail_msg)
+        return current_gym
 
 # --- Dependencias Específicas por Rol (para usar directamente en endpoints) ---
 
 async def verify_admin_role(
-    gym: Gym = Depends(verify_gym_access),
-    current_user: Auth0User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    # Esta dependencia ahora directamente llama a la verificadora con caché
+    gym: Gym = Depends(verify_gym_admin_access)
 ) -> Gym:
     """
     Dependencia FastAPI: Verifica rol ADMIN o OWNER en el gimnasio.
+    Utiliza la caché de Redis a través de verify_gym_admin_access.
     """
-    return TenantMiddleware.verify_gym_role(
-        required_roles=[GymRoleType.ADMIN, GymRoleType.OWNER],
-        gym=gym,
-        current_user=current_user,
-        db=db
-    )
+    # La verificación ya se hizo en verify_gym_admin_access
+    return gym
 
 async def verify_trainer_role(
-    gym: Gym = Depends(verify_gym_access),
-    current_user: Auth0User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    # Llama a la verificadora con caché para rol Trainer (o superior)
+    gym: Gym = Depends(verify_gym_trainer_access)
 ) -> Gym:
     """
     Dependencia FastAPI: Verifica rol TRAINER, ADMIN o OWNER en el gimnasio.
+    Utiliza la caché de Redis a través de verify_gym_trainer_access.
     """
-    return TenantMiddleware.verify_gym_role(
-        required_roles=[GymRoleType.TRAINER, GymRoleType.ADMIN, GymRoleType.OWNER],
-        gym=gym,
-        current_user=current_user,
-        db=db
-    )
+    # La verificación ya se hizo en verify_gym_trainer_access
+    return gym
 
 async def verify_member_role(
-    gym: Gym = Depends(verify_gym_access),
-    current_user: Auth0User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    # Llama a la verificadora con caché para rol Member (o superior)
+    # verify_gym_access ya incluye la lógica de caché
+    gym: Gym = Depends(verify_gym_access)
 ) -> Gym:
     """
     Dependencia FastAPI: Verifica rol MEMBER, TRAINER, ADMIN o OWNER en el gimnasio.
+    Utiliza la caché de Redis a través de verify_gym_access.
     """
-    return TenantMiddleware.verify_gym_role(
-        required_roles=[GymRoleType.MEMBER, GymRoleType.TRAINER, GymRoleType.ADMIN, GymRoleType.OWNER],
-        gym=gym,
-        current_user=current_user,
-        db=db
-    )
+    # La verificación ya se hizo en verify_gym_access (que verifica si pertenece)
+    # No necesitamos verificar roles específicos aquí, solo pertenencia.
+    return gym
 
 # Decoradores funcionales (Considerar eliminar si no se usan)
 def require_gym_role(required_roles: List[str]):
