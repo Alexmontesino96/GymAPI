@@ -760,23 +760,21 @@ class UserService:
             role_str = "_".join(sorted([r.name for r in roles])) # Ej: MEMBER_TRAINER o MEMBER
             cache_key = f"users:public_profile:gym:{gym_id}:roles:{role_str}:skip:{skip}:limit:{limit}"
 
-            # Definir la función (síncrona) para obtener datos de la BD en caso de cache miss
-            def db_fetch_sync():
+            # Definir la función asíncrona para obtener datos de la BD en caso de cache miss
+            async def db_fetch():
                 logger.info(f"DB Fetch for public participants cache miss: key={cache_key}")
+                # La función del repositorio es síncrona pero la envolveremos
+                # para que sea compatible con el patrón que espera cache_service.get_or_set
                 return user_repository.get_public_participants(
-                    db, gym_id=gym_id, roles=roles, skip=skip, limit=limit
+                    db, gym_id=gym_id, roles=roles, name=None, skip=skip, limit=limit
                 )
 
             try:
                 # Usar el servicio de caché genérico
-                # Nota: db_fetch_func debe ser awaitable si la operación subyacente es async
-                # pero user_repository.get_public_participants es síncrono, así que pasamos la función síncrona.
-                # cache_service.get_or_set debe manejar esto internamente o necesitamos envolver db_fetch_sync.
-                # Asumiendo que cache_service puede manejar funciones síncronas:
                 participants = await cache_service.get_or_set(
                     redis_client=redis_client,
                     cache_key=cache_key,
-                    db_fetch_func=db_fetch_sync, # Pasar la función síncrona
+                    db_fetch_func=db_fetch, # Pasar la función asíncrona
                     model_class=UserPublicProfile, # Modelo de destino
                     expiry_seconds=300,  # 5 minutos
                     is_list=True
