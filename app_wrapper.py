@@ -23,7 +23,7 @@ def check_and_install_dependencies():
         'gunicorn': 'gunicorn==21.2.0', 
         'uvicorn': 'uvicorn', 
         'supabase': 'supabase==1.2.0', 
-        'stream_chat': 'stream-chat==5.12.0' # Nombre correcto del paquete pip
+        'stream_chat': 'stream-chat==4.24.0' # Actualizar a versión encontrada
     }
     missing_install_failed = False
     
