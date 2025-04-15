@@ -11,16 +11,16 @@ ENV PYTHONPATH=/app
 COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt && \
-    # Instalar Redis explícitamente
-    pip install --no-cache-dir redis==5.0.1 hiredis==2.2.3 && \
-    # Verificar que Redis se instaló correctamente
-    python -c "import redis; from redis.asyncio import Redis; print(f'Redis {redis.__version__} instalado correctamente')"
+    # Instalar Redis y Supabase explícitamente
+    pip install --no-cache-dir redis==5.0.1 hiredis==2.2.3 supabase==1.2.0 && \
+    # Verificar que Redis y Supabase se instalaron correctamente
+    python -c "import redis; from redis.asyncio import Redis; import supabase; print(f'Redis {redis.__version__} y Supabase {supabase.__version__} instalados correctamente')"
 
 # Copiar el código de la aplicación
 COPY . .
 
-# Verificar que Redis se puede importar desde el código
-RUN python -c "import sys; sys.path.insert(0, '/app'); from app.services.user import user_service; print('Módulo user_service importado correctamente')"
+# Verificar que los módulos se pueden importar desde el código
+RUN python -c "import sys; sys.path.insert(0, '/app'); from app.services.user import user_service; from app.services.storage import storage_service; print('Módulos user_service y storage_service importados correctamente')"
 
 # Puerto en el que se ejecuta la aplicación
 EXPOSE 8000
