@@ -10,9 +10,8 @@ ENV PYTHONPATH=/app
 # Actualizar pip e instalar dependencias
 COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
+    # Instalar directamente desde requirements.txt ahora que las versiones son compatibles
     pip install --no-cache-dir -r requirements.txt && \
-    # Instalar Redis y Supabase explícitamente
-    pip install --no-cache-dir redis==5.0.1 hiredis==2.2.3 supabase==1.2.0 && \
     # Verificar que Redis y Supabase se instalaron correctamente
     python -c "import redis; from redis.asyncio import Redis; import supabase; print(f'Redis {redis.__version__} y Supabase {supabase.__version__} instalados correctamente')"
 
