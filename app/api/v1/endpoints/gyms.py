@@ -21,7 +21,7 @@ from app.db.session import get_db
 from app.db.redis_client import get_redis_client, redis
 from app.services.cache_service import cache_service
 import logging
-from app.core.config import settings
+from app.core.config import get_settings
 
 router = APIRouter()
 

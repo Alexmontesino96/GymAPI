@@ -1,5 +1,5 @@
 import redis.asyncio as redis # Usar cliente asíncrono para FastAPI
-from app.core.config import settings
+from app.core.config import get_settings # Importar get_settings
 import logging
 
 logger = logging.getLogger(__name__)
@@ -14,6 +14,7 @@ async def get_redis_client() -> redis.Redis:
     """
     global redis_client
     if redis_client is None:
+        settings = get_settings() # Obtener la instancia de configuración
         try:
             logger.info(f"Conectando a Redis en {settings.REDIS_URL}...")
             # Crear el cliente usando la URL de configuración

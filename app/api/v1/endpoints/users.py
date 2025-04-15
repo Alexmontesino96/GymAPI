@@ -34,7 +34,7 @@ from app.services.auth0_mgmt import auth0_mgmt_service
 from app.core.tenant import verify_gym_access, verify_gym_admin_access, verify_gym_trainer_access, get_current_gym
 from app.core.auth0_fastapi import auth, get_current_user, Auth0User
 from app.db.session import get_db
-from app.core.config import settings
+from app.core.config import get_settings
 from app.db.redis_client import get_redis_client, redis
 from app.services.cache_service import cache_service
 from app.services.gym import gym_service

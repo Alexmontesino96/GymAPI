@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.core.auth0_fastapi import get_current_user, Auth0User, auth
-from app.core.config import settings
+from app.core.config import get_settings
 from app.services.chat import chat_service
 from app.schemas.chat import (
     ChatRoom, 

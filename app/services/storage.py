@@ -9,8 +9,8 @@ from supabase import create_client, Client
 # Eliminar dotenv si ya no se usa directamente aquí
 # from dotenv import load_dotenv
 
-# Importar settings
-from app.core.config import settings 
+# Importar get_settings en lugar de settings
+from app.core.config import get_settings
 
 # load_dotenv() # Ya no es necesario si config.py lo maneja
 
@@ -27,24 +27,27 @@ class StorageService:
     usando el SDK oficial
     """
     
-    # Usar settings para los valores por defecto
-    def __init__(self, api_url: Optional[str] = settings.SUPABASE_URL, anon_key: Optional[str] = settings.SUPABASE_ANON_KEY):
+    # Usar get_settings() para los valores por defecto
+    def __init__(self, api_url: Optional[str] = None, anon_key: Optional[str] = None):
         """
         Inicializa el cliente de Supabase si las credenciales están disponibles.
+        Obtiene los valores por defecto de get_settings() si no se proporcionan.
         
         Args:
             api_url: URL de la API de Supabase (opcional)
             anon_key: Clave anónima de Supabase (opcional)
         """
-        self.api_url = api_url
-        self.anon_key = anon_key
+        _settings = get_settings() # Obtener la instancia de configuración
+        self.api_url = api_url if api_url is not None else _settings.SUPABASE_URL
+        self.anon_key = anon_key if anon_key is not None else _settings.SUPABASE_ANON_KEY
+        self.profile_image_bucket = _settings.PROFILE_IMAGE_BUCKET # Guardar también el nombre del bucket
         self.supabase: Optional[Client] = None # Inicializar como None
         
         # Inicializar cliente de Supabase solo si las credenciales están presentes
-        if api_url and anon_key:
+        if self.api_url and self.anon_key:
             try:
-                logger.info(f"Inicializando cliente de Supabase para {api_url}")
-                self.supabase = create_client(api_url, anon_key)
+                logger.info(f"Inicializando cliente de Supabase para {self.api_url}")
+                self.supabase = create_client(self.api_url, self.anon_key)
                 logger.info(f"Cliente de Supabase inicializado correctamente")
             except Exception as e:
                 # Registrar el error pero no detener la aplicación
@@ -188,11 +191,11 @@ class StorageService:
             contents = await file.read()
             
             try:
-                logger.info(f"Subiendo imagen {filename} a bucket {settings.PROFILE_IMAGE_BUCKET}")
+                logger.info(f"Subiendo imagen {filename} a bucket {self.profile_image_bucket}")
                 
                 # Función anónima asincrónica para la subida
                 async def upload_operation():
-                    result = self.supabase.storage.from_(settings.PROFILE_IMAGE_BUCKET).upload(
+                    result = self.supabase.storage.from_(self.profile_image_bucket).upload(
                         path=filename,
                         file=contents,
                         file_options={"content-type": file.content_type}
@@ -205,7 +208,7 @@ class StorageService:
                 
                 # Obtener la URL pública (método síncrono, no necesita await)
                 def get_public_url():
-                    url = self.supabase.storage.from_(settings.PROFILE_IMAGE_BUCKET).get_public_url(filename)
+                    url = self.supabase.storage.from_(self.profile_image_bucket).get_public_url(filename)
                     logger.info(f"URL pública generada: {url}")
                     return url
                 
@@ -250,9 +253,16 @@ class StorageService:
         Returns:
             True si la eliminación fue exitosa, False en caso contrario
         """
+        # Verificar si el cliente Supabase está inicializado
+        if not self.supabase:
+            logger.error("Intento de eliminar imagen sin cliente Supabase configurado.")
+            # No lanzar excepción, simplemente devolver False ya que la imagen no puede existir
+            return False
+        
         try:
-            if not image_url or not image_url.startswith(self.api_url):
-                logger.warning(f"URL no válida para eliminar: {image_url}")
+            # Asegurarse que api_url no sea None antes de usar startswith
+            if not self.api_url or not image_url or not image_url.startswith(self.api_url):
+                logger.warning(f"URL no válida para eliminar ({image_url}) o api_url no configurado ({self.api_url})")
                 return False
             
             # Extraer el nombre del archivo de la URL
@@ -260,20 +270,21 @@ class StorageService:
                 # Remover parámetros de consulta si existen
                 clean_url = image_url.split('?')[0]
                 
-                # La URL será algo como: https://ueijlkythlkqadxymzqd.supabase.co/storage/v1/object/public/userphotoprofile/filename
-                if f'public/{settings.PROFILE_IMAGE_BUCKET}/' in clean_url:
-                    parts = clean_url.split(f'public/{settings.PROFILE_IMAGE_BUCKET}/')
-                    if len(parts) != 2:
-                        logger.error(f"Formato de URL no reconocido: {clean_url}")
+                # La URL será algo como: https://<supabase_url>/storage/v1/object/public/<bucket_name>/filename
+                bucket_path_prefix = f'/storage/v1/object/public/{self.profile_image_bucket}/' # Usar self.profile_image_bucket
+                if bucket_path_prefix in clean_url:
+                    # Extraer el nombre del archivo correctamente
+                    filename = clean_url.split(bucket_path_prefix)[-1]
+                    if not filename: # Asegurarse que no sea una cadena vacía
+                        logger.error(f"No se pudo extraer el nombre de archivo de la URL: {clean_url}")
                         return False
                         
-                    filename = parts[1]
-                    logger.info(f"Eliminando archivo {filename} del bucket {settings.PROFILE_IMAGE_BUCKET}")
+                    logger.info(f"Eliminando archivo {filename} del bucket {self.profile_image_bucket}")
                     
                     try:
                         # Función para eliminar con reintentos
                         async def remove_operation():
-                            result = self.supabase.storage.from_(settings.PROFILE_IMAGE_BUCKET).remove([filename])
+                            result = self.supabase.storage.from_(self.profile_image_bucket).remove([filename]) # Usar self.profile_image_bucket
                             logger.info(f"Archivo eliminado correctamente: {result}")
                             return True
                         
@@ -282,14 +293,13 @@ class StorageService:
                         return success
                     except HTTPException:
                         # Capturar HTTPException de _execute_with_retry pero devolver False
-                        # ya que este método debe devolver un booleano
                         logger.error("Falló la eliminación después de todos los reintentos")
                         return False
                     except Exception as remove_error:
                         logger.error(f"Error al eliminar archivo de Supabase: {str(remove_error)}")
                         return False
                 else:
-                    logger.warning(f"URL no corresponde al bucket de imágenes de perfil: {clean_url}")
+                    logger.warning(f"URL ({clean_url}) no corresponde al bucket de imágenes de perfil esperado ({bucket_path_prefix})")
                     return False
                 
             except Exception as e:
@@ -297,9 +307,18 @@ class StorageService:
                 return False
                 
         except Exception as e:
-            logger.error(f"Error al eliminar imagen: {str(e)}")
+            logger.error(f"Error general al eliminar imagen: {str(e)}")
             return False
 
-
 # Instancia del servicio para uso global
-storage_service = StorageService() 
+# Modificado para instanciar al primer uso o a través de dependencia
+_storage_service_instance = None
+
+def get_storage_service() -> StorageService:
+    global _storage_service_instance
+    if _storage_service_instance is None:
+        _storage_service_instance = StorageService()
+    return _storage_service_instance
+
+# Reemplazar la instancia global directa
+# storage_service = StorageService() 

@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, ValidationError
 
-from app.core.config import settings
+from app.core.config import get_settings
 from app.core.auth0_fastapi import auth, get_current_user, Auth0User
 from app.services.user import user_service
 from app.db.session import get_db

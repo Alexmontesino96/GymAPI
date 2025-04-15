@@ -24,7 +24,7 @@ from app.db.redis_client import redis, get_redis_client
 from app.models.user_gym import GymRoleType, UserGym
 from app.schemas.gym import GymSchema
 from app.schemas.user import User as UserSchema
-from app.core.config import settings
+from app.core.config import get_settings
 from app.services.user import user_service
 from app.db.session import get_db
 from app.models.gym import Gym
@@ -203,11 +203,8 @@ class TenantAuthMiddleware(BaseHTTPMiddleware):
     async def store_auth_data(self, auth_data: Dict[str, Any], redis_client: redis.Redis) -> None:
         """
         Almacena los datos combinados de autenticación en caché.
-        
-        Args:
-            auth_data: Datos de autenticación
-            redis_client: Cliente Redis
         """
+        settings = get_settings()
         try:
             auth0_id = auth_data["user"]["auth0_id"]
             gym_id = auth_data["gym_id"]
@@ -230,12 +227,8 @@ class TenantAuthMiddleware(BaseHTTPMiddleware):
     async def store_negative_auth_data(self, auth0_id: str, gym_id: int, redis_client: redis.Redis) -> None:
         """
         Almacena una entrada negativa en caché para evitar consultas repetidas para usuarios sin acceso.
-        
-        Args:
-            auth0_id: ID de Auth0 del usuario
-            gym_id: ID del gimnasio
-            redis_client: Cliente Redis
         """
+        settings = get_settings()
         try:
             combined_key = f"tenant_auth:{auth0_id}:{gym_id}"
             

@@ -1,8 +1,9 @@
 from stream_chat import StreamChat
-from app.core.config import settings
+from app.core.config import get_settings
 
-# Inicializar el cliente Stream con las credenciales desde las variables de entorno
+# Inicializar el cliente Stream con las credenciales obtenidas de get_settings()
+_settings = get_settings()
 stream_client = StreamChat(
-    api_key=settings.STREAM_API_KEY,
-    api_secret=settings.STREAM_API_SECRET
+    api_key=_settings.STREAM_API_KEY,
+    api_secret=_settings.STREAM_API_SECRET
 ) 

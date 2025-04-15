@@ -5,13 +5,16 @@ import re
 import logging
 import os
 
-# Importar settings AQUI para asegurar que se leen las variables de entorno
-from app.core.config import settings
+# Importar get_settings
+from app.core.config import get_settings
 
 logger = logging.getLogger(__name__)
 
-# Obtener la URL directamente de settings, que ya maneja .env y fallbacks
-db_url = settings.SQLALCHEMY_DATABASE_URI
+# Obtener la instancia de configuración
+settings_instance = get_settings()
+
+# Obtener la URL directamente de la instancia de configuración
+db_url = settings_instance.SQLALCHEMY_DATABASE_URI
 
 # Log EXPLICITO de la URL que se usará para crear el engine
 # Asegurarse de ocultar credenciales en el log
@@ -27,10 +30,10 @@ else:
 logger.info(f"URL FINAL utilizada para crear el engine: {display_url}")
 
 try:
-    # Crear el motor con la URL obtenida de settings
+    # Crear el motor con la URL obtenida de la instancia
     engine = create_engine(
         str(db_url), # Asegurarse de que es string
-        echo=settings.DEBUG_MODE, # Usar DEBUG_MODE para activar echo SQL
+        echo=settings_instance.DEBUG_MODE, # Usar DEBUG_MODE de la instancia
         pool_pre_ping=True,
         pool_size=5,
         max_overflow=10,

@@ -4,7 +4,7 @@ import time
 import requests
 from typing import Dict, Any, Optional
 from fastapi import HTTPException
-from app.core.config import settings
+from app.core.config import get_settings
 
 
 class RateLimiter:
@@ -93,10 +93,10 @@ class Auth0ManagementService:
         Inicializa el servicio con las credenciales de Auth0.
         Los tokens de acceso se obtienen y se refrescan automáticamente.
         """
-        self.domain = settings.AUTH0_DOMAIN
-        self.client_id = settings.AUTH0_MGMT_CLIENT_ID
-        self.client_secret = settings.AUTH0_MGMT_CLIENT_SECRET
-        self.audience = settings.AUTH0_MGMT_AUDIENCE
+        self.domain = get_settings().AUTH0_DOMAIN
+        self.client_id = get_settings().AUTH0_MGMT_CLIENT_ID
+        self.client_secret = get_settings().AUTH0_MGMT_CLIENT_SECRET
+        self.audience = get_settings().AUTH0_MGMT_AUDIENCE
         self.token = None
         self.token_expires_at = 0
         

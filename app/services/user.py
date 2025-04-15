@@ -11,8 +11,8 @@ from redis.asyncio import Redis
 from app.repositories.user import user_repository
 from app.schemas.user import UserCreate, UserUpdate, User, UserRoleUpdate, UserProfileUpdate, UserSearchParams, UserSyncFromAuth0, UserPublicProfile, User as UserSchema
 from app.models.user import User as UserModel, UserRole
-from app.services.storage import storage_service
-from app.core.config import settings
+from app.services.storage import get_storage_service
+from app.core.config import get_settings
 from app.db.redis_client import get_redis_client
 from app.core.auth0_mgmt import auth0_mgmt_service
 from app.core.profiling import time_redis_operation, time_db_query, time_deserialize_operation, register_cache_hit, register_cache_miss, async_db_query_timer
@@ -545,20 +545,32 @@ class UserService:
         if not user:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario no encontrado")
         
-        if user.picture:
-            from app.services.storage import SUPABASE_URL
-            if SUPABASE_URL in user.picture:
-                try:
-                    logger.info(f"Eliminando imagen anterior: {user.picture}")
-                    result = await storage_service.delete_profile_image(user.picture)
-                    if result:
-                        logger.info("Imagen anterior eliminada correctamente")
-                    else:
-                        logger.warning("No se pudo eliminar la imagen anterior")
-                except Exception as e:
-                    logger.warning(f"Error al eliminar la imagen anterior: {str(e)}")
+        # Obtener la instancia del servicio de almacenamiento
+        storage_service_instance = get_storage_service()
+        _settings = get_settings()
         
-        image_url = await storage_service.upload_profile_image(file, auth0_id)
+        if user.picture:
+            # Determinar si la URL es de Supabase (si está configurado)
+            is_supabase_url = False
+            if storage_service_instance.api_url and user.picture.startswith(storage_service_instance.api_url):
+                is_supabase_url = True
+            
+            if is_supabase_url:
+                try:
+                    logger.info(f"Eliminando imagen anterior de Supabase: {user.picture}")
+                    result = await storage_service_instance.delete_profile_image(user.picture)
+                    if result:
+                        logger.info("Imagen anterior de Supabase eliminada correctamente")
+                    else:
+                        logger.warning("No se pudo eliminar la imagen anterior de Supabase")
+                except Exception as e:
+                    logger.warning(f"Error al eliminar la imagen anterior de Supabase: {str(e)}")
+            else:
+                # Podríamos añadir lógica para eliminar de S3 si la URL no es de Supabase
+                logger.info(f"Imagen anterior ({user.picture}) no parece ser de Supabase, no se intentará eliminar.")
+        
+        # Subir la nueva imagen usando la instancia del servicio
+        image_url = await storage_service_instance.upload_profile_image(file, auth0_id)
         updated_user = user_repository.update(db, db_obj=user, obj_in={"picture": image_url})
         return updated_user
         

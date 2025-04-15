@@ -4,7 +4,7 @@ import os
 import json
 import time
 from typing import Dict, Any, Optional
-from app.core.config import settings
+from app.core.config import get_settings
 from redis.asyncio import Redis
 from app.db.redis_client import get_redis_client
 import logging
@@ -106,6 +106,7 @@ class Auth0ManagementService:
     """
     
     def __init__(self):
+        settings = get_settings()
         self.domain = settings.AUTH0_DOMAIN
         self.client_id = settings.AUTH0_MGMT_CLIENT_ID
         self.client_secret = settings.AUTH0_MGMT_CLIENT_SECRET

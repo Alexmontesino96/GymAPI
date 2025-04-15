@@ -17,12 +17,15 @@ setup_logging()
 
 # Ahora importar el resto
 from app.api.v1.api import api_router
-from app.core.config import settings
+from app.core.config import get_settings
 from app.middleware.timing import TimingMiddleware
 from app.core.scheduler import init_scheduler
 from app.db.redis_client import get_redis_client, close_redis_client
 
 logger = logging.getLogger(__name__) # Mantener o ajustar según necesidad
+
+# Obtener la instancia de configuración al inicio del módulo
+settings_instance = get_settings()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -70,18 +73,18 @@ async def lifespan(app: FastAPI):
         print(f"Lifespan: Error al cerrar Redis: {e}")
 
 app = FastAPI(
-    title=settings.PROJECT_NAME,
-    description=settings.PROJECT_DESCRIPTION, 
-    version=settings.VERSION,
-    openapi_url=f"{settings.API_V1_STR}/openapi.json",
-    docs_url=f"{settings.API_V1_STR}/docs",
-    redoc_url=f"{settings.API_V1_STR}/redoc",
+    title=settings_instance.PROJECT_NAME,
+    description=settings_instance.PROJECT_DESCRIPTION, 
+    version=settings_instance.VERSION,
+    openapi_url=f"{settings_instance.API_V1_STR}/openapi.json",
+    docs_url=f"{settings_instance.API_V1_STR}/docs",
+    redoc_url=f"{settings_instance.API_V1_STR}/redoc",
     lifespan=lifespan,
-    swagger_ui_oauth2_redirect_url=f"{settings.API_V1_STR}/docs/oauth2-redirect",
+    swagger_ui_oauth2_redirect_url=f"{settings_instance.API_V1_STR}/docs/oauth2-redirect",
     swagger_ui_init_oauth={
         "usePkceWithAuthorizationCodeGrant": True,
-        "clientId": settings.AUTH0_CLIENT_ID,
-        "appName": settings.PROJECT_NAME,
+        "clientId": settings_instance.AUTH0_CLIENT_ID,
+        "appName": settings_instance.PROJECT_NAME,
         "scopes": "openid profile email read:users write:users delete:users read:trainer-members write:trainer-members delete:trainer-members",
     }
 )
@@ -112,7 +115,7 @@ from app.middleware.tenant_auth import setup_tenant_auth_middleware
 setup_tenant_auth_middleware(app)
 
 # Desactivar middleware de profiling en producción
-if settings.DEBUG_MODE:  # Solo añadir en modo debug
+if settings_instance.DEBUG_MODE:  # Usar la instancia
     from app.core.profiling import ProfilingMiddleware
     app.add_middleware(
         ProfilingMiddleware, 
@@ -138,15 +141,16 @@ app.add_middleware(
 )
 
 # Incluir routers
-app.include_router(api_router, prefix=settings.API_V1_STR)
+app.include_router(api_router, prefix=settings_instance.API_V1_STR)
 
 # Ruta raíz
 @app.get("/")
 def root():
     return {
         "message": "Bienvenido a la API",
-        "docs": f"{settings.API_V1_STR}/docs",
+        "docs": f"{settings_instance.API_V1_STR}/docs",
     }
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True) 
+    # Usar la instancia para el reload, aunque no es ideal para producción
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=settings_instance.DEBUG_MODE) 

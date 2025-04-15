@@ -13,7 +13,7 @@ from app.models.user import User, UserRole
 from app.core.auth0_fastapi import Auth0User, get_current_user
 from app.repositories.gym import gym_repository
 from app.db.redis_client import get_redis_client, redis
-from app.core.config import settings
+from app.core.config import get_settings
 import logging
 from app.services.user import user_service
 from app.services.cache_service import cache_service

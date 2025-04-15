@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field, ValidationError
 from typing_extensions import TypedDict
 from sqlalchemy.orm import Session
 
-from app.core.config import settings
+from app.core.config import get_settings
 from app.services.user import user_service
 from app.db.session import get_db
 from app.db.redis_client import get_redis_client, redis
@@ -310,22 +310,27 @@ class Auth0:
                 return None
 
 
-# Inicializar Auth0 con la configuración del proyecto
-auth = Auth0(
-    domain=settings.AUTH0_DOMAIN,
-    api_audience=settings.AUTH0_API_AUDIENCE,
-    scopes={
-        "openid": "OpenID profile",
-        "profile": "Profile information",
-        "email": "Email information",
-        "read:users": "Leer información de usuarios",
-        "write:users": "Crear o modificar usuarios",
-        "delete:users": "Eliminar usuarios",
-        "read:trainer-members": "Leer relaciones entrenador-miembro",
-        "write:trainer-members": "Crear o modificar relaciones entrenador-miembro",
-        "delete:trainer-members": "Eliminar relaciones entrenador-miembro"
-    }
-)
+# Función para inicializar Auth0 usando get_settings
+def initialize_auth0() -> Auth0:
+    settings = get_settings() # Obtener la instancia de configuración
+    return Auth0(
+        domain=settings.AUTH0_DOMAIN,
+        api_audience=settings.AUTH0_API_AUDIENCE,
+        scopes={
+            "openid": "OpenID profile",
+            "profile": "Profile information",
+            "email": "Email information",
+            "read:users": "Leer información de usuarios",
+            "write:users": "Crear o modificar usuarios",
+            "delete:users": "Eliminar usuarios",
+            "read:trainer-members": "Leer relaciones entrenador-miembro",
+            "write:trainer-members": "Crear o modificar relaciones entrenador-miembro",
+            "delete:trainer-members": "Eliminar relaciones entrenador-miembro"
+        }
+    )
+
+# Crear la instancia auth llamando a la función
+auth = initialize_auth0()
 
 # Función de ayuda para obtener usuario sin permisos específicos
 async def get_current_user(

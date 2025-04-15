@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 import hashlib
 
 from app.core.stream_client import stream_client
-from app.core.config import settings
+from app.core.config import get_settings
 from app.repositories.chat import chat_repository
 from app.schemas.chat import ChatRoomCreate, ChatRoomUpdate
 from app.models.chat import ChatRoom
