@@ -2,8 +2,7 @@ services:
   # Servicio web principal - FastAPI
   - type: web
     name: gymapi
-    runtime: docker
-    dockerCommand: bash -c "python app_wrapper.py" # Usamos nuestro wrapper
+    runtime: docker # Especifica que usemos el Dockerfile
     envVars:
       - key: DATABASE_URL
         fromDatabase:
@@ -14,17 +13,23 @@ services:
           name: gymapi-redis
           type: redis
           property: connectionString
-      # Otras variables de entorno deben configurarse manualmente en el panel de Render
+      # Variables de entorno específicas de la aplicación
       - key: SECRET_KEY
-        generateValue: true  # Genera una clave segura automáticamente
+        generateValue: true
       - key: DEBUG_MODE
-        value: "True"  # Cambiado a True para activar el modo debug
+        value: "True"
       - key: LOGGING_LEVEL
-        value: "DEBUG"  # Añadido nivel de logging detallado
+        value: "DEBUG"
       - key: PYTHONUNBUFFERED
-        value: "1"  # Evita buffering en la salida de Python
+        value: "1"
       - key: SQLALCHEMY_ECHO
-        value: "True"  # Muestra consultas SQL en la consola
+        value: "True"
+      # --- Añade aquí TODAS las demás variables de entorno necesarias --- #
+      # - key: AUTH0_DOMAIN
+      #   value: "tu-dominio.auth0.com"
+      # - key: AUTH0_CLIENT_SECRET
+      #   sync: false # Para evitar mostrar secretos en la UI
+      # ... etc
 
   # Servicio Redis
   - type: redis
