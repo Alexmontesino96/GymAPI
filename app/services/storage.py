@@ -28,25 +28,30 @@ class StorageService:
     """
     
     # Usar settings para los valores por defecto
-    def __init__(self, api_url: str = settings.SUPABASE_URL, anon_key: str = settings.SUPABASE_ANON_KEY):
+    def __init__(self, api_url: Optional[str] = settings.SUPABASE_URL, anon_key: Optional[str] = settings.SUPABASE_ANON_KEY):
         """
-        Inicializa el cliente de Supabase
+        Inicializa el cliente de Supabase si las credenciales están disponibles.
         
         Args:
-            api_url: URL de la API de Supabase
-            anon_key: Clave anónima de Supabase (no confundir con las credenciales S3)
+            api_url: URL de la API de Supabase (opcional)
+            anon_key: Clave anónima de Supabase (opcional)
         """
         self.api_url = api_url
         self.anon_key = anon_key
+        self.supabase: Optional[Client] = None # Inicializar como None
         
-        # Inicializar cliente de Supabase
-        try:
-            logger.info(f"Inicializando cliente de Supabase para {api_url}")
-            self.supabase: Client = create_client(api_url, anon_key)
-            logger.info(f"Cliente de Supabase inicializado correctamente")
-        except Exception as e:
-            logger.error(f"Error al inicializar cliente de Supabase: {str(e)}")
-            raise
+        # Inicializar cliente de Supabase solo si las credenciales están presentes
+        if api_url and anon_key:
+            try:
+                logger.info(f"Inicializando cliente de Supabase para {api_url}")
+                self.supabase = create_client(api_url, anon_key)
+                logger.info(f"Cliente de Supabase inicializado correctamente")
+            except Exception as e:
+                # Registrar el error pero no detener la aplicación
+                logger.error(f"Error al inicializar cliente de Supabase: {str(e)}", exc_info=True)
+                # self.supabase permanecerá como None
+        else:
+            logger.warning("Credenciales de Supabase (URL o Key) no configuradas. El cliente de Supabase no se inicializará.")
 
     def _sanitize_filename(self, filename: str) -> str:
         """
@@ -154,6 +159,14 @@ class StorageService:
         Returns:
             URL de la imagen subida
         """
+        # Verificar si el cliente Supabase está inicializado
+        if not self.supabase:
+            logger.error("Intento de subir imagen de perfil sin cliente Supabase configurado.")
+            raise HTTPException(
+                status_code=status.HTTP_501_NOT_IMPLEMENTED, 
+                detail="El servicio de almacenamiento Supabase no está configurado."
+            )
+            
         try:
             # Validar el tipo de archivo
             if not self._is_valid_image(file.content_type):

@@ -1,23 +1,23 @@
-version: '3'
+version: '3.8'
 
 services:
   web:
     build: .
-    ports:
-      - "8000:8000"
+    command: python app_wrapper.py
     volumes:
       - .:/app
+    ports:
+      - "8000:8000"
     environment:
-      - POSTGRES_SERVER=db
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
-      - POSTGRES_DB=app_db
-      - POSTGRES_PORT=5432
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=${REDIS_URL}
+      - DEBUG_MODE=True
+      - LOGGING_LEVEL=DEBUG
+      - PYTHONUNBUFFERED=1
+      - SQLALCHEMY_ECHO=True
     depends_on:
       - db
-    command: >
-      bash -c "alembic upgrade head && 
-              uvicorn main:app --host 0.0.0.0 --port 8000 --reload"
+      - redis
 
   db:
     image: postgres:14
@@ -26,9 +26,14 @@ services:
     environment:
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=postgres
-      - POSTGRES_DB=app_db
+      - POSTGRES_DB=gymapi
     ports:
       - "5432:5432"
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
 
 volumes:
   postgres_data: 

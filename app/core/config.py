@@ -1,6 +1,7 @@
 import secrets
 import os
 from typing import Any, Dict, List, Optional, Union
+from functools import lru_cache
 
 from pydantic import AnyHttpUrl, EmailStr, PostgresDsn, validator, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -186,8 +187,8 @@ class Settings(BaseSettings):
     AUTH0_MGMT_AUDIENCE: str = os.getenv("AUTH0_MGMT_AUDIENCE", f"https://{AUTH0_DOMAIN}/api/v2/")
 
     # Storage configuration
-    SUPABASE_URL: str
-    SUPABASE_ANON_KEY: str
+    SUPABASE_URL: Optional[str] = None  # Reinstated as optional
+    SUPABASE_ANON_KEY: Optional[str] = None  # Reinstated as optional
     PROFILE_IMAGE_BUCKET: str
     S3_ACCESS_KEY_ID: str = os.getenv("S3_ACCESS_KEY_ID", "")
     S3_SECRET_ACCESS_KEY: str = os.getenv("S3_SECRET_ACCESS_KEY", "")  # ¡Reemplazar con la clave real en producción!
@@ -206,5 +207,7 @@ class Settings(BaseSettings):
     CACHE_TTL_GYM_DETAILS: int = 3600 # 1 hora para detalles del gym
     CACHE_TTL_USER_PROFILE: int = 300 # <<< NUEVO: 5 minutos para perfil de usuario >>>
 
-
-settings = Settings() 
+# Usar una función con caché para obtener la configuración
+@lru_cache()
+def get_settings() -> Settings:
+    return Settings() 

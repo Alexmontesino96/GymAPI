@@ -17,4 +17,10 @@ authlib==1.2.1
 # Dependencias para optimizaciones
 schedule==1.2.1
 psutil==5.9.6
-requests==2.31.0 
+requests==2.31.0
+
+# Dependencias para despliegue y servicios
+gunicorn==21.2.0
+redis==5.0.1  # Versión específica del cliente de Redis
+hiredis==2.2.3  # Acelerador opcional pero recomendado para Redis
+supabase==1.2.0 # Si se usa para Storage 
