@@ -4,7 +4,7 @@ services:
     name: gymapi
     runtime: python
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn -w 4 -k uvicorn.workers.UvicornWorker app.main:app --bind 0.0.0.0:$PORT
+    startCommand: ./start.sh
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.0
@@ -21,7 +21,13 @@ services:
       - key: SECRET_KEY
         generateValue: true  # Genera una clave segura automáticamente
       - key: DEBUG_MODE
-        value: "False"
+        value: "True"  # Cambiado a True para activar el modo debug
+      - key: LOGGING_LEVEL
+        value: "DEBUG"  # Añadido nivel de logging detallado
+      - key: PYTHONUNBUFFERED
+        value: "1"  # Evita buffering en la salida de Python
+      - key: SQLALCHEMY_ECHO
+        value: "True"  # Muestra consultas SQL en la consola
 
   # Servicio Redis
   - type: redis
