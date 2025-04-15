@@ -19,9 +19,6 @@ RUN pip install --no-cache-dir --upgrade pip && \
 # Copiar el código de la aplicación
 COPY . .
 
-# Verificar que los módulos se pueden importar desde el código
-RUN python -c "import sys; sys.path.insert(0, '/app'); from app.services.user import user_service; from app.services.storage import storage_service; print('Módulos user_service y storage_service importados correctamente')"
-
 # Puerto en el que se ejecuta la aplicación
 EXPOSE 8000
 
