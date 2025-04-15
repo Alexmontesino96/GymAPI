@@ -11,7 +11,42 @@ logging.basicConfig(
 )
 logger = logging.getLogger("app_wrapper")
 
-# Log inicial importante
+def check_and_install_dependencies():
+    """Verifica las dependencias críticas e intenta instalar si faltan."""
+    logger.info("Iniciando verificación de dependencias...")
+    # Modulos críticos y sus paquetes pip correspondientes
+    critical_modules = {
+        'redis': 'redis==5.0.1',
+        'redis.asyncio': 'redis==5.0.1', # Asegura que redis se instale para esto
+        'fastapi': 'fastapi', 
+        'sqlalchemy': 'sqlalchemy', 
+        'gunicorn': 'gunicorn==21.2.0', 
+        'uvicorn': 'uvicorn', 
+        'supabase': 'supabase==1.2.0', 
+        'stream_chat': 'stream-chat==5.12.0' # Nombre correcto del paquete pip
+    }
+    missing_install_failed = False
+    
+    for module, package in critical_modules.items():
+        try:
+            logger.debug(f"Verificando módulo: {module}")
+            importlib.import_module(module)
+            logger.info(f"✅ Módulo {module} encontrado.")
+        except ImportError:
+            logger.warning(f"⚠️ Módulo {module} no encontrado. Intentando instalar paquete: {package}...")
+            try:
+                # Usar el ejecutable de Python actual para llamar a pip
+                subprocess.check_call([sys.executable, "-m", "pip", "install", package])
+                # Intentar importar de nuevo después de instalar
+                importlib.import_module(module)
+                logger.info(f"✅ Paquete {package} instalado y módulo {module} importado correctamente.")
+            except Exception as install_error:
+                logger.error(f"❌ FALLO al instalar/importar {package} para el módulo {module}: {install_error}")
+                missing_install_failed = True
+                
+    return not missing_install_failed
+
+# --- Ejecución Principal --- 
 logger.info(f"===== INICIANDO app_wrapper.py ====")
 logger.info(f"Python Executable: {sys.executable}")
 logger.info(f"Python Version: {sys.version}")
@@ -19,44 +54,34 @@ logger.info(f"sys.path: {sys.path}")
 logger.info(f"PYTHONPATH: {os.environ.get('PYTHONPATH')}")
 logger.info(f"Working Directory: {os.getcwd()}")
 
-def check_dependencies():
-    """Verifica las dependencias críticas e intenta corregir problemas."""
-    logger.info("Iniciando verificación de dependencias...")
-    try:
-        # Intentar importar redis
-        logger.debug("Intentando importar redis...")
-        import redis
-        logger.debug("Intentando importar redis.asyncio.Redis...")
-        from redis.asyncio import Redis
-        logger.info(f"✅ Redis {redis.__version__} importado correctamente")
-        return True
-    except ImportError as e:
-        logger.error(f"❌ Error importando Redis: {e}")
-        
-        # Intentar instalar Redis
-        logger.info("Intentando instalar Redis...")
-        try:
-            subprocess.check_call([sys.executable, "-m", "pip", "install", "redis==5.0.1", "hiredis==2.2.3"])
-            
-            # Intentar importar de nuevo
-            import redis
-            from redis.asyncio import Redis
-            logger.info(f"Redis {redis.__version__} instalado e importado correctamente")
-            return True
-        except Exception as install_error:
-            logger.error(f"Error instalando Redis: {install_error}")
-            return False
-
-# Verificar módulos esenciales
-if not check_dependencies():
-    logger.critical("No se pudieron instalar las dependencias necesarias. Saliendo...")
+# Verificar/instalar dependencias al inicio
+if not check_and_install_dependencies():
+    logger.critical("No se pudieron verificar/instalar todas las dependencias críticas. Saliendo.")
     sys.exit(1)
 
-# Importar la aplicación principal
-logger.info("Importando la aplicación principal...")
-from app.main import app
+logger.info("Todas las dependencias críticas verificadas.")
+logger.info("Procediendo a iniciar Uvicorn...")
 
-# Este archivo se puede usar como punto de entrada para gunicorn o uvicorn
+# Iniciar la aplicación con Uvicorn directamente (Gunicorn lo llamará desde el CMD del Dockerfile)
+# Necesitamos importar la app aquí, después de verificar dependencias
+try:
+    from app.main import app
+    logger.info("app.main importado correctamente.")
+except ImportError as e:
+    logger.critical(f"Error final al importar app.main: {e}", exc_info=True)
+    sys.exit(1)
+
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("app_wrapper:app", host="0.0.0.0", port=int(os.environ.get("PORT", 8000)), log_level="debug") 
+    # Obtener el puerto de la variable de entorno o usar 8000 por defecto
+    port = int(os.environ.get("PORT", 8000))
+    # Ejecutar Uvicorn. Gunicorn manejará los workers y el binding.
+    # Especificamos la app como "app_wrapper:app" si Gunicorn necesita este archivo
+    # pero aquí Uvicorn se ejecuta directamente.
+    uvicorn.run(
+        "app.main:app", 
+        host="0.0.0.0", 
+        port=port, 
+        log_level="debug",
+        reload=False # El reload debe manejarse fuera (Render o Gunicorn)
+    ) 
