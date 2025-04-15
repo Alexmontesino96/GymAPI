@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from jose import jwt as jose_jwt
 from fastapi.testclient import TestClient
 from app.core.auth0_fastapi import auth, Auth0UnauthenticatedException
-from app.core.config import settings
+from app.core.config import get_settings
 from main import app
 from unittest.mock import patch, MagicMock
 
@@ -29,6 +29,7 @@ def mock_jwks():
 @pytest.fixture
 def valid_token_payload():
     """Genera un payload válido para un token JWT"""
+    settings = get_settings()
     return {
         "iss": f"https://{settings.AUTH0_DOMAIN}/",
         "sub": "auth0|12345678",

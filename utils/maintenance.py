@@ -39,11 +39,11 @@ logger = logging.getLogger("maintenance")
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 # Importar settings para obtener la URL correcta
-from app.core.config import settings
+from app.core.config import get_settings
 
 # Obtener la URL de la base de datos desde settings
 # Asegurarse de que la URL está en formato string
-DB_URL = str(settings.SQLALCHEMY_DATABASE_URI)
+DB_URL = str(get_settings().SQLALCHEMY_DATABASE_URI)
 
 # Crear el engine y la sesión
 engine = create_engine(DB_URL)

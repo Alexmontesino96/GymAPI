@@ -4,7 +4,7 @@ from fastapi.testclient import TestClient
 from unittest.mock import patch, MagicMock
 from main import app
 import urllib.request
-from app.core.config import settings
+from app.core.config import get_settings
 from app.core.auth0_fastapi import Auth0User
 
 client = TestClient(app)
@@ -50,6 +50,7 @@ def mock_auth0_userinfo():
 
 def test_login_endpoint_generates_correct_auth_url():
     """El endpoint de login debe generar la URL de Auth0 correcta"""
+    settings = get_settings()
     response = client.get("/api/v1/auth/login")
     
     assert response.status_code == 200

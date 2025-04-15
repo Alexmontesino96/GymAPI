@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
 from app.api.v1.api import api_router
-from app.core.config import settings
+from app.core.config import get_settings
 from app.middleware.timing import TimingMiddleware
 from app.core.scheduler import init_scheduler
 
@@ -23,18 +23,18 @@ async def lifespan(app: FastAPI):
         app.state.scheduler.shutdown()
 
 app = FastAPI(
-    title=settings.PROJECT_NAME,
-    description=settings.PROJECT_DESCRIPTION,
-    version=settings.VERSION,
-    openapi_url=f"{settings.API_V1_STR}/openapi.json",
-    docs_url=f"{settings.API_V1_STR}/docs",
-    redoc_url=f"{settings.API_V1_STR}/redoc",
+    title=get_settings().PROJECT_NAME,
+    description=get_settings().PROJECT_DESCRIPTION,
+    version=get_settings().VERSION,
+    openapi_url=f"{get_settings().API_V1_STR}/openapi.json",
+    docs_url=f"{get_settings().API_V1_STR}/docs",
+    redoc_url=f"{get_settings().API_V1_STR}/redoc",
     lifespan=lifespan,
-    swagger_ui_oauth2_redirect_url=f"{settings.API_V1_STR}/docs/oauth2-redirect",
+    swagger_ui_oauth2_redirect_url=f"{get_settings().API_V1_STR}/docs/oauth2-redirect",
     swagger_ui_init_oauth={
         "usePkceWithAuthorizationCodeGrant": True,
-        "clientId": settings.AUTH0_CLIENT_ID,
-        "appName": settings.PROJECT_NAME,
+        "clientId": get_settings().AUTH0_CLIENT_ID,
+        "appName": get_settings().PROJECT_NAME,
         "scopes": "openid profile email read:users write:users delete:users read:trainer-members write:trainer-members delete:trainer-members",
     }
 )
@@ -43,7 +43,7 @@ app = FastAPI(
 app.add_middleware(TimingMiddleware)
 
 # Lista de orígenes permitidos para CORS
-origins = [str(origin) for origin in settings.BACKEND_CORS_ORIGINS]
+origins = [str(origin) for origin in get_settings().BACKEND_CORS_ORIGINS]
 if "*" in origins:
     # Si se permite cualquier origen, usar una lista más amplia de dominios comunes
     origins = [
@@ -71,14 +71,14 @@ app.add_middleware(
 )
 
 # Incluir routers
-app.include_router(api_router, prefix=settings.API_V1_STR)
+app.include_router(api_router, prefix=get_settings().API_V1_STR)
 
 # Ruta raíz
 @app.get("/")
 def root():
     return {
         "message": "Bienvenido a la API",
-        "docs": f"{settings.API_V1_STR}/docs",
+        "docs": f"{get_settings().API_V1_STR}/docs",
     }
 
 if __name__ == "__main__":

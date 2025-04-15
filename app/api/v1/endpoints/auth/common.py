@@ -102,6 +102,7 @@ def validate_redirect_uri(redirect_uri: str) -> bool:
         return False
     
     from urllib.parse import urlparse
+    settings = get_settings()
     
     # Validate URL format
     parsed_uri = urlparse(redirect_uri)

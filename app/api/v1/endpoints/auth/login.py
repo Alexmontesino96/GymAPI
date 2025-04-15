@@ -26,6 +26,8 @@ def login_redirect(
     Raises:
         HTTPException: If the redirect_uri is not in the allowed list
     """
+    settings = get_settings()
+    
     # Validate the redirect URL if provided
     if redirect_uri and not validate_redirect_uri(redirect_uri):
         raise HTTPException(
@@ -81,6 +83,8 @@ def login_redirect_automatic(
     Raises:
         HTTPException: If the redirect_uri is not in the allowed list
     """
+    settings = get_settings()
+    
     # Validate the redirect URL if provided
     if redirect_uri and not validate_redirect_uri(redirect_uri):
         raise HTTPException(
@@ -134,6 +138,8 @@ async def auth0_callback(
     Raises:
         HTTPException: If there's an error in the parameters or Auth0 configuration
     """
+    settings = get_settings()
+    
     # Check if there's an error in the URL parameters
     params = dict(request.query_params)
     if "error" in params:
@@ -203,6 +209,8 @@ async def get_auth_config(redirect_uri: Optional[str] = Query(None)):
     Returns:
         dict: Auth0 configuration parameters including domain, clientId, etc.
     """
+    settings = get_settings()
+    
     # If a redirect URL is provided, use it as default
     frontend_uri = redirect_uri or "http://localhost:3001"
     
@@ -242,6 +250,8 @@ async def logout(redirect_uri: Optional[str] = Query(None, description="URL to r
     Raises:
         HTTPException: If the redirect_uri is not in the allowed list
     """
+    settings = get_settings()
+    
     # Validate the redirect URL if provided
     if redirect_uri and not validate_redirect_uri(redirect_uri):
         raise HTTPException(
@@ -249,8 +259,10 @@ async def logout(redirect_uri: Optional[str] = Query(None, description="URL to r
             detail=f"Redirect URL not allowed: {redirect_uri}"
         )
     
-    # Use the provided redirect URL or the default
-    return_to = urllib.parse.quote(redirect_uri or "http://localhost:8000")
+    # If no redirect URI is provided, use a default value
+    return_to = redirect_uri or "http://localhost:3001"
+    
+    # Generate the Auth0 logout URL
     logout_url = f"https://{settings.AUTH0_DOMAIN}/v2/logout?client_id={settings.AUTH0_CLIENT_ID}&returnTo={return_to}"
     
-    return {"logout_url": logout_url} 
+    return {"logout_url": logout_url, "redirect_uri": return_to} 

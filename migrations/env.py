@@ -10,7 +10,7 @@ import sys
 # Añadir el directorio principal al path de Python
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.core.config import settings
+from app.core.config import get_settings
 from app.db.base import Base
 
 # this is the Alembic Config object, which provides
@@ -34,7 +34,7 @@ target_metadata = Base.metadata
 
 # Sobrescribir URL de conexión con la del entorno
 def get_url():
-    return str(settings.SQLALCHEMY_DATABASE_URI)
+    return str(get_settings().SQLALCHEMY_DATABASE_URI)
 
 
 def run_migrations_offline():

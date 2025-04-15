@@ -12,10 +12,10 @@ from sqlalchemy.exc import SQLAlchemyError
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 # Importar settings para obtener la URL correcta
-from app.core.config import settings
+from app.core.config import get_settings
 
 # Obtener la URL de la base de datos desde settings
-DB_URL = str(settings.SQLALCHEMY_DATABASE_URI)
+DB_URL = str(get_settings().SQLALCHEMY_DATABASE_URI)
 
 # URL de conexión a la base de datos (Usando la configuración)
 # db_url = "postgresql://postgres:Jazdi0-cyhvan-pofduz@db.ueijlkythlkqadxymzqd.supabase.co:5432/postgres"

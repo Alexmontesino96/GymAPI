@@ -1,10 +1,11 @@
 from sqlalchemy import create_engine, Table, MetaData, Column, Enum, text, inspect, TIMESTAMP
-from app.core.config import settings
+from app.core.config import get_settings
 from app.models.user import UserRole
 
 def run_migrations():
     """Ejecuta las migraciones pendientes en la base de datos."""
     # Conexión a la base de datos usando str explícitamente
+    settings = get_settings()
     engine = create_engine(str(settings.SQLALCHEMY_DATABASE_URI))
     metadata = MetaData()
     

@@ -9,7 +9,11 @@ from auth0.authentication import GetToken
 from auth0.authentication.token_verifier import TokenVerifier, AsymmetricSignatureVerifier
 from auth0.management import Auth0
 
-from app.core.config import settings
+from app.core.config import get_settings
+
+from app.core.logging_config import get_logger
+
+logger = get_logger(__name__)
 
 # Esquema OAuth2 personalizado para flujo de código de autorización con PKCE
 class OAuth2AuthorizationCodePKCE(OAuth2):
@@ -33,8 +37,8 @@ class OAuth2AuthorizationCodePKCE(OAuth2):
 
 # Esquema OAuth2 para flujo de código con PKCE (para Swagger UI)
 oauth2_scheme = OAuth2AuthorizationCodePKCE(
-    authorizationUrl=f"https://{settings.AUTH0_DOMAIN}/authorize?audience={settings.AUTH0_API_AUDIENCE}",
-    tokenUrl=f"https://{settings.AUTH0_DOMAIN}/oauth/token",
+    authorizationUrl=f"https://{get_settings().AUTH0_DOMAIN}/authorize?audience={get_settings().AUTH0_API_AUDIENCE}",
+    tokenUrl=f"https://{get_settings().AUTH0_DOMAIN}/oauth/token",
     scopes={
         "openid": "OpenID profile",
         "profile": "Profile information",
@@ -44,17 +48,17 @@ oauth2_scheme = OAuth2AuthorizationCodePKCE(
 
 # Inicializar el token verifier de Auth0
 signature_verifier = AsymmetricSignatureVerifier(
-    f"https://{settings.AUTH0_DOMAIN}/.well-known/jwks.json"
+    f"https://{get_settings().AUTH0_DOMAIN}/.well-known/jwks.json"
 )
 
 token_verifier = TokenVerifier(
     signature_verifier=signature_verifier,
-    issuer=settings.AUTH0_ISSUER,
-    audience=settings.AUTH0_API_AUDIENCE
+    issuer=get_settings().AUTH0_ISSUER,
+    audience=get_settings().AUTH0_API_AUDIENCE
 )
 
 # Cliente de autenticación de Auth0
-auth0_client = GetToken(settings.AUTH0_DOMAIN, settings.AUTH0_CLIENT_ID, client_secret=settings.AUTH0_CLIENT_SECRET)
+auth0_client = GetToken(get_settings().AUTH0_DOMAIN, get_settings().AUTH0_CLIENT_ID, client_secret=get_settings().AUTH0_CLIENT_SECRET)
 
 # Variable para almacenar el cliente de gestión (inicialización diferida)
 _mgmt_api_client = None
@@ -65,9 +69,9 @@ async def get_management_client():
     """
     global _mgmt_api_client
     if _mgmt_api_client is None:
-        token_response = auth0_client.client_credentials(f'https://{settings.AUTH0_DOMAIN}/api/v2/')
+        token_response = auth0_client.client_credentials(f'https://{get_settings().AUTH0_DOMAIN}/api/v2/')
         mgmt_api_token = token_response['access_token']
-        _mgmt_api_client = Auth0(settings.AUTH0_DOMAIN, mgmt_api_token)
+        _mgmt_api_client = Auth0(get_settings().AUTH0_DOMAIN, mgmt_api_token)
     return _mgmt_api_client
 
 async def verify_token(token: str) -> Dict:
@@ -147,4 +151,54 @@ def exchange_code_for_token(code: str, redirect_uri: str) -> Dict[str, Any]:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Error al intercambiar el código por token: {str(e)}"
-        ) 
+        )
+
+def get_swagger_ui_oauth2_redirect_html():
+    settings = get_settings()
+    return {
+        "authorizationUrl": f"https://{settings.AUTH0_DOMAIN}/authorize?audience={settings.AUTH0_API_AUDIENCE}",
+        "tokenUrl": f"https://{settings.AUTH0_DOMAIN}/oauth/token",
+        "refreshUrl": None,
+        "scopes": {
+            "openid": "OpenID Connect",
+            "profile": "User profile",
+            "email": "User email"
+        },
+    }
+
+def get_jwks():
+    settings = get_settings()
+    jwks_url = f"https://{settings.AUTH0_DOMAIN}/.well-known/jwks.json"
+    return requests.get(jwks_url).json()
+
+def setup_auth0_jwt(app):
+    settings = get_settings()
+    app.jwt_decode_options = {
+        "verify_signature": True,
+        "verify_aud": True,
+        "verify_iat": True,
+        "verify_exp": True,
+        "verify_nbf": False,
+        "verify_jti": False,
+        "verify_at_hash": False,
+        "leeway": 0,
+    }
+    app.jwt_decode_issuer = settings.AUTH0_ISSUER,
+    app.jwt_decode_audience = settings.AUTH0_API_AUDIENCE
+
+def get_auth0_management_client():
+    global _mgmt_api_client
+    settings = get_settings()
+    
+    if not _mgmt_api_client:
+        auth0_client = GetToken(settings.AUTH0_DOMAIN, settings.AUTH0_CLIENT_ID, client_secret=settings.AUTH0_CLIENT_SECRET)
+        try:
+            # Obtener token de acceso para la API de gestión
+            token_response = auth0_client.client_credentials(f'https://{settings.AUTH0_DOMAIN}/api/v2/')
+            mgmt_api_token = token_response['access_token']
+            _mgmt_api_client = Auth0(settings.AUTH0_DOMAIN, mgmt_api_token)
+        except Exception as e:
+            logger.error(f"Error al inicializar Auth0 Management API: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Error de configuración de Auth0: {str(e)}")
+    
+    return _mgmt_api_client 

@@ -3,7 +3,7 @@ from unittest.mock import patch, MagicMock
 from fastapi.testclient import TestClient
 from fastapi import HTTPException
 
-from app.core.config import settings
+from app.core.config import get_settings
 
 
 class TestAuthEndpoints:
@@ -15,7 +15,7 @@ class TestAuthEndpoints:
         assert response.status_code == 200
         assert "auth_url" in response.json()
         auth_url = response.json()["auth_url"]
-        assert settings.AUTH0_DOMAIN in auth_url
+        assert get_settings().AUTH0_DOMAIN in auth_url
         assert "authorize" in auth_url
         assert "client_id" in auth_url
     
@@ -24,7 +24,7 @@ class TestAuthEndpoints:
         response = client.get("/api/v1/auth/login-redirect", allow_redirects=False)
         assert response.status_code == 307  # Redirección temporal
         location = response.headers.get("location")
-        assert settings.AUTH0_DOMAIN in location
+        assert get_settings().AUTH0_DOMAIN in location
         assert "authorize" in location
     
     @patch("httpx.AsyncClient.post")
@@ -83,6 +83,6 @@ class TestAuthEndpoints:
         assert response.status_code == 200
         assert "logout_url" in response.json()
         logout_url = response.json()["logout_url"]
-        assert settings.AUTH0_DOMAIN in logout_url
+        assert get_settings().AUTH0_DOMAIN in logout_url
         assert "v2/logout" in logout_url
         assert "returnTo" in logout_url 
