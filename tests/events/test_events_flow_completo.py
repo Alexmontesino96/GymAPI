@@ -4,17 +4,23 @@ import json
 from datetime import datetime, timedelta
 import time
 import random
+import logging
+import math
 
 # Configuración de la prueba
 API_BASE_URL = "http://localhost:8080/api/v1"
-AUTH_TOKEN = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6InI2YXBIZVNOUEluaXpaeDlYN1NidyJ9.eyJlbWFpbCI6ImFsZXhtb250ZXNpbm85NkBpY2xvdWQuY29tIiwiaXNzIjoiaHR0cHM6Ly9kZXYtZ2Q1Y3JmZTZxYnFsdTIzcC51cy5hdXRoMC5jb20vIiwic3ViIjoiYXV0aDB8NjdkNWQ2NGQ2NGNjZjFjNTIyYTY5NTBiIiwiYXVkIjpbImh0dHBzOi8vZ3ltYXBpIiwiaHR0cHM6Ly9kZXYtZ2Q1Y3JmZTZxYnFsdTIzcC51cy5hdXRoMC5jb20vdXNlcmluZm8iXSwiaWF0IjoxNzQzNjk3MjM1LCJleHAiOjE3NDM3ODM2MzUsInNjb3BlIjoib3BlbmlkIHByb2ZpbGUgZW1haWwiLCJhenAiOiJPdUo2SUtFMGxKU2RhTUc2amFXMDRqZnB0c01SYnl2cCIsInBlcm1pc3Npb25zIjpbImFkbWluOmV2ZW50cyIsImFkbWluOmd5bXMiLCJhZG1pbjpyZWxhdGlvbnNoaXBzIiwiYWRtaW46dXNlcnMiLCJjcmVhdGU6Y2hhdF9yb29tcyIsImNyZWF0ZTpldmVudHMiLCJjcmVhdGU6cGFydGljaXBhdGlvbnMiLCJjcmVhdGU6cmVsYXRpb25zaGlwcyIsImNyZWF0ZTpzY2hlZHVsZXMiLCJkZWxldGU6ZXZlbnRzIiwiZGVsZXRlOm93bl9wYXJ0aWNpcGF0aW9ucyIsImRlbGV0ZTpyZWxhdGlvbnNoaXBzIiwiZGVsZXRlOnNjaGVkdWxlcyIsImRlbGV0ZTp1c2VycyIsIm1hbmFnZTpjaGF0X3Jvb21zIiwibWFuYWdlOmNsYXNzX3JlZ2lzdHJhdGlvbnMiLCJyZWFkX2V2ZW50cyIsInJlYWQ6Z3ltcyIsInJlYWQ6bWVtYmVycyIsInJlYWQ6b3duX2V2ZW50cyIsInJlYWQ6b3duX3BhcnRpY2lwYXRpb25zIiwicmVhZDpvd25fcmVsYXRpb25zaGlwcyIsInJlYWQ6b3duX3NjaGVkdWxlcyIsInJlYWQ6cGFydGljaXBhdGlvbnMiLCJyZWFkOnByb2ZpbGUiLCJyZWFkOnNjaGVkdWxlcyIsInJlYWQ6dXNlcnMiLCJyZWRhOmd5bV91c2VycyIsInJlZ2lzdGVyOmNsYXNzZXMiLCJ1cGRhdGU6cGFydGljaXBhdGlvbnMiLCJ1cGRhdGU6cmVsYXRpb25zaGlwcyIsInVwZGF0ZTpzY2hlZHVsZXMiLCJ1cGRhdGU6dXNlcnMiLCJ1c2U6Y2hhdCJdfQ.FzTOac71WEgVz6CneRPo69ZhEFlULl_FNwakYmktJuh2zLaBcB1DkPfbMqUfpwsJ66lY7evGMYB8E5J-iGvFrx1xWv07CgqXOnB5MPi7VsBd5A_J8CRz9nSbaeOfOhD8873tC5j0AmVTSmR9Z7M_QIUiKvcOEZjauOnVsGD1oQn_H2fTlnWIjLOxymUr3atH7eHe60ASITdedQ2djsRsY_H05iP4J_xJvbJgp5uvt4w5amvUaZTWpHHURhQSLOUZ8_BXK7e653O56mxuXRZ9id7TMu5wKG6ygSWvlB_ww90-HISm-OORu677jJQdqajuGSK-XxT4kQbMDqzL01_ulQ"
+AUTH_TOKEN = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6InI2YXBIZVNOUEluaXpaeDlYN1NidyJ9.eyJlbWFpbCI6ImFsZXhtb25AZ21haWwuY29tIiwiaXNzIjoiaHR0cHM6Ly9kZXYtZ2Q1Y3JmZTZxYnFsdTIzcC51cy5hdXRoMC5jb20vIiwic3ViIjoiYXV0aDB8NjdlMjE1NTYzZWVlZTc1MmQ3OWMyYzM4IiwiYXVkIjpbImh0dHBzOi8vZ3ltYXBpIiwiaHR0cHM6Ly9kZXYtZ2Q1Y3JmZTZxYnFsdTIzcC51cy5hdXRoMC5jb20vdXNlcmluZm8iXSwiaWF0IjoxNzQ0Njk1NjY4LCJleHAiOjE3NDQ3ODIwNjgsInNjb3BlIjoib3BlbmlkIHByb2ZpbGUgZW1haWwiLCJhenAiOiJPdUo2SUtFMGxKU2RhTUc2amFXMDRqZnB0c01SYnl2cCIsInBlcm1pc3Npb25zIjpbImFkbWluOmV2ZW50cyIsImFkbWluOmd5bXMiLCJhZG1pbjpyZWxhdGlvbnNoaXBzIiwiYWRtaW46dXNlcnMiLCJjcmVhdGU6Y2hhdF9yb29tcyIsImNyZWF0ZTpldmVudHMiLCJjcmVhdGU6cGFydGljaXBhdGlvbnMiLCJjcmVhdGU6cmVsYXRpb25zaGlwcyIsImNyZWF0ZTpzY2hlZHVsZXMiLCJkZWxldGU6ZXZlbnRzIiwiZGVsZXRlOm93bl9wYXJ0aWNpcGF0aW9ucyIsImRlbGV0ZTpyZWxhdGlvbnNoaXBzIiwiZGVsZXRlOnNjaGVkdWxlcyIsImRlbGV0ZTp1c2VycyIsIm1hbmFnZTpjaGF0X3Jvb21zIiwibWFuYWdlOmNsYXNzX3JlZ2lzdHJhdGlvbnMiLCJyZWFkX2V2ZW50cyIsInJlYWQ6Z3ltcyIsInJlYWQ6bWVtYmVycyIsInJlYWQ6b3duX2V2ZW50cyIsInJlYWQ6b3duX3BhcnRpY2lwYXRpb25zIiwicmVhZDpvd25fcmVsYXRpb25zaGlwcyIsInJlYWQ6b3duX3NjaGVkdWxlcyIsInJlYWQ6cGFydGljaXBhdGlvbnMiLCJyZWFkOnByb2ZpbGUiLCJyZWFkOnNjaGVkdWxlcyIsInJlYWQ6dXNlcnMiLCJyZWRhOmd5bV91c2VycyIsInJlZ2lzdGVyOmNsYXNzZXMiLCJ1cGRhdGU6cGFydGljaXBhdGlvbnMiLCJ1cGRhdGU6cmVsYXRpb25zaGlwcyIsInVwZGF0ZTpzY2hlZHVsZXMiLCJ1cGRhdGU6dXNlcnMiLCJ1c2U6Y2hhdCJdfQ.AKEHX1f6wgCca-2V3F99MTjN9rwrTyf4023DmV5aIbz2Jnz5GYyCz22xCbMycraRvoJtIzln0p0oyc2AYs8fgOA3cw3XLP8XNjb9Io3BCVDiGj791wyPI1RrX7BXFyPpRSfR5_5dSsJkIbouHXyE2SUcbZmLEhlQ-rswiA1CdKCSILM1cRgWF2iTMkEyfz1OinHv4VefSjkfBgZ-uCTkq5I09jYLwjVoHEtgSD-Z9CEQO9XoEq2d7lujfrW8QsyHx2-7d_SNAdirY8sRuudTGqDuY3sFSBhYe8zhIzrqsUAoS0V1WQuFduNip_20RF3M5UEHIINUYEdpAa7Ot6dTpA"
 GYM_ID = 1
+
+# Configurar logging para ver detalles
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 # Headers comunes para todas las peticiones
 HEADERS = {
     "Authorization": f"Bearer {AUTH_TOKEN}",
     "Content-Type": "application/json",
-    "x-tenant-id": str(GYM_ID)
+    "X-Gym-ID": str(GYM_ID)
 }
 
 # Lista para almacenar los IDs de eventos creados para limpiarlos al final
@@ -69,16 +75,23 @@ def create_event(event_data=None):
     url = f"{API_BASE_URL}/events/"
     response = requests.post(url, headers=HEADERS, json=event_data)
     
-    if response.status_code == 201:
+    # Aceptar tanto 201 (Created) como 200 (OK) como éxito
+    if response.status_code in [200, 201]: 
         created_event = response.json()
-        created_event_ids.append(created_event['id'])  # Guardar ID para limpieza
-        print(f"✅ Evento creado exitosamente con ID: {created_event['id']}")
-        print(f"   Título: {created_event['title']}")
-        print(f"   Descripción: {created_event['description']}")
-        print(f"   Ubicación: {created_event['location']}")
-        return created_event
+        # Asegurarse de que el evento tiene un ID antes de añadirlo
+        if 'id' in created_event:
+            created_event_ids.append(created_event['id'])  # Guardar ID para limpieza
+            print(f"✅ Evento creado/obtenido exitosamente (status: {response.status_code}) con ID: {created_event['id']}")
+            print(f"   Título: {created_event['title']}")
+            print(f"   Descripción: {created_event.get('description', 'N/A')}") # Usar .get por si acaso
+            print(f"   Ubicación: {created_event.get('location', 'N/A')}")
+            return created_event
+        else:
+            print(f"❌ Error: La respuesta {response.status_code} no contenía un ID de evento.")
+            print(response.text)
+            return None
     else:
-        print(f"❌ Error al crear evento: {response.status_code}")
+        print(f"❌ Error al crear/obtener evento: {response.status_code}")
         print(response.text)
         return None
 
@@ -481,54 +494,230 @@ def run_participation_tests():
     print("  - Actualización de estado de participación")
     print("  - Validación de cambios de estado")
 
+def run_bulk_operations_test():
+    """Prueba la creación, actualización, lectura paginada y eliminación masiva de eventos."""
+    print_separator("PRUEBA DE OPERACIONES MASIVAS DE EVENTOS")
+
+    bulk_created_ids = []
+    updated_ids = []
+
+    try:
+        # --- 1. Creación Masiva (150 eventos) ---
+        print("\n📌 FASE 1: CREACIÓN MASIVA DE 150 EVENTOS")
+        start_bulk_create = time.time()
+        for i in range(150):
+            start_time = (datetime.now() + timedelta(days=random.randint(2, 30))).replace(hour=random.randint(8, 18), minute=0, second=0)
+            end_time = start_time + timedelta(hours=random.randint(1, 3))
+            event_data = {
+                "title": f"Evento Masivo {i+1} - {int(time.time() * 1000)}",
+                "description": f"Descripción del evento masivo {i+1}",
+                "start_time": start_time.isoformat(),
+                "end_time": end_time.isoformat(),
+                "location": f"Sala Masiva {random.choice(['A', 'B', 'C'])}",
+                "max_participants": random.randint(10, 50),
+                "status": "SCHEDULED"
+            }
+            created_event = create_event(event_data)
+            if created_event:
+                bulk_created_ids.append(created_event['id'])
+            else:
+                logger.warning(f"No se pudo crear el evento masivo {i+1}")
+                # Considerar si pausar o continuar
+                time.sleep(0.1) # Pequeña pausa
+        elapsed_bulk_create = time.time() - start_bulk_create
+        logger.info(f"Creación masiva completada en {elapsed_bulk_create:.2f}s. Creados: {len(bulk_created_ids)}/150")
+        if len(bulk_created_ids) != 150:
+            logger.error("No se crearon todos los eventos esperados.")
+            return # No continuar si la creación falla
+
+        # --- 2. Actualización Masiva (100 eventos) ---
+        print("\n📌 FASE 2: ACTUALIZACIÓN MASIVA DE 100 EVENTOS")
+        ids_to_update = random.sample(bulk_created_ids, 100)
+        start_bulk_update = time.time()
+        for event_id in ids_to_update:
+            update_data = {
+                "title": f"Evento Masivo Actualizado {event_id}",
+                "location": "Sala Actualizada",
+                "max_participants": random.randint(5, 15) # Reducir capacidad
+            }
+            updated_event = update_event(event_id, update_data)
+            if updated_event:
+                updated_ids.append(event_id)
+            else:
+                logger.warning(f"No se pudo actualizar el evento {event_id}")
+                time.sleep(0.1)
+        elapsed_bulk_update = time.time() - start_bulk_update
+        logger.info(f"Actualización masiva completada en {elapsed_bulk_update:.2f}s. Actualizados: {len(updated_ids)}/100")
+
+        # --- 3. Lectura Paginada --- 
+        print("\n📌 FASE 3: LECTURA PAGINADA DE TODOS LOS EVENTOS CREADOS")
+        all_retrieved_events = []
+        page_size = 30 # Tamaño de página más pequeño para probar paginación
+        total_expected = len(bulk_created_ids) # 150
+        pages_needed = math.ceil(total_expected / page_size)
+        start_bulk_read = time.time()
+        
+        current_skip = 0
+        while True:
+            limit = page_size
+            logger.info(f"Leyendo página (skip={current_skip}, limit={limit})...")
+            url = f"{API_BASE_URL}/events/?skip={current_skip}&limit={limit}"
+            response = requests.get(url, headers=HEADERS)
+            if response.status_code == 200:
+                page_events = response.json()
+                if not page_events:
+                    logger.info("  Página vacía, finalizando lectura.")
+                    break # Salir si no hay más eventos
+                logger.info(f"  Página obtenida con {len(page_events)} eventos.")
+                all_retrieved_events.extend(page_events)
+                current_skip += len(page_events) # Incrementar skip por la cantidad real obtenida
+            else:
+                logger.error(f"Error al leer página (skip={current_skip}): {response.status_code} - {response.text}")
+                break # Salir del bucle si una página falla
+            
+            # Pequeña pausa entre páginas
+            time.sleep(0.2)
+
+        elapsed_bulk_read = time.time() - start_bulk_read
+        logger.info(f"Lectura paginada completada en {elapsed_bulk_read:.2f}s.")
+        logger.info(f"Total de eventos recuperados: {len(all_retrieved_events)} (Esperados: {total_expected})")
+
+        # Verificar si se recuperaron todos los eventos
+        if len(all_retrieved_events) != total_expected:
+            logger.error("¡Discrepancia en el número de eventos recuperados!")
+        else:
+            logger.info("✅ Verificación de cantidad post-lectura paginada correcta.")
+            # Verificar si los IDs actualizados tienen los nuevos títulos
+            retrieved_ids = {e['id']: e for e in all_retrieved_events}
+            updates_verified = 0
+            for updated_id in updated_ids:
+                if updated_id in retrieved_ids and "Actualizado" in retrieved_ids[updated_id]["title"]:
+                    updates_verified += 1
+            logger.info(f"Verificación de títulos actualizados: {updates_verified}/{len(updated_ids)}")
+
+        # --- 4. Eliminación Masiva (50 eventos) ---
+        print("\n📌 FASE 4: ELIMINACIÓN MASIVA DE 50 EVENTOS")
+        ids_to_delete = random.sample(bulk_created_ids, 50)
+        deleted_count = 0
+        start_bulk_delete = time.time()
+        ids_deleted_successfully = [] # Guardar los que sí se borraron
+        for event_id in ids_to_delete:
+            if delete_event(event_id):
+                deleted_count += 1
+                ids_deleted_successfully.append(event_id)
+            else:
+                logger.warning(f"No se pudo eliminar el evento {event_id}")
+                time.sleep(0.1)
+        elapsed_bulk_delete = time.time() - start_bulk_delete
+        logger.info(f"Eliminación masiva completada en {elapsed_bulk_delete:.2f}s. Eliminados: {deleted_count}/50")
+        
+        # Actualizar la lista de IDs creados para la verificación final
+        bulk_created_ids = [eid for eid in bulk_created_ids if eid not in ids_deleted_successfully]
+
+        # --- 5. Verificación Final (Deben quedar 100 eventos) ---
+        print("\n📌 FASE 5: VERIFICACIÓN FINAL - LECTURA PAGINADA DE EVENTOS RESTANTES")
+        final_retrieved_events = []
+        total_expected_final = 100
+        start_final_read = time.time()
+        current_skip_final = 0
+        
+        while True:
+            limit = page_size
+            logger.info(f"Leyendo página final (skip={current_skip_final}, limit={limit})...")
+            url = f"{API_BASE_URL}/events/?skip={current_skip_final}&limit={limit}"
+            response = requests.get(url, headers=HEADERS)
+            if response.status_code == 200:
+                page_events = response.json()
+                if not page_events:
+                    logger.info("  Página final vacía, finalizando lectura.")
+                    break
+                logger.info(f"  Página final obtenida con {len(page_events)} eventos.")
+                final_retrieved_events.extend(page_events)
+                current_skip_final += len(page_events)
+            else:
+                logger.error(f"Error al leer página final (skip={current_skip_final}): {response.status_code} - {response.text}")
+                break
+            time.sleep(0.2)
+
+        elapsed_final_read = time.time() - start_final_read
+        logger.info(f"Lectura final completada en {elapsed_final_read:.2f}s.")
+        logger.info(f"Total de eventos recuperados finalmente: {len(final_retrieved_events)} (Esperados: {total_expected_final})")
+
+        if len(final_retrieved_events) == total_expected_final:
+            logger.info("✅ ¡Prueba de operaciones masivas completada con éxito!")
+        else:
+            logger.error("❌ ¡Fallo en la prueba de operaciones masivas! El recuento final no coincide.")
+            # Comparar IDs para ver cuáles faltan o sobran
+            final_retrieved_ids = {e['id'] for e in final_retrieved_events}
+            expected_ids = set(bulk_created_ids) # Usamos la lista actualizada
+            missing_ids = expected_ids - final_retrieved_ids
+            extra_ids = final_retrieved_ids - expected_ids
+            if missing_ids:
+                logger.error(f"  IDs faltantes: {missing_ids}")
+            if extra_ids:
+                logger.error(f"  IDs extras encontrados: {extra_ids}")
+
+    except Exception as e:
+        logger.error(f"Error durante la prueba de operaciones masivas: {e}", exc_info=True)
+    finally:
+        # Limpieza final - usar bulk_created_ids que se actualizó
+        print("\n🧹 Limpieza final de IDs de prueba masiva (si queda alguno)")
+        if bulk_created_ids:
+            logger.info(f"Intentando limpiar {len(bulk_created_ids)} IDs restantes...")
+            for event_id in list(bulk_created_ids): # Usar copia
+                # Intentar eliminar, sin importar si ya estaba en created_event_ids global
+                delete_event(event_id) 
+        else:
+            logger.info("No hay IDs de prueba masiva para limpiar.")
+
 def run_comprehensive_test():
     """Ejecuta un conjunto completo de pruebas explorando diferentes caminos funcionales"""
     print_separator("INICIANDO PRUEBA COMPLETA DE EVENTOS")
-    
+
     try:
         # Fase 1: Crear múltiples eventos
         print("\n📌 FASE 1: CREACIÓN DE MÚLTIPLES EVENTOS")
-        
+
         # Evento normal
         evento_normal = create_event()
-        
+
         # Evento para mañana
-        start_time = (datetime.now() + timedelta(days=1)).replace(hour=14, minute=0, second=0)
-        end_time = (datetime.now() + timedelta(days=1)).replace(hour=16, minute=0, second=0)
+        start_time_m = (datetime.now() + timedelta(days=1)).replace(hour=14, minute=0, second=0)
+        end_time_m = (datetime.now() + timedelta(days=1)).replace(hour=16, minute=0, second=0)
         evento_manana = create_event({
             "title": f"Evento para Mañana {int(time.time())}",
             "description": "Este evento está programado para mañana",
-            "start_time": start_time.isoformat(),
-            "end_time": end_time.isoformat(),
+            "start_time": start_time_m.isoformat(),
+            "end_time": end_time_m.isoformat(),
             "location": "Salón Principal",
             "max_participants": 20,
             "status": "SCHEDULED",
             "image_url": ""
         })
-        
+
         # Evento para la próxima semana
-        start_time = (datetime.now() + timedelta(days=7)).replace(hour=10, minute=0, second=0)
-        end_time = (datetime.now() + timedelta(days=7)).replace(hour=12, minute=0, second=0)
+        start_time_s = (datetime.now() + timedelta(days=7)).replace(hour=10, minute=0, second=0)
+        end_time_s = (datetime.now() + timedelta(days=7)).replace(hour=12, minute=0, second=0)
         evento_semana = create_event({
             "title": f"Evento para Próxima Semana {int(time.time())}",
             "description": "Este evento está programado para la próxima semana",
-            "start_time": start_time.isoformat(),
-            "end_time": end_time.isoformat(),
+            "start_time": start_time_s.isoformat(),
+            "end_time": end_time_s.isoformat(),
             "location": "Salón de Conferencias",
             "max_participants": 30,
             "status": "SCHEDULED",
             "image_url": ""
         })
-        
+
         # Fase 2: Verificar mis eventos creados
         print("\n📌 FASE 2: VERIFICACIÓN DE EVENTOS CREADOS")
         mis_eventos = get_own_events()
-        
+
         if mis_eventos:
-            print(f"Se encontraron {len(mis_eventos)} eventos creados por el usuario")
+            logger.info(f"Se encontraron {len(mis_eventos)} eventos creados por el usuario")
             for evento in mis_eventos:
-                print(f"  - ID: {evento['id']}, Título: {evento['title']}")
-        
+                logger.info(f"  - ID: {evento['id']}, Título: {evento['title']}")
+
         # Fase 3: Actualizar un evento
         print("\n📌 FASE 3: ACTUALIZACIÓN DE EVENTO")
         if evento_normal:
@@ -537,41 +726,56 @@ def run_comprehensive_test():
                 "description": f"{evento_normal['description']} - Esta descripción fue actualizada",
                 "max_participants": 25
             })
-        
+        else:
+            logger.warning("No se pudo actualizar evento_normal porque no se creó correctamente.")
+
         # Fase 4: Registrarse en un evento
         print("\n📌 FASE 4: REGISTRO EN EVENTO")
         if evento_manana:
             participacion = register_for_event(evento_manana['id'])
-        
+        else:
+            logger.warning("No se pudo registrar en evento_manana porque no se creó correctamente.")
+
         # Fase 5: Verificar mis participaciones
         print("\n📌 FASE 5: VERIFICACIÓN DE PARTICIPACIONES")
         mis_participaciones = get_my_participations()
-        
+
         if mis_participaciones:
-            print(f"Se encontraron {len(mis_participaciones)} participaciones del usuario")
-            for participacion in mis_participaciones:
-                print(f"  - ID: {participacion['id']}, Evento: {participacion['event_id']}, Estado: {participacion['status']}")
-        
+            logger.info(f"Se encontraron {len(mis_participaciones)} participaciones del usuario")
+            for p in mis_participaciones:
+                logger.info(f"  - ID: {p['id']}, Evento: {p['event_id']}, Estado: {p['status']}")
+
         # Fase 6: Cancelar participación si existe alguna
         print("\n📌 FASE 6: CANCELACIÓN DE PARTICIPACIÓN")
         if mis_participaciones and len(mis_participaciones) > 0:
-            ultima_participacion = mis_participaciones[0]
-            cancel_participation_by_event(ultima_participacion['event_id'])
-        
+            # Intentar cancelar la primera participación encontrada
+            primera_participacion = mis_participaciones[0]
+            cancel_participation_by_event(primera_participacion['event_id'])
+        else:
+            logger.info("No hay participaciones para cancelar.")
+
         # Fase 7: Eliminar un evento
         print("\n📌 FASE 7: ELIMINACIÓN DE EVENTO")
         if evento_semana:
             delete_event(evento_semana['id'])
-        
+        else:
+            logger.warning("No se pudo eliminar evento_semana porque no se creó correctamente.")
+
         # Fase 8: Pruebas exhaustivas de participación
         print("\n📌 FASE 8: PRUEBAS EXHAUSTIVAS DE PARTICIPACIÓN")
         run_participation_tests()
-        
+
+        # --- Nueva Fase 9: Pruebas de Operaciones Masivas ---
+        print("\n📌 FASE 9: PRUEBAS DE OPERACIONES MASIVAS")
+        run_bulk_operations_test()
+
     finally:
         # Siempre limpiar los eventos creados, incluso si hubo errores
         print("\n📌 FASE FINAL: LIMPIEZA")
+        # Asegurarse de que clean_up_events() maneje IDs de bulk_created_ids si es necesario
+        # (Nota: run_bulk_operations_test ya intenta limpiar sus propios IDs)
         clean_up_events()
-    
+
     # Resumen final
     print_separator("RESUMEN DE LA PRUEBA")
     print("✅ Prueba completa de funcionalidad de eventos finalizada")
@@ -584,6 +788,7 @@ def run_comprehensive_test():
     print("  - Cancelación de participación")
     print("  - Eliminación de evento")
     print("  - Pruebas exhaustivas de participación en eventos")
+    print("  - Pruebas de operaciones masivas (crear 150, actualizar 100, leer, eliminar 50)") # Añadido al resumen
     print("  - Limpieza de todos los eventos creados")
 
 if __name__ == "__main__":

@@ -531,7 +531,6 @@ class EventParticipationRepository:
                 member_id=user_id,
                 gym_id=gym_id,
                 status=participation_status,
-                notes=participation_in.notes,
                 registered_at=now,
                 updated_at=now,
                 attended=False

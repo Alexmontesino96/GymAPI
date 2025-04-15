@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     PROJECT_DESCRIPTION: str = "API con FastAPI para gestión de gimnasios"
     VERSION: str = "0.2.0"
     
+    # Debug mode
+    DEBUG_MODE: bool = os.getenv("DEBUG_MODE", "False").lower() in ("true", "1", "t")
+    
     # CORS
     BACKEND_CORS_ORIGINS: List[AnyHttpUrl] = []
 
@@ -31,28 +34,59 @@ class Settings(BaseSettings):
             return v
         raise ValueError(v)
 
-    # Base de datos
-    DATABASE_URL: str
+    # Base de datos - URL explícita y de respaldo para Heroku
+    HEROKU_DB_URL: str = "postgresql://u6chpjmhvbacn5:pcc8066ee2c146523c96e94ea9c289bdfb35af0a929c1c0243adbe5dd4ea85546@c6sfjnr30ch74e.cluster-czrs8kj4isg7.us-east-1.rds.amazonaws.com:5432/d8mrfqhqd7jn4k"
+    DATABASE_URL: str = os.getenv("DATABASE_URL", HEROKU_DB_URL)
     SQLALCHEMY_DATABASE_URI: Optional[PostgresDsn] = None
+    
+    @field_validator("DATABASE_URL", mode="before")
+    def ensure_proper_url_format(cls, v: Optional[str], info) -> str:
+        """Asegura que DATABASE_URL esté en el formato correcto y use Heroku si está disponible."""
+        # Si hay una URL explícita, usarla
+        if v:
+            # Verificar que no sea una URL de Supabase (que ya no funciona)
+            if "ueijlkythlkqadxymzqd.supabase.co" in v:
+                print("⚠️ WARNING: Detectada URL de Supabase, usando la URL de Heroku en su lugar")
+                return "postgresql://u6chpjmhvbacn5:pcc8066ee2c146523c96e94ea9c289bdfb35af0a929c1c0243adbe5dd4ea85546@c6sfjnr30ch74e.cluster-czrs8kj4isg7.us-east-1.rds.amazonaws.com:5432/d8mrfqhqd7jn4k"
+            
+            # Asegurar formato postgresql://
+            if v.startswith('postgres://'):
+                return 'postgresql://' + v[len('postgres://'):]
+            return v
+        
+        # Si no hay URL, usar la URL de Heroku
+        return "postgresql://u6chpjmhvbacn5:pcc8066ee2c146523c96e94ea9c289bdfb35af0a929c1c0243adbe5dd4ea85546@c6sfjnr30ch74e.cluster-czrs8kj4isg7.us-east-1.rds.amazonaws.com:5432/d8mrfqhqd7jn4k"
     
     @field_validator("SQLALCHEMY_DATABASE_URI", mode="before")
     def assemble_db_connection(cls, v: Optional[str], info) -> Any:
-        if isinstance(v, str):
-            return v
-        
+        """Configura la URI de SQLAlchemy basada en DATABASE_URL.
+        Siempre prioriza DATABASE_URL si está presente y tiene el formato correcto.
+        """
         values = info.data
         db_url = values.get("DATABASE_URL")
-        if db_url:
-            return db_url
         
-        return PostgresDsn.build(
-            scheme="postgresql",
-            username=values.get("POSTGRES_USER", "postgres"),
-            password=values.get("POSTGRES_PASSWORD", "postgres"),
-            host=values.get("POSTGRES_SERVER", "localhost"),
-            port=values.get("POSTGRES_PORT", "5432"),
-            path=f"/{values.get('POSTGRES_DB', 'app_db') or ''}",
-        )
+        # SIEMPRE usar DATABASE_URL si está definido
+        if db_url:
+            # Asegurar formato postgresql://
+            if db_url.startswith('postgres://'):
+                corrected_url = 'postgresql://' + db_url[len('postgres://'):]
+                print(f"INFO: Corrigiendo DATABASE_URL de postgres:// a {corrected_url.split('@')[0]}@...")
+                return corrected_url
+            elif not db_url.startswith('postgresql://'):
+                # Si no empieza con postgresql://, podría ser un formato inválido
+                print(f"WARNING: DATABASE_URL tiene un formato inesperado: {db_url}")
+                # Intentar forzar el prefijo si parece una URL válida
+                if '@' in db_url and ':' in db_url and '/' in db_url:
+                    return f"postgresql://{db_url}"
+                else:
+                    # Si no se puede corregir, usar la URL de Heroku como fallback seguro
+                    print(f"ERROR: Formato de DATABASE_URL inválido: {db_url}. Usando Heroku DB URL de fallback.")
+                    return values.get("HEROKU_DB_URL") # Usar la URL explícita de Heroku
+            return db_url # Ya está en formato postgresql://
+        
+        # Si DATABASE_URL no está definida en .env, usar HEROKU_DB_URL
+        print("INFO: DATABASE_URL no encontrada en .env, usando HEROKU_DB_URL por defecto.")
+        return values.get("HEROKU_DB_URL")
 
     # Email
     SMTP_TLS: bool = True
@@ -169,6 +203,8 @@ class Settings(BaseSettings):
     # Configuración Redis
     CACHE_TTL_USER_MEMBERSHIP: int = 3600
     CACHE_TTL_NEGATIVE: int = 60 # 1 minuto
+    CACHE_TTL_GYM_DETAILS: int = 3600 # 1 hora para detalles del gym
+    CACHE_TTL_USER_PROFILE: int = 300 # <<< NUEVO: 5 minutos para perfil de usuario >>>
 
 
 settings = Settings() 

@@ -1,0 +1,56 @@
+=== Profile for GET /api/v1/users/p/gym-participants ===
+Total time: 0.6671s
+
+=== Timing Summary ===
+
+REDIS_OPERATIONS:
+  Total operations: 0
+  Total time: 0.0000s (0.0% of request)
+
+DESERIALIZE_OPERATIONS:
+  Total operations: 0
+  Total time: 0.0000s (0.0% of request)
+
+DB_QUERIES:
+  Total operations: 0
+  Total time: 0.0000s (0.0% of request)
+
+=== cProfile Details ===
+         9413 function calls (9308 primitive calls) in 0.667 seconds
+
+   Ordered by: cumulative time
+   List reduced from 844 to 30 due to restriction <30>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+       37    0.002    0.000    0.666    0.018 /opt/anaconda3/lib/python3.11/asyncio/base_events.py:1845(_run_once)
+       67    0.000    0.000    0.418    0.006 /opt/anaconda3/lib/python3.11/asyncio/events.py:78(_run)
+    69/67    0.000    0.000    0.418    0.006 {method 'run' of '_contextvars.Context' objects}
+       24    0.000    0.000    0.417    0.017 /Users/alexmontesino/GymApi/env/lib/python3.11/site-packages/starlette/middleware/base.py:65(coro)
+       14    0.000    0.000    0.407    0.029 /Users/alexmontesino/GymApi/env/lib/python3.11/site-packages/starlette/middleware/exceptions.py:53(__call__)
+       14    0.000    0.000    0.407    0.029 /Users/alexmontesino/GymApi/env/lib/python3.11/site-packages/fastapi/middleware/asyncexitstack.py:12(__call__)
+       12    0.002    0.000    0.407    0.034 /Users/alexmontesino/GymApi/env/lib/python3.11/site-packages/starlette/routing.py:697(__call__)
+       12    0.000    0.000    0.402    0.033 /Users/alexmontesino/GymApi/env/lib/python3.11/site-packages/starlette/routing.py:265(handle)
+       12    0.000    0.000    0.401    0.033 /Users/alexmontesino/GymApi/env/lib/python3.11/site-packages/starlette/routing.py:63(app)
+        8    0.000    0.000    0.401    0.050 /Users/alexmontesino/GymApi/env/lib/python3.11/site-packages/fastapi/routing.py:218(app)
+     21/7    0.003    0.000    0.397    0.057 /Users/alexmontesino/GymApi/env/lib/python3.11/site-packages/fastapi/dependencies/utils.py:523(solve_dependencies)
+        2    0.000    0.000    0.314    0.157 /Users/alexmontesino/GymApi/env/lib/python3.11/site-packages/sqlalchemy/orm/query.py:2720(first)
+        2    0.000    0.000    0.314    0.157 /Users/alexmontesino/GymApi/env/lib/python3.11/site-packages/sqlalchemy/orm/query.py:2842(_iter)
+        2    0.000    0.000    0.314    0.157 /Users/alexmontesino/GymApi/env/lib/python3.11/site-packages/sqlalchemy/orm/session.py:2247(execute)
+        2    0.000    0.000    0.314    0.157 /Users/alexmontesino/GymApi/env/lib/python3.11/site-packages/sqlalchemy/orm/session.py:2077(_execute_internal)
+        3    0.309    0.103    0.309    0.103 {method 'execute' of 'psycopg2.extensions.cursor' objects}
+       37    0.000    0.000    0.246    0.007 /opt/anaconda3/lib/python3.11/selectors.py:558(select)
+       37    0.245    0.007    0.245    0.007 {method 'control' of 'select.kqueue' objects}
+        2    0.000    0.000    0.236    0.118 /Users/alexmontesino/GymApi/env/lib/python3.11/site-packages/sqlalchemy/orm/context.py:283(orm_execute_statement)
+        2    0.000    0.000    0.235    0.118 /Users/alexmontesino/GymApi/env/lib/python3.11/site-packages/sqlalchemy/engine/base.py:1372(execute)
+        2    0.000    0.000    0.235    0.118 /Users/alexmontesino/GymApi/env/lib/python3.11/site-packages/sqlalchemy/sql/elements.py:507(_execute_on_connection)
+        2    0.000    0.000    0.235    0.118 /Users/alexmontesino/GymApi/env/lib/python3.11/site-packages/sqlalchemy/engine/base.py:1589(_execute_clauseelement)
+        2    0.000    0.000    0.235    0.117 /Users/alexmontesino/GymApi/env/lib/python3.11/site-packages/sqlalchemy/engine/base.py:1790(_execute_context)
+        2    0.000    0.000    0.233    0.117 /Users/alexmontesino/GymApi/env/lib/python3.11/site-packages/sqlalchemy/engine/base.py:1852(_exec_single_context)
+        2    0.000    0.000    0.233    0.117 /Users/alexmontesino/GymApi/env/lib/python3.11/site-packages/sqlalchemy/engine/default.py:921(do_execute)
+        1    0.000    0.000    0.232    0.232 /Users/alexmontesino/GymApi/app/core/tenant.py:206(get_current_gym)
+        1    0.000    0.000    0.084    0.084 /Users/alexmontesino/GymApi/app/core/auth0_fastapi.py:330(get_current_user)
+        1    0.000    0.000    0.084    0.084 /Users/alexmontesino/GymApi/app/services/user.py:157(create_or_update_auth0_user)
+        1    0.000    0.000    0.084    0.084 /Users/alexmontesino/GymApi/app/services/user.py:69(get_user_by_auth0_id)
+        1    0.000    0.000    0.084    0.084 /Users/alexmontesino/GymApi/app/repositories/user.py:23(get_by_auth0_id)
+
+

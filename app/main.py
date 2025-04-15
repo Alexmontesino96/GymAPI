@@ -107,6 +107,21 @@ async def log_requests(request: Request, call_next):
 # Asegurarse que este middleware esté DESPUÉS del de logging si quieres loguear antes de medir
 app.add_middleware(TimingMiddleware)
 
+# Añadir el nuevo middleware de autenticación y tenant
+from app.middleware.tenant_auth import setup_tenant_auth_middleware
+setup_tenant_auth_middleware(app)
+
+# Desactivar middleware de profiling en producción
+if settings.DEBUG_MODE:  # Solo añadir en modo debug
+    from app.core.profiling import ProfilingMiddleware
+    app.add_middleware(
+        ProfilingMiddleware, 
+        target_paths=[
+            "/api/v1/users/p/gym-participants",
+            "/api/v1/users/p/public-profile/"
+        ]
+    )
+
 # Lista de orígenes permitidos para CORS
 origins = ["*"]
 

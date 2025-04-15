@@ -6,13 +6,13 @@ import time
 from typing import Optional, Any, Dict, Callable, Union, Awaitable
 from fastapi import UploadFile, HTTPException, status
 from supabase import create_client, Client
+# Eliminar dotenv si ya no se usa directamente aquí
+# from dotenv import load_dotenv
 
-# Configuración de Supabase
-SUPABASE_URL = "https://ueijlkythlkqadxymzqd.supabase.co"
-# Anon key de Supabase (diferente de las credenciales S3)
-SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVlaWpsa3l0aGxrcWFkeHltenFkIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc0MTk5MjI4MCwiZXhwIjoyMDU3NTY4MjgwfQ.Z7Euv7Zy0G_0aiNLsS47YYb9yVppg-s9DHjjJNevpLk"
-# Bucket de almacenamiento
-PROFILE_IMAGE_BUCKET = "userphotoprofile"  # Bucket para fotos de perfil
+# Importar settings
+from app.core.config import settings 
+
+# load_dotenv() # Ya no es necesario si config.py lo maneja
 
 # Configuración de reintentos
 MAX_RETRIES = 3
@@ -27,7 +27,8 @@ class StorageService:
     usando el SDK oficial
     """
     
-    def __init__(self, api_url: str = SUPABASE_URL, anon_key: str = SUPABASE_ANON_KEY):
+    # Usar settings para los valores por defecto
+    def __init__(self, api_url: str = settings.SUPABASE_URL, anon_key: str = settings.SUPABASE_ANON_KEY):
         """
         Inicializa el cliente de Supabase
         
@@ -174,11 +175,11 @@ class StorageService:
             contents = await file.read()
             
             try:
-                logger.info(f"Subiendo imagen {filename} a bucket {PROFILE_IMAGE_BUCKET}")
+                logger.info(f"Subiendo imagen {filename} a bucket {settings.PROFILE_IMAGE_BUCKET}")
                 
                 # Función anónima asincrónica para la subida
                 async def upload_operation():
-                    result = self.supabase.storage.from_(PROFILE_IMAGE_BUCKET).upload(
+                    result = self.supabase.storage.from_(settings.PROFILE_IMAGE_BUCKET).upload(
                         path=filename,
                         file=contents,
                         file_options={"content-type": file.content_type}
@@ -191,7 +192,7 @@ class StorageService:
                 
                 # Obtener la URL pública (método síncrono, no necesita await)
                 def get_public_url():
-                    url = self.supabase.storage.from_(PROFILE_IMAGE_BUCKET).get_public_url(filename)
+                    url = self.supabase.storage.from_(settings.PROFILE_IMAGE_BUCKET).get_public_url(filename)
                     logger.info(f"URL pública generada: {url}")
                     return url
                 
@@ -247,19 +248,19 @@ class StorageService:
                 clean_url = image_url.split('?')[0]
                 
                 # La URL será algo como: https://ueijlkythlkqadxymzqd.supabase.co/storage/v1/object/public/userphotoprofile/filename
-                if f'public/{PROFILE_IMAGE_BUCKET}/' in clean_url:
-                    parts = clean_url.split(f'public/{PROFILE_IMAGE_BUCKET}/')
+                if f'public/{settings.PROFILE_IMAGE_BUCKET}/' in clean_url:
+                    parts = clean_url.split(f'public/{settings.PROFILE_IMAGE_BUCKET}/')
                     if len(parts) != 2:
                         logger.error(f"Formato de URL no reconocido: {clean_url}")
                         return False
                         
                     filename = parts[1]
-                    logger.info(f"Eliminando archivo {filename} del bucket {PROFILE_IMAGE_BUCKET}")
+                    logger.info(f"Eliminando archivo {filename} del bucket {settings.PROFILE_IMAGE_BUCKET}")
                     
                     try:
                         # Función para eliminar con reintentos
                         async def remove_operation():
-                            result = self.supabase.storage.from_(PROFILE_IMAGE_BUCKET).remove([filename])
+                            result = self.supabase.storage.from_(settings.PROFILE_IMAGE_BUCKET).remove([filename])
                             logger.info(f"Archivo eliminado correctamente: {result}")
                             return True
                         

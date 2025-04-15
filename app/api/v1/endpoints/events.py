@@ -18,8 +18,10 @@ from typing import List, Optional, Any
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query, Body, Path, status, Security, BackgroundTasks
 from sqlalchemy.orm import Session
+from redis.asyncio import Redis
 
 from app.db.session import get_db
+from app.db.redis_client import get_redis_client
 from app.core.auth0_fastapi import get_current_user, get_current_user_with_permissions, Auth0User, auth
 from app.core.tenant import get_current_gym, verify_gym_access
 from app.models.gym import Gym
@@ -223,54 +225,64 @@ async def read_events(
     created_by: Optional[int] = None,
     only_available: bool = False,
     current_gym: Gym = Depends(verify_gym_access),  # Verificar acceso al gimnasio
-    current_user: Auth0User = Security(auth.get_user, scopes=["read_events"])
+    current_user: Auth0User = Security(auth.get_user, scopes=["read_events"]),
+    redis_client: Redis = Depends(get_redis_client)
 ) -> Any:
     """
-    Retrieve a list of events for the current gym with optional filters.
+    Obtener lista de eventos con filtros opcionales.
     
-    This endpoint returns a paginated list of events that can be filtered
-    by various criteria such as status, date range, title, location, and 
-    availability. Each event includes a count of current participants.
+    Este endpoint permite a los usuarios obtener eventos con diferentes criterios
+    de filtrado: estado, rango de fechas, búsqueda por título o ubicación, etc.
+    Los resultados son paginados y ordenados cronológicamente.
     
     Permissions:
-        - Requires 'read:events' scope (all authenticated users)
-        - User must be a member of the specified gym
-        
-    Args:
-        db: Database session
-        skip: Number of records to skip (pagination)
-        limit: Maximum number of records to return (pagination)
-        status: Filter by event status (SCHEDULED, CANCELLED, COMPLETED)
-        start_date: Filter events starting on or after this date
-        end_date: Filter events ending on or before this date
-        title_contains: Filter events with titles containing this string
-        location_contains: Filter events with locations containing this string
-        created_by: Filter events created by a specific user ID
-        only_available: If true, only return events with available spots
-        current_gym: The current gym (tenant) context
-        current_user: Authenticated user
-        
-    Returns:
-        List[EventWithParticipantCount]: List of events with participant counts
+        - Requires 'read_events' scope (all authenticated users)
     """
-    # Usar la versión optimizada que calcula participantes directamente en SQL
-    events_with_counts = event_repository.get_events_with_counts(
-        db=db,
-        skip=skip,
-        limit=limit,
-        status=status,
-        start_date=start_date,
-        end_date=end_date,
-        title_contains=title_contains,
-        location_contains=location_contains,
-        created_by=created_by,
-        only_available=only_available,
-        gym_id=current_gym.id  # Filtrar por gimnasio
-    )
+    start_time = time.time()
     
-    # Convertir directamente a modelos Pydantic
-    result = [EventWithParticipantCount(**event_dict) for event_dict in events_with_counts]
-    return result
+    # Usar el servicio de eventos con caché
+    try:
+        from app.services.event import event_service
+        
+        # Llamar al método con soporte para caché
+        events = await event_service.get_events_cached(
+            db=db,
+            skip=skip,
+            limit=limit,
+            status=status,
+            start_date=start_date,
+            end_date=end_date,
+            title_contains=title_contains,
+            location_contains=location_contains,
+            created_by=created_by,
+            only_available=only_available,
+            gym_id=current_gym.id if current_gym else None,
+            redis_client=redis_client
+        )
+        
+        process_time = (time.time() - start_time) * 1000
+        logger.info(f"Endpoint read_events completado en {process_time:.2f}ms")
+        return events
+        
+    except Exception as e:
+        logger.error(f"Error obteniendo eventos: {e}", exc_info=True)
+        # Fallback a la implementación original en caso de error
+        events_with_counts = event_repository.get_events_with_counts(
+            db,
+            skip=skip,
+            limit=limit,
+            status=status,
+            start_date=start_date,
+            end_date=end_date,
+            title_contains=title_contains,
+            location_contains=location_contains,
+            created_by=created_by,
+            only_available=only_available,
+            gym_id=current_gym.id if current_gym else None
+        )
+        process_time = (time.time() - start_time) * 1000
+        logger.warning(f"Endpoint read_events completado con fallback en {process_time:.2f}ms")
+        return events_with_counts
 
 
 @router.get("/me", response_model=List[EventSchema])
@@ -280,34 +292,66 @@ async def read_my_events(
     skip: int = 0,
     limit: int = 100,
     current_gym: Gym = Depends(verify_gym_access),  # Añadir verificación de gimnasio
-    current_user: Auth0User = Security(auth.get_user, scopes=["read:own_events"])
+    current_user: Auth0User = Security(auth.get_user, scopes=["read:own_events"]),
+    redis_client: Redis = Depends(get_redis_client)
 ) -> Any:
     """
-    Retrieve events created by the authenticated user.
+    Obtener eventos creados por el usuario actual.
     
-    This endpoint allows trainers and administrators to view the events
-    they have created. It provides a convenient way to manage one's own events.
+    Este endpoint devuelve todos los eventos que el usuario ha creado,
+    filtrados por el gimnasio actual si se especifica.
     
     Permissions:
-        - Requires 'read_own_events' scope (all authenticated users)
-        
-    Args:
-        db: Database session
-        skip: Number of records to skip (pagination)
-        limit: Maximum number of records to return (pagination)
-        current_gym: The current gym (tenant) context
-        current_user: Authenticated user
-        
-    Returns:
-        List[Event]: List of events created by the user
+        - Requires 'read:own_events' scope (all authenticated users)
     """
-    # Get Auth0 user ID
-    user_id = current_user.id
-    events = event_repository.get_events_by_creator(
-        db=db, creator_id=user_id, skip=skip, limit=limit,
-        gym_id=current_gym.id  # Filtrar por gimnasio actual
-    )
-    return events
+    start_time = time.time()
+    auth0_id = current_user.id
+    
+    try:
+        from app.services.event import event_service
+        
+        # Buscar el usuario en la BD por auth0_id
+        user = db.query(User).filter(User.auth0_id == auth0_id).first()
+        if not user:
+            # Si no hay usuario, devolvemos lista vacía
+            logger.warning(f"Usuario con Auth0 ID {auth0_id} no encontrado para read_my_events")
+            return []
+        
+        # Obtener eventos usando caché
+        events = await event_service.get_events_by_creator_cached(
+            db=db,
+            creator_id=user.id,  # Usar ID interno
+            skip=skip,
+            limit=limit,
+            gym_id=current_gym.id if current_gym else None,
+            redis_client=redis_client
+        )
+        
+        process_time = (time.time() - start_time) * 1000
+        logger.info(f"Endpoint read_my_events completado en {process_time:.2f}ms")
+        
+        return events
+    
+    except Exception as e:
+        logger.error(f"Error obteniendo eventos del usuario {auth0_id}: {e}", exc_info=True)
+        
+        # Fallback a la implementación original en caso de error
+        user = db.query(User).filter(User.auth0_id == auth0_id).first()
+        if not user:
+            return []
+            
+        events = event_repository.get_events_by_creator(
+            db=db,
+            creator_id=user.id,
+            skip=skip,
+            limit=limit,
+            gym_id=current_gym.id if current_gym else None
+        )
+        
+        process_time = (time.time() - start_time) * 1000
+        logger.warning(f"Endpoint read_my_events completado con fallback en {process_time:.2f}ms")
+        
+        return events
 
 
 @router.get("/{event_id}", response_model=EventDetail)
@@ -316,62 +360,85 @@ async def read_event(
     db: Session = Depends(get_db),
     event_id: int = Path(..., title="ID del evento a obtener", ge=1),
     current_gym: Gym = Depends(verify_gym_access),  # Verificar acceso al gimnasio
-    current_user: Auth0User = Security(auth.get_user, scopes=["read_events"])
+    current_user: Auth0User = Security(auth.get_user, scopes=["read_events"]),
+    redis_client: Redis = Depends(get_redis_client)
 ) -> Any:
     """
-    Retrieve details of a specific event by ID.
+    Obtener detalles de un evento específico.
     
-    This endpoint returns detailed information about an event, including
-    its title, description, date/time, location, and capacity. The participants
-    list is only included if the requesting user is the event creator or an admin.
+    Este endpoint permite a los usuarios obtener información detallada sobre un evento,
+    incluyendo sus participantes, creador, y otros atributos relevantes.
     
     Permissions:
-        - Requires 'read:events' scope (all authenticated users)
-        - Viewing participant list requires event ownership or admin privileges
-        
-    Args:
-        db: Database session
-        event_id: ID of the event to retrieve
-        current_gym: The current gym (tenant) context
-        current_user: Authenticated user
-        
-    Returns:
-        EventDetail: Detailed event information
-        
-    Raises:
-        HTTPException: 404 if event not found
+        - Requires 'read_events' scope (all authenticated users)
     """
-    event = event_repository.get_event(db=db, event_id=event_id)
-    if not event:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Event not found"
-        )
+    start_time = time.time()
     
-    # Check permissions to view participants
-    # Get Auth0 user ID
-    user_id = current_user.id
-    user_permissions = getattr(current_user, "permissions", []) or []
-    is_admin = "admin:all" in user_permissions or "admin:events" in user_permissions
-    is_creator = event.creator_id == user_id
-    
-    # Create detailed object
-    event_dict = EventSchema.from_orm(event).dict()
-    
-    # Include participants only if admin or creator
-    if is_admin or is_creator:
-        event_dict["participants"] = [
-            EventParticipationSchema.from_orm(p) for p in event.participants
-        ]
-    else:
-        # For normal users, include only count
-        event_dict["participants"] = []
-        event_dict["participants_count"] = len([
-            p for p in event.participants 
-            if p.status == EventParticipationStatus.REGISTERED
-        ])
+    try:
+        from app.services.event import event_service
         
-    return EventDetail(**event_dict)
+        # Obtener evento usando caché
+        event_detail = await event_service.get_event_cached(db, event_id, redis_client)
+        
+        if not event_detail:
+            raise HTTPException(status_code=404, detail="Evento no encontrado")
+        
+        # Verificar que el evento pertenece al gimnasio actual
+        if event_detail.gym_id != current_gym.id:
+            raise HTTPException(
+                status_code=403, 
+                detail="El evento no pertenece al gimnasio actual"
+            )
+        
+        process_time = (time.time() - start_time) * 1000
+        logger.info(f"Endpoint read_event completado en {process_time:.2f}ms")
+        
+        return event_detail
+    
+    except HTTPException:
+        # Re-lanzar excepciones HTTP
+        raise
+    except Exception as e:
+        logger.error(f"Error obteniendo evento {event_id}: {e}", exc_info=True)
+        
+        # Fallback a la implementación original en caso de error
+        event = event_repository.get_event(db, event_id=event_id)
+        if not event:
+            raise HTTPException(status_code=404, detail="Evento no encontrado")
+        
+        # Verificar que el evento pertenece al gimnasio actual
+        if event.gym_id != current_gym.id:
+            raise HTTPException(
+                status_code=403, 
+                detail="El evento no pertenece al gimnasio actual"
+            )
+        
+        # Contar participantes
+        participants_count = len(event.participants) if event.participants else 0
+        
+        # Convertir a esquema EventDetail
+        event_detail = EventDetail(
+            id=event.id,
+            title=event.title,
+            description=event.description,
+            start_time=event.start_time,
+            end_time=event.end_time,
+            location=event.location,
+            max_participants=event.max_participants,
+            status=event.status,
+            created_at=event.created_at,
+            updated_at=event.updated_at,
+            creator_id=event.creator_id,
+            creator=event.creator,
+            participants=event.participants,
+            participants_count=participants_count,
+            gym_id=event.gym_id
+        )
+        
+        process_time = (time.time() - start_time) * 1000
+        logger.warning(f"Endpoint read_event completado con fallback en {process_time:.2f}ms")
+        
+        return event_detail
 
 
 @router.put("/{event_id}", response_model=EventSchema)
@@ -627,191 +694,94 @@ async def register_for_event(
     db: Session = Depends(get_db),
     participation_in: EventParticipationCreate = Body(...),
     current_gym: Gym = Depends(verify_gym_access),  # Verifica y obtiene el gimnasio actual
-    current_user: Auth0User = Security(auth.get_user, scopes=["create:participations"])
+    current_user: Auth0User = Security(auth.get_user, scopes=["create:participations"]),
+    redis_client: Redis = Depends(get_redis_client)
 ) -> EventParticipationSchema:
     """
-    Registra al usuario autenticado para un evento específico.
-
-    Este endpoint permite a los miembros (usuarios autenticados) inscribirse en 
-    eventos disponibles en su gimnasio actual. Realiza varias comprobaciones:
+    Registrar el usuario actual como participante de un evento.
     
-    1.  **Existencia y Gimnasio**: Verifica que el evento existe y pertenece al gimnasio 
-        actual del usuario.
-    2.  **Estado del Evento**: Confirma que el evento esté programado (`SCHEDULED`) y abierto 
-        para inscripciones.
-    3.  **Perfil de Usuario**: Asegura que el usuario autenticado tenga un perfil 
-        en la base de datos local.
-    4.  **Participación Previa**: Comprueba si el usuario ya está registrado, en 
-        lista de espera o si había cancelado previamente.
-    5.  **Capacidad**: Evalúa si hay plazas disponibles o si el usuario debe ser 
-        añadido a la lista de espera.
+    Este endpoint permite a los usuarios registrarse para participar en un evento.
+    Si el evento está lleno, el usuario puede ser puesto en lista de espera.
     
-    Si la inscripción es exitosa (o si se reactiva una inscripción cancelada), 
-    se crea o actualiza el registro de participación.
-    
-    **Permisos Necesarios:**
-    -   Requiere el scope `create:participations` (otorgado a todos los usuarios autenticados).
-    
-    **Parámetros:**
-    -   `db` (Inyección de dependencia): Sesión de la base de datos SQLAlchemy.
-    -   `participation_in` (Cuerpo de la solicitud): Objeto `EventParticipationCreate` 
-        que debe contener:
-        -   `event_id` (int, **Requerido**): ID del evento al que se desea inscribir.
-        *(Nota: El campo `notes` ya no se utiliza. Los campos `status` y `attended` del modelo base 
-        son ignorados en la creación y gestionados por el servidor)*.
-    -   `current_gym` (Inyección de dependencia): Objeto `Gym` que representa el 
-        gimnasio actual del usuario (determinado a partir de la solicitud).
-    -   `current_user` (Inyección de dependencia): Objeto `Auth0User` que representa 
-        al usuario autenticado (obtenido a partir del token JWT).
-        
-    **Retorna:**
-    -   `EventParticipationSchema`: Un objeto que representa el registro de participación 
-        creado o actualizado, incluyendo su estado (`REGISTERED` o `WAITING_LIST`).
-        
-    **Posibles Errores (Excepciones HTTP):**
-    -   `404 Not Found`: Si el evento no se encuentra en el gimnasio actual o si el 
-        perfil del usuario no existe.
-    -   `400 Bad Request`: Si el evento no está abierto para inscripciones (`SCHEDULED`) 
-        o si el usuario ya tiene cualquier tipo de registro previo para este evento 
-        (sea `REGISTERED`, `WAITING_LIST` o `CANCELLED`).
-    -   `500 Internal Server Error`: Si ocurre un error inesperado durante el 
-        proceso de inscripción.
+    Permissions:
+        - Requires 'create:participations' scope (all authenticated users)
     """
-    # Registro para monitoreo de rendimiento
-    import time
-    import logging
-    logger = logging.getLogger("events_api")
     start_time = time.time()
+    auth0_id = current_user.id
     
-    # Obtener el ID del usuario Auth0
-    user_id = current_user.id
-    event_id = participation_in.event_id
-    gym_id = current_gym.id
+    # Verificar que el usuario existe en la BD
+    user = db.query(User).filter(User.auth0_id == auth0_id).first()
+    if not user:
+        raise HTTPException(
+            status_code=404,
+            detail="Usuario no encontrado. Por favor complete su perfil primero."
+        )
     
-    logger.info(f"Procesando inscripción - user: {user_id}, event: {event_id}, gym: {gym_id}")
+    # Verificar que el evento existe
+    event = event_repository.get_event(db, event_id=participation_in.event_id)
+    if not event:
+        raise HTTPException(
+            status_code=404,
+            detail="Evento no encontrado"
+        )
     
-    try:
-        # 1. Optimización: Realizar todas las verificaciones en una sola consulta
-        from sqlalchemy import and_, func, select, text
-        from app.models.user import User
-        
-        # Subconsulta para contar participantes registrados
-        registered_count_subq = (
-            select(func.count(EventParticipation.id))
-            .where(
-                and_(
-                    EventParticipation.event_id == event_id,
-                    EventParticipation.status == EventParticipationStatus.REGISTERED
-                )
-            )
-            .scalar_subquery()
+    # Verificar que el evento pertenece al gimnasio actual
+    if event.gym_id != current_gym.id:
+        raise HTTPException(
+            status_code=403,
+            detail="El evento no pertenece al gimnasio actual"
         )
-        
-        # Obtener usuario interno + evento + recuento de participantes en una sola consulta
-        query = db.query(
-            User.id.label('user_id'),
-            Event.id.label('event_id'),
-            Event.status.label('event_status'),
-            Event.max_participants.label('max_participants'),
-            Event.gym_id.label('gym_id'),
-            registered_count_subq.label('registered_count')
-        ).outerjoin(
-            Event, Event.id == event_id
-        ).filter(
-            User.auth0_id == user_id,
-            Event.gym_id == gym_id
-        )
-        
-        # Ejecutar consulta optimizada
-        result = query.first()
-        
-        # Verificar si el evento existe en el gimnasio actual
-        if not result or not result.event_id:
-            logger.warning(f"Evento no encontrado - event_id: {event_id}, gym_id: {gym_id}")
+    
+    # Verificar si el usuario ya está registrado
+    existing = event_participation_repository.get_participation_by_member_and_event(
+        db, member_id=user.id, event_id=participation_in.event_id
+    )
+    if existing:
+        if existing.status == EventParticipationStatus.REGISTERED:
             raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Event not found in current gym"
+                status_code=400,
+                detail="Ya estás registrado para este evento"
             )
-        
-        # Verificar estado del evento
-        if result.event_status != EventStatus.SCHEDULED:
-            logger.warning(f"Evento no disponible - status: {result.event_status}")
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Event is not open for registration"
-            )
-        
-        # Verificar si existe perfil de usuario
-        if not result.user_id:
-            logger.warning(f"Perfil de usuario no encontrado - auth0_id: {user_id}")
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="User profile not found"
-            )
-        
-        internal_user_id = result.user_id
-        
-        # 2. Verificar si ya existe una participación para este usuario y evento
-        existing_participation = db.query(EventParticipation).filter(
-            EventParticipation.event_id == event_id,
-            EventParticipation.member_id == internal_user_id
-        ).first()
-        
-        # Si ya existe una participación (independientemente del estado),
-        # informar al usuario y no permitir registrarse de nuevo.
-        if existing_participation:
-            status_message = existing_participation.status.value.lower().replace('_', ' ')
-            logger.info(f"Participación ya existe - id: {existing_participation.id}, status: {existing_participation.status.value}")
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"You already have a registration for this event with status '{status_message}'. Cancel it first if you want to try registering again."
-            )
-        
-        # 3. Si no existe participación, determinar estado inicial según capacidad
-        has_capacity = (result.max_participants == 0 or 
-                        result.registered_count < result.max_participants)
-        
-        new_participation_status = EventParticipationStatus.REGISTERED if has_capacity else EventParticipationStatus.WAITING_LIST
-        
-        # 4. Crear nueva participación
-        now = datetime.utcnow()
-        db_participation = EventParticipation(
-            event_id=event_id,
-            member_id=internal_user_id,
-            gym_id=result.gym_id,
-            status=new_participation_status,
-            registered_at=now,
-            updated_at=now,
-            attended=False
-        )
-        
-        db.add(db_participation)
-        db.commit()
-        
-        elapsed_time = time.time() - start_time
-        logger.info(f"Inscripción completada exitosamente - tiempo: {elapsed_time:.2f}s, status: {new_participation_status.value}")
-        
-        return db_participation
-        
-    except HTTPException:
-        # Re-lanzar excepciones HTTP para mantener mensajes
-        raise
-    except Exception as e:
-        # Capturar otros errores
-        db.rollback()
-        error_message = str(e)
-        logger.error(f"Error en inscripción: {error_message}", exc_info=True)
-        
-        if "capacity" in error_message.lower():
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Event is at full capacity"
+        elif existing.status == EventParticipationStatus.CANCELLED:
+            # Si el usuario canceló previamente, podemos permitir que se registre de nuevo
+            participation = event_participation_repository.update_participation(
+                db, 
+                db_obj=existing,
+                participation_in=EventParticipationUpdate(status=EventParticipationStatus.REGISTERED)
             )
         else:
             raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Error registering for event: {error_message}"
+                status_code=400,
+                detail=f"No puedes registrarte con estado actual: {existing.status}"
             )
+    else:
+        # Crear nueva participación
+        participation = event_participation_repository.create_participation(
+            db, participation_in=participation_in, member_id=user.id
+        )
+    
+    if not participation:
+        raise HTTPException(
+            status_code=400,
+            detail="Error al registrarse para el evento"
+        )
+    
+    # Invalidar cachés relacionadas
+    if redis_client:
+        try:
+            from app.services.event import event_service
+            await event_service.invalidate_event_caches(
+                redis_client=redis_client,
+                event_id=participation_in.event_id
+            )
+            logger.info(f"Cachés del evento {participation_in.event_id} invalidadas después del registro")
+        except Exception as e:
+            logger.error(f"Error invalidando cachés: {e}", exc_info=True)
+    
+    process_time = (time.time() - start_time) * 1000
+    logger.info(f"Registro para evento completado en {process_time:.2f}ms")
+    
+    return participation
 
 
 @router.get("/participation/me", response_model=List[EventParticipationWithEvent])
@@ -1013,92 +983,70 @@ async def cancel_participation(
     db: Session = Depends(get_db),
     event_id: int = Path(..., title="Event ID"),
     current_gym: Gym = Depends(verify_gym_access),  # Añadir verificación de gimnasio
-    current_user: Auth0User = Security(auth.get_user, scopes=["delete:own_participations"])
+    current_user: Auth0User = Security(auth.get_user, scopes=["delete:own_participations"]),
+    redis_client: Redis = Depends(get_redis_client)
 ) -> None:
     """
-    Cancel participation in an event.
+    Cancelar la participación del usuario actual en un evento.
     
-    This endpoint allows users to cancel their registration for an event.
-    Users can only cancel their own participations.
+    Este endpoint permite a los usuarios cancelar su inscripción a un evento.
+    Si hay una lista de espera, el primer usuario en la lista será promovido automáticamente.
     
     Permissions:
         - Requires 'delete:own_participations' scope (all authenticated users)
-        
-    Args:
-        db: Database session
-        event_id: ID of the event to cancel participation for
-        current_gym: The current gym (tenant) context
-        current_user: Authenticated user
-        
-    Raises:
-        HTTPException: 404 if participation not found
     """
-    # Get Auth0 user ID and log for debugging
-    user_id = current_user.id
+    start_time = time.time()
+    auth0_id = current_user.id
     
-    logger.info(f"Attempting to cancel participation - auth0_id: {user_id}, event_id: {event_id}")
-    
-    # Optimización: Buscar el usuario directamente con una sola consulta
-    internal_user_id = db.query(User.id).filter(User.auth0_id == user_id).scalar()
-    
-    if not internal_user_id:
-        logger.warning(f"User profile not found for auth0_id: {user_id}")
+    # Verificar que el usuario existe en la BD
+    user = db.query(User).filter(User.auth0_id == auth0_id).first()
+    if not user:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User profile not found"
+            status_code=404,
+            detail="Usuario no encontrado"
         )
     
-    logger.info(f"Found internal user ID: {internal_user_id}")
-    
-    # Verificar primero que el evento pertenezca al gimnasio actual
-    event_in_gym = db.query(Event.id).filter(
-        Event.id == event_id,
-        Event.gym_id == current_gym.id
-    ).scalar() is not None
-    
-    if not event_in_gym:
-        logger.warning(f"Event not found in current gym - event_id: {event_id}, gym_id: {current_gym.id}")
+    # Verificar que el evento existe
+    event = event_repository.get_event(db, event_id=event_id)
+    if not event:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Event not found in current gym"
+            status_code=404,
+            detail="Evento no encontrado"
         )
     
-    # Optimización: Buscar participación con una consulta directa usando índices
-    participation = db.query(EventParticipation).filter(
-        EventParticipation.event_id == event_id,
-        EventParticipation.member_id == internal_user_id,
-        EventParticipation.gym_id == current_gym.id  # Filtrar por gimnasio actual
-    ).first()
-    
-    if not participation:
-        logger.warning(f"Participation not found - user_id: {internal_user_id}, event_id: {event_id}")
-        
-        # Verificar si hay otras participaciones del usuario para dar información útil
-        other_participations = db.query(EventParticipation).filter(
-            EventParticipation.member_id == internal_user_id,
-            EventParticipation.gym_id == current_gym.id
-        ).count()
-        
-        if other_participations > 0:
-            logger.info(f"User has {other_participations} participations but none for event {event_id}")
-        
+    # Verificar que el evento pertenece al gimnasio actual
+    if event.gym_id != current_gym.id:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Participation not found - you are not registered for this event"
+            status_code=403,
+            detail="El evento no pertenece al gimnasio actual"
         )
     
-    logger.info(f"Found participation ID: {participation.id}, status: {participation.status}")
+    # Cancelar participación
+    result = event_participation_repository.cancel_participation(
+        db, member_id=user.id, event_id=event_id
+    )
     
-    # Optimización: Usar directamente el ID de participación para eliminar
-    if event_participation_repository.delete_participation(db=db, participation_id=participation.id):
-        logger.info(f"Successfully deleted participation ID: {participation.id}")
-        return None
-    else:
-        logger.error(f"Failed to delete participation ID: {participation.id}")
+    if not result:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to delete participation"
+            status_code=404,
+            detail="No se encontró participación para este evento"
         )
+    
+    # Invalidar cachés relacionadas
+    if redis_client:
+        try:
+            from app.services.event import event_service
+            await event_service.invalidate_event_caches(
+                redis_client=redis_client,
+                event_id=event_id
+            )
+            logger.info(f"Cachés del evento {event_id} invalidadas después de cancelar participación")
+        except Exception as e:
+            logger.error(f"Error invalidando cachés: {e}", exc_info=True)
+    
+    process_time = (time.time() - start_time) * 1000
+    logger.info(f"Cancelación de participación completada en {process_time:.2f}ms")
+    return None
 
 
 @router.put("/participation/event/{event_id}/user/{user_id}", response_model=EventParticipationSchema)

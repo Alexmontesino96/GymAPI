@@ -1,6 +1,7 @@
 from typing import Dict, List, Optional, Tuple
 from datetime import datetime, timedelta
 import logging
+import json
 
 from fastapi import HTTPException, UploadFile, status, Depends
 from sqlalchemy.orm import Session
@@ -14,6 +15,7 @@ from app.services.storage import storage_service
 from app.core.config import settings
 from app.db.redis_client import get_redis_client
 from app.core.auth0_mgmt import auth0_mgmt_service
+from app.core.profiling import time_redis_operation, time_db_query, time_deserialize_operation, register_cache_hit, register_cache_miss, async_db_query_timer
 
 
 # --- Constantes para Tokens de Confirmación ---
@@ -50,6 +52,7 @@ class UserService:
             
     # --- Métodos CRUD y Búsqueda existentes (sin cambios significativos) ---
 
+    @time_db_query
     def get_user(self, db: Session, user_id: int) -> Optional[UserModel]:
         """
         Obtener un usuario por ID.
@@ -60,24 +63,28 @@ class UserService:
             return None
         return user
 
+    @time_db_query
     def get_user_by_email(self, db: Session, email: str) -> Optional[UserModel]:
         """
         Obtener un usuario por email.
         """
         return user_repository.get_by_email(db, email=email)
 
+    @time_db_query
     def get_user_by_auth0_id(self, db: Session, auth0_id: str) -> Optional[UserModel]:
         """
         Obtener un usuario por ID de Auth0.
         """
         return user_repository.get_by_auth0_id(db, auth0_id=auth0_id)
 
+    @time_db_query
     def get_users(self, db: Session, skip: int = 0, limit: int = 100) -> List[UserModel]:
         """
         Obtener múltiples usuarios.
         """
         return user_repository.get_multi(db, skip=skip, limit=limit)
 
+    @time_db_query
     def get_users_by_role(
         self, 
         db: Session, 
@@ -121,6 +128,7 @@ class UserService:
                 db, role=role, skip=skip, limit=limit
             )
 
+    @time_db_query
     def search_users(self, db: Session, search_params: UserSearchParams, gym_id: Optional[int] = None) -> List[UserModel]:
         """
         Búsqueda avanzada de usuarios con múltiples criterios.
@@ -231,19 +239,25 @@ class UserService:
                  pass 
 
         # Actualizar localmente (síncrono)
-        updated_user = user_repository.update(db, db_obj=user, obj_in=user_in)
+        @time_db_query
+        def _update_db(session, db_obj, obj_in_data):
+             return user_repository.update(session, db_obj=db_obj, obj_in=obj_in_data)
+        updated_user = _update_db(db, user, user_in)
         
         # <<< Invalidar caché user_by_auth0_id si el usuario tiene auth0_id >>>
         if updated_user.auth0_id and redis_client:
             auth0_cache_key = f"user_by_auth0_id:{updated_user.auth0_id}"
+            @time_redis_operation
+            async def _redis_delete(key): return await redis_client.delete(key)
             try:
-                await redis_client.delete(auth0_cache_key)
+                await _redis_delete(auth0_cache_key)
                 logger.info(f"Invalidada caché {auth0_cache_key} tras update_user")
             except Exception as e:
                 logger.error(f"Error invalidando caché {auth0_cache_key}: {e}")
         
         return updated_user
 
+    @time_db_query
     def update_user_profile(self, db: Session, user_id: int, profile_in: UserProfileUpdate) -> UserModel:
         """
         Actualizar solo el perfil de un usuario.
@@ -253,6 +267,7 @@ class UserService:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario no encontrado")
         return user_repository.update(db, db_obj=user, obj_in=profile_in)
 
+    @time_db_query
     def update_user_role(self, db: Session, user_id: int, role_update: UserRoleUpdate, calling_user: UserModel) -> UserModel:
         """
         Actualizar el rol de un usuario.
@@ -326,7 +341,10 @@ class UserService:
             logger.info(f"Procediendo a eliminar usuario {user_id} ({user_email_for_log}) localmente...")
             # Guardar el objeto antes de eliminarlo de la sesión con remove
             user_to_return = user 
-            user_repository.remove(db, id=user_id) # Esto elimina el objeto de la sesión
+            @time_db_query # Decorar la operación remove
+            def _remove_db(session, id_to_remove):
+                user_repository.remove(session, id=id_to_remove)
+            _remove_db(db, user_id)
             logger.info(f"Usuario {user_id} eliminado exitosamente de la base de datos local.")
             
             # Devolver el objeto que teníamos antes de eliminarlo
@@ -440,6 +458,7 @@ class UserService:
         
         return domain.lower() in disposable_domains
 
+    @time_db_query
     def check_local_email_availability(self, db: Session, email: str, exclude_user_id: Optional[int] = None) -> bool:
         """
         Comprueba si un email está disponible localmente.
@@ -545,59 +564,61 @@ class UserService:
         
     # --- NUEVO MÉTODO PARA SINCRONIZACIÓN --- 
     async def sync_user_email_from_auth0(
-        self,
-        db: Session,
-        *, 
-        sync_data: UserSyncFromAuth0,
-        redis_client: Optional[Redis] = None # Hacer redis_client opcional
+        self, 
+        db: Session, 
+        auth0_user: UserSyncFromAuth0,
+        redis_client: Optional[Redis] = None
     ) -> Optional[UserModel]:
         """
-        Sincroniza el email de un usuario local con la información recibida de Auth0.
-        Llamado típicamente desde un webhook o Action.
+        Sincroniza el email de un usuario desde Auth0.
         
         Args:
             db: Sesión de base de datos.
-            sync_data: Datos recibidos (auth0_id, email).
-            redis_client: Cliente Redis para invalidación de caché (opcional).
+            auth0_user: Datos del usuario de Auth0.
+            redis_client: Cliente Redis opcional para invalidar caché.
             
         Returns:
-            El usuario actualizado o None si no se encontró o no hubo cambios.
+            El modelo de usuario actualizado o None si no se encuentra.
         """
-        logger = logging.getLogger("user_service")
-        logger.info(f"Recibida solicitud de sincronización para Auth0 ID: {sync_data.auth0_id}")
-        
-        user = self.get_user_by_auth0_id(db, auth0_id=sync_data.auth0_id)
-        
-        if not user:
-            logger.warning(f"Sincronización fallida: Usuario con Auth0 ID {sync_data.auth0_id} no encontrado localmente.")
-            return None # O podríamos crear el usuario si esa es la lógica deseada
+        try:
+            # Buscar usuario por auth0_id
+            user = self.get_user_by_auth0_id(db, auth0_id=auth0_user.user_id)
+            if not user:
+                logger.warning(f"Usuario con auth0_id {auth0_user.user_id} no encontrado para actualizar email")
+                return None
+                
+            # Si el email no ha cambiado, no hacer nada
+            if user.email == auth0_user.email:
+                logger.info(f"Email de usuario {auth0_user.user_id} no ha cambiado, omitiendo actualización")
+                return user
+                
+            # Actualizar email
+            user.email = auth0_user.email
+            db.commit()
             
-        if user.email.lower() == sync_data.email.lower():
-            logger.info(f"Sincronización no necesaria: Email local ya coincide para Auth0 ID {sync_data.auth0_id}")
-            return user # Devolver el usuario existente sin cambios
-        
-        # Email diferente, actualizar localmente
-        logger.info(f"Sincronizando email para Auth0 ID {sync_data.auth0_id}: '{user.email}' -> '{sync_data.email}'")
-        update_payload = {"email": sync_data.email}
-        
-        # Actualizar el email en la BD local
-        updated_user = user_repository.update(db, db_obj=user, obj_in=update_payload)
-        logger.info(f"Email sincronizado localmente para usuario ID {updated_user.id}")
-        
-        # <<< Invalidar caché user_by_auth0_id >>>
-        auth0_cache_key = f"user_by_auth0_id:{updated_user.auth0_id}"
-        await redis_client.delete(auth0_cache_key)
-        logger.info(f"Invalidada caché {auth0_cache_key} tras sync_user_email")
-        # <<< Invalidar caché de perfil público >>>
-        public_profile_cache_key = f"user_public_profile:{updated_user.id}"
-        await redis_client.delete(public_profile_cache_key)
-        logger.info(f"Invalidada caché {public_profile_cache_key} tras sync_user_email")
-        
-        from app.services.cache_service import cache_service # Import local
-        logger.info(f"Invalidando cachés para usuario ID {updated_user.id} tras sincronización de email.")
-        await cache_service.invalidate_user_caches(redis_client, user_id=updated_user.id)
-
-        return updated_user
+            updated_user = self.get_user_by_auth0_id(db, auth0_id=auth0_user.user_id)
+            logger.info(f"Email de usuario {auth0_user.user_id} actualizado a {auth0_user.email}")
+            
+            # Invalidar caché si Redis está disponible
+            if redis_client:
+                try:
+                    # Invalidar clave de usuario por auth0_id
+                    auth0_cache_key = f"user_by_auth0_id:{updated_user.auth0_id}"
+                    await redis_client.delete(auth0_cache_key)
+                    logger.debug(f"Caché invalidada para {auth0_cache_key}")
+                    
+                    # Invalidar perfil público
+                    public_profile_cache_key = f"user_public_profile:{updated_user.id}"
+                    await redis_client.delete(public_profile_cache_key)
+                    logger.debug(f"Caché invalidada para {public_profile_cache_key}")
+                except Exception as e:
+                    logger.error(f"Error al invalidar caché para usuario {auth0_user.user_id}: {e}")
+            
+            return updated_user
+        except Exception as e:
+            logger.error(f"Error al sincronizar email de usuario {auth0_user.user_id}: {e}")
+            db.rollback()
+            return None
 
     # --- Métodos con Caché en Redis --- 
     # <<< RENOMBRAR Y MODIFICAR get_users_by_role_cached >>>
@@ -633,6 +654,7 @@ class UserService:
         cache_key = f"users:full_profile:gym:{gym_id}:roles:{role_str}:skip:{skip}:limit:{limit}"
         
         # Definir función de consulta a la base de datos (asíncrona)
+        @time_db_query
         async def db_fetch():
             logger.info(f"DB Fetch for gym participants cache miss: key={cache_key}")
             # Llama al nuevo método del repositorio
@@ -724,6 +746,7 @@ class UserService:
 
         cache_key = f"users:all:skip:{skip}:limit:{limit}"
 
+        @time_db_query
         async def db_fetch():
             # La función get_users ya es síncrona
             return self.get_users(db, skip=skip, limit=limit)
@@ -780,6 +803,7 @@ class UserService:
             cache_key = f"users:public_profile:gym:{gym_id}:roles:{role_str}:skip:{skip}:limit:{limit}"
 
             # Definir la función asíncrona para obtener datos de la BD en caso de cache miss
+            @time_db_query
             async def db_fetch():
                 logger.info(f"DB Fetch for public participants cache miss: key={cache_key}")
                 # La función del repositorio es síncrona pero la envolveremos
@@ -789,14 +813,12 @@ class UserService:
                 )
 
             try:
-                # Usar el servicio de caché genérico
-                participants = await cache_service.get_or_set(
+                # Usar el método optimizado del servicio de caché
+                participants = await cache_service.get_or_set_profiles_optimized(
                     redis_client=redis_client,
                     cache_key=cache_key,
-                    db_fetch_func=db_fetch, # Pasar la función asíncrona
-                    model_class=UserPublicProfile, # Modelo de destino
-                    expiry_seconds=300,  # 5 minutos
-                    is_list=True
+                    db_fetch_func=db_fetch,
+                    expiry_seconds=300  # 5 minutos
                 )
                 return participants
             except Exception as e:
@@ -827,6 +849,7 @@ class UserService:
 
         cache_key = f"user_public_profile:{user_id}"
 
+        @time_db_query
         async def db_fetch():
             logger.info(f"DB Fetch for public profile cache miss: key={cache_key}")
             user_model = user_repository.get(db, id=user_id)
@@ -855,70 +878,89 @@ class UserService:
 
     # <<< NUEVO MÉTODO CACHEADO PARA BUSCAR USER POR AUTH0_ID >>>
     async def get_user_by_auth0_id_cached(
-        self,
+        self, 
+        db: Session, 
         auth0_id: str,
-        db: Session,
-        redis_client: Redis
+        redis_client: Optional[Redis] = None
     ) -> Optional[UserSchema]:
         """
-        Obtiene un usuario por su Auth0 ID, utilizando caché Redis.
-        Devuelve el objeto UserSchema o None.
+        Versión cacheada de get_user_by_auth0_id que usa Redis.
+        
+        Args:
+            db: Sesión de base de datos.
+            auth0_id: ID de Auth0 del usuario.
+            redis_client: Cliente Redis opcional. Si es None, se hace consulta directa a BD.
+            
+        Returns:
+            UserSchema o None si no se encuentra el usuario.
         """
-        from app.services.cache_service import cache_service
-
         if not redis_client:
-            logger.warning(f"Redis no disponible, obteniendo user por auth0_id {auth0_id} desde BD")
-            return self.get_user_by_auth0_id(db, auth0_id=auth0_id)
-
+            logger.debug(f"Redis no disponible, consultando user_by_auth0_id:{auth0_id} directamente en BD")
+            user = self.get_user_by_auth0_id(db, auth0_id=auth0_id)
+            return UserSchema.model_validate(user) if user else None
+        
         cache_key = f"user_by_auth0_id:{auth0_id}"
-
-        async def db_fetch():
-            logger.info(f"DB Fetch for user by auth0_id cache miss: key={cache_key}")
-            user_model = self.get_user_by_auth0_id(db, auth0_id=auth0_id)
-            # Devolvemos el UserSchema para que se guarde en caché
-            return UserSchema.from_orm(user_model) if user_model else None
-
+        
+        # Intentar obtener directamente desde Redis primero
         try:
-            # Obtener el UserSchema de la caché
-            user_schema = await cache_service.get_or_set(
-                redis_client=redis_client,
-                cache_key=cache_key,
-                db_fetch_func=db_fetch,
-                model_class=UserSchema,
-                expiry_seconds=settings.CACHE_TTL_USER_MEMBERSHIP, # Reutilizar TTL
-                is_list=False
-            )
-            # Convertir de UserSchema a UserModel si se encontró
-            # Necesitamos el UserModel para las comprobaciones de rol en las dependencias
+            @time_redis_operation
+            async def _redis_get(key):
+                return await redis_client.get(key)
+                
+            cached_data = await _redis_get(cache_key)
+            
+            if cached_data:
+                # Cache HIT: Registrar y deserializar
+                register_cache_hit(cache_key)
+                logger.debug(f"Cache HIT para {cache_key}")
+                
+                @time_deserialize_operation
+                def _deserialize(data):
+                    return UserSchema.model_validate(json.loads(data))
+                
+                return _deserialize(cached_data)
+        
+            # Cache MISS: Registrar el miss y buscar en BD
+            register_cache_miss(cache_key)
+            logger.debug(f"Cache MISS para {cache_key}, consultando BD")
+            
+            # Definir función interna para búsqueda en BD
+            async def db_fetch():
+                async with async_db_query_timer(f"get_user_by_auth0_id({auth0_id})"):
+                    user = self.get_user_by_auth0_id(db, auth0_id=auth0_id)
+                    return UserSchema.model_validate(user) if user else None
+            
+            # Ejecutar la búsqueda en BD
+            user_schema = await db_fetch()
+            
+            # Si encontramos el usuario, guardar en caché
             if user_schema:
-                # Podríamos hacer otra consulta a BD para obtener el objeto ORM fresco,
-                # pero eso anularía el propósito de la caché.
-                # Por ahora, construiremos un objeto UserModel básico con los datos clave.
-                # ¡OJO!: Esto puede no tener todos los campos si UserSchema no los incluye.
-                # Sería mejor si las dependencias pudieran usar UserSchema.
-                # Alternativa: Guardar solo ID y Rol en caché?
-                # Por ahora, devolvemos un objeto ORM simulado con datos de UserSchema
-                # Esto ASUME que UserSchema tiene id y role.
-                # return UserModel(id=user_schema.id, role=user_schema.role, auth0_id=auth0_id)
-                # --- MEJOR APROXIMACIÓN: Consultar BD usando el ID obtenido --- 
-                # Esto asegura tener el objeto ORM completo si la caché acierta.
-                # Aún así, es una query extra si hay hit.
-                # return self.get_user(db, user_id=user_schema.id)
-                # --- COMPROMISO: Devolver el schema y adaptar dependencias --- 
-                # Las dependencias necesitarán `user.role` y `user.id`.
-                # Cambiemos el tipo de retorno a UserSchema y adaptemos tenant.py
-                # Esto evita la query extra en caso de HIT.
-                # Cambiando tipo de retorno...
-                 return user_schema # Devolver UserSchema
-            else:
-                return None
-
+                @time_redis_operation
+                async def _redis_set(key, value, ex):
+                    await redis_client.set(key, value, ex=ex)
+                
+                # Serializar y guardar en caché de forma asíncrona
+                try:
+                    serialized = user_schema.model_dump_json()
+                    await _redis_set(cache_key, serialized, ex=settings.CACHE_TTL_USER_PROFILE)
+                    logger.debug(f"Usuario {auth0_id} almacenado en caché con clave {cache_key}")
+                except Exception as e:
+                    logger.error(f"Error al guardar usuario {auth0_id} en caché: {e}")
+            
+            return user_schema
+            
         except Exception as e:
-            logger.error(f"Error al obtener usuario cacheado por auth0_id {auth0_id}: {str(e)}", exc_info=True)
-            # Fallback a BD
-            logger.info(f"Fallback a BD para user por auth0_id {auth0_id} debido a error de caché")
-            return self.get_user_by_auth0_id(db, auth0_id=auth0_id)
-    # <<< FIN NUEVO MÉTODO >>>
+            # Si hay cualquier error con Redis, log y fallback a BD
+            logger.error(f"Error al acceder a caché para usuario {auth0_id}: {e}")
+            
+            # Definir función interna para búsqueda fallback en BD
+            async def db_fallback():
+                async with async_db_query_timer(f"fallback_get_user_by_auth0_id({auth0_id})"):
+                    user = self.get_user_by_auth0_id(db, auth0_id=auth0_id)
+                    return UserSchema.model_validate(user) if user else None
+            
+            # Ejecutar la búsqueda fallback en BD
+            return await db_fallback()
 
 
 user_service = UserService() 

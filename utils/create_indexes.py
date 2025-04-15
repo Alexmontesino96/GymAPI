@@ -3,16 +3,29 @@ Script para crear índices en la tabla event_participations.
 Este script añade índices importantes para optimizar las consultas de participación en eventos.
 """
 
-from sqlalchemy import create_engine, text
+import sys
 import os
+from sqlalchemy import create_engine, MetaData, Index, text
+from sqlalchemy.exc import SQLAlchemyError
+
+# Añadir directorio raíz al path para importar config
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+# Importar settings para obtener la URL correcta
+from app.core.config import settings
+
+# Obtener la URL de la base de datos desde settings
+DB_URL = str(settings.SQLALCHEMY_DATABASE_URI)
+
+# URL de conexión a la base de datos (Usando la configuración)
+# db_url = "postgresql://postgres:Jazdi0-cyhvan-pofduz@db.ueijlkythlkqadxymzqd.supabase.co:5432/postgres"
 
 def create_indexes():
     """Crear índices manualmente mediante SQL"""
     print("Conectando a la base de datos...")
     
     # Usar directamente la URL de conexión
-    db_url = "postgresql://postgres:Jazdi0-cyhvan-pofduz@db.ueijlkythlkqadxymzqd.supabase.co:5432/postgres"
-    engine = create_engine(db_url)
+    engine = create_engine(DB_URL)
     
     # SQL para crear cada índice
     index_statements = [

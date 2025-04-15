@@ -12,6 +12,7 @@ import time
 import logging
 import argparse
 import sys
+import os
 import psutil
 import psycopg2
 import requests
@@ -34,6 +35,20 @@ logging.basicConfig(
 )
 logger = logging.getLogger("maintenance")
 
+# Añadir directorio raíz al path para importar config
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+# Importar settings para obtener la URL correcta
+from app.core.config import settings
+
+# Obtener la URL de la base de datos desde settings
+# Asegurarse de que la URL está en formato string
+DB_URL = str(settings.SQLALCHEMY_DATABASE_URI)
+
+# Crear el engine y la sesión
+engine = create_engine(DB_URL)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
 # Importar servicios de la aplicación
 try:
     from app.db.session import get_db, engine
@@ -46,9 +61,6 @@ try:
 except ImportError as e:
     logger.warning(f"No se pudieron cargar módulos internos de la aplicación: {e}")
     internal_modules_available = False
-    
-# URL de conexión de base de datos para mantenimiento directo
-DB_URL = "postgresql://postgres:Jazdi0-cyhvan-pofduz@db.ueijlkythlkqadxymzqd.supabase.co:5432/postgres"
 
 def check_services_health():
     """Verificar el estado de los servicios externos"""

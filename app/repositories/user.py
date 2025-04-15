@@ -154,10 +154,10 @@ class UserRepository(BaseRepository[User, UserCreate, UserUpdate]):
                  last_name=row[2],
                  picture=row[3],
                  role=row[4],
-                 bio=row[5],
+                 bio=row[5], 
                  is_active=row[6]
              ) for row in results
-        ]
+        ] 
         return participants
 
     def get_gym_participants(

@@ -1,0 +1,56 @@
+=== Profile for GET /api/v1/users/p/gym-participants ===
+Total time: 0.0698s
+
+=== Timing Summary ===
+
+REDIS_OPERATIONS:
+  Total operations: 0
+  Total time: 0.0000s (0.0% of total measured)
+
+DESERIALIZE_OPERATIONS:
+  Total operations: 0
+  Total time: 0.0000s (0.0% of total measured)
+
+DB_QUERIES:
+  Total operations: 0
+  Total time: 0.0000s (0.0% of total measured)
+
+=== cProfile Details ===
+         6785 function calls (6699 primitive calls) in 0.070 seconds
+
+   Ordered by: cumulative time
+   List reduced from 757 to 30 due to restriction <30>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+       31    0.000    0.000    0.070    0.002 /opt/anaconda3/lib/python3.11/asyncio/base_events.py:1845(_run_once)
+       31    0.000    0.000    0.042    0.001 /opt/anaconda3/lib/python3.11/selectors.py:558(select)
+       31    0.042    0.001    0.042    0.001 {method 'control' of 'select.kqueue' objects}
+       62    0.000    0.000    0.028    0.000 /opt/anaconda3/lib/python3.11/asyncio/events.py:78(_run)
+    65/62    0.000    0.000    0.028    0.000 {method 'run' of '_contextvars.Context' objects}
+       25    0.000    0.000    0.027    0.001 /Users/alexmontesino/GymApi/env/lib/python3.11/site-packages/starlette/middleware/base.py:65(coro)
+       15    0.000    0.000    0.024    0.002 /Users/alexmontesino/GymApi/env/lib/python3.11/site-packages/starlette/middleware/exceptions.py:53(__call__)
+       11    0.000    0.000    0.024    0.002 /Users/alexmontesino/GymApi/env/lib/python3.11/site-packages/fastapi/middleware/asyncexitstack.py:12(__call__)
+        8    0.000    0.000    0.024    0.003 /Users/alexmontesino/GymApi/env/lib/python3.11/site-packages/starlette/routing.py:697(__call__)
+        8    0.000    0.000    0.024    0.003 /Users/alexmontesino/GymApi/env/lib/python3.11/site-packages/starlette/routing.py:265(handle)
+        8    0.000    0.000    0.023    0.003 /Users/alexmontesino/GymApi/env/lib/python3.11/site-packages/starlette/routing.py:63(app)
+        8    0.000    0.000    0.023    0.003 /Users/alexmontesino/GymApi/env/lib/python3.11/site-packages/fastapi/routing.py:218(app)
+     17/8    0.000    0.000    0.021    0.003 /Users/alexmontesino/GymApi/env/lib/python3.11/site-packages/fastapi/dependencies/utils.py:523(solve_dependencies)
+        1    0.000    0.000    0.016    0.016 /Users/alexmontesino/GymApi/app/core/auth0_fastapi.py:123(get_user)
+        1    0.000    0.000    0.015    0.015 /Users/alexmontesino/GymApi/env/lib/python3.11/site-packages/jose/jwt.py:56(decode)
+        1    0.000    0.000    0.015    0.015 /Users/alexmontesino/GymApi/env/lib/python3.11/site-packages/jose/jws.py:48(verify)
+        1    0.000    0.000    0.015    0.015 /Users/alexmontesino/GymApi/env/lib/python3.11/site-packages/jose/jws.py:250(_verify_signature)
+        1    0.000    0.000    0.014    0.014 /Users/alexmontesino/GymApi/env/lib/python3.11/site-packages/jose/jws.py:205(_sig_matches_keys)
+        1    0.000    0.000    0.010    0.010 /Users/alexmontesino/GymApi/env/lib/python3.11/site-packages/jose/jwk.py:63(construct)
+        1    0.000    0.000    0.010    0.010 /Users/alexmontesino/GymApi/env/lib/python3.11/site-packages/jose/backends/cryptography_backend.py:227(__init__)
+        1    0.000    0.000    0.010    0.010 /Users/alexmontesino/GymApi/env/lib/python3.11/site-packages/jose/backends/cryptography_backend.py:274(_process_jwk)
+        1    0.005    0.005    0.005    0.005 {method 'public_key' of 'cryptography.hazmat.primitives.asymmetric.rsa.RSAPublicNumbers' objects}
+        1    0.000    0.000    0.005    0.005 /Users/alexmontesino/GymApi/env/lib/python3.11/site-packages/jose/backends/cryptography_backend.py:326(verify)
+        1    0.004    0.004    0.005    0.005 {method 'verify' of 'cryptography.hazmat.bindings._rust.openssl.rsa.RSAPublicKey' objects}
+        1    0.000    0.000    0.004    0.004 /Users/alexmontesino/GymApi/env/lib/python3.11/site-packages/cryptography/hazmat/backends/__init__.py:10(default_backend)
+      3/1    0.000    0.000    0.004    0.004 <frozen importlib._bootstrap>:1165(_find_and_load)
+      3/1    0.000    0.000    0.004    0.004 <frozen importlib._bootstrap>:1120(_find_and_load_unlocked)
+      5/1    0.000    0.000    0.004    0.004 <frozen importlib._bootstrap>:233(_call_with_frames_removed)
+        1    0.000    0.000    0.004    0.004 {built-in method builtins.__import__}
+        4    0.000    0.000    0.003    0.001 /opt/anaconda3/lib/python3.11/logging/__init__.py:1610(_log)
+
+

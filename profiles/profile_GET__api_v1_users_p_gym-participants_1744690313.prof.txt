@@ -1,0 +1,56 @@
+=== Profile for GET /api/v1/users/p/gym-participants ===
+Total time: 0.2397s
+
+=== Timing Summary ===
+
+REDIS_OPERATIONS:
+  Total operations: 0
+  Total time: 0.0000s (0.0% of request)
+
+DESERIALIZE_OPERATIONS:
+  Total operations: 0
+  Total time: 0.0000s (0.0% of request)
+
+DB_QUERIES:
+  Total operations: 0
+  Total time: 0.0000s (0.0% of request)
+
+=== cProfile Details ===
+         7542 function calls (7504 primitive calls) in 0.240 seconds
+
+   Ordered by: cumulative time
+   List reduced from 580 to 30 due to restriction <30>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+       35    0.001    0.000    0.239    0.007 /opt/anaconda3/lib/python3.11/asyncio/base_events.py:1845(_run_once)
+       35    0.001    0.000    0.182    0.005 /opt/anaconda3/lib/python3.11/selectors.py:558(select)
+       35    0.181    0.005    0.181    0.005 {method 'control' of 'select.kqueue' objects}
+       50    0.000    0.000    0.056    0.001 /opt/anaconda3/lib/python3.11/asyncio/events.py:78(_run)
+    52/50    0.000    0.000    0.056    0.001 {method 'run' of '_contextvars.Context' objects}
+       20    0.000    0.000    0.054    0.003 /Users/alexmontesino/GymApi/env/lib/python3.11/site-packages/starlette/middleware/base.py:65(coro)
+       10    0.000    0.000    0.050    0.005 /Users/alexmontesino/GymApi/env/lib/python3.11/site-packages/starlette/middleware/exceptions.py:53(__call__)
+       10    0.000    0.000    0.050    0.005 /Users/alexmontesino/GymApi/env/lib/python3.11/site-packages/fastapi/middleware/asyncexitstack.py:12(__call__)
+        7    0.000    0.000    0.050    0.007 /Users/alexmontesino/GymApi/env/lib/python3.11/site-packages/starlette/routing.py:697(__call__)
+        7    0.000    0.000    0.050    0.007 /Users/alexmontesino/GymApi/env/lib/python3.11/site-packages/starlette/routing.py:265(handle)
+        7    0.000    0.000    0.050    0.007 /Users/alexmontesino/GymApi/env/lib/python3.11/site-packages/starlette/routing.py:63(app)
+        7    0.000    0.000    0.049    0.007 /Users/alexmontesino/GymApi/env/lib/python3.11/site-packages/fastapi/routing.py:218(app)
+     23/7    0.006    0.000    0.049    0.007 /Users/alexmontesino/GymApi/env/lib/python3.11/site-packages/fastapi/dependencies/utils.py:523(solve_dependencies)
+        2    0.003    0.001    0.013    0.006 /Users/alexmontesino/GymApi/app/core/auth0_fastapi.py:57(__call__)
+        7    0.011    0.002    0.011    0.002 {method 'validate_python' of 'pydantic_core._pydantic_core.SchemaValidator' objects}
+        4    0.000    0.000    0.011    0.003 /Users/alexmontesino/GymApi/env/lib/python3.11/site-packages/pydantic/main.py:153(__init__)
+        2    0.000    0.000    0.010    0.005 /Users/alexmontesino/GymApi/env/lib/python3.11/site-packages/fastapi/security/http.py:301(__call__)
+      8/4    0.000    0.000    0.010    0.002 /Users/alexmontesino/GymApi/app/core/profiling.py:182(wrapper)
+        4    0.000    0.000    0.009    0.002 /Users/alexmontesino/GymApi/app/services/cache_service.py:29(get_or_set)
+        6    0.006    0.001    0.008    0.001 /Users/alexmontesino/GymApi/env/lib/python3.11/site-packages/redis/asyncio/client.py:606(execute_command)
+        2    0.000    0.000    0.007    0.004 /Users/alexmontesino/GymApi/app/core/tenant.py:209(get_current_gym)
+       15    0.000    0.000    0.007    0.000 /opt/anaconda3/lib/python3.11/logging/__init__.py:1610(_log)
+        2    0.001    0.001    0.007    0.003 /Users/alexmontesino/GymApi/app/core/auth0_fastapi.py:123(get_user)
+        4    0.000    0.000    0.007    0.002 /Users/alexmontesino/GymApi/app/services/cache_service.py:60(_redis_get)
+        1    0.001    0.001    0.006    0.006 /Users/alexmontesino/GymApi/app/core/auth0_fastapi.py:330(get_current_user)
+       15    0.000    0.000    0.006    0.000 /opt/anaconda3/lib/python3.11/logging/__init__.py:1636(handle)
+       15    0.000    0.000    0.006    0.000 /opt/anaconda3/lib/python3.11/logging/__init__.py:1690(callHandlers)
+       30    0.000    0.000    0.006    0.000 /opt/anaconda3/lib/python3.11/logging/__init__.py:965(handle)
+       30    0.000    0.000    0.006    0.000 /opt/anaconda3/lib/python3.11/logging/__init__.py:1098(emit)
+        3    0.000    0.000    0.005    0.002 /opt/anaconda3/lib/python3.11/logging/__init__.py:1508(error)
+
+

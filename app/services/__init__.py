@@ -17,7 +17,17 @@ from app.services.schedule import (
     class_service,
     class_session_service,
     class_participation_service
-)
+) 
 from app.services.gym import gym_service
 from app.services.auth0_mgmt import auth0_mgmt_service
-from app.services.cache_service import cache_service 
+from app.services.cache_service import cache_service
+from app.services.event import event_service
+
+# Exportar servicios para acceso fácil
+__all__ = [
+    "user_service",
+    "gym_service",
+    "trainer_member_service",
+    "chat_service",
+    "event_service",
+] 

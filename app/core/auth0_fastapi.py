@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.services.user import user_service
 from app.db.session import get_db
+from app.db.redis_client import get_redis_client, redis
 
 logger = logging.getLogger('fastapi_auth0')
 
@@ -327,7 +328,11 @@ auth = Auth0(
 )
 
 # Función de ayuda para obtener usuario sin permisos específicos
-async def get_current_user(db: Session = Depends(get_db), user: Auth0User = Security(auth.get_user, scopes=[])):
+async def get_current_user(
+    db: Session = Depends(get_db), 
+    user: Auth0User = Security(auth.get_user, scopes=[]),
+    redis_client: redis.Redis = Depends(get_redis_client)
+):
     """
     Obtiene el usuario actual autenticado y asegura la sincronización con la BD local.
     
@@ -340,6 +345,18 @@ async def get_current_user(db: Session = Depends(get_db), user: Auth0User = Secu
 
     # --- Sincronización Just-in-Time ---    
     try:
+        # Primero verificar si el usuario ya existe en caché
+        if redis_client:
+            cached_user = await user_service.get_user_by_auth0_id_cached(
+                db=db, 
+                auth0_id=user.id, 
+                redis_client=redis_client
+            )
+            if cached_user:
+                # Si ya existe en caché, devolver sin consultar la base de datos
+                return user
+
+        # Si no está en caché o no hay Redis, proceder con la sincronización normal
         # Prepara los datos mínimos necesarios para la sincronización
         auth0_user_data = {
             "sub": user.id,  # 'sub' es el id de Auth0

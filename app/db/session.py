@@ -1,23 +1,69 @@
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.exc import SQLAlchemyError
+import re
+import logging
+import os
 
+# Importar settings AQUI para asegurar que se leen las variables de entorno
 from app.core.config import settings
 
-# Crear motor de base de datos
-engine = create_engine(
-    str(settings.SQLALCHEMY_DATABASE_URI),
-    echo=False,
-    pool_pre_ping=True,  # Verifica la conexión antes de usarla
-)
+logger = logging.getLogger(__name__)
+
+# Obtener la URL directamente de settings, que ya maneja .env y fallbacks
+db_url = settings.SQLALCHEMY_DATABASE_URI
+
+# Log EXPLICITO de la URL que se usará para crear el engine
+# Asegurarse de ocultar credenciales en el log
+display_url = str(db_url)
+if '@' in display_url:
+    parts = display_url.split('@')
+    credentials = parts[0].split('://')[1] # Obtener user:pass
+    host_info = parts[1]
+    display_url = f"postgresql://***@{host_info}" # Ocultar credenciales
+else:
+    display_url = "URL sin credenciales (o formato inesperado)"
+
+logger.info(f"URL FINAL utilizada para crear el engine: {display_url}")
+
+try:
+    # Crear el motor con la URL obtenida de settings
+    engine = create_engine(
+        str(db_url), # Asegurarse de que es string
+        echo=settings.DEBUG_MODE, # Usar DEBUG_MODE para activar echo SQL
+        pool_pre_ping=True,
+        pool_size=5,
+        max_overflow=10,
+        pool_timeout=30,
+        connect_args={"connect_timeout": 10} # Timeout de conexión explícito
+    )
+
+    # Verificar la conexión al crear el engine
+    with engine.connect() as conn:
+        logger.info(f"Verificación de conexión inicial EXITOSA con: {display_url}")
+
+except Exception as e:
+    logger.critical(f"¡¡¡FALLO CRÍTICO AL CREAR ENGINE CON URL: {display_url}!!! Error: {e}", exc_info=True)
+    # Fallback a SQLite en memoria para permitir que la app al menos inicie
+    logger.warning("Creando engine SQLite en memoria como fallback.")
+    engine = create_engine("sqlite:///:memory:")
 
 # Crear clase de sesión
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
 
 # Dependencia para obtener la sesión de DB
 def get_db():
     db = SessionLocal()
     try:
         yield db
+    except SQLAlchemyError as e:
+        logger.error(f"Error de SQLAlchemy en la sesión: {e}", exc_info=True)
+        db.rollback() # Hacer rollback en caso de error
+        raise # Relanzar la excepción para que FastAPI la maneje
+    except Exception as e:
+        logger.error(f"Error inesperado en get_db: {e}", exc_info=True)
+        raise
     finally:
-        db.close() 
+        # Asegurarse siempre de cerrar la sesión
+        if db:
+            db.close() 

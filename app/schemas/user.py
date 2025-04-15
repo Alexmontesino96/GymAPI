@@ -3,6 +3,7 @@ from datetime import datetime
 from pydantic import BaseModel, EmailStr, Field, field_validator
 from pydantic.v1 import validator
 from app.models.user import UserRole
+from app.models.user_gym import GymRoleType
 
 
 # Propiedades compartidas
@@ -144,6 +145,49 @@ class UserPublicProfile(BaseModel):
         from_attributes = True
 
 
+# Esquema optimizado para la deserialización rápida de perfiles públicos
+class UserPublicProfileLight(BaseModel):
+    """
+    Versión ligera del esquema UserPublicProfile optimizada para deserialización rápida.
+    Utiliza tipos simples y reduce validaciones para mejorar el rendimiento.
+    
+    Este esquema es solo para uso interno en la serialización/deserialización y no
+    debe exponerse directamente en la API para mantener la compatibilidad.
+    """
+    id: int
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    picture: Optional[str] = None
+    role: str  # Almacenamos el nombre del enum como string para evitar validación
+    bio: Optional[str] = None
+    is_active: bool = True
+    
+    def to_public_profile(self) -> UserPublicProfile:
+        """Convierte este perfil ligero al esquema completo UserPublicProfile."""
+        return UserPublicProfile(
+            id=self.id,
+            first_name=self.first_name,
+            last_name=self.last_name,
+            picture=self.picture,
+            role=UserRole(self.role),  # Convertir string a enum
+            bio=self.bio,
+            is_active=self.is_active
+        )
+    
+    @classmethod
+    def from_public_profile(cls, profile: UserPublicProfile) -> "UserPublicProfileLight":
+        """Crea una versión ligera a partir de un UserPublicProfile."""
+        return cls(
+            id=profile.id,
+            first_name=profile.first_name,
+            last_name=profile.last_name,
+            picture=profile.picture,
+            role=profile.role.value,  # Convertir enum a string
+            bio=profile.bio,
+            is_active=profile.is_active
+        )
+
+
 # Esquema para solicitar cambio de email via flujo Auth0
 class Auth0EmailChangeRequest(BaseModel):
     new_email: EmailStr
@@ -158,3 +202,15 @@ class UserSyncFromAuth0(BaseModel):
 
     class Config:
         from_attributes = True # Opcional, pero buena práctica
+
+
+# === NUEVO SCHEMA PARA LA RESPUESTA DE /gym-users ===
+class GymUserSummary(BaseModel):
+    id: int
+    email: EmailStr
+    full_name: str
+    role: GymRoleType # El rol dentro del gym
+    joined_at: Optional[datetime] = None # Fecha de unión al gym
+
+    class Config:
+        from_attributes = True

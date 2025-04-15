@@ -1,0 +1,78 @@
+=== Profile for GET /api/v1/users/p/gym-participants ===
+Total time: 5.1364s
+
+=== Timing Summary ===
+
+REDIS_OPERATIONS:
+  Total operations: 7
+  Total time: 1.5168s (54.3% of total measured)
+  Average time: 0.2167s
+  Max time: 0.5101s
+
+  Top operations:
+    - get_or_set(gym_details:1): 0.5101s
+    - get_or_set_profiles_optimized(users:public_profile:gym:1:roles:MEMBER_TRAINER:skip:0:limit:100): 0.3820s
+    - _redis_get: 0.2497s
+    - _redis_get: 0.1441s
+    - get_or_set(user_by_auth0_id:auth0|67e215563eeee752d79c2c38): 0.1216s
+
+DESERIALIZE_OPERATIONS:
+  Total operations: 4
+  Total time: 0.4669s (16.7% of total measured)
+  Average time: 0.1167s
+  Max time: 0.3893s
+
+  Top operations:
+    - _deserialize: 0.3893s
+    - _deserialize: 0.0742s
+    - _json_loads: 0.0026s
+    - _deserialize_light: 0.0007s
+
+DB_QUERIES:
+  Total operations: 1
+  Total time: 0.8120s (29.0% of total measured)
+  Average time: 0.8120s
+  Max time: 0.8120s
+
+  Top operations:
+    - get_user_by_auth0_id: 0.8120s
+
+=== cProfile Details ===
+         16032 function calls (15774 primitive calls) in 5.085 seconds
+
+   Ordered by: cumulative time
+   List reduced from 1278 to 30 due to restriction <30>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+       40    0.021    0.001    5.085    0.127 /opt/anaconda3/lib/python3.11/asyncio/base_events.py:1845(_run_once)
+       77    0.025    0.000    4.518    0.059 /opt/anaconda3/lib/python3.11/asyncio/events.py:78(_run)
+    79/77    0.056    0.001    4.494    0.058 {method 'run' of '_contextvars.Context' objects}
+       25    0.001    0.000    4.221    0.169 /Users/alexmontesino/GymApi/env/lib/python3.11/site-packages/starlette/middleware/base.py:65(coro)
+       15    0.000    0.000    4.013    0.268 /Users/alexmontesino/GymApi/env/lib/python3.11/site-packages/starlette/middleware/exceptions.py:53(__call__)
+       15    0.003    0.000    4.013    0.268 /Users/alexmontesino/GymApi/env/lib/python3.11/site-packages/fastapi/middleware/asyncexitstack.py:12(__call__)
+       13    0.000    0.000    3.866    0.297 /Users/alexmontesino/GymApi/env/lib/python3.11/site-packages/starlette/routing.py:697(__call__)
+       13    0.001    0.000    3.865    0.297 /Users/alexmontesino/GymApi/env/lib/python3.11/site-packages/starlette/routing.py:265(handle)
+       13    0.001    0.000    3.865    0.297 /Users/alexmontesino/GymApi/env/lib/python3.11/site-packages/starlette/routing.py:63(app)
+        9    0.027    0.003    3.779    0.420 /Users/alexmontesino/GymApi/env/lib/python3.11/site-packages/fastapi/routing.py:218(app)
+     24/8    0.002    0.000    3.457    0.432 /Users/alexmontesino/GymApi/env/lib/python3.11/site-packages/fastapi/dependencies/utils.py:523(solve_dependencies)
+       18    1.099    0.061    1.223    0.068 {method 'validate_python' of 'pydantic_core._pydantic_core.SchemaValidator' objects}
+     14/8    0.002    0.000    1.057    0.132 /Users/alexmontesino/GymApi/app/core/profiling.py:189(wrapper)
+        1    0.000    0.000    0.820    0.820 /Users/alexmontesino/GymApi/app/core/auth0_fastapi.py:330(get_current_user)
+        1    0.000    0.000    0.820    0.820 /Users/alexmontesino/GymApi/app/services/user.py:164(create_or_update_auth0_user)
+        1    0.000    0.000    0.820    0.820 /Users/alexmontesino/GymApi/app/core/profiling.py:271(sync_wrapper)
+        1    0.000    0.000    0.812    0.812 /Users/alexmontesino/GymApi/app/services/user.py:72(get_user_by_auth0_id)
+        1    0.002    0.002    0.812    0.812 /Users/alexmontesino/GymApi/app/repositories/user.py:23(get_by_auth0_id)
+        2    0.000    0.000    0.793    0.397 /Users/alexmontesino/GymApi/app/core/tenant.py:38(get_current_gym)
+       64    0.011    0.000    0.778    0.012 /Users/alexmontesino/GymApi/env/lib/python3.11/site-packages/fastapi/dependencies/utils.py:651(request_params_to_args)
+       12    0.000    0.000    0.760    0.063 /Users/alexmontesino/GymApi/env/lib/python3.11/site-packages/pydantic/main.py:153(__init__)
+        2    0.000    0.000    0.759    0.380 /Users/alexmontesino/GymApi/app/core/auth0_fastapi.py:57(__call__)
+        2    0.000    0.000    0.759    0.380 /Users/alexmontesino/GymApi/env/lib/python3.11/site-packages/fastapi/security/http.py:301(__call__)
+        5    0.000    0.000    0.693    0.139 /Users/alexmontesino/GymApi/env/lib/python3.11/site-packages/fastapi/_compat.py:242(is_scalar_sequence_field)
+     11/5    0.003    0.000    0.693    0.139 /Users/alexmontesino/GymApi/env/lib/python3.11/site-packages/fastapi/_compat.py:568(field_annotation_is_scalar_sequence)
+        4    0.010    0.002    0.556    0.139 /Users/alexmontesino/GymApi/app/services/cache_service.py:29(get_or_set)
+        1    0.000    0.000    0.555    0.555 /Users/alexmontesino/GymApi/env/lib/python3.11/site-packages/sqlalchemy/orm/query.py:2720(first)
+        1    0.000    0.000    0.549    0.549 /Users/alexmontesino/GymApi/env/lib/python3.11/site-packages/sqlalchemy/orm/query.py:2842(_iter)
+        1    0.000    0.000    0.549    0.549 /Users/alexmontesino/GymApi/env/lib/python3.11/site-packages/sqlalchemy/orm/session.py:2247(execute)
+        1    0.000    0.000    0.549    0.549 /Users/alexmontesino/GymApi/env/lib/python3.11/site-packages/sqlalchemy/orm/session.py:2077(_execute_internal)
+
+

@@ -6,6 +6,18 @@ from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.types import ASGIApp
 from starlette.responses import StreamingResponse
+import logging
+
+# Importar contextvars y funciones de registro de cache
+try:
+    from app.core.profiling import cache_hits_context, cache_misses_context
+    HAS_PROFILING = True
+except ImportError:
+    HAS_PROFILING = False
+    cache_hits_context = None
+    cache_misses_context = None
+
+logger = logging.getLogger("timing_middleware")
 
 class TimingMiddleware(BaseHTTPMiddleware):
     """
@@ -31,6 +43,20 @@ class TimingMiddleware(BaseHTTPMiddleware):
         is_critical_operation = False
         if method == "POST" and "/events/participation" in path:
             is_critical_operation = True
+            
+        # Resetear contadores de cache para esta petición si el sistema de profiling está disponible
+        token_hits = None
+        token_misses = None
+        if HAS_PROFILING:
+            # Crear nuevos diccionarios para los contadores de esta petición
+            current_cache_hits = {"count": 0, "keys": []}
+            current_cache_misses = {"count": 0, "keys": []}
+            
+            # Establecer nuevos valores en el contexto
+            if cache_hits_context is not None:
+                token_hits = cache_hits_context.set(current_cache_hits)
+            if cache_misses_context is not None:
+                token_misses = cache_misses_context.set(current_cache_misses)
         
         # Procesar la solicitud
         response = await call_next(request)
@@ -68,6 +94,35 @@ class TimingMiddleware(BaseHTTPMiddleware):
         response.headers["X-Process-Speed"] = speed_category
         response.headers["X-Request-Method"] = method
         response.headers["X-Request-Path"] = path
+        
+        # Añadir información de cache hits/misses si está disponible
+        if HAS_PROFILING:
+            try:
+                hits_data = cache_hits_context.get() if cache_hits_context is not None else {"count": 0}
+                misses_data = cache_misses_context.get() if cache_misses_context is not None else {"count": 0}
+                
+                hits_count = hits_data.get("count", 0)
+                misses_count = misses_data.get("count", 0)
+                
+                # Calcular ratio de cache hits
+                total_ops = hits_count + misses_count
+                hit_ratio = 0 if total_ops == 0 else (hits_count / total_ops) * 100
+                
+                # Añadir a cabeceras
+                response.headers["X-Cache-Hits"] = str(hits_count)
+                response.headers["X-Cache-Misses"] = str(misses_count)
+                response.headers["X-Cache-Hit-Ratio"] = f"{hit_ratio:.1f}%"
+                
+                # Registrar en log
+                logger.debug(f"Cache stats for {method} {path}: Hits={hits_count}, Misses={misses_count}, Ratio={hit_ratio:.1f}%")
+                
+                # Resetear contextos
+                if token_hits:
+                    cache_hits_context.reset(token_hits)
+                if token_misses:
+                    cache_misses_context.reset(token_misses)
+            except Exception as e:
+                logger.error(f"Error al procesar estadísticas de caché: {e}")
         
         # Para operaciones críticas, dar recomendaciones de optimización específicas
         if is_critical_operation and process_time > 1000:
