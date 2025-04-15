@@ -16,14 +16,15 @@ def check_and_install_dependencies():
     logger.info("Iniciando verificación de dependencias...")
     # Modulos críticos y sus paquetes pip correspondientes
     critical_modules = {
-        'redis': 'redis==5.0.1',
-        'redis.asyncio': 'redis==5.0.1', # Asegura que redis se instale para esto
+        'redis': 'redis==5.2.1',
+        'redis.asyncio': 'redis==5.2.1', # Asegura que redis se instale para esto
         'fastapi': 'fastapi', 
         'sqlalchemy': 'sqlalchemy', 
         'gunicorn': 'gunicorn==21.2.0', 
         'uvicorn': 'uvicorn', 
-        'supabase': 'supabase==1.2.0', 
-        'stream_chat': 'stream-chat==4.24.0' # Actualizar a versión encontrada
+        'supabase': 'supabase==2.15.0', 
+        'stream_chat': 'stream-chat==4.23.0', # Actualizar a versión encontrada
+        'apscheduler': 'apscheduler==3.11.0' # Añadir APScheduler
     }
     missing_install_failed = False
     
