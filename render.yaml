@@ -2,12 +2,9 @@ services:
   # Servicio web principal - FastAPI
   - type: web
     name: gymapi
-    runtime: python
-    buildCommand: pip install -r requirements.txt
-    startCommand: ./start.sh
+    runtime: docker
+    dockerCommand: bash -c "python app_wrapper.py" # Usamos nuestro wrapper
     envVars:
-      - key: PYTHON_VERSION
-        value: 3.11.0
       - key: DATABASE_URL
         fromDatabase:
           name: gymapi-db
