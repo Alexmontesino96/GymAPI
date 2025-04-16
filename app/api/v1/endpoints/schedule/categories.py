@@ -1,146 +1,28 @@
 from app.api.v1.endpoints.schedule.common import *
 from app.models.schedule import ClassCategoryCustom, Class
 from app.schemas.schedule import ClassCategoryCustomCreate, ClassCategoryCustomUpdate, ClassCategoryCustom as ClassCategoryCustomSchema
-from app.repositories.base import BaseRepository
 from app.models.gym import Gym
 from app.models.user_gym import GymRoleType
-from app.core.tenant import verify_gym_access, verify_trainer_role, verify_admin_role
-from fastapi import APIRouter, Depends, Body, Path, Security, HTTPException, status
+from app.core.tenant import verify_gym_access, verify_trainer_role, verify_admin_role, GymSchema
+from fastapi import APIRouter, Depends, Body, Path, Security, HTTPException, status, Request
 from typing import List, Optional, Any
-
-# Crear un repositorio para ClassCategoryCustom
-class ClassCategoryCustomRepository(BaseRepository[ClassCategoryCustom, ClassCategoryCustomCreate, ClassCategoryCustomUpdate]):
-    def get_by_gym(self, db: Session, *, gym_id: int) -> List[ClassCategoryCustom]:
-        """Obtener categorías de clase personalizadas para un gimnasio específico"""
-        return db.query(ClassCategoryCustom).filter(
-            ClassCategoryCustom.gym_id == gym_id
-        ).all()
-    
-    def get_active_categories(self, db: Session, *, gym_id: int) -> List[ClassCategoryCustom]:
-        """Obtener categorías activas para un gimnasio específico"""
-        return db.query(ClassCategoryCustom).filter(
-            ClassCategoryCustom.gym_id == gym_id,
-            ClassCategoryCustom.is_active == True
-        ).all()
-    
-    def get_by_name_and_gym(self, db: Session, *, name: str, gym_id: int) -> Optional[ClassCategoryCustom]:
-        """Verificar si existe una categoría con el mismo nombre en el mismo gimnasio"""
-        return db.query(ClassCategoryCustom).filter(
-            ClassCategoryCustom.name == name,
-            ClassCategoryCustom.gym_id == gym_id
-        ).first()
-
-# Instanciar el repositorio
-class_category_repository = ClassCategoryCustomRepository(ClassCategoryCustom)
-
-# Crear un servicio para ClassCategoryCustom
-class ClassCategoryService:
-    def get_category(self, db: Session, category_id: int, gym_id: int) -> Any:
-        """Obtener una categoría por ID asegurando que pertenece al gimnasio correcto"""
-        category = class_category_repository.get(db, id=category_id)
-        if not category:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Categoría no encontrada"
-            )
-        
-        # Verificar que la categoría pertenece al gimnasio actual
-        if category.gym_id != gym_id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="No tienes acceso a esta categoría"
-            )
-            
-        return category
-    
-    def get_categories_by_gym(self, db: Session, gym_id: int, active_only: bool = True) -> List[Any]:
-        """Obtener categorías para un gimnasio específico"""
-        if active_only:
-            return class_category_repository.get_active_categories(db, gym_id=gym_id)
-        return class_category_repository.get_by_gym(db, gym_id=gym_id)
-    
-    def create_category(self, db: Session, category_data: ClassCategoryCustomCreate, gym_id: int, created_by_id: Optional[int] = None) -> Any:
-        """Crear una nueva categoría personalizada"""
-        # Verificar si ya existe una categoría con el mismo nombre en este gimnasio
-        existing_category = class_category_repository.get_by_name_and_gym(
-            db, name=category_data.name, gym_id=gym_id
-        )
-        if existing_category:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Ya existe una categoría con este nombre en este gimnasio"
-            )
-        
-        # Crear la instancia del modelo SQLAlchemy directamente, incluyendo gym_id y created_by
-        db_obj = ClassCategoryCustom(
-            **category_data.model_dump(), 
-            gym_id=gym_id, 
-            created_by=created_by_id
-        )
-        
-        # Añadir, confirmar y refrescar directamente en la sesión
-        db.add(db_obj)
-        try:
-            db.commit()
-            db.refresh(db_obj)
-        except Exception as e:
-            db.rollback()
-            # Aquí podrías querer loggear el error 'e' o relanzarlo de forma más específica
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Error al guardar la categoría en la base de datos"
-            )
-            
-        return db_obj
-    
-    def update_category(self, db: Session, category_id: int, category_data: ClassCategoryCustomUpdate, gym_id: int) -> Any:
-        """Actualizar una categoría existente"""
-        # Obtener la categoría y verificar que pertenece al gimnasio correcto
-        category = self.get_category(db, category_id=category_id, gym_id=gym_id)
-        
-        # Si se está actualizando el nombre, verificar que no exista otra categoría con ese nombre
-        if category_data.name and category_data.name != category.name:
-            existing_category = class_category_repository.get_by_name_and_gym(
-                db, name=category_data.name, gym_id=gym_id
-            )
-            if existing_category:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Ya existe otra categoría con este nombre en este gimnasio"
-                )
-        
-        return class_category_repository.update(db, db_obj=category, obj_in=category_data)
-    
-    def delete_category(self, db: Session, category_id: int, gym_id: int) -> None:
-        """Eliminar una categoría (o marcar como inactiva si está en uso)"""
-        # Obtener la categoría y verificar que pertenece al gimnasio correcto
-        category = self.get_category(db, category_id=category_id, gym_id=gym_id)
-        
-        # Verificar si hay clases usando esta categoría
-        classes_with_category = db.query(Class).filter(Class.category_id == category_id).count()
-        if classes_with_category > 0:
-            # Si hay clases usando esta categoría, solo marcarla como inactiva
-            class_category_repository.update(
-                db, db_obj=category, obj_in={"is_active": False}
-            )
-        else:
-            # Si no está en uso, eliminarla
-            class_category_repository.remove(db, id=category_id)
-        
-        # El servicio ya no necesita devolver nada
-        return None
-
-# Instanciar el servicio
-category_service = ClassCategoryService()
+from app.services.schedule import category_service
+from app.db.session import get_db
+from app.core.auth0_fastapi import Auth0User, auth
+from app.services.user import user_service
+from app.db.redis_client import get_redis_client
+from redis.asyncio import Redis
 
 router = APIRouter()
 
 @router.get("/categories", response_model=List[ClassCategoryCustomSchema])
 async def get_categories(
+    request: Request,
     active_only: bool = True,
     db: Session = Depends(get_db),
-    current_gym: Gym = Depends(verify_gym_access),
-    user: Auth0User = Security(auth.get_user, scopes=["read:schedules"])
+    current_gym: GymSchema = Depends(verify_gym_access),
+    user: Auth0User = Security(auth.get_user, scopes=["read:schedules"]),
+    redis_client: Redis = Depends(get_redis_client)
 ) -> Any:
     """
     Obtener todas las categorías de clases personalizadas del gimnasio actual.
@@ -156,15 +38,17 @@ async def get_categories(
     - Scope 'read:schedules' en Auth0
     - Pertenencia al gimnasio actual
     """
-    return category_service.get_categories_by_gym(db, gym_id=current_gym.id, active_only=active_only)
+    return await category_service.get_categories_by_gym(db, gym_id=current_gym.id, active_only=active_only, redis_client=redis_client)
 
 
 @router.get("/categories/{category_id}", response_model=ClassCategoryCustomSchema)
 async def get_category(
+    request: Request,
     category_id: int = Path(..., description="ID de la categoría"),
     db: Session = Depends(get_db),
-    current_gym: Gym = Depends(verify_gym_access),
-    user: Auth0User = Security(auth.get_user, scopes=["read:schedules"])
+    current_gym: GymSchema = Depends(verify_gym_access),
+    user: Auth0User = Security(auth.get_user, scopes=["read:schedules"]),
+    redis_client: Redis = Depends(get_redis_client)
 ) -> Any:
     """
     Obtener una categoría específica.
@@ -177,16 +61,17 @@ async def get_category(
     - Scope 'read:schedules' en Auth0
     - Pertenencia al gimnasio actual
     """
-    return category_service.get_category(db, category_id=category_id, gym_id=current_gym.id)
+    return await category_service.get_category(db, category_id=category_id, gym_id=current_gym.id, redis_client=redis_client)
 
 
 @router.post("/categories", response_model=ClassCategoryCustomSchema)
 async def create_category(
+    request: Request,
     category_data: ClassCategoryCustomCreate = Body(...),
     db: Session = Depends(get_db),
-    # Verificar que el usuario tiene rol de entrenador o administrador en este gimnasio
-    current_gym: Gym = Depends(verify_trainer_role),
-    user: Auth0User = Security(auth.get_user, scopes=["create:schedules"])
+    current_gym: GymSchema = Depends(verify_trainer_role),
+    user: Auth0User = Security(auth.get_user, scopes=["create:schedules"]),
+    redis_client: Redis = Depends(get_redis_client)
 ) -> Any:
     """
     Crear una nueva categoría de clase personalizada.
@@ -198,25 +83,25 @@ async def create_category(
     - Scope 'create:schedules' en Auth0
     - Rol de TRAINER, ADMIN o OWNER en el gimnasio actual
     """
-    # Obtener ID del usuario actual para registrarlo como creador
     auth0_id = user.id
-    db_user = user_service.get_user_by_auth0_id(db, auth0_id=auth0_id)
+    db_user = await user_service.get_user_by_auth0_id_cached(db, auth0_id=auth0_id, redis_client=redis_client)
     
     created_by_id = db_user.id if db_user else None
     
-    return category_service.create_category(
-        db, category_data=category_data, gym_id=current_gym.id, created_by_id=created_by_id
+    return await category_service.create_category(
+        db, category_data=category_data, gym_id=current_gym.id, created_by_id=created_by_id, redis_client=redis_client
     )
 
 
 @router.put("/categories/{category_id}", response_model=ClassCategoryCustomSchema)
 async def update_category(
+    request: Request,
     category_id: int = Path(..., description="ID de la categoría"),
     category_data: ClassCategoryCustomUpdate = Body(...),
     db: Session = Depends(get_db),
-    # Verificar que el usuario tiene rol de entrenador o administrador en este gimnasio
-    current_gym: Gym = Depends(verify_trainer_role),
-    user: Auth0User = Security(auth.get_user, scopes=["update:schedules"])
+    current_gym: GymSchema = Depends(verify_trainer_role),
+    user: Auth0User = Security(auth.get_user, scopes=["update:schedules"]),
+    redis_client: Redis = Depends(get_redis_client)
 ) -> Any:
     """
     Actualizar una categoría existente.
@@ -229,8 +114,8 @@ async def update_category(
     - Scope 'update:schedules' en Auth0
     - Rol de TRAINER, ADMIN o OWNER en el gimnasio actual
     """
-    return category_service.update_category(
-        db, category_id=category_id, category_data=category_data, gym_id=current_gym.id
+    return await category_service.update_category(
+        db, category_id=category_id, category_data=category_data, gym_id=current_gym.id, redis_client=redis_client
     )
 
 
@@ -239,11 +124,12 @@ async def update_category(
     status_code=status.HTTP_204_NO_CONTENT
 )
 async def delete_category(
+    request: Request,
     category_id: int = Path(..., description="ID de la categoría"),
     db: Session = Depends(get_db),
-    # Verificar que el usuario tiene rol de administrador en este gimnasio
-    current_gym: Gym = Depends(verify_admin_role),
-    user: Auth0User = Security(auth.get_user, scopes=["delete:schedules"])
+    current_gym: GymSchema = Depends(verify_admin_role),
+    user: Auth0User = Security(auth.get_user, scopes=["delete:schedules"]),
+    redis_client: Redis = Depends(get_redis_client)
 ) -> None:
     """
     Eliminar una categoría.
@@ -259,6 +145,5 @@ async def delete_category(
     - Scope 'delete:schedules' en Auth0
     - Rol de ADMIN o OWNER en el gimnasio actual
     """
-    category_service.delete_category(db, category_id=category_id, gym_id=current_gym.id)
-    # No es necesario devolver nada explícitamente, FastAPI lo manejará
+    await category_service.delete_category(db, category_id=category_id, gym_id=current_gym.id, redis_client=redis_client)
     return None 

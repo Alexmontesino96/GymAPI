@@ -9,14 +9,16 @@ from app.repositories.schedule import (
     gym_special_hours_repository,
     class_repository,
     class_session_repository,
-    class_participation_repository
+    class_participation_repository,
+    class_category_repository
 )
 from app.models.schedule import (
     ClassSessionStatus,
     ClassParticipationStatus,
     DayOfWeek,
     Class,
-    GymSpecialHours
+    GymSpecialHours,
+    ClassCategoryCustom
 )
 from app.schemas.schedule import (
     GymHoursCreate, 
@@ -28,8 +30,17 @@ from app.schemas.schedule import (
     ClassSessionCreate, 
     ClassSessionUpdate,
     ClassParticipationCreate, 
-    ClassParticipationUpdate
+    ClassParticipationUpdate,
+    ClassCategoryCustomCreate,
+    ClassCategoryCustomUpdate
 )
+
+# --- Añadir importaciones para Caché --- 
+import logging
+from redis.asyncio import Redis
+from app.services.cache_service import cache_service
+from app.schemas.schedule import ClassCategoryCustom as ClassCategoryCustomSchema
+# --- Fin importaciones Caché --- 
 
 
 class GymHoursService:
@@ -458,6 +469,173 @@ class GymSpecialHoursService:
         
         return gym_special_hours_repository.remove(db, id=special_day_id)
 
+
+# --- Añadir Servicio para Categorías Personalizadas --- 
+class ClassCategoryService:
+    # --- Añadir método helper para invalidación --- 
+    async def _invalidate_custom_category_caches(self, redis_client: Redis, gym_id: int, category_id: Optional[int] = None):
+        if not redis_client:
+            return
+        logger = logging.getLogger(__name__) 
+        try:
+            if category_id:
+                detail_key = f"category:custom:detail:{category_id}"
+                await redis_client.delete(detail_key)
+                logger.debug(f"Invalidated cache key: {detail_key}")
+            list_pattern = f"categories:custom:gym:{gym_id}:*"
+            deleted_count = await cache_service.delete_pattern(redis_client, list_pattern)
+            logger.debug(f"Invalidated {deleted_count} keys with pattern: {list_pattern}")
+        except Exception as e:
+            logger.error(f"Error invalidating category cache: {e}", exc_info=True)
+    # --- Fin método helper --- 
+    
+    async def get_category(self, db: Session, category_id: int, gym_id: int, redis_client: Optional[Redis] = None) -> Any:
+        """Obtener una categoría por ID (con caché) asegurando que pertenece al gimnasio"""
+        
+        cache_key = f"category:custom:detail:{category_id}"
+        
+        async def db_fetch():
+            # Verificar que la categoría existe en la BD
+            category_db = class_category_repository.get(db, id=category_id)
+            if not category_db:
+                 raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Categoría no encontrada"
+                )
+            return category_db
+        
+        # Intentar obtener de caché
+        category = await cache_service.get_or_set(
+            redis_client=redis_client,
+            cache_key=cache_key,
+            db_fetch_func=db_fetch,
+            model_class=ClassCategoryCustomSchema,
+            expiry_seconds=3600, # 1 hora
+            is_list=False
+        )
+
+        # Verificar pertenencia al gimnasio después de obtenerla (de caché o BD)
+        if not category:
+             # Si get_or_set devuelve None (por ej. error en db_fetch), lanzar 404
+              raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Categoría no encontrada"
+                )
+        
+        if category.gym_id != gym_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="No tienes acceso a esta categoría"
+            )
+            
+        return category
+    
+    async def get_categories_by_gym(self, db: Session, gym_id: int, active_only: bool = True, redis_client: Optional[Redis] = None) -> List[Any]:
+        """Obtener categorías para un gimnasio específico (con caché)"""
+        
+        cache_key = f"categories:custom:gym:{gym_id}:active:{active_only}"
+        
+        async def db_fetch():
+            if active_only:
+                return class_category_repository.get_active_categories(db, gym_id=gym_id)
+            return class_category_repository.get_by_gym(db, gym_id=gym_id)
+
+        categories = await cache_service.get_or_set(
+            redis_client=redis_client,
+            cache_key=cache_key,
+            db_fetch_func=db_fetch,
+            model_class=ClassCategoryCustomSchema,
+            expiry_seconds=3600, # 1 hora
+            is_list=True
+        )
+        return categories
+    
+    async def create_category(self, db: Session, category_data: ClassCategoryCustomCreate, gym_id: int, created_by_id: Optional[int] = None, redis_client: Optional[Redis] = None) -> Any:
+        """Crear una nueva categoría personalizada e invalidar caché"""
+        existing_category = class_category_repository.get_by_name_and_gym(
+            db, name=category_data.name, gym_id=gym_id
+        )
+        if existing_category:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Ya existe una categoría con este nombre en este gimnasio"
+            )
+        
+        db_obj = ClassCategoryCustom(
+            **category_data.model_dump(), 
+            gym_id=gym_id, 
+            created_by=created_by_id
+        )
+        
+        db.add(db_obj)
+        try:
+            db.commit()
+            db.refresh(db_obj)
+            # Invalidar caché después del commit exitoso
+            await self._invalidate_custom_category_caches(redis_client, gym_id=gym_id)
+        except Exception as e:
+            db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Error al guardar la categoría en la base de datos"
+            )
+            
+        return db_obj
+    
+    async def update_category(self, db: Session, category_id: int, category_data: ClassCategoryCustomUpdate, gym_id: int, redis_client: Optional[Redis] = None) -> Any:
+        """Actualizar una categoría existente e invalidar caché"""
+        # Usar get_category sin caché para obtener el objeto a actualizar
+        # No podemos usar la versión cacheada porque necesitamos el objeto de SQLAlchemy
+        category = class_category_repository.get(db, id=category_id)
+        if not category or category.gym_id != gym_id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Categoría no encontrada en este gimnasio"
+            )
+        
+        if category_data.name and category_data.name != category.name:
+            existing_category = class_category_repository.get_by_name_and_gym(
+                db, name=category_data.name, gym_id=gym_id
+            )
+            if existing_category:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Ya existe otra categoría con este nombre en este gimnasio"
+                )
+        
+        updated_category = class_category_repository.update(db, db_obj=category, obj_in=category_data)
+        # Invalidar caché después de la actualización
+        await self._invalidate_custom_category_caches(redis_client, gym_id=gym_id, category_id=category_id)
+        return updated_category
+    
+    async def delete_category(self, db: Session, category_id: int, gym_id: int, redis_client: Optional[Redis] = None) -> None:
+        """Eliminar/inactivar una categoría e invalidar caché"""
+        # Usar get_category sin caché para la verificación inicial
+        category = class_category_repository.get(db, id=category_id)
+        if not category or category.gym_id != gym_id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Categoría no encontrada en este gimnasio"
+            )
+        
+        classes_with_category = db.query(Class.id).filter(Class.category_id == category_id).count() # Optimizado para contar
+        
+        try:
+            if classes_with_category > 0:
+                class_category_repository.update(
+                    db, db_obj=category, obj_in={"is_active": False}
+                )
+            else:
+                class_category_repository.remove(db, id=category_id)
+            # Invalidar caché después de eliminar/inactivar
+            await self._invalidate_custom_category_caches(redis_client, gym_id=gym_id, category_id=category_id)
+        except Exception as e:
+            db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error al eliminar/inactivar categoría: {e}"
+            )
+# --- Fin Servicio --- 
 
 class ClassService:
     def get_class(self, db: Session, class_id: int) -> Any:
@@ -893,9 +1071,7 @@ class ClassSessionService:
 
 
 class ClassParticipationService:
-    def register_for_class(
-        self, db: Session, member_id: int, session_id: int
-    ) -> Any:
+    async def register_for_class(self, db: Session, member_id: int, session_id: int, redis_client: Optional[Redis] = None) -> Any:
         """Registrar a un miembro en una sesión de clase"""
         # Verificar si la sesión existe y está programada
         session_data = class_session_repository.get_with_availability(db, session_id=session_id)
@@ -949,6 +1125,9 @@ class ClassParticipationService:
                 # Actualizar contador de participantes
                 class_session_repository.update_participant_count(db, session_id=session_id)
                 
+                # Invalidar cachés de sesión al final
+                if redis_client and updated:
+                    await self._invalidate_session_caches_from_participation(redis_client, session_id)
                 return updated
             else:
                 raise HTTPException(
@@ -971,11 +1150,12 @@ class ClassParticipationService:
         # Actualizar contador de participantes
         class_session_repository.update_participant_count(db, session_id=session_id)
         
+        # Invalidar cachés de sesión al final
+        if redis_client and participation:
+            await self._invalidate_session_caches_from_participation(redis_client, session_id)
         return participation
     
-    def cancel_registration(
-        self, db: Session, member_id: int, session_id: int, reason: Optional[str] = None
-    ) -> Any:
+    async def cancel_registration(self, db: Session, member_id: int, session_id: int, reason: Optional[str] = None, redis_client: Optional[Redis] = None) -> Any:
         """Cancelar el registro de un miembro en una sesión"""
         # Verificar si la participación existe
         participation = class_participation_repository.get_by_session_and_member(
@@ -1004,9 +1184,17 @@ class ClassParticipationService:
             )
         
         # Cancelar la participación
-        return class_participation_repository.cancel_participation(
+        cancelled_participation = class_participation_repository.cancel_participation(
             db, session_id=session_id, member_id=member_id, reason=reason
         )
+        
+        # Actualizar contador de participantes
+        class_session_repository.update_participant_count(db, session_id=session_id)
+        
+        # Invalidar cachés de sesión al final
+        if redis_client and cancelled_participation:
+            await self._invalidate_session_caches_from_participation(redis_client, session_id)
+        return cancelled_participation
     
     def mark_attendance(self, db: Session, member_id: int, session_id: int) -> Any:
         """Marcar la asistencia de un miembro a una sesión"""
@@ -1099,10 +1287,26 @@ class ClassParticipationService:
             db, member_id=member_id, skip=skip, limit=limit, gym_id=gym_id
         )
 
+    # Añadir método helper para invalidar caché de sesión desde participación
+    async def _invalidate_session_caches_from_participation(self, redis_client: Redis, session_id: int):
+        # Podríamos hacer esto más eficiente si tuviéramos gym_id y trainer_id aquí,
+        # pero por ahora invalidaremos solo el detalle de la sesión que es lo más importante
+        # para el contador de participantes.
+        if not redis_client:
+            return
+        logger = logging.getLogger(__name__)
+        detail_key = f"schedule:session:detail:{session_id}"
+        try:
+            await redis_client.delete(detail_key)
+            logger.debug(f"Invalidated session detail cache from participation change: {detail_key}")
+        except Exception as e:
+             logger.error(f"Error invalidating session cache {detail_key}: {e}", exc_info=True)
+
 
 # Instantiate services
 gym_hours_service = GymHoursService()
 gym_special_hours_service = GymSpecialHoursService()
+category_service = ClassCategoryService()
 class_service = ClassService()
 class_session_service = ClassSessionService()
 class_participation_service = ClassParticipationService() 

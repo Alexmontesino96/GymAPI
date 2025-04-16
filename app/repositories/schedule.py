@@ -12,7 +12,8 @@ from app.models.schedule import (
     ClassSession, 
     ClassParticipation,
     ClassSessionStatus,
-    ClassParticipationStatus
+    ClassParticipationStatus,
+    ClassCategoryCustom
 )
 from app.schemas.schedule import (
     GymHoursCreate, 
@@ -24,7 +25,9 @@ from app.schemas.schedule import (
     ClassSessionCreate, 
     ClassSessionUpdate,
     ClassParticipationCreate, 
-    ClassParticipationUpdate
+    ClassParticipationUpdate,
+    ClassCategoryCustomCreate,
+    ClassCategoryCustomUpdate
 )
 
 
@@ -281,6 +284,28 @@ class GymSpecialHoursRepository(BaseRepository[GymSpecialHours, GymSpecialHoursC
         all_results.sort(key=lambda x: x.date)
         
         return all_results
+
+
+class ClassCategoryCustomRepository(BaseRepository[ClassCategoryCustom, ClassCategoryCustomCreate, ClassCategoryCustomUpdate]):
+    def get_by_gym(self, db: Session, *, gym_id: int) -> List[ClassCategoryCustom]:
+        """Obtener categorías de clase personalizadas para un gimnasio específico"""
+        return db.query(ClassCategoryCustom).filter(
+            ClassCategoryCustom.gym_id == gym_id
+        ).order_by(ClassCategoryCustom.name).all()
+    
+    def get_active_categories(self, db: Session, *, gym_id: int) -> List[ClassCategoryCustom]:
+        """Obtener categorías activas para un gimnasio específico"""
+        return db.query(ClassCategoryCustom).filter(
+            ClassCategoryCustom.gym_id == gym_id,
+            ClassCategoryCustom.is_active == True
+        ).order_by(ClassCategoryCustom.name).all()
+    
+    def get_by_name_and_gym(self, db: Session, *, name: str, gym_id: int) -> Optional[ClassCategoryCustom]:
+        """Verificar si existe una categoría con el mismo nombre en el mismo gimnasio"""
+        return db.query(ClassCategoryCustom).filter(
+            func.lower(ClassCategoryCustom.name) == func.lower(name), # Comparación case-insensitive
+            ClassCategoryCustom.gym_id == gym_id
+        ).first()
 
 
 class ClassRepository(BaseRepository[Class, ClassCreate, ClassUpdate]):
@@ -616,6 +641,7 @@ class ClassParticipationRepository(BaseRepository[ClassParticipation, ClassParti
 # Instantiate repositories
 gym_hours_repository = GymHoursRepository(GymHours)
 gym_special_hours_repository = GymSpecialHoursRepository(GymSpecialHours)
+class_category_repository = ClassCategoryCustomRepository(ClassCategoryCustom)
 class_repository = ClassRepository(Class)
 class_session_repository = ClassSessionRepository(ClassSession)
 class_participation_repository = ClassParticipationRepository(ClassParticipation) 
