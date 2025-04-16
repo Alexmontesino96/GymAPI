@@ -11,17 +11,19 @@ async def get_upcoming_sessions(
     limit: int = 100,
     db: Session = Depends(get_db),
     current_gym: Gym = Depends(verify_gym_access),
-    user: Auth0User = Security(auth.get_user, scopes=["read:schedules"])
+    user: Auth0User = Security(auth.get_user, scopes=["read:schedules"]),
+    redis_client: Redis = Depends(get_redis_client)
 ) -> Any:
     """
     Obtener las próximas sesiones de clase programadas.
     Requiere el scope 'read:schedules'.
     """
-    return class_session_service.get_upcoming_sessions(
+    return await class_session_service.get_upcoming_sessions(
         db, 
         skip=skip, 
         limit=limit, 
-        gym_id=current_gym.id
+        gym_id=current_gym.id,
+        redis_client=redis_client
     )
 
 

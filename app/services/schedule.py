@@ -875,13 +875,135 @@ class GymHoursService:
 
 
 class GymSpecialHoursService:
+    # --- Añadir método helper para invalidación de caché ---
+    async def _invalidate_special_hours_cache(self, redis_client: Redis, gym_id: int, special_day_id: Optional[int] = None, date_value: Optional[date] = None):
+        """
+        Invalida la caché de días especiales.
+        
+        Args:
+            redis_client: Cliente Redis
+            gym_id: ID del gimnasio
+            special_day_id: ID del día especial a invalidar (opcional)
+            date_value: Fecha específica a invalidar (opcional)
+        """
+        if not redis_client:
+            return
+            
+        tracking_set_key = f"cache_keys:special_days:{gym_id}"
+        keys_to_delete = []
+        
+        try:
+            # Invalidar clave específica de ID si se proporciona
+            if special_day_id is not None:
+                keys_to_delete.append(f"special_day:detail:{special_day_id}")
+                
+            # Invalidar clave específica de fecha si se proporciona
+            if date_value is not None:
+                date_str = date_value.isoformat()
+                keys_to_delete.append(f"special_day:date:{date_str}:gym:{gym_id}")
+            
+            # Claves adicionales a invalidar siempre
+            keys_to_delete.append(f"special_days:upcoming:gym:{gym_id}")
+            
+            # Obtener las claves de lista desde el Set de seguimiento
+            list_cache_keys = await redis_client.smembers(tracking_set_key)
+            if list_cache_keys:
+                # Convertir bytes a strings si es necesario
+                list_cache_keys_str = [key.decode('utf-8') if isinstance(key, bytes) else key for key in list_cache_keys]
+                keys_to_delete.extend(list_cache_keys_str)
+                # Añadir el propio Set a la lista para borrarlo también
+                keys_to_delete.append(tracking_set_key)
+            
+            # Borrar todas las claves encontradas
+            if keys_to_delete:
+                deleted_count = await redis_client.delete(*keys_to_delete)
+                logger.debug(f"Invalidated {deleted_count} special days cache keys for gym {gym_id}: {keys_to_delete}")
+                
+        except Exception as e:
+            logger.error(f"Error invalidating special days cache for gym {gym_id}: {e}", exc_info=True)
+    # --- Fin método helper ---
+
+    async def get_special_hours_cached(self, db: Session, special_day_id: int, redis_client: Optional[Redis] = None) -> Any:
+        """
+        Obtener un día especial por ID (con caché).
+        
+        Args:
+            db: Sesión de base de datos
+            special_day_id: ID del día especial
+            redis_client: Cliente Redis opcional
+        """
+        if not redis_client:
+            return self.get_special_hours(db, special_day_id)
+            
+        cache_key = f"special_day:detail:{special_day_id}"
+        
+        async def db_fetch():
+            return gym_special_hours_repository.get(db, id=special_day_id)
+        
+        special_day = await cache_service.get_or_set(
+            redis_client=redis_client,
+            cache_key=cache_key,
+            db_fetch_func=db_fetch,
+            model_class=GymSpecialHours,
+            expiry_seconds=3600 * 12, # 12 horas
+            is_list=False
+        )
+        
+        return special_day
+    
     def get_special_hours(self, db: Session, special_day_id: int) -> Any:
-        """Obtener un día especial por ID"""
+        """Obtener un día especial por ID (versión no-caché)"""
         return gym_special_hours_repository.get(db, id=special_day_id)
+    
+    async def get_special_hours_by_date_cached(self, db: Session, date_value: date, gym_id: int, redis_client: Optional[Redis] = None) -> Any:
+        """
+        Obtener horarios especiales para una fecha específica (con caché).
+        
+        Args:
+            db: Sesión de base de datos
+            date_value: Fecha a consultar
+            gym_id: ID del gimnasio
+            redis_client: Cliente Redis opcional
+        """
+        if not redis_client:
+            return self.get_special_hours_by_date(db, date_value, gym_id)
+            
+        date_str = date_value.isoformat()
+        cache_key = f"special_day:date:{date_str}:gym:{gym_id}"
+        tracking_set_key = f"cache_keys:special_days:{gym_id}"
+        
+        # Indica si el resultado vino de la BD
+        fetched_from_db = False
+        
+        async def db_fetch():
+            nonlocal fetched_from_db
+            result = gym_special_hours_repository.get_by_date(db, date_value=date_value, gym_id=gym_id)
+            fetched_from_db = True
+            return result
+        
+        special_day = await cache_service.get_or_set(
+            redis_client=redis_client,
+            cache_key=cache_key,
+            db_fetch_func=db_fetch,
+            model_class=GymSpecialHours,
+            expiry_seconds=3600 * 12, # 12 horas
+            is_list=False
+        )
+        
+        # Si se obtuvo de la BD, añadir la clave al set de seguimiento
+        if fetched_from_db and redis_client and special_day is not None:
+            try:
+                await redis_client.sadd(tracking_set_key, cache_key)
+                await redis_client.expire(tracking_set_key, 3600 * 24 * 7) # 7 días
+                logger.debug(f"Added cache key {cache_key} to tracking set {tracking_set_key}")
+            except Exception as e:
+                logger.error(f"Error adding cache key {cache_key} to set {tracking_set_key}: {e}", exc_info=True)
+        
+        return special_day
     
     def get_special_hours_by_date(self, db: Session, date_value: date, gym_id: int) -> Any:
         """
-        Obtener horarios especiales para una fecha específica.
+        Obtener horarios especiales para una fecha específica (versión no-caché).
         
         Args:
             db: Sesión de base de datos
@@ -890,9 +1012,54 @@ class GymSpecialHoursService:
         """
         return gym_special_hours_repository.get_by_date(db, date_value=date_value, gym_id=gym_id)
     
+    async def get_upcoming_special_days_cached(self, db: Session, limit: int = 10, gym_id: int = None, redis_client: Optional[Redis] = None) -> List[Any]:
+        """
+        Obtener los próximos días especiales (con caché).
+        
+        Args:
+            db: Sesión de base de datos
+            limit: Número máximo de registros a devolver
+            gym_id: ID del gimnasio para filtrar
+            redis_client: Cliente Redis opcional
+        """
+        if not redis_client or not gym_id:
+            return self.get_upcoming_special_days(db, limit, gym_id)
+            
+        cache_key = f"special_days:upcoming:gym:{gym_id}:limit:{limit}"
+        tracking_set_key = f"cache_keys:special_days:{gym_id}"
+        
+        # Indica si el resultado vino de la BD
+        fetched_from_db = False
+        
+        async def db_fetch():
+            nonlocal fetched_from_db
+            result = gym_special_hours_repository.get_upcoming_special_days(db, limit=limit, gym_id=gym_id)
+            fetched_from_db = True
+            return result
+        
+        special_days = await cache_service.get_or_set(
+            redis_client=redis_client,
+            cache_key=cache_key,
+            db_fetch_func=db_fetch,
+            model_class=GymSpecialHours,
+            expiry_seconds=3600 * 6, # 6 horas
+            is_list=True
+        )
+        
+        # Si se obtuvo de la BD, añadir la clave al set de seguimiento
+        if fetched_from_db and redis_client and special_days is not None:
+            try:
+                await redis_client.sadd(tracking_set_key, cache_key)
+                await redis_client.expire(tracking_set_key, 3600 * 24 * 7) # 7 días
+                logger.debug(f"Added cache key {cache_key} to tracking set {tracking_set_key}")
+            except Exception as e:
+                logger.error(f"Error adding cache key {cache_key} to set {tracking_set_key}: {e}", exc_info=True)
+        
+        return special_days
+    
     def get_upcoming_special_days(self, db: Session, limit: int = 10, gym_id: int = None) -> List[Any]:
         """
-        Obtener los próximos días especiales.
+        Obtener los próximos días especiales (versión no-caché).
         
         Args:
             db: Sesión de base de datos
@@ -901,9 +1068,32 @@ class GymSpecialHoursService:
         """
         return gym_special_hours_repository.get_upcoming_special_days(db, limit=limit, gym_id=gym_id)
     
+    async def create_special_day_cached(self, db: Session, special_hours_data: GymSpecialHoursCreate, gym_id: int = None, redis_client: Optional[Redis] = None) -> Any:
+        """
+        Crear un nuevo día especial e invalidar caché.
+        
+        Args:
+            db: Sesión de base de datos
+            special_hours_data: Datos del día especial a crear
+            gym_id: ID del gimnasio al que pertenece el día especial
+            redis_client: Cliente Redis opcional
+        """
+        # Crear el día especial
+        result = self.create_special_day(db, special_hours_data, gym_id)
+        
+        # Invalidar cachés afectadas
+        if result and redis_client:
+            await self._invalidate_special_hours_cache(
+                redis_client, 
+                gym_id, 
+                date_value=result.date
+            )
+            
+        return result
+    
     def create_special_day(self, db: Session, special_hours_data: GymSpecialHoursCreate, gym_id: int = None) -> Any:
         """
-        Crear un nuevo día especial
+        Crear un nuevo día especial (versión no-caché)
         
         Args:
             db: Sesión de base de datos
@@ -923,10 +1113,51 @@ class GymSpecialHoursService:
         # Crear el objeto usando el repositorio
         return gym_special_hours_repository.create(db, obj_in=obj_in_data)
     
+    async def update_special_day_cached(
+        self, db: Session, special_day_id: int, special_hours_data: GymSpecialHoursUpdate, redis_client: Optional[Redis] = None
+    ) -> Any:
+        """
+        Actualizar un día especial existente e invalidar caché.
+        
+        Args:
+            db: Sesión de base de datos
+            special_day_id: ID del día especial a actualizar
+            special_hours_data: Datos a actualizar
+            redis_client: Cliente Redis opcional
+        """
+        # Obtener el día especial para conocer su gym_id y fecha
+        special_day = await self.get_special_hours_cached(db, special_day_id, redis_client)
+        if not special_day:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Día especial no encontrado"
+            )
+            
+        # Actualizar el día especial
+        result = self.update_special_day(db, special_day_id, special_hours_data)
+        
+        # Invalidar cachés afectadas
+        if result and redis_client:
+            await self._invalidate_special_hours_cache(
+                redis_client, 
+                special_day.gym_id, 
+                special_day_id=special_day_id,
+                date_value=special_day.date
+            )
+            
+        return result
+    
     def update_special_day(
         self, db: Session, special_day_id: int, special_hours_data: GymSpecialHoursUpdate
     ) -> Any:
-        """Actualizar un día especial existente"""
+        """
+        Actualizar un día especial existente (versión no-caché)
+        
+        Args:
+            db: Sesión de base de datos
+            special_day_id: ID del día especial a actualizar
+            special_hours_data: Datos a actualizar
+        """
         special_day = gym_special_hours_repository.get(db, id=special_day_id)
         if not special_day:
             raise HTTPException(
@@ -938,8 +1169,45 @@ class GymSpecialHoursService:
             db, db_obj=special_day, obj_in=special_hours_data
         )
     
+    async def delete_special_day_cached(self, db: Session, special_day_id: int, redis_client: Optional[Redis] = None) -> Any:
+        """
+        Eliminar un día especial e invalidar caché.
+        
+        Args:
+            db: Sesión de base de datos
+            special_day_id: ID del día especial a eliminar
+            redis_client: Cliente Redis opcional
+        """
+        # Obtener el día especial para conocer su gym_id y fecha
+        special_day = await self.get_special_hours_cached(db, special_day_id, redis_client)
+        if not special_day:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Día especial no encontrado"
+            )
+            
+        # Eliminar el día especial
+        result = self.delete_special_day(db, special_day_id)
+        
+        # Invalidar cachés afectadas
+        if result and redis_client:
+            await self._invalidate_special_hours_cache(
+                redis_client, 
+                special_day.gym_id, 
+                special_day_id=special_day_id,
+                date_value=special_day.date
+            )
+            
+        return result
+    
     def delete_special_day(self, db: Session, special_day_id: int) -> Any:
-        """Eliminar un día especial"""
+        """
+        Eliminar un día especial (versión no-caché)
+        
+        Args:
+            db: Sesión de base de datos
+            special_day_id: ID del día especial a eliminar
+        """
         special_day = gym_special_hours_repository.get(db, id=special_day_id)
         if not special_day:
             raise HTTPException(

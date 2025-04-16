@@ -15,19 +15,22 @@ from app.schemas.schedule import (
 from app.services import schedule
 from app.models.user import User, UserRole
 from app.models.user_gym import UserGym, GymRoleType
+from app.db.redis_client import get_redis_client
+from redis.asyncio import Redis
 
 router = APIRouter()
 
 
 @router.get("/", response_model=List[GymSpecialHours])
-def get_special_days(
+async def get_special_days(
     *,
     db: Session = Depends(get_db),
     skip: int = 0,
     limit: int = 100,
     upcoming_only: bool = Query(True, description="Si es True, solo devuelve días especiales futuros"),
     current_user: Auth0User = Depends(get_current_user),
-    current_gym: Gym = Depends(verify_gym_access)
+    current_gym: Gym = Depends(verify_gym_access),
+    redis_client: Redis = Depends(get_redis_client)
 ) -> Any:
     """
     Obtiene la lista de días especiales.
@@ -36,8 +39,8 @@ def get_special_days(
     gym_id = current_gym.id
     
     if upcoming_only:
-        return schedule.gym_special_hours_service.get_upcoming_special_days(
-            db=db, limit=limit, gym_id=gym_id
+        return await schedule.gym_special_hours_service.get_upcoming_special_days_cached(
+            db=db, limit=limit, gym_id=gym_id, redis_client=redis_client
         )
     else:
         # TODO: Implementar endpoint para obtener todos los días especiales con paginación
@@ -48,18 +51,19 @@ def get_special_days(
 
 
 @router.get("/{special_day_id}", response_model=GymSpecialHours)
-def get_special_day(
+async def get_special_day(
     *,
     db: Session = Depends(get_db),
     special_day_id: int = Path(..., description="ID del día especial"),
     current_user: Auth0User = Depends(get_current_user),
-    current_gym: Gym = Depends(verify_gym_access)
+    current_gym: Gym = Depends(verify_gym_access),
+    redis_client: Redis = Depends(get_redis_client)
 ) -> Any:
     """
     Obtiene un día especial por ID.
     """
-    special_day = schedule.gym_special_hours_service.get_special_hours(
-        db=db, special_day_id=special_day_id
+    special_day = await schedule.gym_special_hours_service.get_special_hours_cached(
+        db=db, special_day_id=special_day_id, redis_client=redis_client
     )
     if not special_day:
         raise HTTPException(
@@ -79,12 +83,13 @@ def get_special_day(
 
 
 @router.get("/date/{date}", response_model=GymSpecialHours)
-def get_special_day_by_date(
+async def get_special_day_by_date(
     *,
     db: Session = Depends(get_db),
     date: date = Path(..., description="Fecha (YYYY-MM-DD)"),
     current_user: Auth0User = Depends(get_current_user),
-    current_gym: Gym = Depends(verify_gym_access)
+    current_gym: Gym = Depends(verify_gym_access),
+    redis_client: Redis = Depends(get_redis_client)
 ) -> Any:
     """
     Obtiene el horario especial para una fecha específica.
@@ -92,8 +97,8 @@ def get_special_day_by_date(
     # Obtener el ID del gimnasio
     gym_id = current_gym.id
     
-    special_day = schedule.gym_special_hours_service.get_special_hours_by_date(
-        db=db, date_value=date, gym_id=gym_id
+    special_day = await schedule.gym_special_hours_service.get_special_hours_by_date_cached(
+        db=db, date_value=date, gym_id=gym_id, redis_client=redis_client
     )
     
     if not special_day:
@@ -106,13 +111,14 @@ def get_special_day_by_date(
 
 
 @router.post("/", response_model=GymSpecialHours, status_code=status.HTTP_201_CREATED)
-def create_special_day(
+async def create_special_day(
     *,
     db: Session = Depends(get_db),
     special_day_in: GymSpecialHoursCreate,
     overwrite: bool = Query(False, description="Si es True, sobrescribe el horario especial existente para esta fecha"),
     current_user: Auth0User = Depends(get_current_user),
-    current_gym: Gym = Depends(verify_gym_access)
+    current_gym: Gym = Depends(verify_gym_access),
+    redis_client: Redis = Depends(get_redis_client)
 ) -> Any:
     """
     Crea un nuevo horario especial.
@@ -141,8 +147,8 @@ def create_special_day(
     gym_id = current_gym.id
     
     # Verificar si ya existe un horario especial para esta fecha
-    existing = schedule.gym_special_hours_service.get_special_hours_by_date(
-        db=db, date_value=special_day_in.date, gym_id=gym_id
+    existing = await schedule.gym_special_hours_service.get_special_hours_by_date_cached(
+        db=db, date_value=special_day_in.date, gym_id=gym_id, redis_client=redis_client
     )
     
     # Crear una copia de los datos de entrada y añadir el gym_id del header
@@ -178,8 +184,8 @@ def create_special_day(
                 is_closed=obj_in_data.get("is_closed"),
                 description=obj_in_data.get("description")
             )
-            return schedule.gym_special_hours_service.update_special_day(
-                db=db, special_day_id=existing.id, special_hours_data=update_data
+            return await schedule.gym_special_hours_service.update_special_day_cached(
+                db=db, special_day_id=existing.id, special_hours_data=update_data, redis_client=redis_client
             )
         # Si ya existe pero no se permite sobrescribir, devolver error
         elif existing:
@@ -198,10 +204,11 @@ def create_special_day(
                 description=obj_in_data.get("description")
             )
             # Se agrega el gym_id directamente al crear el objeto en el servicio
-            return schedule.gym_special_hours_service.create_special_day(
+            return await schedule.gym_special_hours_service.create_special_day_cached(
                 db=db, 
                 special_hours_data=special_hours_data,
-                gym_id=gym_id
+                gym_id=gym_id,
+                redis_client=redis_client
             )
     except ValueError as e:
         raise HTTPException(
@@ -211,13 +218,14 @@ def create_special_day(
 
 
 @router.put("/{special_day_id}", response_model=GymSpecialHours)
-def update_special_day(
+async def update_special_day(
     *,
     db: Session = Depends(get_db),
     special_day_id: int = Path(..., description="ID del día especial"),
     special_day_in: GymSpecialHoursUpdate,
     current_user: Auth0User = Depends(get_current_user),
-    current_gym: Gym = Depends(verify_gym_access)
+    current_gym: Gym = Depends(verify_gym_access),
+    redis_client: Redis = Depends(get_redis_client)
 ) -> Any:
     """
     Actualiza un horario especial existente.
@@ -241,8 +249,8 @@ def update_special_day(
             )
     
     # Verificar que el día especial existe y pertenece al gimnasio del usuario
-    special_day = schedule.gym_special_hours_service.get_special_hours(
-        db=db, special_day_id=special_day_id
+    special_day = await schedule.gym_special_hours_service.get_special_hours_cached(
+        db=db, special_day_id=special_day_id, redis_client=redis_client
     )
     if not special_day:
         raise HTTPException(
@@ -258,19 +266,20 @@ def update_special_day(
             detail="No tiene acceso a este día especial"
         )
     
-    return schedule.gym_special_hours_service.update_special_day(
-        db=db, special_day_id=special_day_id, special_hours_data=special_day_in
+    return await schedule.gym_special_hours_service.update_special_day_cached(
+        db=db, special_day_id=special_day_id, special_hours_data=special_day_in, redis_client=redis_client
     )
 
 
 @router.put("/date/{date}", response_model=GymSpecialHours)
-def update_special_day_by_date(
+async def update_special_day_by_date(
     *,
     db: Session = Depends(get_db),
     date: date = Path(..., description="Fecha (YYYY-MM-DD)"),
     special_day_in: GymSpecialHoursUpdate,
     current_user: Auth0User = Depends(get_current_user),
-    current_gym: Gym = Depends(verify_gym_access)
+    current_gym: Gym = Depends(verify_gym_access),
+    redis_client: Redis = Depends(get_redis_client)
 ) -> Any:
     """
     Actualiza un horario especial existente buscándolo por fecha.
@@ -298,8 +307,8 @@ def update_special_day_by_date(
     gym_id = current_gym.id
     
     # Buscar el día especial por fecha
-    special_day = schedule.gym_special_hours_service.get_special_hours_by_date(
-        db=db, date_value=date, gym_id=gym_id
+    special_day = await schedule.gym_special_hours_service.get_special_hours_by_date_cached(
+        db=db, date_value=date, gym_id=gym_id, redis_client=redis_client
     )
     
     if not special_day:
@@ -309,18 +318,19 @@ def update_special_day_by_date(
         )
     
     # Actualizar el día especial
-    return schedule.gym_special_hours_service.update_special_day(
-        db=db, special_day_id=special_day.id, special_hours_data=special_day_in
+    return await schedule.gym_special_hours_service.update_special_day_cached(
+        db=db, special_day_id=special_day.id, special_hours_data=special_day_in, redis_client=redis_client
     )
 
 
 @router.delete("/{special_day_id}", response_model=GymSpecialHours)
-def delete_special_day(
+async def delete_special_day(
     *,
     db: Session = Depends(get_db),
     special_day_id: int = Path(..., description="ID del día especial"),
     current_user: Auth0User = Depends(get_current_user),
-    current_gym: Gym = Depends(verify_gym_access)
+    current_gym: Gym = Depends(verify_gym_access),
+    redis_client: Redis = Depends(get_redis_client)
 ) -> Any:
     """
     Elimina un horario especial.
@@ -342,8 +352,8 @@ def delete_special_day(
             )
     
     # Verificar que el día especial existe y pertenece al gimnasio del usuario
-    special_day = schedule.gym_special_hours_service.get_special_hours(
-        db=db, special_day_id=special_day_id
+    special_day = await schedule.gym_special_hours_service.get_special_hours_cached(
+        db=db, special_day_id=special_day_id, redis_client=redis_client
     )
     if not special_day:
         raise HTTPException(
@@ -359,6 +369,6 @@ def delete_special_day(
             detail="No tiene acceso a este día especial"
         )
     
-    return schedule.gym_special_hours_service.delete_special_day(
-        db=db, special_day_id=special_day_id
+    return await schedule.gym_special_hours_service.delete_special_day_cached(
+        db=db, special_day_id=special_day_id, redis_client=redis_client
     ) 

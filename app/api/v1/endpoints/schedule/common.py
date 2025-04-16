@@ -11,10 +11,12 @@ from typing import Any, Dict, List, Optional
 from datetime import datetime, date, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Query, Path, Body, Security, status
 from sqlalchemy.orm import Session
+from redis.asyncio import Redis
 
 from app.core.auth0_fastapi import auth, get_current_user, Auth0User
 from app.core.tenant import get_current_gym, verify_gym_access, verify_trainer_role, verify_admin_role
 from app.db.session import get_db
+from app.db.redis_client import get_redis_client
 from app.models.gym import Gym
 from app.models.schedule import (
     DayOfWeek,
