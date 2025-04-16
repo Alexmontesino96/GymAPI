@@ -371,11 +371,11 @@ async def read_gym_users(
             from app.services.gym import gym_service
             # Llamar a la versión cacheada del servicio de gym
             users = await gym_service.get_gym_users_cached(db=db, gym_id=current_gym.id, skip=skip, limit=limit, redis_client=redis_client)
-    except Exception as e:
-        logger = logging.getLogger("user_endpoint")
+        except Exception as e:
+            logger = logging.getLogger("user_endpoint")
             logger.error(f"Error buscando usuarios del gimnasio {current_gym.id}: {str(e)}", exc_info=True)
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error al recuperar usuarios del gimnasio")
-            return users
+        return users
 
 @router.delete("/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT, tags=["Gym Management"])
 async def remove_user_from_gym(
