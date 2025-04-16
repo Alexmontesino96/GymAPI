@@ -41,8 +41,8 @@ from app.services.gym import gym_service
 from app.core.security import verify_auth0_webhook_secret
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
-# === Endpoints Públicos / Generales (Accesibles por Miembros/Entrenadores) === #
 
 @router.get("/profile", response_model=UserSchema, tags=["Profile"])
 async def get_user_profile(
@@ -312,10 +312,10 @@ async def read_public_user_profile(
                 user_gym_db = db.query(UserGym).filter(UserGym.user_id == user_id, UserGym.gym_id == gym_id).first()
                 if user_gym_db:
                     role_str = user_gym_db.role.value
-                    await redis_client.set(membership_cache_key, role_str, ex=settings.CACHE_TTL_USER_MEMBERSHIP)
+                    await redis_client.set(membership_cache_key, role_str, ex=get_settings().CACHE_TTL_USER_MEMBERSHIP)
                     logger.debug(f"Cache de membresía {membership_cache_key} establecida a {role_str}")
                 else:
-                    await redis_client.set(membership_cache_key, "__NONE__", ex=settings.CACHE_TTL_NEGATIVE)
+                    await redis_client.set(membership_cache_key, "__NONE__", ex=get_settings().CACHE_TTL_NEGATIVE)
                     logger.debug(f"Cache de membresía negativa establecida para {membership_cache_key}")
                     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario no encontrado en este gimnasio (BD Check + Cache Write)")
         except Exception as e:

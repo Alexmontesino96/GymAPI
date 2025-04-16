@@ -199,7 +199,7 @@ async def cancel_session(
     return class_session_service.cancel_session(db, session_id=session_id)
 
 
-@router.get("/sessions/date-range", response_model=List[ClassSession])
+@router.get("/date-range", response_model=List[ClassSession])
 async def get_sessions_by_date_range(
     start_date: date = Query(..., description="Fecha de inicio"),
     end_date: date = Query(..., description="Fecha de fin"),
