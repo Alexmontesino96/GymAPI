@@ -20,7 +20,7 @@ and proper access control based on user roles.
 
 from typing import Any, Dict, List
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Security
+from fastapi import APIRouter, Depends, HTTPException, Query, Security, Request
 from sqlalchemy.orm import Session
 
 from app.core.auth0_fastapi import auth, get_current_user, get_current_user_with_permissions, Auth0User
@@ -34,15 +34,18 @@ from app.schemas.trainer_member import (
     TrainerMemberRelationshipUpdate,
     UserWithRelationship
 )
+from app.core.tenant import verify_gym_access
 
 router = APIRouter()
 
 
 @router.post("/", response_model=TrainerMemberRelationship)
 async def create_trainer_member_relationship(
+    request: Request,
     relationship_in: TrainerMemberRelationshipCreate,
     db: Session = Depends(get_db),
     user: Auth0User = Security(auth.get_user, scopes=["create:relationships"]),
+    current_gym: GymSchema = Depends(verify_gym_access)
 ) -> Any:
     """
     Create a new relationship between a trainer and a member.
@@ -58,6 +61,7 @@ async def create_trainer_member_relationship(
         relationship_in: Relationship data including trainer_id and member_id
         db: Database session
         user: Authenticated user with appropriate permissions
+        current_gym: Gym schema with gym context
         
     Returns:
         TrainerMemberRelationship: The newly created relationship
@@ -118,14 +122,16 @@ async def read_relationships(
 
 @router.get("/trainer/{trainer_id}/members", response_model=List[Dict])
 async def read_members_by_trainer(
+    request: Request,
     trainer_id: int,
     skip: int = 0,
     limit: int = 100,
     db: Session = Depends(get_db),
     user: Auth0User = Security(auth.get_user, scopes=["read:relationships"]),
+    current_gym: GymSchema = Depends(verify_gym_access)
 ) -> Any:
     """
-    Retrieve all members assigned to a specific trainer.
+    Retrieve all members assigned to a specific trainer in the current gym.
     
     This endpoint returns the list of members being trained by a specific trainer,
     including relationship details. Access is restricted to the trainer themselves
@@ -141,6 +147,7 @@ async def read_members_by_trainer(
         limit: Maximum number of records to return (pagination)
         db: Database session
         user: Authenticated user with appropriate permissions
+        current_gym: Gym schema with gym context
         
     Returns:
         List[Dict]: List of members with relationship details
@@ -332,12 +339,14 @@ async def read_my_members(
 
 @router.get("/{relationship_id}", response_model=TrainerMemberRelationship)
 async def read_relationship(
+    request: Request,
     relationship_id: int,
     db: Session = Depends(get_db),
     user: Auth0User = Security(auth.get_user, scopes=["read:relationships"]),
+    current_gym: GymSchema = Depends(verify_gym_access)
 ) -> Any:
     """
-    Retrieve a specific trainer-member relationship by ID.
+    Retrieve a specific trainer-member relationship by ID within the current gym.
     
     This endpoint provides detailed information about a specific training relationship,
     including notes, goals, and metadata. Access is restricted to users who are
@@ -351,6 +360,7 @@ async def read_relationship(
         relationship_id: ID of the relationship to retrieve
         db: Database session
         user: Authenticated user with appropriate permissions
+        current_gym: Gym schema with gym context
         
     Returns:
         TrainerMemberRelationship: The requested relationship details
@@ -359,6 +369,9 @@ async def read_relationship(
         HTTPException: 404 if user not found, 403 if unauthorized
     """
     relationship = trainer_member_service.get_relationship(db, relationship_id=relationship_id)
+    
+    if not relationship or relationship.gym_id != current_gym.id:
+        raise HTTPException(status_code=404, detail="Relationship not found in this gym")
     
     # Still verify if the user is part of the relationship or an admin
     auth0_id = user.id

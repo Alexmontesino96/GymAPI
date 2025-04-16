@@ -31,7 +31,7 @@ from app.models.user_gym import UserGym, GymRoleType
 from app.services.user import user_service
 from app.schemas.user import User as UserSchema, UserCreate, UserUpdate, UserRoleUpdate, UserProfileUpdate, UserSearchParams, EmailAvailabilityCheck, UserPublicProfile, Auth0EmailChangeRequest, UserSyncFromAuth0, GymUserSummary
 from app.services.auth0_mgmt import auth0_mgmt_service
-from app.core.tenant import verify_gym_access, verify_gym_admin_access, verify_gym_trainer_access, get_current_gym
+from app.core.tenant import verify_gym_access, verify_gym_admin_access, verify_gym_trainer_access, get_current_gym, GymSchema
 from app.core.auth0_fastapi import auth, get_current_user, Auth0User
 from app.db.session import get_db
 from app.core.config import get_settings
@@ -203,13 +203,14 @@ async def resend_email_verification(
 
 @router.get("/gym-participants", response_model=List[UserSchema], tags=["Gym Participants"])
 async def read_gym_participants(
+    request: Request,
     role: Optional[UserRole] = Query(None, description="Filtrar por rol (MEMBER o TRAINER). Omitir para ambos."),
     db: Session = Depends(get_db),
     skip: int = 0,
     limit: int = 100,
     current_user: Auth0User = Security(auth.get_user, scopes=["read:members"]),
     redis_client: redis.Redis = Depends(get_redis_client),
-    current_gym: Gym = Depends(verify_gym_access)
+    current_gym: GymSchema = Depends(verify_gym_access)
 ) -> Any:
     """Obtiene miembros y/o entrenadores del gimnasio actual."""
     logger = logging.getLogger("user_endpoint")
@@ -237,6 +238,7 @@ async def read_gym_participants(
 
 @router.get("/p/gym-participants", response_model=List[UserPublicProfile], tags=["Gym Participants (Public)"])
 async def read_public_gym_participants(
+    request: Request,
     role: Optional[UserRole] = Query(None, description="Filtrar por rol (MEMBER o TRAINER). Omitir para ambos."),
     name_contains: Optional[str] = Query(None, description="Filtrar por nombre/apellido (parcial)"),
     db: Session = Depends(get_db),
@@ -244,7 +246,7 @@ async def read_public_gym_participants(
     limit: int = 100,
     current_user: Auth0User = Security(auth.get_user, scopes=["read:members"]),
     redis_client: redis.Redis = Depends(get_redis_client),
-    current_gym: Gym = Depends(verify_gym_access)
+    current_gym: GymSchema = Depends(verify_gym_access)
 ) -> Any:
     """Obtiene perfiles públicos de miembros y/o entrenadores del gimnasio actual."""
     logger = logging.getLogger("user_endpoint")
@@ -276,10 +278,11 @@ async def read_public_gym_participants(
 
 @router.get("/p/public-profile/{user_id}", response_model=UserPublicProfile, tags=["Gym Participants (Public)"])
 async def read_public_user_profile(
+    request: Request,
     user_id: int,
     db: Session = Depends(get_db),
     current_user: Auth0User = Security(auth.get_user, scopes=["read:members"]),
-    current_gym: Gym = Depends(verify_gym_access),
+    current_gym: GymSchema = Depends(verify_gym_access),
     redis_client: redis.Redis = Depends(get_redis_client)
 ) -> Any:
     """Obtiene el perfil público de un usuario específico del gimnasio actual."""
@@ -342,13 +345,14 @@ async def read_public_user_profile(
 
 @router.get("/gym-users", response_model=List[GymUserSummary], tags=["Gym Management"])
 async def read_gym_users(
+    request: Request,
     db: Session = Depends(get_db),
     skip: int = 0,
     limit: int = 100,
     role: Optional[UserRole] = Query(None, description="Filtrar por rol de usuario global"),
     current_user: Auth0User = Security(auth.get_user, scopes=["read:users"]),
     redis_client: redis.Redis = Depends(get_redis_client),
-    current_gym: Gym = Depends(verify_gym_admin_access)
+    current_gym: GymSchema = Depends(verify_gym_admin_access)
 ) -> Any:
     """[ADMIN] Obtiene todos los usuarios asociados al gimnasio actual."""
     # Usar la versión cacheada para evitar consulta a BD innecesaria
@@ -375,9 +379,10 @@ async def read_gym_users(
 
 @router.delete("/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT, tags=["Gym Management"])
 async def remove_user_from_gym(
+    request: Request,
     user_id: int = Path(..., title="ID del usuario a eliminar del gimnasio"),
     db: Session = Depends(get_db),
-    current_gym: Gym = Depends(verify_gym_access),
+    current_gym: GymSchema = Depends(verify_gym_access),
     current_user: Auth0User = Depends(get_current_user),
     redis_client: redis.Redis = Depends(get_redis_client)
 ) -> None:
@@ -444,7 +449,7 @@ async def search_users(
     search_params: UserSearchParams = Depends(),
     db: Session = Depends(get_db),
     current_auth_user: Auth0User = Depends(get_current_user),
-    current_gym: Optional[Gym] = Depends(get_current_gym),
+    current_gym: Optional[GymSchema] = Depends(get_current_gym),
     redis_client: redis.Redis = Depends(get_redis_client)
 ) -> Any:
     """Búsqueda avanzada de usuarios. Admins buscan dentro de su gym, SuperAdmins globalmente."""
@@ -480,10 +485,11 @@ async def search_users(
 
 @router.get("/{user_id}", response_model=UserSchema, tags=["User Lookup"])
 async def read_user_by_id(
+    request: Request,
     user_id: int,
     db: Session = Depends(get_db),
     current_auth_user: Auth0User = Depends(get_current_user),
-    current_gym: Optional[Gym] = Depends(get_current_gym),
+    current_gym: Optional[GymSchema] = Depends(get_current_gym),
     redis_client: redis.Redis = Depends(get_redis_client)
 ) -> Any:
     """Obtiene un usuario específico por ID local (Admin/SuperAdmin). 

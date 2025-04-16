@@ -16,14 +16,14 @@ All endpoints are protected with appropriate permission scopes.
 
 from typing import List, Optional, Any
 from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException, Query, Body, Path, status, Security, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, Query, Body, Path, status, Security, BackgroundTasks, Request
 from sqlalchemy.orm import Session
 from redis.asyncio import Redis
 
 from app.db.session import get_db
 from app.db.redis_client import get_redis_client
 from app.core.auth0_fastapi import get_current_user, get_current_user_with_permissions, Auth0User, auth
-from app.core.tenant import get_current_gym, verify_gym_access
+from app.core.tenant import verify_gym_access, get_current_gym, GymSchema
 from app.models.gym import Gym
 from app.schemas.event import (
     Event as EventSchema, 
@@ -43,6 +43,8 @@ from fastapi.responses import JSONResponse
 from fastapi.encoders import jsonable_encoder
 import logging
 import time
+from app.services.event import event_service
+from app.services.chat import chat_service
 
 logger = logging.getLogger("events_api")
 
@@ -55,8 +57,6 @@ async def create_chat_room_background(db_session_factory, event_id: int, user_id
     try:
         # Crear una nueva sesión de BD para la tarea en segundo plano
         db = db_session_factory()
-        from app.services.chat import chat_service
-        from app.schemas.chat import ChatRoomCreate
         logger.info(f"[BG Task] Iniciando creación de chat para evento {event_id}")
         
         # Nota: chat_service.create_room ya maneja la obtención si existe
@@ -88,10 +88,11 @@ async def schedule_event_completion_background(event_id: int, end_time: datetime
 @router.post("/", response_model=EventSchema, status_code=status.HTTP_201_CREATED)
 async def create_event(
     *,
+    request: Request,
     db: Session = Depends(get_db),
     event_in: EventCreate,
     background_tasks: BackgroundTasks,
-    current_gym: Gym = Depends(verify_gym_access),  # Obtener gimnasio actual
+    current_gym: GymSchema = Depends(verify_gym_access),  # Usar GymSchema
     current_user: Auth0User = Security(auth.get_user, scopes=["create:events"])
 ) -> JSONResponse:
     """
@@ -214,6 +215,7 @@ async def create_event(
 @router.get("/", response_model=List[EventWithParticipantCount])
 async def read_events(
     *,
+    request: Request,
     db: Session = Depends(get_db),
     skip: int = 0,
     limit: int = 100,
@@ -224,7 +226,7 @@ async def read_events(
     location_contains: Optional[str] = None,
     created_by: Optional[int] = None,
     only_available: bool = False,
-    current_gym: Gym = Depends(verify_gym_access),  # Verificar acceso al gimnasio
+    current_gym: GymSchema = Depends(verify_gym_access),  # Usar GymSchema
     current_user: Auth0User = Security(auth.get_user, scopes=["read_events"]),
     redis_client: Redis = Depends(get_redis_client)
 ) -> Any:
@@ -242,8 +244,6 @@ async def read_events(
     
     # Usar el servicio de eventos con caché
     try:
-        from app.services.event import event_service
-        
         # Llamar al método con soporte para caché
         events = await event_service.get_events_cached(
             db=db,
@@ -288,10 +288,11 @@ async def read_events(
 @router.get("/me", response_model=List[EventSchema])
 async def read_my_events(
     *,
+    request: Request,
     db: Session = Depends(get_db),
     skip: int = 0,
     limit: int = 100,
-    current_gym: Gym = Depends(verify_gym_access),  # Añadir verificación de gimnasio
+    current_gym: GymSchema = Depends(verify_gym_access),  # Usar GymSchema
     current_user: Auth0User = Security(auth.get_user, scopes=["read:own_events"]),
     redis_client: Redis = Depends(get_redis_client)
 ) -> Any:
@@ -308,8 +309,6 @@ async def read_my_events(
     auth0_id = current_user.id
     
     try:
-        from app.services.event import event_service
-        
         # Buscar el usuario en la BD por auth0_id
         user = db.query(User).filter(User.auth0_id == auth0_id).first()
         if not user:
@@ -357,9 +356,10 @@ async def read_my_events(
 @router.get("/{event_id}", response_model=EventDetail)
 async def read_event(
     *,
+    request: Request,
     db: Session = Depends(get_db),
     event_id: int = Path(..., title="ID del evento a obtener", ge=1),
-    current_gym: Gym = Depends(verify_gym_access),  # Verificar acceso al gimnasio
+    current_gym: GymSchema = Depends(verify_gym_access),  # Usar GymSchema
     current_user: Auth0User = Security(auth.get_user, scopes=["read_events"]),
     redis_client: Redis = Depends(get_redis_client)
 ) -> Any:
@@ -375,8 +375,6 @@ async def read_event(
     start_time = time.time()
     
     try:
-        from app.services.event import event_service
-        
         # Obtener evento usando caché
         event_detail = await event_service.get_event_cached(db, event_id, redis_client)
         
@@ -444,10 +442,11 @@ async def read_event(
 @router.put("/{event_id}", response_model=EventSchema)
 async def update_event(
     *,
+    request: Request,
     db: Session = Depends(get_db),
     event_id: int = Path(..., title="Event ID"),
     event_in: EventUpdate,
-    current_gym: Gym = Depends(verify_gym_access),  # Añadir verificación de gimnasio
+    current_gym: GymSchema = Depends(verify_gym_access),  # Usar GymSchema
     current_user: Auth0User = Security(auth.get_user, scopes=["admin:events"])
 ) -> Any:
     """
@@ -581,9 +580,10 @@ async def update_event(
 @router.delete("/{event_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_event(
     *,
+    request: Request,
     db: Session = Depends(get_db),
     event_id: int = Path(..., title="Event ID"),
-    current_gym: Gym = Depends(verify_gym_access),  # Añadir verificación de gimnasio
+    current_gym: GymSchema = Depends(verify_gym_access),  # Usar GymSchema
     current_user: Auth0User = Security(auth.get_user, scopes=["delete:events"])
 ) -> None:
     """
@@ -639,9 +639,10 @@ async def delete_event(
 @router.delete("/admin/{event_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def admin_delete_event(
     *,
+    request: Request,
     db: Session = Depends(get_db),
     event_id: int = Path(..., title="Event ID"),
-    current_gym: Gym = Depends(verify_gym_access),  # Añadir verificación de gimnasio
+    current_gym: GymSchema = Depends(verify_gym_access),  # Usar GymSchema
     current_user: Auth0User = Security(auth.get_user, scopes=["admin:events"])
 ) -> None:
     """
@@ -691,9 +692,10 @@ async def admin_delete_event(
 @router.post("/participation", response_model=EventParticipationSchema, status_code=status.HTTP_201_CREATED)
 async def register_for_event(
     *,
+    request: Request,
     db: Session = Depends(get_db),
     participation_in: EventParticipationCreate = Body(...),
-    current_gym: Gym = Depends(verify_gym_access),  # Verifica y obtiene el gimnasio actual
+    current_gym: GymSchema = Depends(verify_gym_access),  # Usar GymSchema
     current_user: Auth0User = Security(auth.get_user, scopes=["create:participations"]),
     redis_client: Redis = Depends(get_redis_client)
 ) -> EventParticipationSchema:
@@ -769,7 +771,6 @@ async def register_for_event(
     # Invalidar cachés relacionadas
     if redis_client:
         try:
-            from app.services.event import event_service
             await event_service.invalidate_event_caches(
                 redis_client=redis_client,
                 event_id=participation_in.event_id
@@ -787,9 +788,10 @@ async def register_for_event(
 @router.get("/participation/me", response_model=List[EventParticipationWithEvent])
 async def read_my_participations(
     *,
+    request: Request,
     db: Session = Depends(get_db),
     participation_status: Optional[EventParticipationStatus] = None,
-    current_gym: Gym = Depends(verify_gym_access),  # Añadir verificación de gimnasio
+    current_gym: GymSchema = Depends(verify_gym_access),  # Usar GymSchema
     current_user: Auth0User = Security(auth.get_user, scopes=["read:own_participations"])
 ) -> List[EventParticipationWithEvent]:
     """
@@ -860,10 +862,11 @@ async def read_my_participations(
 @router.get("/participation/event/{event_id}", response_model=List[EventParticipationSchema])
 async def read_event_participations(
     *,
+    request: Request,
     db: Session = Depends(get_db),
     event_id: int = Path(..., title="Event ID"),
     participation_status: Optional[EventParticipationStatus] = None,
-    current_gym: Gym = Depends(verify_gym_access),  # Añadir verificación de gimnasio
+    current_gym: GymSchema = Depends(verify_gym_access),  # Usar GymSchema
     current_user: Auth0User = Security(auth.get_user, scopes=["read:participations"])
 ) -> Any:
     """
@@ -980,9 +983,10 @@ async def read_event_participations(
 @router.delete("/participation/{event_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def cancel_participation(
     *,
+    request: Request,
     db: Session = Depends(get_db),
     event_id: int = Path(..., title="Event ID"),
-    current_gym: Gym = Depends(verify_gym_access),  # Añadir verificación de gimnasio
+    current_gym: GymSchema = Depends(verify_gym_access),  # Usar GymSchema
     current_user: Auth0User = Security(auth.get_user, scopes=["delete:own_participations"]),
     redis_client: Redis = Depends(get_redis_client)
 ) -> None:
@@ -1035,7 +1039,6 @@ async def cancel_participation(
     # Invalidar cachés relacionadas
     if redis_client:
         try:
-            from app.services.event import event_service
             await event_service.invalidate_event_caches(
                 redis_client=redis_client,
                 event_id=event_id
@@ -1052,11 +1055,12 @@ async def cancel_participation(
 @router.put("/participation/event/{event_id}/user/{user_id}", response_model=EventParticipationSchema)
 async def update_attendance(
     *,
+    request: Request,
     db: Session = Depends(get_db),
     event_id: int = Path(..., title="Event ID"),
     user_id: int = Path(..., title="Internal User ID of the participant"),
-    attendance_data: EventParticipationUpdate = Body(...), # Renombrado para claridad
-    current_gym: Gym = Depends(verify_gym_access),
+    attendance_data: EventParticipationUpdate = Body(...),
+    current_gym: GymSchema = Depends(verify_gym_access),
     current_user: Auth0User = Security(auth.get_user, scopes=["update:participations"])
 ) -> EventParticipationSchema:
     """

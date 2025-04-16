@@ -19,6 +19,7 @@ from app.services.user import user_service
 from app.services.cache_service import cache_service
 from app.schemas.gym import GymSchema
 from app.core.profiling import time_redis_operation, time_db_query, register_cache_hit, register_cache_miss
+from app.schemas.user import User as UserSchema
 
 async def get_tenant_id(
     x_gym_id: Optional[str] = Header(None, alias="X-Gym-ID")
@@ -97,6 +98,7 @@ async def get_current_gym(
     return gym_schema
 
 async def _verify_user_role_in_gym(
+    request: Request,
     required_roles: Optional[Set[GymRoleType]],
     db: Session,
     current_gym_schema: Optional[GymSchema],
@@ -104,21 +106,8 @@ async def _verify_user_role_in_gym(
     redis_client: redis.Redis
 ) -> GymSchema:
     """
-    Verifica que el usuario pertenece al gimnasio y tiene alguno de los roles requeridos.
-    Utiliza caché Redis para optimizar las verificaciones más frecuentes.
-    
-    Args:
-        required_roles: Conjunto de roles permitidos. None para cualquier rol.
-        db: Sesión de base de datos
-        current_gym_schema: Esquema del gimnasio actual
-        current_user: Usuario autenticado de Auth0
-        redis_client: Cliente Redis para caché
-        
-    Returns:
-        GymSchema: El gimnasio verificado
-        
-    Raises:
-        HTTPException: Si el usuario no tiene acceso o el gimnasio no existe
+    Verifica que el usuario pertenece al gimnasio y tiene el rol requerido.
+    OPTIMIZADO: Primero verifica request.state antes de consultar caché/DB.
     """
     if not current_gym_schema:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Se requiere un ID de gimnasio (X-Gym-ID)")
@@ -127,127 +116,142 @@ async def _verify_user_role_in_gym(
     gym_name = current_gym_schema.name
     logger = logging.getLogger("tenant_verification")
     
-    user_id_or_schema = await user_service.get_user_by_auth0_id_cached(
-        db=db, auth0_id=current_user.id, redis_client=redis_client
-    )
-    if not user_id_or_schema:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, 
-            detail="Usuario no encontrado en el sistema"
-        )
-    # user_id puede ser UserSchema en lugar de UserModel ahora
-    user_id = user_id_or_schema.id
+    # --- OPTIMIZACIÓN: Verificar request.state --- 
+    user_role_in_gym = getattr(request.state, 'role_in_gym', None)
+    user_from_state = getattr(request.state, 'user', None)
+    gym_from_state = getattr(request.state, 'gym', None)
     
-    # Verificar membresía del usuario usando caché Redis
-    user_role_in_gym = None
-    cache_hit_status = "NO_REDIS"
+    # Asegurarse que el gym en state coincide con el actual
+    if gym_from_state and gym_from_state.id != gym_id:
+         logger.warning(f"Discrepancia de Gym ID entre request.state ({gym_from_state.id}) y dependency ({gym_id})")
+         # Resetear valores de state si no coinciden
+         user_role_in_gym = None
+         user_from_state = None
     
-    # Si existe Redis, verificar caché
-    if redis_client:
-        cache_key = f"user_gym_membership:{user_id}:{gym_id}"
-        try:
-            # Intentar obtener del caché
-            @time_redis_operation
-            async def _redis_get(key): return await redis_client.get(key)
-            cached_role_str = await _redis_get(cache_key)
-            
-            if cached_role_str is not None:
-                # Registro del cache hit
-                register_cache_hit(cache_key)
+    # Asegurarse que el user en state coincide con el actual
+    if user_from_state and user_from_state.auth0_id != current_user.id:
+         logger.warning(f"Discrepancia de User ID entre request.state ({user_from_state.auth0_id}) y dependency ({current_user.id})")
+         # Resetear valores de state si no coinciden
+         user_role_in_gym = None
+         user_from_state = None
+         
+    # Si tenemos rol en state, usarlo directamente
+    if user_role_in_gym is not None:
+        logger.debug(f"Verificación de rol obtenida de request.state: Rol={user_role_in_gym}")
+        cache_hit_status = "STATE_HIT"
+    else:
+        # --- FIN OPTIMIZACIÓN --- 
+        
+        # Obtener user_id (si no lo teníamos ya de user_from_state)
+        user_id = user_from_state.id if user_from_state else None
+        if not user_id:
+            user_id_or_schema = await user_service.get_user_by_auth0_id_cached(
+                db=db, auth0_id=current_user.id, redis_client=redis_client
+            )
+            if not user_id_or_schema:
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Usuario no encontrado en el sistema")
+            user_id = user_id_or_schema.id
+        
+        # Verificar membresía (lógica de caché/DB existente)
+        cache_hit_status = "NO_REDIS"
+        if redis_client:
+            cache_key = f"user_gym_membership:{user_id}:{gym_id}"
+            try:
+                @time_redis_operation
+                async def _redis_get(key): return await redis_client.get(key)
+                cached_role_str = await _redis_get(cache_key)
                 
-                if cached_role_str == "__NONE__":
-                    cache_hit_status = "HIT_NEGATIVE"
-                    user_role_in_gym = None
-                    logger.debug(f"Cache HIT Negativo: Usuario {user_id} NO pertenece a gym {gym_id}")
+                if cached_role_str is not None:
+                    register_cache_hit(cache_key)
+                    if cached_role_str == "__NONE__":
+                        cache_hit_status = "HIT_NEGATIVE"
+                        user_role_in_gym = None 
+                    else:
+                        cache_hit_status = "HIT_POSITIVE"
+                        user_role_in_gym = cached_role_str
                 else:
-                    cache_hit_status = "HIT_POSITIVE"
-                    logger.debug(f"Cache HIT Positivo: Usuario {user_id} pertenece a gym {gym_id}, rol: {cached_role_str}")
-                    user_role_in_gym = cached_role_str
-            else:
-                # Registro del cache miss
-                register_cache_miss(cache_key)
-                
-                cache_hit_status = "MISS"
-                logger.debug(f"Cache MISS para {cache_key}, consultando BD...")
+                    register_cache_miss(cache_key)
+                    cache_hit_status = "MISS"
+                    @time_db_query
+                    def _fetch_membership(): 
+                         return db.query(UserGym).filter(UserGym.user_id == user_id, UserGym.gym_id == gym_id).first()
+                    user_gym_db = _fetch_membership()
+                    
+                    if user_gym_db:
+                        user_role_in_gym = user_gym_db.role.value
+                        @time_redis_operation
+                        async def _redis_set(key, value, ex): await redis_client.set(key, value, ex=ex)
+                        asyncio.create_task(_redis_set(cache_key, user_role_in_gym, get_settings().CACHE_TTL_USER_MEMBERSHIP))
+                    else:
+                        @time_redis_operation
+                        async def _redis_set_neg(key, value, ex): await redis_client.set(key, value, ex=ex)
+                        asyncio.create_task(_redis_set_neg(cache_key, "__NONE__", get_settings().CACHE_TTL_NEGATIVE))
+                        user_role_in_gym = None
+            except Exception as e:
+                logger.error(f"Error durante verificación de rol en gym con Redis: {e}", exc_info=True)
+                cache_hit_status = "REDIS_ERROR_FALLBACK"
                 @time_db_query
-                def _fetch_membership(): 
+                def _fallback_fetch(): 
                      return db.query(UserGym).filter(UserGym.user_id == user_id, UserGym.gym_id == gym_id).first()
-                user_gym_db = _fetch_membership()
-                
-                if user_gym_db:
-                    user_role_in_gym = user_gym_db.role.value
-                    logger.debug(f"Usuario {user_id} encontrado en gym {gym_id} (BD), rol: {user_role_in_gym}. Guardando en caché...")
-                    @time_redis_operation
-                    async def _redis_set(key, value, ex): await redis_client.set(key, value, ex=ex)
-                    asyncio.create_task(_redis_set(cache_key, user_role_in_gym, get_settings().CACHE_TTL_USER_MEMBERSHIP))
-                else:
-                    logger.debug(f"Usuario {user_id} NO encontrado en gym {gym_id} (BD). Guardando caché negativo...")
-                    @time_redis_operation
-                    async def _redis_set_neg(key, value, ex): await redis_client.set(key, value, ex=ex)
-                    asyncio.create_task(_redis_set_neg(cache_key, "__NONE__", get_settings().CACHE_TTL_NEGATIVE))
-                    user_role_in_gym = None
-        except Exception as e:
-            logger.error(f"Error durante verificación de rol en gym con Redis: {e}", exc_info=True)
-            logger.warning(f"Fallback a verificación de BD para rol en gym {gym_id} debido a error de Redis")
-            @time_db_query
-            def _fallback_fetch(): 
-                 return db.query(UserGym).filter(UserGym.user_id == user_id, UserGym.gym_id == gym_id).first()
-            user_gym_db_fallback = _fallback_fetch()
-            user_role_in_gym = user_gym_db_fallback.role.value if user_gym_db_fallback else None
-            cache_hit_status = "REDIS_ERROR_FALLBACK"
+                user_gym_db_fallback = _fallback_fetch()
+                user_role_in_gym = user_gym_db_fallback.role.value if user_gym_db_fallback else None
 
     if user_role_in_gym is None:
-        logger.warning(f"Acceso denegado a gym {gym_id} para user {user_id}. No pertenece. (Cache: {cache_hit_status})")
+        logger.warning(f"Acceso denegado a gym {gym_id} para user {current_user.id}. No pertenece. (Cache: {cache_hit_status})")
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Acceso denegado al gimnasio {gym_name}")
 
     required_role_values = {role.value for role in required_roles} if required_roles else None
 
     if required_role_values is not None and user_role_in_gym not in required_role_values:
-        logger.warning(f"Acceso denegado a gym {gym_id} para user {user_id}. Rol '{user_role_in_gym}' insuficiente (Req: {required_role_values}). (Cache: {cache_hit_status})")
+        logger.warning(f"Acceso denegado a gym {gym_id} para user {current_user.id}. Rol '{user_role_in_gym}' insuficiente (Req: {required_role_values}). (Cache: {cache_hit_status})")
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Permisos insuficientes en el gimnasio {gym_name}")
 
-    logger.debug(f"Acceso concedido a gym {gym_id} para user {user_id}. Rol: '{user_role_in_gym}' (Req: {required_roles or 'Any'}). (Cache: {cache_hit_status})")
+    logger.debug(f"Acceso concedido a gym {gym_id} para user {current_user.id}. Rol: '{user_role_in_gym}' (Req: {required_roles or 'Any'}). (Cache: {cache_hit_status})")
     return current_gym_schema
 
 async def verify_gym_access(
+    request: Request,
     db: Session = Depends(get_db),
     current_gym_schema: Optional[GymSchema] = Depends(get_current_gym),
     current_user: Auth0User = Depends(get_current_user),
     redis_client: redis.Redis = Depends(get_redis_client)
 ) -> GymSchema:
     """Dependencia: Verifica que el usuario pertenece al gimnasio."""
-    return await _verify_user_role_in_gym(None, db, current_gym_schema, current_user, redis_client)
+    return await _verify_user_role_in_gym(request, None, db, current_gym_schema, current_user, redis_client)
 
 async def verify_gym_admin_access(
+    request: Request,
     db: Session = Depends(get_db),
     current_gym_schema: Optional[GymSchema] = Depends(get_current_gym),
     current_user: Auth0User = Depends(get_current_user),
     redis_client: redis.Redis = Depends(get_redis_client)
 ) -> GymSchema:
     """Dependencia: Verifica rol ADMIN u OWNER en el gimnasio."""
-    return await _verify_user_role_in_gym({GymRoleType.ADMIN, GymRoleType.OWNER}, db, current_gym_schema, current_user, redis_client)
+    return await _verify_user_role_in_gym(request, {GymRoleType.ADMIN, GymRoleType.OWNER}, db, current_gym_schema, current_user, redis_client)
 
 async def verify_gym_trainer_access(
+    request: Request,
     db: Session = Depends(get_db),
     current_gym_schema: Optional[GymSchema] = Depends(get_current_gym),
     current_user: Auth0User = Depends(get_current_user),
     redis_client: redis.Redis = Depends(get_redis_client)
 ) -> GymSchema:
     """Dependencia: Verifica rol TRAINER, ADMIN u OWNER en el gimnasio."""
-    return await _verify_user_role_in_gym({GymRoleType.TRAINER, GymRoleType.ADMIN, GymRoleType.OWNER}, db, current_gym_schema, current_user, redis_client)
+    return await _verify_user_role_in_gym(request, {GymRoleType.TRAINER, GymRoleType.ADMIN, GymRoleType.OWNER}, db, current_gym_schema, current_user, redis_client)
 
 async def verify_gym_ownership(
+    request: Request,
     db: Session = Depends(get_db),
     current_gym_schema: Optional[GymSchema] = Depends(get_current_gym),
     current_user: Auth0User = Depends(get_current_user),
     redis_client: redis.Redis = Depends(get_redis_client)
 ) -> GymSchema:
     """Dependencia: Verifica rol OWNER en el gimnasio."""
-    return await _verify_user_role_in_gym({GymRoleType.OWNER}, db, current_gym_schema, current_user, redis_client)
+    return await _verify_user_role_in_gym(request, {GymRoleType.OWNER}, db, current_gym_schema, current_user, redis_client)
 
-async def verify_admin_role(gym: GymSchema = Depends(verify_gym_admin_access)) -> GymSchema:
+async def verify_admin_role(request: Request, gym: GymSchema = Depends(verify_gym_admin_access)) -> GymSchema:
     return gym
-async def verify_trainer_role(gym: GymSchema = Depends(verify_gym_trainer_access)) -> GymSchema:
+async def verify_trainer_role(request: Request, gym: GymSchema = Depends(verify_gym_trainer_access)) -> GymSchema:
     return gym
-async def verify_member_role(gym: GymSchema = Depends(verify_gym_access)) -> GymSchema:
+async def verify_member_role(request: Request, gym: GymSchema = Depends(verify_gym_access)) -> GymSchema:
     return gym 
