@@ -30,6 +30,9 @@ async def webhook_user_created(
         dict: Status of the user synchronization
     """
     try:
+        # Verificar la configuración
+        settings = get_settings()
+        
         # Verify secret key in Authorization header
         auth_header = request.headers.get("Authorization", "")
         timestamp_header = request.headers.get("X-Auth0-Hook-Timestamp", "")
@@ -174,6 +177,9 @@ async def webhook_user_updated(
         dict: Status of the user email synchronization
     """
     try:
+        # Verificar la configuración
+        settings = get_settings()
+        
         # Verify secret key in Authorization header
         auth_header = request.headers.get("Authorization", "")
         timestamp_header = request.headers.get("X-Auth0-Hook-Timestamp", "")
@@ -349,10 +355,11 @@ async def create_platform_admin(
         HTTPException: For invalid secret key or missing user ID
     """
     # Verify the secret key
-    if request_data.secret_key != settings.ADMIN_SECRET_KEY:
+    if request_data.secret_key != get_settings().ADMIN_SECRET_KEY:
+        logger.warning("Invalid admin creation key", extra={"user_id": current_user.sub})
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Incorrect secret key"
+            detail="Invalid admin secret key"
         )
     
     # Verify that the current user exists in the database

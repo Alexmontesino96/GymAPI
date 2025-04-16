@@ -56,6 +56,8 @@ async def exchange_token(
     Raises:
         HTTPException: For rate limiting, invalid parameters, or Auth0 errors
     """
+    settings = get_settings()
+    
     # Apply rate limiting
     client_ip = request.client.host
     if not check_rate_limit(client_ip):
