@@ -187,9 +187,9 @@ class Settings(BaseSettings):
     AUTH0_MGMT_AUDIENCE: str = os.getenv("AUTH0_MGMT_AUDIENCE", f"https://{AUTH0_DOMAIN}/api/v2/")
 
     # Storage configuration
-    SUPABASE_URL: Optional[str] = None  # Reinstated as optional
-    SUPABASE_ANON_KEY: Optional[str] = None  # Reinstated as optional
-    PROFILE_IMAGE_BUCKET: str
+    PROFILE_IMAGE_BUCKET: str = "profile-images"
+    SUPABASE_URL: Optional[str] = None
+    SUPABASE_ANON_KEY: Optional[str] = None
     S3_ACCESS_KEY_ID: str = os.getenv("S3_ACCESS_KEY_ID", "")
     S3_SECRET_ACCESS_KEY: str = os.getenv("S3_SECRET_ACCESS_KEY", "")  # ¡Reemplazar con la clave real en producción!
 

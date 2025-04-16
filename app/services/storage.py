@@ -28,33 +28,27 @@ class StorageService:
     """
     
     # Usar get_settings() para los valores por defecto
-    def __init__(self, api_url: Optional[str] = None, anon_key: Optional[str] = None):
+    def __init__(self):
         """
         Inicializa el cliente de Supabase si las credenciales están disponibles.
         Obtiene los valores por defecto de get_settings() si no se proporcionan.
-        
-        Args:
-            api_url: URL de la API de Supabase (opcional)
-            anon_key: Clave anónima de Supabase (opcional)
         """
-        _settings = get_settings() # Obtener la instancia de configuración
-        self.api_url = api_url if api_url is not None else _settings.SUPABASE_URL
-        self.anon_key = anon_key if anon_key is not None else _settings.SUPABASE_ANON_KEY
-        self.profile_image_bucket = _settings.PROFILE_IMAGE_BUCKET # Guardar también el nombre del bucket
-        self.supabase: Optional[Client] = None # Inicializar como None
+        settings = get_settings()
+        self.api_url = settings.SUPABASE_URL
+        self.api_key = settings.SUPABASE_ANON_KEY
+        self.profile_image_bucket = settings.PROFILE_IMAGE_BUCKET
+        self.supabase: Optional[Client] = None
         
-        # Inicializar cliente de Supabase solo si las credenciales están presentes
-        if self.api_url and self.anon_key:
+        # Inicializar el cliente de Supabase solo si tenemos las credenciales
+        if self.api_url and self.api_key:
             try:
-                logger.info(f"Inicializando cliente de Supabase para {self.api_url}")
-                self.supabase = create_client(self.api_url, self.anon_key)
-                logger.info(f"Cliente de Supabase inicializado correctamente")
+                self.supabase = create_client(self.api_url, self.api_key)
+                logger.info("Cliente Supabase inicializado correctamente")
             except Exception as e:
-                # Registrar el error pero no detener la aplicación
-                logger.error(f"Error al inicializar cliente de Supabase: {str(e)}", exc_info=True)
-                # self.supabase permanecerá como None
+                logger.error(f"Error al inicializar el cliente Supabase: {str(e)}")
+                self.supabase = None
         else:
-            logger.warning("Credenciales de Supabase (URL o Key) no configuradas. El cliente de Supabase no se inicializará.")
+            logger.warning("No se proporcionaron credenciales de Supabase. El servicio de almacenamiento no funcionará.")
 
     def _sanitize_filename(self, filename: str) -> str:
         """
@@ -151,23 +145,26 @@ class StorageService:
             detail=f"Error de comunicación con el servicio de almacenamiento después de {MAX_RETRIES} intentos: {str(last_error)}"
         )
 
-    async def upload_profile_image(self, file: UploadFile, user_id: str) -> str:
+    async def upload_profile_image(self, user_id: str, file: UploadFile) -> str:
         """
-        Sube una imagen de perfil a Supabase Storage usando el SDK
+        Sube una imagen de perfil para un usuario específico
         
         Args:
-            file: Archivo a subir
             user_id: ID del usuario
+            file: Archivo de imagen a subir
             
         Returns:
-            URL de la imagen subida
+            URL pública del archivo subido
+            
+        Raises:
+            HTTPException: Si ocurre un error durante la subida o comunicación con Supabase
         """
-        # Verificar si el cliente Supabase está inicializado
+        # Verificar que Supabase esté configurado
         if not self.supabase:
-            logger.error("Intento de subir imagen de perfil sin cliente Supabase configurado.")
+            logger.error("Cliente Supabase no inicializado. No se puede subir la imagen.")
             raise HTTPException(
-                status_code=status.HTTP_501_NOT_IMPLEMENTED, 
-                detail="El servicio de almacenamiento Supabase no está configurado."
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Servicio de almacenamiento no disponible"
             )
             
         try:
@@ -309,6 +306,22 @@ class StorageService:
         except Exception as e:
             logger.error(f"Error general al eliminar imagen: {str(e)}")
             return False
+
+    def generate_public_url(self, path: str) -> str:
+        """
+        Genera una URL pública para acceder a un archivo
+        
+        Args:
+            path: Ruta del archivo en el bucket
+            
+        Returns:
+            URL pública del archivo
+        """
+        if not self.api_url or not self.api_key:
+            return ""
+        
+        # Formato de URL pública de Supabase Storage
+        return f"{self.api_url}/storage/v1/object/public/{self.profile_image_bucket}/{path}"
 
 # Instancia del servicio para uso global
 # Modificado para instanciar al primer uso o a través de dependencia

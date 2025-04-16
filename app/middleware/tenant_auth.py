@@ -19,6 +19,7 @@ import logging
 import time
 from typing import Optional, Dict, Any, Tuple
 from sqlalchemy.orm import Session
+from functools import lru_cache
 
 from app.db.redis_client import redis, get_redis_client
 from app.models.user_gym import GymRoleType, UserGym
@@ -28,7 +29,8 @@ from app.core.config import get_settings
 from app.services.user import user_service
 from app.db.session import get_db
 from app.models.gym import Gym
-from app.core.profiling import time_redis_operation, register_cache_hit, register_cache_miss, time_db_query
+from app.core.profiling import register_cache_hit, register_cache_miss, time_db_query, time_redis_operation
+
 
 logger = logging.getLogger("tenant_auth_middleware")
 
@@ -204,7 +206,6 @@ class TenantAuthMiddleware(BaseHTTPMiddleware):
         """
         Almacena los datos combinados de autenticación en caché.
         """
-        settings = get_settings()
         try:
             auth0_id = auth_data["user"]["auth0_id"]
             gym_id = auth_data["gym_id"]
@@ -217,7 +218,7 @@ class TenantAuthMiddleware(BaseHTTPMiddleware):
             await _redis_set(
                 combined_key,
                 json.dumps(auth_data),
-                ex=settings.CACHE_TTL_USER_MEMBERSHIP
+                ex=get_settings().CACHE_TTL_USER_MEMBERSHIP
             )
             
             logger.debug(f"Datos de autenticación guardados en caché: {combined_key}")
@@ -228,7 +229,6 @@ class TenantAuthMiddleware(BaseHTTPMiddleware):
         """
         Almacena una entrada negativa en caché para evitar consultas repetidas para usuarios sin acceso.
         """
-        settings = get_settings()
         try:
             combined_key = f"tenant_auth:{auth0_id}:{gym_id}"
             
@@ -239,7 +239,7 @@ class TenantAuthMiddleware(BaseHTTPMiddleware):
             await _redis_set(
                 combined_key,
                 json.dumps({"access": False, "timestamp": time.time()}),
-                ex=settings.CACHE_TTL_NEGATIVE
+                ex=get_settings().CACHE_TTL_NEGATIVE
             )
             
             logger.debug(f"Entrada negativa guardada en caché: {combined_key}")
