@@ -366,7 +366,7 @@ class GymHoursService:
                 logger.error(f"Error adding cache key {cache_key} to set {tracking_set_key}: {e}", exc_info=True)
                 
         return hours_data
-
+    
     def create_or_update_gym_hours(
         self, db: Session, day: int, gym_hours_data: Union[GymHoursCreate, GymHoursUpdate],
         gym_id: int
@@ -548,7 +548,7 @@ class GymHoursService:
             }
         
         return result
-    
+
     def apply_defaults_to_range(
         self, db: Session, start_date: date, end_date: date, gym_id: int, overwrite_existing: bool = False
     ) -> List[GymSpecialHours]:
@@ -680,81 +680,83 @@ class GymHoursService:
         """
         # Si no hay Redis, o el rango es muy grande, procesar sin caché
         if not redis_client or (end_date - start_date).days > 31:  # Si es más de un mes, no cachear
-            # Verificar que el rango de fechas sea válido
-            if end_date < start_date:
-                raise ValueError("La fecha de fin no puede ser anterior a la fecha de inicio")
-                
-            # Obtener los horarios especiales para este rango
-            special_hours = gym_special_hours_repository.get_by_date_range(
-                db, start_date=start_date, end_date=end_date, gym_id=gym_id
-            )
+            return await self.get_schedule_for_date_range(db, start_date, end_date, gym_id)
             
-            # Crear un diccionario de horarios especiales por fecha para acceso rápido
-            special_hours_dict = {str(hour.date): hour for hour in special_hours}
+        # Verificar que el rango de fechas sea válido
+        if end_date < start_date:
+            raise ValueError("La fecha de fin no puede ser anterior a la fecha de inicio")
             
-            # Obtener los horarios semanales predeterminados (usando la versión cacheada)
-            weekly_hours = await self.get_all_gym_hours_cached(db, gym_id=gym_id, redis_client=redis_client)
-            if not weekly_hours:
-                # Si no hay horarios semanales, crearlos con valores predeterminados
-                weekly_hours = self._create_default_hours(db, gym_id=gym_id)
-                
-            # Crear un diccionario de horarios por día de la semana para acceso rápido
-            weekly_hours_dict = {hour.day_of_week: hour for hour in weekly_hours}
+        # Obtener los horarios especiales para este rango
+        special_hours = gym_special_hours_repository.get_by_date_range(
+            db, start_date=start_date, end_date=end_date, gym_id=gym_id
+        )
+        
+        # Crear un diccionario de horarios especiales por fecha para acceso rápido
+        special_hours_dict = {str(hour.date): hour for hour in special_hours}
+        
+        # Obtener los horarios semanales predeterminados (usando la versión cacheada)
+        weekly_hours = await self.get_all_gym_hours_cached(db, gym_id=gym_id, redis_client=redis_client)
+        if not weekly_hours:
+            # Si no hay horarios semanales, crearlos con valores predeterminados
+            weekly_hours = self._create_default_hours(db, gym_id=gym_id)
             
-            # Preparar la respuesta
-            result = []
-            current_date = start_date
+        # Crear un diccionario de horarios por día de la semana para acceso rápido
+        weekly_hours_dict = {hour.day_of_week: hour for hour in weekly_hours}
+        
+        # Preparar la respuesta
+        result = []
+        current_date = start_date
+        
+        while current_date <= end_date:
+            # Obtener el día de la semana (0=Lunes, 6=Domingo)
+            day_of_week = current_date.weekday()
+            date_str = str(current_date)
             
-            while current_date <= end_date:
-                # Obtener el día de la semana (0=Lunes, 6=Domingo)
-                day_of_week = current_date.weekday()
-                date_str = str(current_date)
-                
-                # Verificar si hay un horario especial para esta fecha
-                if date_str in special_hours_dict:
-                    special_hour = special_hours_dict[date_str]
-                    schedule_entry = {
-                        "date": current_date,
-                        "day_of_week": day_of_week,
-                        "open_time": special_hour.open_time,
-                        "close_time": special_hour.close_time,
-                        "is_closed": special_hour.is_closed,
-                        "is_special": True,
-                        "description": special_hour.description,
-                        "source_id": special_hour.id
-                    }
+            # Verificar si hay un horario especial para esta fecha
+            if date_str in special_hours_dict:
+                special_hour = special_hours_dict[date_str]
+                schedule_entry = {
+                    "date": current_date,
+                    "day_of_week": day_of_week,
+                    "open_time": special_hour.open_time,
+                    "close_time": special_hour.close_time,
+                    "is_closed": special_hour.is_closed,
+                    "is_special": True,
+                    "description": special_hour.description,
+                    "source_id": special_hour.id
+                }
+            else:
+                # Usar el horario semanal para este día
+                weekly_hour = weekly_hours_dict.get(day_of_week)
+                if not weekly_hour:
+                    # Si no hay horario para este día, usar valores predeterminados
+                    is_closed = day_of_week == 6  # Cerrado en domingo
+                    open_time = time(9, 0) if not is_closed else None
+                    close_time = time(21, 0) if not is_closed else None
+                    source_id = None
                 else:
                     # Usar el horario semanal para este día
-                    weekly_hour = weekly_hours_dict.get(day_of_week)
-                    if not weekly_hour:
-                        # Si no hay horario para este día, usar valores predeterminados
-                        is_closed = day_of_week == 6  # Cerrado en domingo
-                        open_time = time(9, 0) if not is_closed else None
-                        close_time = time(21, 0) if not is_closed else None
-                        source_id = None
-                    else:
-                        # Usar el horario semanal para este día
-                        is_closed = weekly_hour.is_closed
-                        open_time = weekly_hour.open_time
-                        close_time = weekly_hour.close_time
-                        source_id = weekly_hour.id
-                        
-                    schedule_entry = {
-                        "date": current_date,
-                        "day_of_week": day_of_week,
-                        "open_time": open_time,
-                        "close_time": close_time,
-                        "is_closed": is_closed,
-                        "is_special": False,
-                        "description": None,
-                        "source_id": source_id
-                    }
+                    is_closed = weekly_hour.is_closed
+                    open_time = weekly_hour.open_time
+                    close_time = weekly_hour.close_time
+                    source_id = weekly_hour.id
                     
-                result.append(schedule_entry)
+                schedule_entry = {
+                    "date": current_date,
+                    "day_of_week": day_of_week,
+                    "open_time": open_time,
+                    "close_time": close_time,
+                    "is_closed": is_closed,
+                    "is_special": False,
+                    "description": None,
+                    "source_id": source_id
+                }
                 
-                # Avanzar al siguiente día
-                current_date += timedelta(days=1)
-                
+            result.append(schedule_entry)
+            
+            # Avanzar al siguiente día
+            current_date += timedelta(days=1)
+            
             return result
         else:
             # Para rangos pequeños, usamos caché
@@ -1469,8 +1471,8 @@ class ClassService:
         async def db_fetch():
             class_obj = class_repository.get(db, id=class_id)
             if not class_obj:
-                # No lanzar excepción aquí, dejar que get_or_set devuelva None
-                return None 
+                    # No lanzar excepción aquí, dejar que get_or_set devuelva None
+                    return None 
             return class_obj
         
         # Intentar obtener de caché
@@ -1508,11 +1510,11 @@ class ClassService:
         if gym_id is None:
             # No soportaremos caché para todas las clases sin gym_id por ahora
             logger.warning("Attempted to get classes without gym_id. Cache disabled for this request.")
-            query = db.query(Class)
-            if active_only:
-                query = query.filter(Class.is_active == True)
+        query = db.query(Class)
+        if active_only:
+            query = query.filter(Class.is_active == True)
             return query.offset(skip).limit(limit).all()
-            
+        
         cache_key = f"schedule:classes:gym:{gym_id}:active:{active_only}:skip:{skip}:limit:{limit}"
         
         async def db_fetch():
@@ -1520,7 +1522,7 @@ class ClassService:
             if active_only:
                 query = query.filter(Class.is_active == True)
             return query.offset(skip).limit(limit).all()
-
+    
         classes = await cache_service.get_or_set(
             redis_client=redis_client,
             cache_key=cache_key,
@@ -1656,9 +1658,9 @@ class ClassService:
                 Class.category_id == category_id, 
                 Class.gym_id == gym_id, 
                 Class.is_active == True
-            )
+                )
             return query.offset(skip).limit(limit).all()
-
+    
         classes = await cache_service.get_or_set(
             redis_client=redis_client,
             cache_key=cache_key,
@@ -1678,7 +1680,7 @@ class ClassService:
         """
         if gym_id is None:
             logger.warning("Attempted to get classes by difficulty without gym_id. Cache disabled.")
-            query = db.query(Class).filter(Class.difficulty_level == difficulty, Class.is_active == True)
+            
             return query.offset(skip).limit(limit).all()
             
         cache_key = f"schedule:classes:difficulty:{difficulty}:gym:{gym_id}:skip:{skip}:limit:{limit}"
@@ -1690,7 +1692,7 @@ class ClassService:
                 Class.is_active == True
             )
             return query.offset(skip).limit(limit).all()
-
+    
         classes = await cache_service.get_or_set(
             redis_client=redis_client,
             cache_key=cache_key,
@@ -1727,13 +1729,13 @@ class ClassService:
         async def db_fetch():
             search_pattern = f"%{search}%"
             query = db.query(Class).filter(
-                or_(
-                    Class.name.ilike(search_pattern),
-                    Class.description.ilike(search_pattern)
-                ),
-                Class.gym_id == gym_id,
-                Class.is_active == True
-            )
+                    or_(
+                        Class.name.ilike(search_pattern),
+                        Class.description.ilike(search_pattern)
+                    ),
+                    Class.gym_id == gym_id,
+                    Class.is_active == True
+                )
             return query.offset(skip).limit(limit).all()
         
         classes = await cache_service.get_or_set(
@@ -1837,7 +1839,7 @@ class ClassSessionService:
         created_session = class_session_repository.create(
             db, obj_in=ClassSessionCreate(**obj_in_data)
         )
-        
+    
         # Invalidar cachés relevantes (ej. listas de sesiones futuras, por fecha, por trainer, etc.)
         await self._invalidate_session_caches(redis_client, gym_id=gym_id, trainer_id=created_session.trainer_id, class_id=created_session.class_id)
         
@@ -1928,7 +1930,7 @@ class ClassSessionService:
         # Invalidar cachés relevantes una vez después del bucle
         if created_sessions:
              await self._invalidate_session_caches(redis_client, gym_id=gym_id, trainer_id=base_session_data.trainer_id, class_id=base_session_data.class_id)
-
+        
         return created_sessions
     
     async def update_session(
@@ -1989,7 +1991,7 @@ class ClassSessionService:
             db, db_obj=session, 
             obj_in={"status": ClassSessionStatus.CANCELLED}
         )
-        
+    
         # Invalidar caché
         await self._invalidate_session_caches(
             redis_client, 
@@ -2030,10 +2032,10 @@ class ClassSessionService:
         """
         # Nota: Añadir redis_client
         if gym_id is None:
-             logger.warning("Attempted to get sessions by date range without gym_id. Cache disabled.")
-             start_datetime = datetime.combine(start_date, time.min)
-             end_datetime = datetime.combine(end_date, time.max)
-             return class_session_repository.get_by_date_range(db, start_date=start_datetime, end_date=end_datetime, skip=skip, limit=limit)
+            logger.warning("Attempted to get sessions by date range without gym_id. Cache disabled.")
+            start_datetime = datetime.combine(start_date, time.min)
+            end_datetime = datetime.combine(end_date, time.max)
+            return class_session_repository.get_by_date_range(db, start_date=start_datetime, end_date=end_datetime, skip=skip, limit=limit)
 
         # Formatear fechas para la clave
         start_str = start_date.isoformat()
@@ -2138,21 +2140,21 @@ class ClassParticipationService:
                     detail="Ya estás registrado en esta clase"
                 )
         else:
-            # Crear nueva participación
+        # Crear nueva participación
             participation_data = ClassParticipationCreate(
                 session_id=session_id,
                 member_id=member_id,
                 status=ClassParticipationStatus.REGISTERED,
-                gym_id=gym_id  # Asignar el gym_id
+                    gym_id=gym_id  # Asignar el gym_id
             )
             participation_result = class_participation_repository.create(
-                db, obj_in=participation_data
-            )
+            db, obj_in=participation_data
+        )
         
         # Actualizar contador de participantes y validar resultado
         if participation_result:
             class_session_repository.update_participant_count(db, session_id=session_id)
-            # Invalidar cachés de sesión al final
+                # Invalidar cachés de sesión al final
             await self._invalidate_session_caches(redis_client, gym_id=gym_id, trainer_id=session.trainer_id, class_id=session.class_id)
             return participation_result
         else:
