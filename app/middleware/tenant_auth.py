@@ -176,11 +176,10 @@ class TenantAuthMiddleware(BaseHTTPMiddleware):
             response = await call_next(request)
         finally:
             # Limpiar el estado de la request al finalizar (buena práctica)
-            if hasattr(request, 'state'):
-                del request.state
+            if hasattr(request, 'state') and hasattr(request.state, 'clear'):
+                request.state.clear()
             # Cerrar sesión de DB si se abrió aquí (si db fue obtenido)
-            # Nota: Esto puede ser complejo si la sesión se usa más adelante.
-            # Considerar usar dependencias en endpoints para manejar sesiones. 
+            # Nota: Es mejor manejar la sesión con dependencias en endpoints.
             pass
 
         # 6. Medir tiempo total de procesamiento
