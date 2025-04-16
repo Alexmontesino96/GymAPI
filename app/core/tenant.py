@@ -107,7 +107,7 @@ async def _verify_user_role_in_gym(
 ) -> GymSchema:
     """
     Verifica que el usuario pertenece al gimnasio y tiene el rol requerido.
-    OPTIMIZADO: Primero verifica request.state antes de consultar caché/DB.
+    Permite acceso si el usuario es SUPER_ADMIN global.
     """
     if not current_gym_schema:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Se requiere un ID de gimnasio (X-Gym-ID)")
@@ -116,42 +116,41 @@ async def _verify_user_role_in_gym(
     gym_name = current_gym_schema.name
     logger = logging.getLogger("tenant_verification")
     
-    # --- OPTIMIZACIÓN: Verificar request.state --- 
+    # --- Obtener usuario local y verificar rol SUPER_ADMIN --- 
+    local_user = await user_service.get_user_by_auth0_id_cached(
+        db=db, auth0_id=current_user.id, redis_client=redis_client
+    )
+    if not local_user:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, 
+            detail="Usuario no encontrado en el sistema local"
+        )
+        
+    # Si es SUPER_ADMIN, conceder acceso directamente a cualquier gimnasio
+    if local_user.role == UserRole.SUPER_ADMIN:
+        logger.debug(f"Acceso concedido a gym {gym_id} para SUPER_ADMIN (User ID: {local_user.id})")
+        return current_gym_schema
+    # --- Fin verificación SUPER_ADMIN --- 
+    
+    user_id = local_user.id # ID interno del usuario
+    
+    # --- Lógica existente para verificar rol específico del gimnasio --- 
+    # --- (Incluyendo optimización fallida de request.state que podemos eliminar o ignorar) --- 
     user_role_in_gym = getattr(request.state, 'role_in_gym', None)
     user_from_state = getattr(request.state, 'user', None)
     gym_from_state = getattr(request.state, 'gym', None)
     
-    # Asegurarse que el gym en state coincide con el actual
     if gym_from_state and gym_from_state.id != gym_id:
-         logger.warning(f"Discrepancia de Gym ID entre request.state ({gym_from_state.id}) y dependency ({gym_id})")
-         # Resetear valores de state si no coinciden
          user_role_in_gym = None
          user_from_state = None
-    
-    # Asegurarse que el user en state coincide con el actual
     if user_from_state and user_from_state.auth0_id != current_user.id:
-         logger.warning(f"Discrepancia de User ID entre request.state ({user_from_state.auth0_id}) y dependency ({current_user.id})")
-         # Resetear valores de state si no coinciden
          user_role_in_gym = None
          user_from_state = None
          
-    # Si tenemos rol en state, usarlo directamente
     if user_role_in_gym is not None:
         logger.debug(f"Verificación de rol obtenida de request.state: Rol={user_role_in_gym}")
         cache_hit_status = "STATE_HIT"
     else:
-        # --- FIN OPTIMIZACIÓN --- 
-        
-        # Obtener user_id (si no lo teníamos ya de user_from_state)
-        user_id = user_from_state.id if user_from_state else None
-        if not user_id:
-            user_id_or_schema = await user_service.get_user_by_auth0_id_cached(
-                db=db, auth0_id=current_user.id, redis_client=redis_client
-            )
-            if not user_id_or_schema:
-                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Usuario no encontrado en el sistema")
-            user_id = user_id_or_schema.id
-        
         # Verificar membresía (lógica de caché/DB existente)
         cache_hit_status = "NO_REDIS"
         if redis_client:

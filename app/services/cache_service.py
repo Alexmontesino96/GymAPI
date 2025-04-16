@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from pydantic import BaseModel
 from redis.asyncio import Redis
 from sqlalchemy.orm import Session
+from pydantic_core import Url
 
 from app.core.profiling import time_redis_operation, time_deserialize_operation, time_db_query, register_cache_hit, register_cache_miss, db_query_timer
 
@@ -13,11 +14,13 @@ logger = logging.getLogger(__name__)
 
 T = TypeVar('T', bound=BaseModel)
 
-# Serializador JSON personalizado para manejar objetos datetime
+# Serializador JSON personalizado para manejar objetos datetime y Url
 def json_serializer(obj):
-    """Serializador JSON personalizado que maneja objetos datetime."""
+    """Serializador JSON personalizado que maneja objetos datetime y Url de Pydantic."""
     if isinstance(obj, datetime):
         return obj.isoformat()
+    if isinstance(obj, Url):
+        return str(obj)
     raise TypeError(f"Tipo no serializable: {type(obj)}")
 
 class CacheService:
