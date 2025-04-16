@@ -78,7 +78,7 @@ async def get_current_gym(
                 cache_key=cache_key,
                 db_fetch_func=db_fetch, 
                 model_class=GymSchema,
-                expiry_seconds=settings.CACHE_TTL_GYM_DETAILS, 
+                expiry_seconds=get_settings().CACHE_TTL_GYM_DETAILS, 
                 is_list=False
             )
         except Exception as e:
@@ -179,12 +179,12 @@ async def _verify_user_role_in_gym(
                     logger.debug(f"Usuario {user_id} encontrado en gym {gym_id} (BD), rol: {user_role_in_gym}. Guardando en caché...")
                     @time_redis_operation
                     async def _redis_set(key, value, ex): await redis_client.set(key, value, ex=ex)
-                    asyncio.create_task(_redis_set(cache_key, user_role_in_gym, settings.CACHE_TTL_USER_MEMBERSHIP))
+                    asyncio.create_task(_redis_set(cache_key, user_role_in_gym, get_settings().CACHE_TTL_USER_MEMBERSHIP))
                 else:
                     logger.debug(f"Usuario {user_id} NO encontrado en gym {gym_id} (BD). Guardando caché negativo...")
                     @time_redis_operation
                     async def _redis_set_neg(key, value, ex): await redis_client.set(key, value, ex=ex)
-                    asyncio.create_task(_redis_set_neg(cache_key, "__NONE__", settings.CACHE_TTL_NEGATIVE))
+                    asyncio.create_task(_redis_set_neg(cache_key, "__NONE__", get_settings().CACHE_TTL_NEGATIVE))
                     user_role_in_gym = None
         except Exception as e:
             logger.error(f"Error durante verificación de rol en gym con Redis: {e}", exc_info=True)

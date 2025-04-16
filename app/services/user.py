@@ -876,7 +876,7 @@ class UserService:
                 cache_key=cache_key,
                 db_fetch_func=db_fetch,
                 model_class=UserPublicProfile, # El modelo Pydantic que queremos cachear/devolver
-                expiry_seconds=settings.CACHE_TTL_USER_MEMBERSHIP, # Reutilizar TTL estándar
+                expiry_seconds=get_settings().CACHE_TTL_USER_MEMBERSHIP, # Reutilizar TTL estándar
                 is_list=False # Es un objeto único
             )
             return public_profile
@@ -954,7 +954,7 @@ class UserService:
                 # Serializar y guardar en caché de forma asíncrona
                 try:
                     serialized = user_schema.model_dump_json()
-                    await _redis_set(cache_key, serialized, ex=settings.CACHE_TTL_USER_PROFILE)
+                    await _redis_set(cache_key, serialized, ex=get_settings().CACHE_TTL_USER_PROFILE)
                     logger.debug(f"Usuario {auth0_id} almacenado en caché con clave {cache_key}")
                 except Exception as e:
                     logger.error(f"Error al guardar usuario {auth0_id} en caché: {e}")
