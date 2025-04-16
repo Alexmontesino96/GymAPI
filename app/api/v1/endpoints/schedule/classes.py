@@ -1,6 +1,8 @@
 from app.api.v1.endpoints.schedule.common import *
 from app.core.tenant import verify_gym_access
 from app.models.gym import Gym
+from app.db.redis_client import get_redis_client
+from redis.asyncio import Redis
 
 router = APIRouter()
 

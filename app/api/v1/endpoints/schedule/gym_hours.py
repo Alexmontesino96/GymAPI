@@ -18,8 +18,8 @@ from app.schemas.schedule import (
 from app.services import schedule
 from app.models.user import User, UserRole
 from app.models.user_gym import UserGym, GymRoleType
-from app.db.redis_client import get_redis_client, Redis
-
+from app.db.redis_client import get_redis_client
+from redis import Redis
 router = APIRouter()
 
 @router.get("/regular", response_model=List[GymHours])
