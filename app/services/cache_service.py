@@ -395,5 +395,109 @@ class CacheService:
         for pattern in patterns:
             await CacheService.delete_pattern(redis_client, pattern)
 
+    @staticmethod
+    @time_redis_operation
+    async def get_or_set_json(
+        redis_client: Redis,
+        cache_key: str,
+        db_fetch_func: Callable,
+        expiry_seconds: int = 300  # 5 minutos por defecto
+    ) -> Any:
+        """
+        Obtiene y deserializa datos JSON de Redis o los establece si no existen.
+        Esta versión es específica para datos que no requieren un modelo Pydantic.
+        
+        Args:
+            redis_client: Cliente Redis a usar
+            cache_key: Clave única para identificar el objeto en caché
+            db_fetch_func: Función que obtiene los datos de la BD si no están en caché
+            expiry_seconds: Tiempo de expiración en segundos
+            
+        Returns:
+            Diccionario o lista de diccionarios con los datos deserializados
+        """
+        if not redis_client:
+            logger.warning("Cliente Redis no disponible, ejecutando consulta sin caché")
+            return await db_fetch_func()
+            
+        # Intentar obtener del caché
+        try:
+            start_time = datetime.now()
+            @time_redis_operation
+            async def _redis_get(key): return await redis_client.get(key)
+            cached_data = await _redis_get(cache_key)
+            if cached_data:
+                # ¡CACHE HIT! Registrar para métricas
+                register_cache_hit(cache_key)
+                
+                print(f"DEBUG CACHE HIT para clave: {cache_key}")
+                logger.debug(f"Cache hit para clave: {cache_key}")
+                
+                try:
+                    data_dict = json.loads(cached_data)
+                    logger.debug(f"Deserialización exitosa desde caché para clave: {cache_key}")
+                    return data_dict
+                except Exception as e:
+                    logger.error(f"Error al deserializar datos JSON de caché para clave {cache_key}: {e}", exc_info=True)
+                    # Fallback a BD en caso de error de deserialización
+                    register_cache_miss(cache_key)
+                    logger.warning(f"Ignorando datos en caché corruptos, consultando BD para {cache_key}")
+                    # Eliminar la clave corrupta
+                    await redis_client.delete(cache_key)
+                    
+        except Exception as e:
+            logger.error(f"Error al leer del caché: {str(e)}", exc_info=True)
+            # Continuamos con la consulta a BD en caso de error
+        
+        # Si no está en caché o hay error, obtener de la BD
+        # ¡CACHE MISS! Registrar para métricas
+        register_cache_miss(cache_key)
+        
+        print(f"DEBUG CACHE MISS para clave: {cache_key}")
+        logger.debug(f"Cache miss para clave: {cache_key}")
+        db_start_time = datetime.now()
+        
+        # Aquí es donde ejecutamos realmente la consulta a BD
+        try:
+            with db_query_timer():  # Reemplazar el decorador con un contexto
+                data = await db_fetch_func()
+        except Exception as e:
+            logger.error(f"Error en DB fetch para {cache_key}: {e}")
+            # Relanzar para que el manejador de excepciones superior lo capture
+            raise
+            
+        db_time = (datetime.now() - db_start_time).total_seconds()
+        logger.debug(f"Consulta a BD tomó {db_time:.4f}s para clave {cache_key}")
+        
+        # Guardar en caché
+        try:
+            if data is not None:
+                # Serializar los datos a JSON
+                try:
+                    serialized_data = json.dumps(data, default=json_serializer)
+                    logger.debug(f"Serialización JSON exitosa para clave {cache_key}")
+                except Exception as e:
+                    logger.error(f"Error al serializar JSON para {cache_key}: {e}", exc_info=True)
+                    # No almacenar en caché si hay error
+                    return data
+                
+                # Almacenar en Redis
+                try:
+                    @time_redis_operation
+                    async def _redis_set(key, value, ex): return await redis_client.set(key, value, ex=ex)
+                    result = await _redis_set(cache_key, serialized_data, expiry_seconds)
+                    if result:
+                        logger.debug(f"Datos JSON guardados correctamente en caché con clave: {cache_key}, TTL: {expiry_seconds}s")
+                    else:
+                        logger.warning(f"Redis SET devolvió False para clave: {cache_key}")
+                except Exception as e:
+                    logger.error(f"Error al guardar JSON en Redis para {cache_key}: {e}", exc_info=True)
+                
+        except Exception as e:
+            logger.error(f"Error general al guardar JSON en caché: {str(e)}", exc_info=True)
+            # Continuamos retornando los datos aunque el caché falle
+            
+        return data
+
 # Instancia global del servicio
 cache_service = CacheService() 
