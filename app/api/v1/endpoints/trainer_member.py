@@ -35,6 +35,7 @@ from app.schemas.trainer_member import (
     UserWithRelationship
 )
 from app.core.tenant import verify_gym_access
+from app.schemas.gym import GymSchema
 
 router = APIRouter()
 
