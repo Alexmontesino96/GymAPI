@@ -28,7 +28,7 @@ from app.schemas.user import User as UserSchema
 from app.core.config import get_settings
 from app.services.user import user_service
 from app.db.session import get_db
-from app.models.gym import Gym
+from app.models.gym import Gym 
 from app.core.profiling import register_cache_hit, register_cache_miss, time_db_query, time_redis_operation
 from app.core.auth0_fastapi import get_current_user
 
@@ -127,50 +127,51 @@ class TenantAuthMiddleware(BaseHTTPMiddleware):
                  )
                  
             # Si tenemos auth0_id y se requiere gimnasio, obtener datos combinados
-            if auth0_id and requires_gym and gym_id is not None:
-                # Necesitamos DB y Redis para obtener/guardar datos combinados
-                # Obtenerlos aquí en lugar de depender de llamadas posteriores
-                db = next(get_db()) # Obtener sesión de DB síncrona
-                redis_client = await get_redis_client() # Obtener cliente Redis
+            if auth0_id:
+                # Obtener el usuario desde caché/DB (solo una vez)
+                db = next(get_db())
+                redis_client = await get_redis_client()
+                user = None
                 
                 if not redis_client:
                     logger.error("Redis no disponible en middleware, no se pueden verificar/cachear datos de acceso")
-                    # Fallback a no hacer nada o error 503? Por seguridad, mejor fallar
                     return Response(
                         content=json.dumps({"detail": "Servicio de caché no disponible"}),
                         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                         media_type="application/json"
                     )
-                    
-                # Intentar obtener datos combinados
-                combined_data = await self.get_combined_auth_data(auth0_id, gym_id, db, redis_client)
                 
-                if combined_data and combined_data.get("access", True): # Verificar acceso (puede ser negativo) 
-                    # Poblar request.state para uso posterior
-                    request.state.user = UserSchema(**combined_data.get("user", {}))
-                    request.state.gym = GymSchema(**combined_data.get("gym", {}))
-                    request.state.role_in_gym = combined_data.get("role_in_gym")
-                    logger.debug(f"Datos combinados cargados en state para user {auth0_id}, gym {gym_id}")
+                # Precargamos el usuario en todos los casos para evitar llamadas duplicadas
+                user = await user_service.get_user_by_auth0_id_cached(db, auth0_id, redis_client)
+                
+                if requires_gym and gym_id is not None:
+                    # Necesitamos verificar acceso al gimnasio
+                    # Intentar obtener datos combinados, pasando el usuario ya cacheado
+                    combined_data = await self.get_combined_auth_data(auth0_id, gym_id, db, redis_client, user_cached=user)
+                    
+                    if combined_data and combined_data.get("access", True): # Verificar acceso (puede ser negativo) 
+                        # Poblar request.state para uso posterior
+                        request.state.user = UserSchema(**combined_data.get("user", {}))
+                        request.state.gym = GymSchema(**combined_data.get("gym", {}))
+                        request.state.role_in_gym = combined_data.get("role_in_gym")
+                        logger.debug(f"Datos combinados cargados en state para user {auth0_id}, gym {gym_id}")
+                    else:
+                        # Si no hay datos combinados o acceso es False (cache negativo)
+                        logger.warning(f"Acceso denegado para user {auth0_id} a gym {gym_id} (middleware)")
+                        return Response(
+                            content=json.dumps({"detail": f"Acceso denegado al gimnasio"}),
+                            status_code=status.HTTP_403_FORBIDDEN,
+                            media_type="application/json"
+                        )
                 else:
-                    # Si no hay datos combinados o acceso es False (cache negativo)
-                    logger.warning(f"Acceso denegado para user {auth0_id} a gym {gym_id} (middleware)")
-                    return Response(
-                        content=json.dumps({"detail": f"Acceso denegado al gimnasio"}),
-                        status_code=status.HTTP_403_FORBIDDEN,
-                        media_type="application/json"
-                    )
-            elif auth0_id: # Se requiere auth pero no gym, obtener solo usuario
-                 db = next(get_db())
-                 redis_client = await get_redis_client()
-                 user = await user_service.get_user_by_auth0_id_cached(db, auth0_id, redis_client)
-                 if user:
-                     request.state.user = user
-                 else:
-                     logger.warning(f"Usuario autenticado {auth0_id} no encontrado en DB local")
-                     # Permitir continuar o devolver error? Depende del caso de uso.
-                     # Por ahora, permitimos continuar pero sin usuario en state.
-                     pass
-                     
+                    # Solo se necesita el usuario (sin gimnasio)
+                    if user:
+                        request.state.user = user
+                    else:
+                        logger.warning(f"Usuario autenticado {auth0_id} no encontrado en DB local")
+                        # Permitir continuar o devolver error? Depende del caso de uso.
+                        # Por ahora, permitimos continuar pero sin usuario en state.
+                        pass
         # 5. Ejecutar el resto de la request
         try:
             response = await call_next(request)
@@ -189,9 +190,16 @@ class TenantAuthMiddleware(BaseHTTPMiddleware):
         # 7. Devolver la respuesta
         return response
     
-    async def get_combined_auth_data(self, auth0_id: str, gym_id: int, db: Session, redis_client: redis.Redis) -> Optional[Dict[str, Any]]:
+    async def get_combined_auth_data(self, auth0_id: str, gym_id: int, db: Session, redis_client: redis.Redis, user_cached: Optional[UserSchema] = None) -> Optional[Dict[str, Any]]:
         """
         Obtiene o crea los datos combinados de autenticación y acceso al gimnasio.
+        
+        Args:
+            auth0_id: ID de Auth0 del usuario
+            gym_id: ID del gimnasio
+            db: Sesión de base de datos
+            redis_client: Cliente Redis
+            user_cached: Usuario ya obtenido de caché/DB (opcional, para evitar operación Redis redundante)
         """
         combined_key = f"tenant_auth:{auth0_id}:{gym_id}"
         settings = get_settings() # Obtener settings para TTLs
@@ -213,7 +221,11 @@ class TenantAuthMiddleware(BaseHTTPMiddleware):
             
             register_cache_miss(combined_key)
             
-            user = await user_service.get_user_by_auth0_id_cached(db, auth0_id, redis_client)
+            # Usar el usuario ya cacheado si se proporciona
+            user = user_cached
+            if user is None:
+                user = await user_service.get_user_by_auth0_id_cached(db, auth0_id, redis_client)
+                
             if not user:
                 await self.store_negative_auth_data(auth0_id, gym_id, redis_client) # Cache negativo si user no existe
                 return {"access": False}

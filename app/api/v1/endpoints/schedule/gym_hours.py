@@ -18,6 +18,7 @@ from app.schemas.schedule import (
 from app.services import schedule
 from app.models.user import User, UserRole
 from app.models.user_gym import UserGym, GymRoleType
+from app.db.redis_client import get_redis_client, Redis
 
 router = APIRouter()
 
@@ -25,7 +26,8 @@ router = APIRouter()
 async def get_all_gym_hours(
     db: Session = Depends(get_db),
     current_gym: Gym = Depends(verify_gym_access),
-    user: Auth0User = Security(auth.get_user, scopes=["read:schedules"])
+    user: Auth0User = Security(auth.get_user, scopes=["read:schedules"]),
+    redis_client: Redis = Depends(get_redis_client)
 ) -> Any:
     """
     Get the gym's regular operating hours for all days of the week.
@@ -41,11 +43,12 @@ async def get_all_gym_hours(
         db: Database session dependency
         current_gym: The current gym context
         user: Authenticated user with appropriate scope
+        redis_client: Redis client for caching
         
     Returns:
         List[GymHours]: A list of regular hours for all days of the week
     """
-    return schedule.gym_hours_service.get_all_gym_hours(db, gym_id=current_gym.id)
+    return await schedule.gym_hours_service.get_all_gym_hours_cached(db, gym_id=current_gym.id, redis_client=redis_client)
 
 
 @router.get("/regular/{day}", response_model=GymHours)
@@ -53,7 +56,8 @@ async def get_gym_hours_by_day(
     day: int = Path(..., ge=0, le=6, description="Day of the week (0=Monday, 6=Sunday)"),
     db: Session = Depends(get_db),
     current_gym: Gym = Depends(verify_gym_access),
-    user: Auth0User = Security(auth.get_user, scopes=["read:schedules"])
+    user: Auth0User = Security(auth.get_user, scopes=["read:schedules"]),
+    redis_client: Redis = Depends(get_redis_client)
 ) -> Any:
     """
     Get the gym's regular operating hours for a specific day of the week.
@@ -70,24 +74,12 @@ async def get_gym_hours_by_day(
         db: Database session dependency
         current_gym: The current gym context
         user: Authenticated user with appropriate scope
+        redis_client: Redis client for caching
         
     Returns:
         GymHours: Regular opening and closing times for the specified day
     """
-    hours = schedule.gym_hours_service.get_gym_hours_by_day(db, day=day, gym_id=current_gym.id)
-    if not hours:
-        # Create default hours if none exist
-        hours = schedule.gym_hours_service.create_or_update_gym_hours(
-            db, day=day, 
-            gym_hours_data=GymHoursCreate(
-                day_of_week=day,
-                open_time=datetime.strptime("09:00", "%H:%M").time(),
-                close_time=datetime.strptime("21:00", "%H:%M").time(),
-                is_closed=(day == 6),  # Closed on Sundays
-                gym_id=current_gym.id
-            )
-        )
-    return hours
+    return await schedule.gym_hours_service.get_gym_hours_by_day_cached(db, day=day, gym_id=current_gym.id, redis_client=redis_client)
 
 
 @router.put("/regular/{day}", response_model=GymHours)
@@ -96,7 +88,8 @@ async def update_gym_hours(
     gym_hours_data: GymHoursUpdate = Body(...),
     db: Session = Depends(get_db),
     current_gym: Gym = Depends(verify_gym_access),
-    current_user: Auth0User = Depends(get_current_user)
+    current_user: Auth0User = Depends(get_current_user),
+    redis_client: Redis = Depends(get_redis_client)
 ) -> Any:
     """
     Update the gym's regular operating hours for a specific day of the week.
@@ -114,6 +107,7 @@ async def update_gym_hours(
         db: Database session dependency
         current_gym: The current gym context
         current_user: Authenticated user
+        redis_client: Redis client for caching
         
     Returns:
         GymHours: Updated regular opening and closing times for the specified day
@@ -139,11 +133,12 @@ async def update_gym_hours(
     gym_hours_dict["gym_id"] = current_gym.id
     updated_gym_hours_data = GymHoursUpdate(**gym_hours_dict)
     
-    return schedule.gym_hours_service.create_or_update_gym_hours(
+    return await schedule.gym_hours_service.create_or_update_gym_hours_cached(
         db, 
         day=day, 
         gym_hours_data=updated_gym_hours_data,
-        gym_id=current_gym.id
+        gym_id=current_gym.id,
+        redis_client=redis_client
     )
 
 
@@ -152,7 +147,8 @@ async def get_gym_hours_by_date(
     date: date = Path(..., description="Date (YYYY-MM-DD)"),
     db: Session = Depends(get_db),
     current_gym: Gym = Depends(verify_gym_access),
-    user: Auth0User = Security(auth.get_user, scopes=["read:schedules"])
+    user: Auth0User = Security(auth.get_user, scopes=["read:schedules"]),
+    redis_client: Redis = Depends(get_redis_client)
 ) -> Any:
     """
     Get the gym's effective operating hours for a specific date.
@@ -169,6 +165,7 @@ async def get_gym_hours_by_date(
         db: Database session dependency
         current_gym: The current gym context
         user: Authenticated user with appropriate scope
+        redis_client: Redis client for caching
         
     Returns:
         Dict: Contains operating hours info with fields:
@@ -179,16 +176,17 @@ async def get_gym_hours_by_date(
             - open_time: The actual opening time for this date
             - close_time: The actual closing time for this date
     """
-    return schedule.gym_hours_service.get_hours_for_date(db, date_value=date, gym_id=current_gym.id)
+    return await schedule.gym_hours_service.get_hours_for_date_cached(db, date_value=date, gym_id=current_gym.id, redis_client=redis_client)
 
 
 @router.post("/apply-defaults", response_model=List[GymSpecialHours])
-def apply_defaults_to_range(
+async def apply_defaults_to_range(
     *,
     db: Session = Depends(get_db),
     apply_request: ApplyDefaultsRequest,
     current_user: Auth0User = Depends(get_current_user),
-    current_gym: Gym = Depends(verify_gym_access)
+    current_gym: Gym = Depends(verify_gym_access),
+    redis_client: Redis = Depends(get_redis_client)
 ) -> Any:
     """
     Apply regular weekly hours to a range of dates as special hours.
@@ -205,6 +203,7 @@ def apply_defaults_to_range(
         db: Database session dependency
         current_gym: The current gym context
         current_user: Authenticated user
+        redis_client: Redis client for caching
         
     Returns:
         List[GymSpecialHours]: Created or updated special hours entries
@@ -229,12 +228,13 @@ def apply_defaults_to_range(
     gym_id = current_gym.id
     
     try:
-        return schedule.gym_hours_service.apply_defaults_to_range(
+        return await schedule.gym_hours_service.apply_defaults_to_range_cached(
             db=db,
             start_date=apply_request.start_date,
             end_date=apply_request.end_date,
             gym_id=gym_id,
-            overwrite_existing=apply_request.overwrite_existing
+            overwrite_existing=apply_request.overwrite_existing,
+            redis_client=redis_client
         )
     except ValueError as e:
         raise HTTPException(
@@ -244,13 +244,14 @@ def apply_defaults_to_range(
 
 
 @router.get("/date-range", response_model=List[DailyScheduleResponse])
-def get_schedule_for_date_range(
+async def get_schedule_for_date_range(
     *,
     db: Session = Depends(get_db),
     start_date: date = Query(..., description="Start date (YYYY-MM-DD)"),
     end_date: date = Query(..., description="End date (YYYY-MM-DD)"),
     current_user: Auth0User = Depends(get_current_user),
-    current_gym: Gym = Depends(verify_gym_access)
+    current_gym: Gym = Depends(verify_gym_access),
+    redis_client: Redis = Depends(get_redis_client)
 ) -> Any:
     """
     Get the gym's complete schedule for a range of dates.
@@ -268,6 +269,7 @@ def get_schedule_for_date_range(
         db: Database session dependency
         current_gym: The current gym context
         current_user: Authenticated user
+        redis_client: Redis client for caching
         
     Returns:
         List[DailyScheduleResponse]: A list of daily schedules with effective hours
@@ -276,11 +278,12 @@ def get_schedule_for_date_range(
     gym_id = current_gym.id
     
     try:
-        schedule_data = schedule.gym_hours_service.get_schedule_for_date_range(
+        schedule_data = await schedule.gym_hours_service.get_schedule_for_date_range_cached(
             db=db,
             start_date=start_date,
             end_date=end_date,
-            gym_id=gym_id
+            gym_id=gym_id,
+            redis_client=redis_client
         )
         return schedule_data
     except ValueError as e:

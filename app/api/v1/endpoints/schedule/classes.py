@@ -11,18 +11,20 @@ async def get_classes(
     active_only: bool = True,
     db: Session = Depends(get_db),
     current_gym: Gym = Depends(verify_gym_access),
-    user: Auth0User = Security(auth.get_user, scopes=["read:schedules"])
+    user: Auth0User = Security(auth.get_user, scopes=["read:schedules"]),
+    redis_client: Redis = Depends(get_redis_client)
 ) -> Any:
     """
     Obtener todas las clases del gimnasio actual.
     Requiere el scope 'read:schedules'.
     """
-    return class_service.get_classes(
+    return await class_service.get_classes(
         db, 
         skip=skip, 
         limit=limit, 
         active_only=active_only,
-        gym_id=current_gym.id
+        gym_id=current_gym.id,
+        redis_client=redis_client
     )
 
 
@@ -31,23 +33,24 @@ async def get_class(
     class_id: int = Path(..., description="ID de la clase"),
     db: Session = Depends(get_db),
     current_gym: Gym = Depends(verify_gym_access),
-    user: Auth0User = Security(auth.get_user, scopes=["read:schedules"])
+    user: Auth0User = Security(auth.get_user, scopes=["read:schedules"]),
+    redis_client: Redis = Depends(get_redis_client)
 ) -> Any:
     """
     Obtener una clase específica con sus sesiones.
     Requiere el scope 'read:schedules'.
     """
-    class_obj = class_service.get_class(db, class_id=class_id)
+    class_obj = await class_service.get_class(db, class_id=class_id, gym_id=current_gym.id, redis_client=redis_client)
     
-    # Verificar que la clase pertenezca al gimnasio actual
-    if not class_obj or class_obj.gym_id != current_gym.id:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Clase no encontrada en este gimnasio"
-        )
+    # Verificar que la clase pertenezca al gimnasio actual (esto ya lo hace el servicio)
     
     # Obtener sesiones de la clase (solo las del gimnasio actual)
-    sessions = class_session_service.get_sessions_by_class(db, class_id=class_id, gym_id=current_gym.id)
+    sessions = await class_session_service.get_sessions_by_class(
+        db, 
+        class_id=class_id, 
+        gym_id=current_gym.id,
+        redis_client=redis_client
+    )
     
     # Crear respuesta con sesiones
     response = class_obj.__dict__.copy()
@@ -61,7 +64,8 @@ async def create_class(
     class_data: ClassCreate = Body(...),
     db: Session = Depends(get_db),
     current_gym: Gym = Depends(verify_gym_access),
-    user: Auth0User = Security(auth.get_user, scopes=["create:schedules"])
+    user: Auth0User = Security(auth.get_user, scopes=["create:schedules"]),
+    redis_client: Redis = Depends(get_redis_client)
 ) -> Any:
     """
     Crear una nueva clase.
@@ -104,11 +108,12 @@ async def create_class(
     
     # Crear la clase con los datos procesados
     class_obj = ClassCreate(**input_dict)
-    return class_service.create_class(
+    return await class_service.create_class(
         db, 
         class_data=class_obj, 
         created_by_id=created_by_id,
-        gym_id=current_gym.id  # Pasar explícitamente el ID del gimnasio
+        gym_id=current_gym.id,  # Pasar explícitamente el ID del gimnasio
+        redis_client=redis_client
     )
 
 
@@ -118,26 +123,15 @@ async def update_class(
     class_data: ClassUpdate = Body(...),
     db: Session = Depends(get_db),
     current_gym: Gym = Depends(verify_gym_access),
-    user: Auth0User = Security(auth.get_user, scopes=["update:schedules"])
+    user: Auth0User = Security(auth.get_user, scopes=["update:schedules"]),
+    redis_client: Redis = Depends(get_redis_client)
 ) -> Any:
     """
     Actualizar una clase existente.
     Requiere el scope 'update:schedules' asignado a entrenadores y administradores.
     """
     # Obtener la clase
-    class_obj = class_service.get_class(db, class_id=class_id)
-    if not class_obj:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Clase no encontrada"
-        )
-    
-    # Verificar que la clase pertenezca al gimnasio actual
-    if class_obj.gym_id != current_gym.id:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Clase no encontrada en este gimnasio"
-        )
+    class_obj = await class_service.get_class(db, class_id=class_id, gym_id=current_gym.id, redis_client=redis_client)
     
     # Verificar si está actualizando la categoría
     if class_data.category_id:
@@ -153,7 +147,7 @@ async def update_class(
                 detail="La categoría seleccionada no pertenece a este gimnasio"
             )
     
-    return class_service.update_class(db, class_id=class_id, class_data=class_data)
+    return await class_service.update_class(db, class_id=class_id, class_data=class_data, gym_id=current_gym.id, redis_client=redis_client)
 
 
 @router.delete("/classes/{class_id}", response_model=Class)
@@ -161,7 +155,8 @@ async def delete_class(
     class_id: int = Path(..., description="ID de la clase"),
     db: Session = Depends(get_db),
     current_gym: Gym = Depends(verify_gym_access),
-    user: Auth0User = Security(auth.get_user, scopes=["delete:schedules"])
+    user: Auth0User = Security(auth.get_user, scopes=["delete:schedules"]),
+    redis_client: Redis = Depends(get_redis_client)
 ) -> Any:
     """
     Eliminar una clase.
@@ -170,21 +165,9 @@ async def delete_class(
     Nota: Si la clase tiene sesiones programadas, se marcará como inactiva en lugar de eliminarla.
     """
     # Obtener la clase
-    class_obj = class_service.get_class(db, class_id=class_id)
-    if not class_obj:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Clase no encontrada"
-        )
+    class_obj = await class_service.get_class(db, class_id=class_id, gym_id=current_gym.id, redis_client=redis_client)
     
-    # Verificar que la clase pertenezca al gimnasio actual
-    if class_obj.gym_id != current_gym.id:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Clase no encontrada en este gimnasio"
-        )
-    
-    return class_service.delete_class(db, class_id=class_id)
+    return await class_service.delete_class(db, class_id=class_id, gym_id=current_gym.id, redis_client=redis_client)
 
 
 @router.get("/classes/category/{category}", response_model=List[Class])
@@ -194,19 +177,26 @@ async def get_classes_by_category(
     limit: int = 100,
     db: Session = Depends(get_db),
     current_gym: Gym = Depends(verify_gym_access),
-    user: Auth0User = Security(auth.get_user, scopes=["read:schedules"])
+    user: Auth0User = Security(auth.get_user, scopes=["read:schedules"]),
+    redis_client: Redis = Depends(get_redis_client)
 ) -> Any:
     """
     Obtener clases por categoría.
     Requiere el scope 'read:schedules'.
     """
-    return class_service.get_classes_by_category(
-        db, 
-        category=category, 
-        skip=skip, 
+    from app.models.schedule import Class
+    # Obtener clases por categoría enum en lugar de categoría personalizada
+    classes = await class_service.get_classes(
+        db,
+        skip=skip,
         limit=limit,
-        gym_id=current_gym.id
+        active_only=True,
+        gym_id=current_gym.id,
+        redis_client=redis_client
     )
+    
+    # Filtrar por categoría enum después de obtenerlas
+    return [cls for cls in classes if cls.category_enum == category]
 
 
 @router.get("/classes/difficulty/{difficulty}", response_model=List[Class])
@@ -216,18 +206,22 @@ async def get_classes_by_difficulty(
     limit: int = 100,
     db: Session = Depends(get_db),
     current_gym: Gym = Depends(verify_gym_access),
-    user: Auth0User = Security(auth.get_user, scopes=["read:schedules"])
+    user: Auth0User = Security(auth.get_user, scopes=["read:schedules"]),
+    redis_client: Redis = Depends(get_redis_client)
 ) -> Any:
     """
     Obtener clases por nivel de dificultad.
     Requiere el scope 'read:schedules'.
     """
-    return class_service.get_classes_by_difficulty(
+    # Convertir el enum a string ya que el método espera un string
+    difficulty_str = difficulty.value
+    return await class_service.get_classes_by_difficulty(
         db, 
-        difficulty=difficulty, 
+        difficulty=difficulty_str, 
         skip=skip, 
         limit=limit,
-        gym_id=current_gym.id
+        gym_id=current_gym.id,
+        redis_client=redis_client
     )
 
 
@@ -238,16 +232,18 @@ async def search_classes(
     limit: int = 100,
     db: Session = Depends(get_db),
     current_gym: Gym = Depends(verify_gym_access),
-    user: Auth0User = Security(auth.get_user, scopes=["read:schedules"])
+    user: Auth0User = Security(auth.get_user, scopes=["read:schedules"]),
+    redis_client: Redis = Depends(get_redis_client)
 ) -> Any:
     """
     Buscar clases por nombre o descripción.
     Requiere el scope 'read:schedules'.
     """
-    return class_service.search_classes(
+    return await class_service.search_classes(
         db, 
         search=query, 
         skip=skip, 
         limit=limit,
-        gym_id=current_gym.id
+        gym_id=current_gym.id,
+        redis_client=redis_client
     ) 
