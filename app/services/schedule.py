@@ -3,6 +3,7 @@ from datetime import datetime, time, timedelta, date
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
+import asyncio
 
 from app.repositories.schedule import (
     gym_hours_repository,
@@ -32,7 +33,9 @@ from app.schemas.schedule import (
     ClassParticipationCreate, 
     ClassParticipationUpdate,
     ClassCategoryCustomCreate,
-    ClassCategoryCustomUpdate
+    ClassCategoryCustomUpdate,
+    GymHours, 
+    GymSpecialHours
 )
 
 # --- Añadir importaciones para Caché --- 
@@ -48,6 +51,54 @@ logger = logging.getLogger(__name__)
 # --- Fin Logger ---
 
 class GymHoursService:
+    # --- Añadir método helper para invalidación de caché --- 
+    async def _invalidate_gym_hours_cache(self, redis_client: Redis, gym_id: int, day: Optional[int] = None, date_value: Optional[date] = None):
+        """
+        Invalida la caché de horarios de gimnasio.
+        
+        Args:
+            redis_client: Cliente Redis
+            gym_id: ID del gimnasio
+            day: Día específico a invalidar (opcional)
+            date_value: Fecha específica a invalidar (opcional)
+        """
+        if not redis_client:
+            return
+            
+        tracking_set_key = f"cache_keys:gym_hours:{gym_id}"
+        keys_to_delete = []
+        
+        try:
+            # Invalidar clave específica de día si se proporciona
+            if day is not None:
+                keys_to_delete.append(f"gym_hours:day:{day}:gym:{gym_id}")
+                
+            # Invalidar clave específica de fecha si se proporciona
+            if date_value is not None:
+                date_str = date_value.isoformat()
+                keys_to_delete.append(f"gym_hours:date:{date_str}:gym:{gym_id}")
+            
+            # Claves adicionales a invalidar siempre
+            keys_to_delete.append(f"gym_hours:all:gym:{gym_id}")
+            
+            # Obtener las claves de lista desde el Set de seguimiento
+            list_cache_keys = await redis_client.smembers(tracking_set_key)
+            if list_cache_keys:
+                # Convertir bytes a strings si es necesario (depende de la configuración de redis-py)
+                list_cache_keys_str = [key.decode('utf-8') if isinstance(key, bytes) else key for key in list_cache_keys]
+                keys_to_delete.extend(list_cache_keys_str)
+                # Añadir el propio Set a la lista para borrarlo también
+                keys_to_delete.append(tracking_set_key)
+            
+            # Borrar todas las claves encontradas
+            if keys_to_delete:
+                deleted_count = await redis_client.delete(*keys_to_delete)
+                logger.debug(f"Invalidated {deleted_count} gym hours cache keys for gym {gym_id}: {keys_to_delete}")
+                
+        except Exception as e:
+            logger.error(f"Error invalidating gym hours cache for gym {gym_id}: {e}", exc_info=True)
+    # --- Fin método helper ---
+    
     def get_gym_hours_by_day(self, db: Session, day: int, gym_id: int) -> Any:
         """
         Obtener los horarios del gimnasio para un día específico.
@@ -57,7 +108,57 @@ class GymHoursService:
             day: Día de la semana (0=Lunes, 6=Domingo)
             gym_id: ID del gimnasio
         """
-        return gym_hours_repository.get_by_day(db, day=day, gym_id=gym_id)
+        # Wrapper que llama a la versión cacheada con redis_client=None
+        # Esto evita duplicar código y mantiene compatibilidad con código existente
+        return asyncio.run(self.get_gym_hours_by_day_cached(db, day, gym_id, redis_client=None))
+    
+    async def get_gym_hours_by_day_cached(self, db: Session, day: int, gym_id: int, redis_client: Optional[Redis] = None) -> Any:
+        """
+        Obtener los horarios del gimnasio para un día específico (con caché).
+        
+        Args:
+            db: Sesión de base de datos
+            day: Día de la semana (0=Lunes, 6=Domingo)
+            gym_id: ID del gimnasio
+            redis_client: Cliente Redis opcional
+        """
+        if not redis_client:
+            return self.get_gym_hours_by_day(db, day, gym_id)
+            
+        cache_key = f"gym_hours:day:{day}:gym:{gym_id}"
+        tracking_set_key = f"cache_keys:gym_hours:{gym_id}"
+        
+        # Indica si el resultado vino de la BD
+        fetched_from_db = False
+        
+        async def db_fetch():
+            nonlocal fetched_from_db
+            result = gym_hours_repository.get_by_day(db, day=day, gym_id=gym_id)
+            # Si no hay resultados, creamos valores predeterminados
+            if not result:
+                result = gym_hours_repository.get_or_create_default(db, day=day, gym_id=gym_id)
+            fetched_from_db = True
+            return result
+            
+        hours = await cache_service.get_or_set(
+            redis_client=redis_client,
+            cache_key=cache_key,
+            db_fetch_func=db_fetch,
+            model_class=GymHours,
+            expiry_seconds=3600 * 24, # 24 horas
+            is_list=False
+        )
+        
+        # Si se obtuvo de la BD, añadir la clave al set de seguimiento
+        if fetched_from_db and redis_client and hours is not None:
+            try:
+                await redis_client.sadd(tracking_set_key, cache_key)
+                await redis_client.expire(tracking_set_key, 3600 * 24 * 7) # 7 días
+                logger.debug(f"Added cache key {cache_key} to tracking set {tracking_set_key}")
+            except Exception as e:
+                logger.error(f"Error adding cache key {cache_key} to set {tracking_set_key}: {e}", exc_info=True)
+                
+        return hours
     
     def get_all_gym_hours(self, db: Session, gym_id: int) -> List[Any]:
         """
@@ -67,8 +168,205 @@ class GymHoursService:
             db: Sesión de base de datos
             gym_id: ID del gimnasio
         """
-        return gym_hours_repository.get_all_days(db, gym_id=gym_id)
+        # Wrapper que llama a la versión cacheada con redis_client=None
+        return asyncio.run(self.get_all_gym_hours_cached(db, gym_id, redis_client=None))
     
+    async def get_all_gym_hours_cached(self, db: Session, gym_id: int, redis_client: Optional[Redis] = None) -> List[Any]:
+        """
+        Obtener los horarios para todos los días de la semana (con caché).
+        
+        Args:
+            db: Sesión de base de datos
+            gym_id: ID del gimnasio
+            redis_client: Cliente Redis opcional
+        """
+        if not redis_client:
+            return self.get_all_gym_hours(db, gym_id)
+            
+        cache_key = f"gym_hours:all:gym:{gym_id}"
+        tracking_set_key = f"cache_keys:gym_hours:{gym_id}"
+        
+        # Indica si el resultado vino de la BD
+        fetched_from_db = False
+        
+        async def db_fetch():
+            nonlocal fetched_from_db
+            result = gym_hours_repository.get_all_days(db, gym_id=gym_id)
+            # Comprobar si tenemos los 7 días de la semana
+            if len(result) < 7:
+                # Si faltan días, crear los que falten con valores predeterminados
+                existing_days = {hour.day_of_week for hour in result}
+                for day in range(7):
+                    if day not in existing_days:
+                        # Crear con valores predeterminados
+                        new_day = gym_hours_repository.get_or_create_default(db, day=day, gym_id=gym_id)
+                        result.append(new_day)
+                # Ordenar por día de la semana
+                result.sort(key=lambda x: x.day_of_week)
+            fetched_from_db = True
+            return result
+            
+        hours = await cache_service.get_or_set(
+            redis_client=redis_client,
+            cache_key=cache_key,
+            db_fetch_func=db_fetch,
+            model_class=GymHours,
+            expiry_seconds=3600 * 24, # 24 horas
+            is_list=True
+        )
+        
+        # Si se obtuvo de la BD, añadir la clave al set de seguimiento
+        if fetched_from_db and redis_client and hours is not None:
+            try:
+                await redis_client.sadd(tracking_set_key, cache_key)
+                await redis_client.expire(tracking_set_key, 3600 * 24 * 7) # 7 días
+                logger.debug(f"Added cache key {cache_key} to tracking set {tracking_set_key}")
+            except Exception as e:
+                logger.error(f"Error adding cache key {cache_key} to set {tracking_set_key}: {e}", exc_info=True)
+                
+        return hours
+    
+    async def create_or_update_gym_hours_cached(
+        self, db: Session, day: int, gym_hours_data: Union[GymHoursCreate, GymHoursUpdate],
+        gym_id: int, redis_client: Optional[Redis] = None
+    ) -> Any:
+        """
+        Crear o actualizar los horarios del gimnasio para un día específico (con invalidación de caché).
+        
+        Args:
+            db: Sesión de base de datos
+            day: Día de la semana (0=Lunes, 6=Domingo)
+            gym_hours_data: Datos del horario a crear o actualizar
+            gym_id: ID del gimnasio
+            redis_client: Cliente Redis opcional
+        """
+        # Ejecutar operación de creación/actualización
+        result = self.create_or_update_gym_hours(db, day, gym_hours_data, gym_id)
+        
+        # Invalidar caché si la operación fue exitosa
+        if result and redis_client:
+            await self._invalidate_gym_hours_cache(redis_client, gym_id, day=day)
+            
+        return result
+    
+    def _create_default_hours(self, db: Session, gym_id: int) -> List[Any]:
+        """
+        Crea los horarios predeterminados para un gimnasio.
+        Método interno usado para reemplazar initialize_default_hours.
+        
+        Args:
+            db: Sesión de base de datos
+            gym_id: ID del gimnasio
+        """
+        default_hours = []
+        
+        # Horarios predeterminados (Lunes a Viernes: 9am-9pm, Sábado: 10am-6pm, Domingo: cerrado)
+        default_schedule = {
+            0: (time(9, 0), time(21, 0), False),  # Lunes
+            1: (time(9, 0), time(21, 0), False),  # Martes
+            2: (time(9, 0), time(21, 0), False),  # Miércoles
+            3: (time(9, 0), time(21, 0), False),  # Jueves
+            4: (time(9, 0), time(21, 0), False),  # Viernes
+            5: (time(10, 0), time(18, 0), False), # Sábado
+            6: (None, None, True)                 # Domingo (cerrado)
+        }
+        
+        for day in range(7):
+            open_time, close_time, is_closed = default_schedule[day]
+            
+            # Crear el objeto de datos para el repositorio, incluyendo gym_id
+            obj_in_data = {
+                "day_of_week": day,
+                "open_time": open_time,
+                "close_time": close_time,
+                "is_closed": is_closed,
+                "gym_id": gym_id
+            }
+            
+            # Verificar si ya existen horarios para este día
+            existing_hours = gym_hours_repository.get_by_day(db, day=day, gym_id=gym_id)
+            if existing_hours:
+                # Si ya existen, actualizar solo si es necesario
+                # Crear un objeto de actualización solo con los campos que cambian
+                update_data = {}
+                if existing_hours.open_time != open_time:
+                    update_data['open_time'] = open_time
+                if existing_hours.close_time != close_time:
+                    update_data['close_time'] = close_time
+                if existing_hours.is_closed != is_closed:
+                    update_data['is_closed'] = is_closed
+                    
+                if update_data: # Solo actualizar si hay cambios
+                    hours = gym_hours_repository.update(db, db_obj=existing_hours, obj_in=update_data)
+                else:
+                    hours = existing_hours
+            else:
+                # Si no existen, crear nuevos usando obj_in_data (que ya tiene gym_id)
+                hours = gym_hours_repository.create(db, obj_in=obj_in_data)
+            
+            default_hours.append(hours)
+        
+        return default_hours
+    
+    def get_hours_for_date(self, db: Session, date_value: date, gym_id: int) -> Dict[str, Any]:
+        """
+        Obtener los horarios del gimnasio para una fecha específica.
+        
+        Args:
+            db: Sesión de base de datos
+            date_value: Fecha a consultar
+            gym_id: ID del gimnasio
+        """
+        # Wrapper que llama a la versión cacheada con redis_client=None
+        return asyncio.run(self.get_hours_for_date_cached(db, date_value, gym_id, redis_client=None))
+    
+    async def get_hours_for_date_cached(self, db: Session, date_value: date, gym_id: int, redis_client: Optional[Redis] = None) -> Dict[str, Any]:
+        """
+        Obtener los horarios del gimnasio para una fecha específica (con caché).
+        
+        Args:
+            db: Sesión de base de datos
+            date_value: Fecha a consultar
+            gym_id: ID del gimnasio
+            redis_client: Cliente Redis opcional
+        """
+        if not redis_client:
+            return await self._get_hours_for_date_internal(db, date_value, gym_id)
+            
+        date_str = date_value.isoformat()
+        cache_key = f"gym_hours:date:{date_str}:gym:{gym_id}"
+        tracking_set_key = f"cache_keys:gym_hours:{gym_id}"
+        
+        # Indica si el resultado vino de la BD
+        fetched_from_db = False
+        
+        async def db_fetch():
+            nonlocal fetched_from_db
+            result = await self._get_hours_for_date_internal(db, date_value, gym_id)
+            fetched_from_db = True
+            return result
+            
+        # Esta función no usa un modelo de Pydantic directamente, sino un diccionario de resultados
+        # Usamos expiry_seconds más corto ya que este dato puede cambiar con más frecuencia
+        # debido a la configuración de horarios especiales
+        hours_data = await cache_service.get_or_set_json(
+            redis_client=redis_client,
+            cache_key=cache_key,
+            db_fetch_func=db_fetch,
+            expiry_seconds=3600 * 12, # 12 horas
+        )
+        
+        # Si se obtuvo de la BD, añadir la clave al set de seguimiento
+        if fetched_from_db and redis_client and hours_data is not None:
+            try:
+                await redis_client.sadd(tracking_set_key, cache_key)
+                await redis_client.expire(tracking_set_key, 3600 * 24 * 7) # 7 días
+                logger.debug(f"Added cache key {cache_key} to tracking set {tracking_set_key}")
+            except Exception as e:
+                logger.error(f"Error adding cache key {cache_key} to set {tracking_set_key}: {e}", exc_info=True)
+                
+        return hours_data
+
     def create_or_update_gym_hours(
         self, db: Session, day: int, gym_hours_data: Union[GymHoursCreate, GymHoursUpdate],
         gym_id: int
@@ -182,6 +480,19 @@ class GymHoursService:
             date_value: Fecha a consultar
             gym_id: ID del gimnasio
         """
+        # Wrapper que llama a la versión cacheada con redis_client=None
+        return asyncio.run(self.get_hours_for_date_cached(db, date_value, gym_id, redis_client=None))
+
+    # Implementación interna para la versión cacheada
+    async def _get_hours_for_date_internal(self, db: Session, date_value: date, gym_id: int) -> Dict[str, Any]:
+        """
+        Implementación interna del método get_hours_for_date para ser usada por get_hours_for_date_cached.
+        
+        Args:
+            db: Sesión de base de datos
+            date_value: Fecha a consultar
+            gym_id: ID del gimnasio
+        """
         # Verificar si hay horarios especiales para esta fecha
         special_hours = gym_special_hours_repository.get_by_date(db, date_value=date_value, gym_id=gym_id)
         
@@ -237,7 +548,7 @@ class GymHoursService:
             }
         
         return result
-
+    
     def apply_defaults_to_range(
         self, db: Session, start_date: date, end_date: date, gym_id: int, overwrite_existing: bool = False
     ) -> List[GymSpecialHours]:
@@ -254,12 +565,33 @@ class GymHoursService:
         Returns:
             Lista de objetos GymSpecialHours creados o actualizados
         """
+        # Wrapper que llama a la versión cacheada con redis_client=None
+        return asyncio.run(self.apply_defaults_to_range_cached(db, start_date, end_date, gym_id, overwrite_existing, redis_client=None))
+        
+    async def apply_defaults_to_range_cached(
+        self, db: Session, start_date: date, end_date: date, gym_id: int, 
+        overwrite_existing: bool = False, redis_client: Optional[Redis] = None
+    ) -> List[GymSpecialHours]:
+        """
+        Aplica el horario semanal predeterminado a un rango de fechas específicas (con invalidación de caché).
+        
+        Args:
+            db: Sesión de base de datos
+            start_date: Fecha de inicio del rango
+            end_date: Fecha de fin del rango
+            gym_id: ID del gimnasio
+            overwrite_existing: Si es True, sobrescribe las excepciones manuales existentes
+            redis_client: Cliente Redis opcional
+            
+        Returns:
+            Lista de objetos GymSpecialHours creados o actualizados
+        """
         # Verificar que el rango de fechas sea válido
         if end_date < start_date:
             raise ValueError("La fecha de fin no puede ser anterior a la fecha de inicio")
             
-        # Obtener los horarios semanales predeterminados
-        weekly_hours = self.get_all_gym_hours(db, gym_id=gym_id)
+        # Obtener los horarios semanales predeterminados (utilizando la versión cacheada)
+        weekly_hours = await self.get_all_gym_hours_cached(db, gym_id=gym_id, redis_client=redis_client)
         if not weekly_hours:
             # Si no hay horarios semanales, crearlos con valores predeterminados
             weekly_hours = self._create_default_hours(db, gym_id=gym_id)
@@ -304,9 +636,19 @@ class GymHoursService:
             current_date += timedelta(days=1)
             
         # Crear o actualizar los horarios especiales en bloque
-        return gym_special_hours_repository.bulk_create_or_update(
+        result = gym_special_hours_repository.bulk_create_or_update(
             db, gym_id=gym_id, schedule_data=schedule_data
         )
+        
+        # Invalidar la caché para el rango de fechas
+        if result and redis_client:
+            # Invalidar todas las fechas afectadas del rango
+            current_date = start_date
+            while current_date <= end_date:
+                await self._invalidate_gym_hours_cache(redis_client, gym_id, date_value=current_date)
+                current_date += timedelta(days=1)
+        
+        return result
         
     def get_schedule_for_date_range(
         self, db: Session, start_date: date, end_date: date, gym_id: int
@@ -320,82 +662,216 @@ class GymHoursService:
             end_date: Fecha de fin
             gym_id: ID del gimnasio
         """
-        # Verificar que el rango de fechas sea válido
-        if end_date < start_date:
-            raise ValueError("La fecha de fin no puede ser anterior a la fecha de inicio")
+        # Wrapper que llama a la versión cacheada con redis_client=None
+        return asyncio.run(self.get_schedule_for_date_range_cached(db, start_date, end_date, gym_id, redis_client=None))
+        
+    async def get_schedule_for_date_range_cached(
+        self, db: Session, start_date: date, end_date: date, gym_id: int, redis_client: Optional[Redis] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Obtener el horario del gimnasio para un rango de fechas (con caché).
+        
+        Args:
+            db: Sesión de base de datos
+            start_date: Fecha de inicio
+            end_date: Fecha de fin
+            gym_id: ID del gimnasio
+            redis_client: Cliente Redis opcional
+        """
+        # Si no hay Redis, o el rango es muy grande, procesar sin caché
+        if not redis_client or (end_date - start_date).days > 31:  # Si es más de un mes, no cachear
+            # Verificar que el rango de fechas sea válido
+            if end_date < start_date:
+                raise ValueError("La fecha de fin no puede ser anterior a la fecha de inicio")
+                
+            # Obtener los horarios especiales para este rango
+            special_hours = gym_special_hours_repository.get_by_date_range(
+                db, start_date=start_date, end_date=end_date, gym_id=gym_id
+            )
             
-        # Obtener los horarios especiales para este rango
-        special_hours = gym_special_hours_repository.get_by_date_range(
-            db, start_date=start_date, end_date=end_date, gym_id=gym_id
-        )
-        
-        # Crear un diccionario de horarios especiales por fecha para acceso rápido
-        special_hours_dict = {str(hour.date): hour for hour in special_hours}
-        
-        # Obtener los horarios semanales predeterminados
-        weekly_hours = self.get_all_gym_hours(db, gym_id=gym_id)
-        if not weekly_hours:
-            # Si no hay horarios semanales, crearlos con valores predeterminados
-            weekly_hours = self._create_default_hours(db, gym_id=gym_id)
+            # Crear un diccionario de horarios especiales por fecha para acceso rápido
+            special_hours_dict = {str(hour.date): hour for hour in special_hours}
             
-        # Crear un diccionario de horarios por día de la semana para acceso rápido
-        weekly_hours_dict = {hour.day_of_week: hour for hour in weekly_hours}
-        
-        # Preparar la respuesta
-        result = []
-        current_date = start_date
-        
-        while current_date <= end_date:
-            # Obtener el día de la semana (0=Lunes, 6=Domingo)
-            day_of_week = current_date.weekday()
-            date_str = str(current_date)
+            # Obtener los horarios semanales predeterminados (usando la versión cacheada)
+            weekly_hours = await self.get_all_gym_hours_cached(db, gym_id=gym_id, redis_client=redis_client)
+            if not weekly_hours:
+                # Si no hay horarios semanales, crearlos con valores predeterminados
+                weekly_hours = self._create_default_hours(db, gym_id=gym_id)
+                
+            # Crear un diccionario de horarios por día de la semana para acceso rápido
+            weekly_hours_dict = {hour.day_of_week: hour for hour in weekly_hours}
             
-            # Verificar si hay un horario especial para esta fecha
-            if date_str in special_hours_dict:
-                special_hour = special_hours_dict[date_str]
-                schedule_entry = {
-                    "date": current_date,
-                    "day_of_week": day_of_week,
-                    "open_time": special_hour.open_time,
-                    "close_time": special_hour.close_time,
-                    "is_closed": special_hour.is_closed,
-                    "is_special": True,
-                    "description": special_hour.description,
-                    "source_id": special_hour.id
-                }
-            else:
-                # Usar el horario semanal para este día
-                weekly_hour = weekly_hours_dict.get(day_of_week)
-                if not weekly_hour:
-                    # Si no hay horario para este día, usar valores predeterminados
-                    is_closed = day_of_week == 6  # Cerrado en domingo
-                    open_time = time(9, 0) if not is_closed else None
-                    close_time = time(21, 0) if not is_closed else None
-                    source_id = None
+            # Preparar la respuesta
+            result = []
+            current_date = start_date
+            
+            while current_date <= end_date:
+                # Obtener el día de la semana (0=Lunes, 6=Domingo)
+                day_of_week = current_date.weekday()
+                date_str = str(current_date)
+                
+                # Verificar si hay un horario especial para esta fecha
+                if date_str in special_hours_dict:
+                    special_hour = special_hours_dict[date_str]
+                    schedule_entry = {
+                        "date": current_date,
+                        "day_of_week": day_of_week,
+                        "open_time": special_hour.open_time,
+                        "close_time": special_hour.close_time,
+                        "is_closed": special_hour.is_closed,
+                        "is_special": True,
+                        "description": special_hour.description,
+                        "source_id": special_hour.id
+                    }
                 else:
                     # Usar el horario semanal para este día
-                    is_closed = weekly_hour.is_closed
-                    open_time = weekly_hour.open_time
-                    close_time = weekly_hour.close_time
-                    source_id = weekly_hour.id
+                    weekly_hour = weekly_hours_dict.get(day_of_week)
+                    if not weekly_hour:
+                        # Si no hay horario para este día, usar valores predeterminados
+                        is_closed = day_of_week == 6  # Cerrado en domingo
+                        open_time = time(9, 0) if not is_closed else None
+                        close_time = time(21, 0) if not is_closed else None
+                        source_id = None
+                    else:
+                        # Usar el horario semanal para este día
+                        is_closed = weekly_hour.is_closed
+                        open_time = weekly_hour.open_time
+                        close_time = weekly_hour.close_time
+                        source_id = weekly_hour.id
+                        
+                    schedule_entry = {
+                        "date": current_date,
+                        "day_of_week": day_of_week,
+                        "open_time": open_time,
+                        "close_time": close_time,
+                        "is_closed": is_closed,
+                        "is_special": False,
+                        "description": None,
+                        "source_id": source_id
+                    }
                     
-                schedule_entry = {
-                    "date": current_date,
-                    "day_of_week": day_of_week,
-                    "open_time": open_time,
-                    "close_time": close_time,
-                    "is_closed": is_closed,
-                    "is_special": False,
-                    "description": None,
-                    "source_id": source_id
-                }
+                result.append(schedule_entry)
                 
-            result.append(schedule_entry)
+                # Avanzar al siguiente día
+                current_date += timedelta(days=1)
+                
+            return result
+        else:
+            # Para rangos pequeños, usamos caché
+            cache_key = f"gym_hours:range:{start_date.isoformat()}:{end_date.isoformat()}:gym:{gym_id}"
+            tracking_set_key = f"cache_keys:gym_hours:{gym_id}"
             
-            # Avanzar al siguiente día
-            current_date += timedelta(days=1)
+            # Indica si el resultado vino de la BD
+            fetched_from_db = False
             
-        return result
+            async def db_fetch():
+                nonlocal fetched_from_db
+                # Verificar que el rango de fechas sea válido
+                if end_date < start_date:
+                    raise ValueError("La fecha de fin no puede ser anterior a la fecha de inicio")
+                    
+                # Obtener los horarios especiales para este rango
+                special_hours = gym_special_hours_repository.get_by_date_range(
+                    db, start_date=start_date, end_date=end_date, gym_id=gym_id
+                )
+                
+                # Crear un diccionario de horarios especiales por fecha para acceso rápido
+                special_hours_dict = {str(hour.date): hour for hour in special_hours}
+                
+                # Obtener los horarios semanales predeterminados (usando la versión cacheada)
+                weekly_hours = await self.get_all_gym_hours_cached(db, gym_id=gym_id, redis_client=redis_client)
+                if not weekly_hours:
+                    # Si no hay horarios semanales, crearlos con valores predeterminados
+                    weekly_hours = self._create_default_hours(db, gym_id=gym_id)
+                    
+                # Crear un diccionario de horarios por día de la semana para acceso rápido
+                weekly_hours_dict = {hour.day_of_week: hour for hour in weekly_hours}
+                
+                # Preparar la respuesta
+                result = []
+                current_date = start_date
+                
+                while current_date <= end_date:
+                    # Obtener el día de la semana (0=Lunes, 6=Domingo)
+                    day_of_week = current_date.weekday()
+                    date_str = str(current_date)
+                    
+                    # Verificar si hay un horario especial para esta fecha
+                    if date_str in special_hours_dict:
+                        special_hour = special_hours_dict[date_str]
+                        schedule_entry = {
+                            "date": current_date.isoformat(),  # Convertir a string para JSON
+                            "day_of_week": day_of_week,
+                            "open_time": special_hour.open_time.isoformat() if special_hour.open_time else None,
+                            "close_time": special_hour.close_time.isoformat() if special_hour.close_time else None,
+                            "is_closed": special_hour.is_closed,
+                            "is_special": True,
+                            "description": special_hour.description,
+                            "source_id": special_hour.id
+                        }
+                    else:
+                        # Usar el horario semanal para este día
+                        weekly_hour = weekly_hours_dict.get(day_of_week)
+                        if not weekly_hour:
+                            # Si no hay horario para este día, usar valores predeterminados
+                            is_closed = day_of_week == 6  # Cerrado en domingo
+                            open_time = time(9, 0) if not is_closed else None
+                            close_time = time(21, 0) if not is_closed else None
+                            source_id = None
+                        else:
+                            # Usar el horario semanal para este día
+                            is_closed = weekly_hour.is_closed
+                            open_time = weekly_hour.open_time
+                            close_time = weekly_hour.close_time
+                            source_id = weekly_hour.id
+                            
+                        schedule_entry = {
+                            "date": current_date.isoformat(),  # Convertir a string para JSON
+                            "day_of_week": day_of_week,
+                            "open_time": open_time.isoformat() if open_time else None,
+                            "close_time": close_time.isoformat() if close_time else None,
+                            "is_closed": is_closed,
+                            "is_special": False,
+                            "description": None,
+                            "source_id": source_id
+                        }
+                        
+                    result.append(schedule_entry)
+                    
+                    # Avanzar al siguiente día
+                    current_date += timedelta(days=1)
+                    
+                fetched_from_db = True
+                return result
+                
+            # Esta función devuelve un diccionario de resultados, no un modelo Pydantic
+            schedule_data = await cache_service.get_or_set_json(
+                redis_client=redis_client,
+                cache_key=cache_key,
+                db_fetch_func=db_fetch,
+                expiry_seconds=3600 * 6,  # 6 horas
+            )
+            
+            # Si se obtuvo de la BD, añadir la clave al set de seguimiento
+            if fetched_from_db and redis_client and schedule_data is not None:
+                try:
+                    await redis_client.sadd(tracking_set_key, cache_key)
+                    await redis_client.expire(tracking_set_key, 3600 * 24 * 7)  # 7 días
+                    logger.debug(f"Added cache key {cache_key} to tracking set {tracking_set_key}")
+                except Exception as e:
+                    logger.error(f"Error adding cache key {cache_key} to set {tracking_set_key}: {e}", exc_info=True)
+                    
+            # Convertir fechas de ISO a objetos date/time
+            if schedule_data:
+                for entry in schedule_data:
+                    if "date" in entry and isinstance(entry["date"], str):
+                        entry["date"] = date.fromisoformat(entry["date"])
+                    if "open_time" in entry and entry["open_time"] and isinstance(entry["open_time"], str):
+                        entry["open_time"] = time.fromisoformat(entry["open_time"])
+                    if "close_time" in entry and entry["close_time"] and isinstance(entry["close_time"], str):
+                        entry["close_time"] = time.fromisoformat(entry["close_time"])
+            
+            return schedule_data
 
 
 class GymSpecialHoursService:
