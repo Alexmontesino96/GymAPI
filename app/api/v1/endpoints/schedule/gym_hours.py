@@ -30,23 +30,26 @@ async def get_all_gym_hours(
     redis_client: Redis = Depends(get_redis_client)
 ) -> Any:
     """
-    Get the gym's regular operating hours for all days of the week.
-    
-    This endpoint returns the opening and closing times for each day of the week
-    to help members plan their visits accordingly. The data includes whether
-    the gym is closed on specific days.
-    
-    Permissions:
-        - Requires 'read:schedules' scope
-        
+    Get All Regular Gym Hours (Weekly Template)
+
+    Retrieves the gym's standard operating hours template for all days of the week (Monday-Sunday).
+
     Args:
-        db: Database session dependency
-        current_gym: The current gym context
-        user: Authenticated user with appropriate scope
-        redis_client: Redis client for caching
-        
+        db (Session, optional): Database session dependency. Defaults to Depends(get_db).
+        current_gym (Gym, optional): Current gym context dependency. Defaults to Depends(verify_gym_access).
+        user (Auth0User, optional): Authenticated user dependency. Defaults to Security(auth.get_user, scopes=["read:schedules"]).
+        redis_client (Redis, optional): Redis client dependency. Defaults to Depends(get_redis_client).
+
+    Permissions:
+        - Requires 'read:schedules' scope.
+
     Returns:
-        List[GymHours]: A list of regular hours for all days of the week
+        List[GymHoursSchema]: A list containing 7 GymHours objects, one for each day (0=Mon to 6=Sun).
+
+    Raises:
+        HTTPException 401: Invalid or missing token.
+        HTTPException 403: Token lacks required scope or user doesn't belong to the gym.
+        HTTPException 404: Gym not found.
     """
     return await schedule.gym_hours_service.get_all_gym_hours_cached(db, gym_id=current_gym.id, redis_client=redis_client)
 
@@ -60,24 +63,30 @@ async def get_gym_hours_by_day(
     redis_client: Redis = Depends(get_redis_client)
 ) -> Any:
     """
-    Get the gym's regular operating hours for a specific day of the week.
-    
-    This endpoint retrieves opening and closing times for a specific day.
-    If no regular hours are defined for the requested day, default values will be
-    created using typical business hours (9:00-21:00) with Sundays closed.
-    
-    Permissions:
-        - Requires 'read:schedules' scope
-        
+    Get Regular Gym Hours for a Specific Day
+
+    Retrieves the gym's standard operating hours for a specific day of the week.
+    If no hours are explicitly defined for this day, default hours (Mon-Sat 9 AM - 9 PM,
+    Sun closed) will be returned and potentially created in the database.
+
     Args:
-        day: Day of the week (integer 0-6 where 0=Monday, 6=Sunday)
-        db: Database session dependency
-        current_gym: The current gym context
-        user: Authenticated user with appropriate scope
-        redis_client: Redis client for caching
-        
+        day (int): The day of the week (0=Monday, 6=Sunday).
+        db (Session, optional): Database session dependency. Defaults to Depends(get_db).
+        current_gym (Gym, optional): Current gym context dependency. Defaults to Depends(verify_gym_access).
+        user (Auth0User, optional): Authenticated user dependency. Defaults to Security(auth.get_user, scopes=["read:schedules"]).
+        redis_client (Redis, optional): Redis client dependency. Defaults to Depends(get_redis_client).
+
+    Permissions:
+        - Requires 'read:schedules' scope.
+
     Returns:
-        GymHours: Regular opening and closing times for the specified day
+        GymHoursSchema: The regular operating hours object for the specified day.
+
+    Raises:
+        HTTPException 401: Invalid or missing token.
+        HTTPException 403: Token lacks required scope or user doesn't belong to the gym.
+        HTTPException 404: Gym not found.
+        HTTPException 422: If the day parameter is outside the 0-6 range.
     """
     return await schedule.gym_hours_service.get_gym_hours_by_day_cached(db, day=day, gym_id=current_gym.id, redis_client=redis_client)
 
@@ -92,51 +101,59 @@ async def update_gym_hours(
     redis_client: Redis = Depends(get_redis_client)
 ) -> Any:
     """
-    Update the gym's regular operating hours for a specific day of the week.
-    
-    This endpoint allows administrators to modify the opening and closing times
-    for a specific day of the week, or mark a day as closed. If regular hours for the
-    specified day don't exist yet, they will be created.
-    
-    Permissions:
-        - Requires admin or platform admin role
-        
+    Update Regular Gym Hours for a Specific Day
+
+    Updates or creates the standard operating hours for a specific day of the week.
+    Allows setting open/close times or marking the day as closed.
+
     Args:
-        day: Day of the week (integer 0-6 where 0=Monday, 6=Sunday)
-        gym_hours_data: New schedule data (open_time, close_time, is_closed)
-        db: Database session dependency
-        current_gym: The current gym context
-        current_user: Authenticated user
-        redis_client: Redis client for caching
-        
+        day (int): The day of the week (0=Monday, 6=Sunday).
+        gym_hours_data (GymHoursUpdate): The new schedule data for the day.
+        db (Session, optional): Database session dependency. Defaults to Depends(get_db).
+        current_gym (Gym, optional): Current gym context dependency. Defaults to Depends(verify_gym_access).
+        current_user (Auth0User, optional): Authenticated user dependency. Defaults to Depends(get_current_user).
+        redis_client (Redis, optional): Redis client dependency. Defaults to Depends(get_redis_client).
+
+    Permissions:
+        - Requires ADMIN role within the gym or SUPER_ADMIN platform role.
+
+    Request Body (GymHoursUpdate - all fields optional):
+        {
+          "open_time": "HH:MM (string)",
+          "close_time": "HH:MM (string)",
+          "is_closed": boolean
+        }
+        Note: `open_time` and `close_time` are required if `is_closed` is false or omitted.
+
     Returns:
-        GymHours: Updated regular opening and closing times for the specified day
+        GymHoursSchema: The updated or newly created regular hours object for the specified day.
+
+    Raises:
+        HTTPException 401: Invalid or missing token.
+        HTTPException 403: User lacks required admin permissions.
+        HTTPException 404: Gym not found.
+        HTTPException 422: Invalid input data (e.g., day out of range, invalid time format, close_time before open_time).
     """
-    # Verificar si el usuario es admin o super_admin
+    # Verify admin privileges
     local_user = db.query(User).filter(User.auth0_id == current_user.id).first()
     if not local_user or (local_user.role != UserRole.ADMIN and local_user.role != UserRole.SUPER_ADMIN):
-        # Verificar si tiene rol de ADMIN en el gimnasio
         user_gym = db.query(UserGym).filter(
             UserGym.user_id == local_user.id,
             UserGym.gym_id == current_gym.id,
             UserGym.role.in_([GymRoleType.ADMIN, GymRoleType.OWNER])
         ).first()
-        
         if not user_gym:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Se requiere rol de administrador para esta acción"
+                detail="Administrator role required for this action"
             )
-    
-    # Añadir el gimnasio actual a los datos
-    gym_hours_dict = gym_hours_data.model_dump()
-    gym_hours_dict["gym_id"] = current_gym.id
-    updated_gym_hours_data = GymHoursUpdate(**gym_hours_dict)
-    
+
+    # Service expects gym_id, ensures data consistency
+    # The schema GymHoursUpdate doesn't include gym_id, it's added by the service layer
     return await schedule.gym_hours_service.create_or_update_gym_hours_cached(
-        db, 
-        day=day, 
-        gym_hours_data=updated_gym_hours_data,
+        db,
+        day=day,
+        gym_hours_data=gym_hours_data, # Pass the Pydantic model directly
         gym_id=current_gym.id,
         redis_client=redis_client
     )
@@ -151,30 +168,35 @@ async def get_gym_hours_by_date(
     redis_client: Redis = Depends(get_redis_client)
 ) -> Any:
     """
-    Get the gym's effective operating hours for a specific date.
-    
-    This endpoint determines the actual operating hours for the specified date,
-    taking into account both the regular weekly schedule and any special hours
-    that may override it (such as holidays or special events).
-    
-    Permissions:
-        - Requires 'read:schedules' scope
-        
+    Get Effective Gym Hours for a Specific Date
+
+    Retrieves the actual operating hours for a specific date, taking into account
+    both the regular weekly schedule and any special hours (like holidays) that may override it.
+
     Args:
-        date: The specific date to check
-        db: Database session dependency
-        current_gym: The current gym context
-        user: Authenticated user with appropriate scope
-        redis_client: Redis client for caching
-        
+        date (date): The specific date to query (YYYY-MM-DD format).
+        db (Session, optional): Database session dependency. Defaults to Depends(get_db).
+        current_gym (Gym, optional): Current gym context dependency. Defaults to Depends(verify_gym_access).
+        user (Auth0User, optional): Authenticated user dependency. Defaults to Security(auth.get_user, scopes=["read:schedules"]).
+        redis_client (Redis, optional): Redis client dependency. Defaults to Depends(get_redis_client).
+
+    Permissions:
+        - Requires 'read:schedules' scope.
+
     Returns:
-        Dict: Contains operating hours info with fields:
-            - regular_hours: The normal hours for that day of week
-            - special_hours: Any special hours defined (if applicable)
-            - is_special: Whether special hours apply
-            - is_closed: Whether the gym is closed on this date
-            - open_time: The actual opening time for this date
-            - close_time: The actual closing time for this date
+        Dict[str, Any]: A dictionary containing detailed schedule information:
+                         - `date`: The queried date.
+                         - `day_of_week`: Integer (0-6).
+                         - `regular_hours`: GymHoursSchema for the corresponding day of the week.
+                         - `special_hours`: GymSpecialHoursSchema if special hours exist for this date, else null.
+                         - `is_special`: Boolean indicating if special hours apply.
+                         - `effective_hours`: Dict with `open_time`, `close_time`, `is_closed`, `source` ('regular' or 'special'), `source_id`.
+
+    Raises:
+        HTTPException 401: Invalid or missing token.
+        HTTPException 403: Token lacks required scope or user doesn't belong to the gym.
+        HTTPException 404: Gym not found.
+        HTTPException 422: Invalid date format.
     """
     return await schedule.gym_hours_service.get_hours_for_date_cached(db, date_value=date, gym_id=current_gym.id, redis_client=redis_client)
 
@@ -189,44 +211,54 @@ async def apply_defaults_to_range(
     redis_client: Redis = Depends(get_redis_client)
 ) -> Any:
     """
-    Apply regular weekly hours to a range of dates as special hours.
-    
-    This endpoint allows administrators to initialize special hours for a date range
-    using the regular weekly schedule as a template. This is useful when setting up
-    initial schedules or resetting a period to default hours.
-    
-    Permissions:
-        - Requires admin or platform admin role
-        
+    Apply Regular Hours Template to a Date Range
+
+    Applies the gym's standard weekly operating hours template as special hours entries
+    for a specified range of dates. Useful for initializing schedules or resetting a period.
+
     Args:
-        apply_request: Contains start_date, end_date and overwrite_existing flag
-        db: Database session dependency
-        current_gym: The current gym context
-        current_user: Authenticated user
-        redis_client: Redis client for caching
-        
+        apply_request (ApplyDefaultsRequest): Contains start_date, end_date, and overwrite_existing flag.
+        db (Session, optional): Database session dependency. Defaults to Depends(get_db).
+        current_user (Auth0User, optional): Authenticated user dependency. Defaults to Depends(get_current_user).
+        current_gym (Gym, optional): Current gym context dependency. Defaults to Depends(verify_gym_access).
+        redis_client (Redis, optional): Redis client dependency. Defaults to Depends(get_redis_client).
+
+    Permissions:
+        - Requires ADMIN role within the gym or SUPER_ADMIN platform role.
+
+    Request Body (ApplyDefaultsRequest):
+        {
+          "start_date": "YYYY-MM-DD",
+          "end_date": "YYYY-MM-DD",
+          "overwrite_existing": boolean (optional, default: false)
+        }
+
     Returns:
-        List[GymSpecialHours]: Created or updated special hours entries
+        List[GymSpecialHoursSchema]: A list of the created or updated special hours entries within the range.
+
+    Raises:
+        HTTPException 400: Invalid date range (e.g., end_date before start_date).
+        HTTPException 401: Invalid or missing token.
+        HTTPException 403: User lacks required admin permissions.
+        HTTPException 404: Gym not found.
+        HTTPException 422: Validation error in request body.
     """
-    # Verificar si el usuario es admin o super_admin
+    # Verify admin privileges
     local_user = db.query(User).filter(User.auth0_id == current_user.id).first()
     if not local_user or (local_user.role != UserRole.ADMIN and local_user.role != UserRole.SUPER_ADMIN):
-        # Verificar si tiene rol de ADMIN en el gimnasio
         user_gym = db.query(UserGym).filter(
             UserGym.user_id == local_user.id,
             UserGym.gym_id == current_gym.id,
             UserGym.role.in_([GymRoleType.ADMIN, GymRoleType.OWNER])
         ).first()
-        
         if not user_gym:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Se requiere rol de administrador para esta acción"
+                detail="Administrator role required for this action"
             )
-    
-    # Obtener el ID del gimnasio desde el objeto current_gym
+
     gym_id = current_gym.id
-    
+
     try:
         return await schedule.gym_hours_service.apply_defaults_to_range_cached(
             db=db,
@@ -249,34 +281,47 @@ async def get_schedule_for_date_range(
     db: Session = Depends(get_db),
     start_date: date = Query(..., description="Start date (YYYY-MM-DD)"),
     end_date: date = Query(..., description="End date (YYYY-MM-DD)"),
-    current_user: Auth0User = Depends(get_current_user),
+    current_user: Auth0User = Depends(get_current_user), # Requires authentication, any role
     current_gym: Gym = Depends(verify_gym_access),
     redis_client: Redis = Depends(get_redis_client)
 ) -> Any:
     """
-    Get the gym's complete schedule for a range of dates.
-    
-    This endpoint retrieves the effective operating hours for each date in the specified range,
-    including both regular weekly hours and any special hours that apply. It's useful for
-    generating calendar views or planning future operations.
-    
-    Permissions:
-        - Requires authentication
-        
+    Get Effective Daily Schedule for a Date Range
+
+    Retrieves the effective operating hours for each date in the specified range,
+    combining regular weekly hours and any applicable special hours. Useful for calendar views.
+
     Args:
-        start_date: The first date in the range to retrieve
-        end_date: The last date in the range to retrieve
-        db: Database session dependency
-        current_gym: The current gym context
-        current_user: Authenticated user
-        redis_client: Redis client for caching
-        
+        start_date (date): The first date in the range (YYYY-MM-DD).
+        end_date (date): The last date in the range (YYYY-MM-DD).
+        db (Session, optional): Database session dependency. Defaults to Depends(get_db).
+        current_user (Auth0User, optional): Authenticated user dependency. Defaults to Depends(get_current_user).
+        current_gym (Gym, optional): Current gym context dependency. Defaults to Depends(verify_gym_access).
+        redis_client (Redis, optional): Redis client dependency. Defaults to Depends(get_redis_client).
+
+    Permissions:
+        - Requires authenticated user (any role).
+
     Returns:
-        List[DailyScheduleResponse]: A list of daily schedules with effective hours
+        List[DailyScheduleResponse]: A list of daily schedule objects, each containing:
+                                     - `date`: The specific date.
+                                     - `day_of_week`: Integer (0-6).
+                                     - `open_time`: Effective opening time (or null).
+                                     - `close_time`: Effective closing time (or null).
+                                     - `is_closed`: Boolean indicating if closed.
+                                     - `is_special`: Boolean indicating if special hours applied.
+                                     - `description`: Description if it was a special day.
+                                     - `source_id`: ID of the GymHours or GymSpecialHours record used.
+
+    Raises:
+        HTTPException 400: Invalid date range (e.g., end_date before start_date).
+        HTTPException 401: Invalid or missing token.
+        HTTPException 403: User doesn't belong to the gym.
+        HTTPException 404: Gym not found.
+        HTTPException 422: Invalid date format in query parameters.
     """
-    # Obtener el ID del gimnasio
     gym_id = current_gym.id
-    
+
     try:
         schedule_data = await schedule.gym_hours_service.get_schedule_for_date_range_cached(
             db=db,

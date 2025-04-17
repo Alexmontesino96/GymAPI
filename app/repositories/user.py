@@ -24,6 +24,7 @@ class UserRepository(BaseRepository[User, UserCreate, UserUpdate]):
         """
         Obtener un usuario por ID de Auth0.
         """
+        print(f"DEBUG: Inside repo get_by_auth0_id, type(db) = {type(db)}, db = {repr(db)}")
         return db.query(User).filter(User.auth0_id == auth0_id).first()
 
     def get_by_role(self, db: Session, *, role: UserRole, skip: int = 0, limit: int = 100) -> List[User]:

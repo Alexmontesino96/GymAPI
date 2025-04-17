@@ -356,8 +356,8 @@ async def read_gym_users(
 ) -> Any:
     """[ADMIN] Obtiene todos los usuarios asociados al gimnasio actual."""
     # Usar la versión cacheada para evitar consulta a BD innecesaria
-    local_user = await user_service.get_user_by_auth0_id_cached(current_user.id, db, redis_client)
-    if not local_user:
+    local_caller = await user_service.get_user_by_auth0_id_cached(db, current_user.id, redis_client)
+    if not local_caller:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario no encontrado")
     
     if role:
@@ -391,7 +391,7 @@ async def remove_user_from_gym(
     logger.info(f"Intento de eliminar user {user_id} del gym {current_gym.id} por usuario {current_user.id}")
 
     # Usar la versión cacheada para evitar consulta a BD innecesaria
-    local_caller = await user_service.get_user_by_auth0_id_cached(current_user.id, db, redis_client)
+    local_caller = await user_service.get_user_by_auth0_id_cached(db, current_user.id, redis_client)
     if not local_caller:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Usuario llamante no encontrado")
 
@@ -455,7 +455,7 @@ async def search_users(
     """Búsqueda avanzada de usuarios. Admins buscan dentro de su gym, SuperAdmins globalmente."""
     
     # Usar la versión cacheada para evitar consulta a BD innecesaria
-    local_caller = await user_service.get_user_by_auth0_id_cached(current_auth_user.id, db, redis_client)
+    local_caller = await user_service.get_user_by_auth0_id_cached(db, current_auth_user.id, redis_client)
     if not local_caller:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Usuario no autorizado")
 
@@ -495,7 +495,7 @@ async def read_user_by_id(
     """Obtiene un usuario específico por ID local (Admin/SuperAdmin). 
        Admins solo pueden ver usuarios dentro del gym actual (X-Gym-ID)."""
     # Usar la versión cacheada para evitar consulta a BD innecesaria
-    local_caller = await user_service.get_user_by_auth0_id_cached(current_auth_user.id, db, redis_client)
+    local_caller = await user_service.get_user_by_auth0_id_cached(db, current_auth_user.id, redis_client)
     if not local_caller:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Usuario no autorizado")
 
@@ -556,7 +556,7 @@ async def read_users(
 ) -> Any:
     """[SUPER_ADMIN] Obtiene todos los usuarios de la plataforma."""
     # Usar la versión cacheada para evitar consulta a BD innecesaria
-    local_user = await user_service.get_user_by_auth0_id_cached(current_user.id, db, redis_client)
+    local_user = await user_service.get_user_by_auth0_id_cached(db, current_user.id, redis_client)
     if not local_user or local_user.role != UserRole.SUPER_ADMIN:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Requiere rol SUPER_ADMIN.")
     try:
@@ -588,7 +588,7 @@ async def read_users_by_role(
 ) -> Any:
     """[SUPER_ADMIN] Obtiene usuarios filtrados por rol global."""
     # Usar la versión cacheada para evitar consulta a BD innecesaria
-    local_caller = await user_service.get_user_by_auth0_id_cached(current_user.id, db, redis_client)
+    local_caller = await user_service.get_user_by_auth0_id_cached(db, current_user.id, redis_client)
     if not local_caller or local_caller.role != UserRole.SUPER_ADMIN:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Requiere rol SUPER_ADMIN.")
     valid_roles = [UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.TRAINER, UserRole.MEMBER]
@@ -617,7 +617,7 @@ async def update_user(
 ) -> Any:
     """[SUPER_ADMIN] Actualiza el perfil de cualquier usuario."""
     # Usar la versión cacheada para evitar consulta a BD innecesaria
-    local_caller = await user_service.get_user_by_auth0_id_cached(current_user.id, db, redis_client)
+    local_caller = await user_service.get_user_by_auth0_id_cached(db, current_user.id, redis_client)
     if not local_caller or local_caller.role != UserRole.SUPER_ADMIN:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Requiere rol SUPER_ADMIN.")
     target_user = user_service.get_user(db, user_id=user_id)
@@ -652,7 +652,7 @@ async def admin_delete_user(
 ) -> Any:
     """[SUPER_ADMIN] Elimina un usuario completamente del sistema (BD y Auth0)."""
     # Usar la versión cacheada para evitar consulta a BD innecesaria
-    local_caller = await user_service.get_user_by_auth0_id_cached(current_user.id, db, redis_client)
+    local_caller = await user_service.get_user_by_auth0_id_cached(db, current_user.id, redis_client)
     if not local_caller or local_caller.role != UserRole.SUPER_ADMIN:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Requiere rol SUPER_ADMIN.")
     target_user = user_service.get_user(db, user_id=user_id)

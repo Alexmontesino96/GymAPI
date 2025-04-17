@@ -570,7 +570,7 @@ class UserService:
                 logger.info(f"Imagen anterior ({user.picture}) no parece ser de Supabase, no se intentará eliminar.")
         
         # Subir la nueva imagen usando la instancia del servicio
-        image_url = await storage_service_instance.upload_profile_image(file, auth0_id)
+        image_url = await storage_service_instance.upload_profile_image(auth0_id, file=file)
         updated_user = user_repository.update(db, db_obj=user, obj_in={"picture": image_url})
         return updated_user
         

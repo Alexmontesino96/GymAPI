@@ -15,13 +15,33 @@ async def get_upcoming_sessions(
     redis_client: Redis = Depends(get_redis_client)
 ) -> Any:
     """
-    Obtener las próximas sesiones de clase programadas.
-    Requiere el scope 'read:schedules'.
+    Get Upcoming Class Sessions
+
+    Retrieves a list of upcoming (scheduled and future) class sessions for the current gym.
+
+    Args:
+        skip (int, optional): Number of records to skip for pagination. Defaults to 0.
+        limit (int, optional): Maximum number of records to return. Defaults to 100.
+        db (Session, optional): Database session dependency. Defaults to Depends(get_db).
+        current_gym (Gym, optional): Current gym context dependency. Defaults to Depends(verify_gym_access).
+        user (Auth0User, optional): Authenticated user dependency. Defaults to Security(auth.get_user, scopes=["read:schedules"]).
+        redis_client (Redis, optional): Redis client dependency. Defaults to Depends(get_redis_client).
+
+    Permissions:
+        - Requires 'read:schedules' scope.
+
+    Returns:
+        List[ClassSessionSchema]: A list of upcoming class session objects.
+
+    Raises:
+        HTTPException 401: Invalid or missing token.
+        HTTPException 403: Token lacks required scope or user doesn't belong to the gym.
+        HTTPException 404: Gym not found.
     """
     return await class_session_service.get_upcoming_sessions(
-        db, 
-        skip=skip, 
-        limit=limit, 
+        db,
+        skip=skip,
+        limit=limit,
         gym_id=current_gym.id,
         redis_client=redis_client
     )
@@ -29,310 +49,520 @@ async def get_upcoming_sessions(
 
 @router.get("/sessions/{session_id}", response_model=Dict[str, Any])
 async def get_session_with_details(
-    session_id: int = Path(..., description="ID de la sesión"),
+    session_id: int = Path(..., description="ID of the session"),
     db: Session = Depends(get_db),
     current_gym: Gym = Depends(verify_gym_access),
-    user: Auth0User = Security(auth.get_user, scopes=["read:schedules"])
+    user: Auth0User = Security(auth.get_user, scopes=["read:schedules"]),
+    redis_client: Redis = Depends(get_redis_client)
 ) -> Any:
     """
-    Obtener una sesión específica con detalles de clase y disponibilidad.
-    Requiere el scope 'read:schedules'.
+    Get Specific Session with Details
+
+    Retrieves details of a specific class session, including associated class information
+    and current participation/availability status (registered count, spots left).
+
+    Args:
+        session_id (int): The ID of the class session.
+        db (Session, optional): Database session dependency. Defaults to Depends(get_db).
+        current_gym (Gym, optional): Current gym context dependency. Defaults to Depends(verify_gym_access).
+        user (Auth0User, optional): Authenticated user dependency. Defaults to Security(auth.get_user, scopes=["read:schedules"]).
+        redis_client (Redis, optional): Redis client dependency. Defaults to Depends(get_redis_client).
+
+    Permissions:
+        - Requires 'read:schedules' scope.
+
+    Returns:
+        Dict[str, Any]: A dictionary containing:
+                         - `session`: The ClassSessionSchema object.
+                         - `class`: The ClassSchema object for the session's class.
+                         - `registered_count`: Number of currently registered participants.
+                         - `available_spots`: Number of spots remaining.
+                         - `is_full`: Boolean indicating if the session has reached max capacity.
+
+    Raises:
+        HTTPException 401: Invalid or missing token.
+        HTTPException 403: Token lacks required scope or user doesn't belong to the gym.
+        HTTPException 404: Session or Gym not found, or session doesn't belong to this gym.
     """
-    # Verificar que la sesión pertenezca al gimnasio actual
-    session = class_session_service.get_session(db, session_id=session_id)
-    if not session or session.gym_id != current_gym.id:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Sesión no encontrada en este gimnasio"
-        )
-    
-    return class_session_service.get_session_with_details(db, session_id=session_id)
+    # Service method verifies session belongs to the gym
+    session_details = await class_session_service.get_session_with_details(
+        db, session_id=session_id, gym_id=current_gym.id, redis_client=redis_client
+    )
+    if not session_details:
+        # Handle case where service returns None (e.g., not found)
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found in this gym")
+    return session_details
 
 
-@router.post("/sessions", response_model=ClassSession)
+@router.post("/sessions", response_model=ClassSession, status_code=status.HTTP_201_CREATED)
 async def create_session(
     session_data: ClassSessionCreate = Body(...),
     db: Session = Depends(get_db),
     current_gym: Gym = Depends(verify_gym_access),
-    user: Auth0User = Security(auth.get_user, scopes=["create:schedules"])
+    user: Auth0User = Security(auth.get_user, scopes=["create:schedules"]),
+    redis_client: Redis = Depends(get_redis_client)
 ) -> Any:
     """
-    Crear una nueva sesión de clase.
-    
-    Esta ruta permite crear una sesión específica para una clase.
-    Una sesión representa una instancia concreta de la clase en un momento
-    y lugar determinado.
-    
-    Requiere:
-    - Scope 'create:schedules' en Auth0
-    - Pertenencia al gimnasio actual
+    Create Single Class Session
+
+    Creates a new, single instance of a class session.
+
+    Args:
+        session_data (ClassSessionCreate): Data for the new session.
+        db (Session, optional): Database session dependency. Defaults to Depends(get_db).
+        current_gym (Gym, optional): Current gym context dependency. Defaults to Depends(verify_gym_access).
+        user (Auth0User, optional): Authenticated user dependency. Defaults to Security(auth.get_user, scopes=["create:schedules"]).
+        redis_client (Redis, optional): Redis client dependency. Defaults to Depends(get_redis_client).
+
+    Permissions:
+        - Requires 'create:schedules' scope.
+
+    Request Body (ClassSessionCreate):
+        {
+          "class_id": integer,
+          "trainer_id": integer,
+          "start_time": "YYYY-MM-DDTHH:MM:SSZ (ISO 8601)",
+          "end_time": "YYYY-MM-DDTHH:MM:SSZ (optional, calculated if omitted)",
+          "room": "string (optional)",
+          "status": "string (scheduled|in_progress|completed|cancelled, default: scheduled)",
+          "notes": "string (optional)"
+        }
+
+    Returns:
+        ClassSessionSchema: The newly created class session object.
+
+    Raises:
+        HTTPException 400: Invalid data (e.g., class inactive, end_time before start_time).
+        HTTPException 401: Invalid or missing token.
+        HTTPException 403: Token lacks required scope.
+        HTTPException 404: Gym, Class, or Trainer not found, or class/trainer doesn't belong to gym.
+        HTTPException 422: Validation error in request body.
     """
-    # Obtener ID del usuario actual para registrarlo como creador
+    # Get current user's local ID
     auth0_id = user.id
-    db_user = user_service.get_user_by_auth0_id(db, auth0_id=auth0_id)
-    
-    # Verificar que la clase existe y pertenece al gimnasio actual
-    class_obj = class_service.get_class(db, class_id=session_data.class_id)
-    if not class_obj or class_obj.gym_id != current_gym.id:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Clase no encontrada en este gimnasio"
+    # Use cached version
+    db_user = await user_service.get_user_by_auth0_id_cached(db, auth0_id=auth0_id, redis_client=redis_client)
+
+    created_by_id = db_user.id if db_user else None
+
+    # Verify class exists, is active, and belongs to the gym (service does this)
+    # Verify trainer exists and belongs to the gym
+    if session_data.trainer_id:
+        trainer_membership = await user_service.check_user_gym_membership_cached(
+            db=db, user_id=session_data.trainer_id, gym_id=current_gym.id, redis_client=redis_client
         )
-    
-    # Si el entrenador es diferente al usuario actual, verificar que existe
-    # y pertenece al gimnasio
-    if db_user and session_data.trainer_id != db_user.id:
-        print(f"DEBUG: Verificando entrenador {session_data.trainer_id} en gimnasio {current_gym.id}")
-        trainer_exists = gym_service.check_user_in_gym(
-            db, user_id=session_data.trainer_id, gym_id=current_gym.id
-        )
-        print(f"DEBUG: Resultado de verificación: {trainer_exists}")
-        if not trainer_exists:
+        if not trainer_membership:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="Entrenador no encontrado en este gimnasio"
+                detail="Trainer not found in this gym"
             )
-    
-    # Asignar el gimnasio actual de forma explícita 
-    session_dict = session_data.model_dump()
-    session_dict["gym_id"] = current_gym.id
-    
-    # Forzar el gym_id - mostrar para depuración
-    print(f"DEBUG: Asignando gym_id={current_gym.id} a la sesión")
-    
-    # Crear un nuevo objeto con el gym_id explícitamente asignado
-    complete_session_data = ClassSessionCreate(**session_dict)
-    
-    # Doble verificación para asegurar que no se pierde
-    assert complete_session_data.gym_id == current_gym.id, "Error: gym_id no se estableció correctamente"
-    
-    # Crear la sesión
-    created_by_id = db_user.id if db_user else None
-    return class_session_service.create_session(
-        db, session_data=complete_session_data, created_by_id=created_by_id
+
+    # Service handles gym_id assignment, end_time calculation, and creation
+    return await class_session_service.create_session(
+        db, session_data=session_data, gym_id=current_gym.id, created_by_id=created_by_id, redis_client=redis_client
     )
 
 
 @router.post("/sessions/recurring", response_model=List[ClassSession])
 async def create_recurring_sessions(
-    base_session: ClassSessionCreate = Body(...),
-    start_date: date = Body(..., description="Fecha de inicio"),
-    end_date: date = Body(..., description="Fecha de fin"),
+    base_session_data: ClassSessionCreate = Body(..., alias="base_session"),
+    start_date: date = Body(..., description="Start date for recurrence"),
+    end_date: date = Body(..., description="End date for recurrence"),
     days_of_week: List[int] = Body(
-        ..., description="Días de la semana (0=Lunes, 6=Domingo)"
+        ..., description="Days of week (0=Mon, 6=Sun)", example=[0, 2, 4]
     ),
     db: Session = Depends(get_db),
     user: Auth0User = Security(auth.get_user, scopes=["create:schedules"]),
-    current_gym: Gym = Depends(verify_gym_access)
+    current_gym: Gym = Depends(verify_gym_access),
+    redis_client: Redis = Depends(get_redis_client)
 ) -> Any:
     """
-    Crear sesiones recurrentes en un rango de fechas.
-    Requiere el scope 'create:schedules' asignado a entrenadores y administradores.
+    Create Recurring Class Sessions
+
+    Creates multiple class sessions based on a template, date range, and specified days of the week.
+
+    Args:
+        base_session_data (ClassSessionCreate): Template data (class_id, trainer_id, time, room, etc.).
+        start_date (date): First date to potentially create a session.
+        end_date (date): Last date to potentially create a session.
+        days_of_week (List[int]): List of integers representing days (0=Monday, 6=Sunday) for recurrence.
+        db (Session, optional): Database session dependency. Defaults to Depends(get_db).
+        user (Auth0User, optional): Authenticated user dependency. Defaults to Security(auth.get_user, scopes=["create:schedules"]).
+        current_gym (Gym, optional): Current gym context dependency. Defaults to Depends(verify_gym_access).
+        redis_client (Redis, optional): Redis client dependency. Defaults to Depends(get_redis_client).
+
+    Permissions:
+        - Requires 'create:schedules' scope (typically for trainers/admins).
+
+    Request Body:
+        {
+          "base_session": {
+            "class_id": integer,
+            "trainer_id": integer,
+            "start_time": "YYYY-MM-DDTHH:MM:SSZ" /* Time part used for recurrence */,
+            "room": "string (optional)",
+            "notes": "string (optional)"
+          },
+          "start_date": "YYYY-MM-DD",
+          "end_date": "YYYY-MM-DD",
+          "days_of_week": [integer] /* 0-6 */
+        }
+
+    Returns:
+        List[ClassSessionSchema]: A list of all the created class session objects.
+
+    Raises:
+        HTTPException 400: Invalid data (e.g., end_date before start_date, invalid days_of_week).
+        HTTPException 401: Invalid or missing token.
+        HTTPException 403: Token lacks required scope.
+        HTTPException 404: Gym, Class, or Trainer not found, or class/trainer doesn't belong to gym.
+        HTTPException 422: Validation error in request body.
     """
-    # Obtener ID del usuario actual para registrarlo como creador
+    # Get current user's local ID
     auth0_id = user.id
-    db_user = user_service.get_user_by_auth0_id(db, auth0_id=auth0_id)
-    
+    # Use cached version
+    db_user = await user_service.get_user_by_auth0_id_cached(db, auth0_id=auth0_id, redis_client=redis_client)
     created_by_id = db_user.id if db_user else None
-    
-    # Asignar el gym_id desde el tenant actual
-    session_obj = base_session.model_dump()
-    session_obj["gym_id"] = current_gym.id
-    
-    # Crear un nuevo objeto ClassSessionCreate con el gym_id establecido
-    updated_base_session = ClassSessionCreate(**session_obj)
-    
-    return class_session_service.create_recurring_sessions(
-        db, 
-        base_session_data=updated_base_session,
+
+    # Service handles validation of class/trainer, date logic, and creation
+    return await class_session_service.create_recurring_sessions(
+        db,
+        base_session_data=base_session_data,
         start_date=start_date,
         end_date=end_date,
         days_of_week=days_of_week,
-        created_by_id=created_by_id
+        created_by_id=created_by_id,
+        gym_id=current_gym.id,
+        redis_client=redis_client
     )
 
 
 @router.put("/sessions/{session_id}", response_model=ClassSession)
 async def update_session(
-    session_id: int = Path(..., description="ID de la sesión"),
+    session_id: int = Path(..., description="ID of the session"),
     session_data: ClassSessionUpdate = Body(...),
     db: Session = Depends(get_db),
     current_gym: Gym = Depends(verify_gym_access),
-    user: Auth0User = Security(auth.get_user, scopes=["update:schedules"])
+    user: Auth0User = Security(auth.get_user, scopes=["update:schedules"]),
+    redis_client: Redis = Depends(get_redis_client)
 ) -> Any:
     """
-    Actualizar una sesión existente.
-    Requiere el scope 'update:schedules' asignado a entrenadores y administradores.
+    Update Class Session
+
+    Updates details of an existing class session.
+
+    Args:
+        session_id (int): The ID of the session to update.
+        session_data (ClassSessionUpdate): Fields to update.
+        db (Session, optional): Database session dependency. Defaults to Depends(get_db).
+        current_gym (Gym, optional): Current gym context dependency. Defaults to Depends(verify_gym_access).
+        user (Auth0User, optional): Authenticated user dependency. Defaults to Security(auth.get_user, scopes=["update:schedules"]).
+        redis_client (Redis, optional): Redis client dependency. Defaults to Depends(get_redis_client).
+
+    Permissions:
+        - Requires 'update:schedules' scope (typically for trainers/admins).
+
+    Request Body (ClassSessionUpdate - all fields optional):
+        {
+          "class_id": integer,
+          "trainer_id": integer,
+          "start_time": "YYYY-MM-DDTHH:MM:SSZ",
+          "end_time": "YYYY-MM-DDTHH:MM:SSZ",
+          "room": "string",
+          "status": "string (scheduled|in_progress|completed|cancelled)",
+          "notes": "string"
+        }
+
+    Returns:
+        ClassSessionSchema: The updated class session object.
+
+    Raises:
+        HTTPException 400: Invalid data (e.g., end_time before start_time).
+        HTTPException 401: Invalid or missing token.
+        HTTPException 403: Token lacks required scope.
+        HTTPException 404: Session, Gym, or referenced Class/Trainer not found/valid in gym.
+        HTTPException 422: Validation error in request body.
     """
-    # Verificar que la sesión pertenezca al gimnasio actual
-    session = class_session_service.get_session(db, session_id=session_id)
-    if not session or session.gym_id != current_gym.id:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Sesión no encontrada en este gimnasio"
-        )
-    
-    return class_session_service.update_session(
-        db, session_id=session_id, session_data=session_data
+    # Service layer handles checking session ownership and performing update
+    return await class_session_service.update_session(
+        db, session_id=session_id, session_data=session_data, gym_id=current_gym.id, redis_client=redis_client
     )
 
 
 @router.post("/sessions/{session_id}/cancel", response_model=ClassSession)
 async def cancel_session(
-    session_id: int = Path(..., description="ID de la sesión"),
+    session_id: int = Path(..., description="ID of the session"),
     db: Session = Depends(get_db),
     current_gym: Gym = Depends(verify_gym_access),
-    user: Auth0User = Security(auth.get_user, scopes=["update:schedules"])
+    user: Auth0User = Security(auth.get_user, scopes=["update:schedules"]),
+    redis_client: Redis = Depends(get_redis_client)
 ) -> Any:
     """
-    Cancelar una sesión.
-    Requiere el scope 'update:schedules' asignado a entrenadores y administradores.
+    Cancel Class Session
+
+    Marks a scheduled class session as cancelled.
+
+    Args:
+        session_id (int): The ID of the session to cancel.
+        db (Session, optional): Database session dependency. Defaults to Depends(get_db).
+        current_gym (Gym, optional): Current gym context dependency. Defaults to Depends(verify_gym_access).
+        user (Auth0User, optional): Authenticated user dependency. Defaults to Security(auth.get_user, scopes=["update:schedules"]).
+        redis_client (Redis, optional): Redis client dependency. Defaults to Depends(get_redis_client).
+
+    Permissions:
+        - Requires 'update:schedules' scope (typically for trainers/admins).
+
+    Returns:
+        ClassSessionSchema: The session object with status updated to CANCELLED.
+
+    Raises:
+        HTTPException 401: Invalid or missing token.
+        HTTPException 403: Token lacks required scope.
+        HTTPException 404: Session or Gym not found, or session doesn't belong to this gym.
     """
-    # Verificar que la sesión pertenezca al gimnasio actual
-    session = class_session_service.get_session(db, session_id=session_id)
-    if not session or session.gym_id != current_gym.id:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Sesión no encontrada en este gimnasio"
-        )
-    
-    return class_session_service.cancel_session(db, session_id=session_id)
+    # Service layer handles checking session ownership and updating status
+    return await class_session_service.cancel_session(db, session_id=session_id, gym_id=current_gym.id, redis_client=redis_client)
 
 
 @router.get("/date-range", response_model=List[ClassSession])
 async def get_sessions_by_date_range(
-    start_date: date = Query(..., description="Fecha de inicio"),
-    end_date: date = Query(..., description="Fecha de fin"),
+    start_date: date = Query(..., description="Start date (YYYY-MM-DD)"),
+    end_date: date = Query(..., description="End date (YYYY-MM-DD)"),
     skip: int = 0,
     limit: int = 100,
     db: Session = Depends(get_db),
     current_gym: Gym = Depends(verify_gym_access),
-    user: Auth0User = Security(auth.get_user, scopes=["read:schedules"])
+    user: Auth0User = Security(auth.get_user, scopes=["read:schedules"]),
+    redis_client: Redis = Depends(get_redis_client)
 ) -> Any:
     """
-    Obtener sesiones en un rango de fechas.
-    Requiere el scope 'read:schedules'.
+    Get Sessions by Date Range
+
+    Retrieves class sessions scheduled within a specific date range for the current gym.
+
+    Args:
+        start_date (date): The start date of the range (YYYY-MM-DD).
+        end_date (date): The end date of the range (YYYY-MM-DD).
+        skip (int, optional): Pagination skip. Defaults to 0.
+        limit (int, optional): Pagination limit. Defaults to 100.
+        db (Session, optional): Database session dependency. Defaults to Depends(get_db).
+        current_gym (Gym, optional): Current gym context dependency. Defaults to Depends(verify_gym_access).
+        user (Auth0User, optional): Authenticated user dependency. Defaults to Security(auth.get_user, scopes=["read:schedules"]).
+        redis_client (Redis, optional): Redis client dependency. Defaults to Depends(get_redis_client).
+
+    Permissions:
+        - Requires 'read:schedules' scope.
+
+    Returns:
+        List[ClassSessionSchema]: A list of session objects within the date range.
+
+    Raises:
+        HTTPException 400: Invalid date range (e.g., end_date before start_date).
+        HTTPException 401: Invalid or missing token.
+        HTTPException 403: Token lacks required scope.
+        HTTPException 404: Gym not found.
+        HTTPException 422: Invalid date format in query parameters.
     """
-    return class_session_service.get_sessions_by_date_range(
-        db, 
-        start_date=start_date, 
-        end_date=end_date, 
-        skip=skip, 
+    # The service method handles the conversion from date to datetime for the query
+    return await class_session_service.get_sessions_by_date_range(
+        db,
+        start_date=start_date,
+        end_date=end_date,
+        skip=skip,
         limit=limit,
-        gym_id=current_gym.id
+        gym_id=current_gym.id,
+        redis_client=redis_client
     )
 
 
-@router.get("/sessions/trainer/{trainer_id}", response_model=List[ClassSession])
+@router.get("/trainer/{trainer_id}", response_model=List[ClassSession])
 async def get_trainer_sessions(
-    trainer_id: int = Path(..., description="ID del entrenador"),
-    upcoming_only: bool = Query(False, description="Solo sesiones futuras"),
+    trainer_id: int = Path(..., description="ID of the trainer"),
+    upcoming_only: bool = Query(False, description="Only return future sessions"),
     skip: int = 0,
     limit: int = 100,
     db: Session = Depends(get_db),
     current_gym: Gym = Depends(verify_gym_access),
-    user: Auth0User = Security(auth.get_user, scopes=["read:schedules"])
+    user: Auth0User = Security(auth.get_user, scopes=["read:schedules"]),
+    redis_client: Redis = Depends(get_redis_client)
 ) -> Any:
     """
-    Obtener sesiones de un entrenador específico.
-    Requiere el scope 'read:schedules'.
+    Get Sessions by Trainer
+
+    Retrieves class sessions assigned to a specific trainer within the current gym.
+    Can optionally filter for only upcoming sessions.
+
+    Args:
+        trainer_id (int): The ID of the trainer whose sessions are requested.
+        upcoming_only (bool, optional): If true, only returns sessions starting from now. Defaults to False.
+        skip (int, optional): Pagination skip. Defaults to 0.
+        limit (int, optional): Pagination limit. Defaults to 100.
+        db (Session, optional): Database session dependency. Defaults to Depends(get_db).
+        current_gym (Gym, optional): Current gym context dependency. Defaults to Depends(verify_gym_access).
+        user (Auth0User, optional): Authenticated user dependency. Requires 'read:schedules' or 
+                                    'read:trainer_schedules' if viewing another trainer's schedule.
+                                    Defaults to Security(auth.get_user, scopes=["read:schedules"]).
+        redis_client (Redis, optional): Redis client dependency. Defaults to Depends(get_redis_client).
+
+    Permissions:
+        - Requires 'read:schedules' scope.
+        - To view another trainer's schedule, requires 'read:trainer_schedules' scope OR user must be a SuperAdmin.
+
+    Returns:
+        List[ClassSessionSchema]: A list of session objects taught by the specified trainer.
+
+    Raises:
+        HTTPException 401: Invalid or missing token.
+        HTTPException 403: Insufficient permissions to view this trainer's schedule.
+        HTTPException 404: Gym or Trainer not found, or trainer doesn't belong to this gym.
     """
-    # Verificar si el usuario actual es el entrenador o un administrador
+    # Check permissions: Allow if user is the requested trainer, a SuperAdmin, or has specific permission
     auth0_id = user.id
-    db_user = user_service.get_user_by_auth0_id(db, auth0_id=auth0_id)
-    
-    if db_user and (db_user.id == trainer_id or db_user.is_superuser):
-        return class_session_service.get_sessions_by_trainer(
-            db, 
-            trainer_id=trainer_id, 
-            skip=skip, 
-            limit=limit, 
-            upcoming_only=upcoming_only,
-            gym_id=current_gym.id
-        )
-    
-    # Si no es el propio entrenador o un administrador, verificar los permisos adicionales
-    user_permissions = getattr(user, "permissions", []) or []
-    if "read:trainer_schedules" not in user_permissions:
+    # Use cached version
+    db_user = await user_service.get_user_by_auth0_id_cached(db, auth0_id=auth0_id, redis_client=redis_client)
+
+    is_own_schedule = db_user and db_user.id == trainer_id
+    is_super_admin = db_user and db_user.role == UserRole.SUPER_ADMIN # Assuming UserRole enum exists
+    has_permission = "read:trainer_schedules" in (getattr(user, "permissions", []) or [])
+
+    if not (is_own_schedule or is_super_admin or has_permission):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="No tienes permiso para ver las sesiones de este entrenador"
+            detail="Insufficient permissions to view this trainer's schedule"
         )
-    
-    return class_session_service.get_sessions_by_trainer(
-        db, 
-        trainer_id=trainer_id, 
-        skip=skip, 
-        limit=limit, 
+
+    # Verify trainer exists in the current gym
+    trainer_membership = await user_service.check_user_gym_membership_cached(
+        db=db, user_id=trainer_id, gym_id=current_gym.id, redis_client=redis_client
+    )
+    if not trainer_membership:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Trainer not found in this gym"
+        )
+
+    return await class_session_service.get_sessions_by_trainer(
+        db,
+        trainer_id=trainer_id,
+        skip=skip,
+        limit=limit,
         upcoming_only=upcoming_only,
-        gym_id=current_gym.id
+        gym_id=current_gym.id,
+        redis_client=redis_client
     )
 
 
 @router.get("/my-sessions", response_model=List[ClassSession])
 async def get_my_sessions(
-    upcoming_only: bool = Query(True, description="Solo sesiones futuras"),
+    upcoming_only: bool = Query(True, description="Only return future sessions"),
     skip: int = 0,
     limit: int = 100,
     db: Session = Depends(get_db),
     current_gym: Gym = Depends(verify_gym_access),
-    user: Auth0User = Security(auth.get_user, scopes=["read:own_schedules"])
+    user: Auth0User = Security(auth.get_user, scopes=["read:own_schedules"]),
+    redis_client: Redis = Depends(get_redis_client)
 ) -> Any:
     """
-    Obtener las sesiones del entrenador actual.
-    Requiere el scope 'read:own_schedules' asignado a entrenadores.
+    Get My Sessions (for Trainers)
+
+    Retrieves the calling user's (who must be a trainer) class sessions within the current gym.
+    Can optionally filter for only upcoming sessions.
+
+    Args:
+        upcoming_only (bool, optional): If true, only returns sessions starting from now. Defaults to True.
+        skip (int, optional): Pagination skip. Defaults to 0.
+        limit (int, optional): Pagination limit. Defaults to 100.
+        db (Session, optional): Database session dependency. Defaults to Depends(get_db).
+        current_gym (Gym, optional): Current gym context dependency. Defaults to Depends(verify_gym_access).
+        user (Auth0User, optional): Authenticated user dependency. Defaults to Security(auth.get_user, scopes=["read:own_schedules"]).
+        redis_client (Redis, optional): Redis client dependency. Defaults to Depends(get_redis_client).
+
+    Permissions:
+        - Requires 'read:own_schedules' scope (intended for trainers).
+
+    Returns:
+        List[ClassSessionSchema]: A list of the calling user's session objects.
+
+    Raises:
+        HTTPException 401: Invalid or missing token.
+        HTTPException 403: Token lacks required scope or user is not found/not a trainer in this gym.
+        HTTPException 404: Gym not found or User not found.
     """
-    # Obtener ID del usuario actual
     auth0_id = user.id
-    db_user = user_service.get_user_by_auth0_id(db, auth0_id=auth0_id)
-    
+    # Use cached version
+    db_user = await user_service.get_user_by_auth0_id_cached(db, auth0_id=auth0_id, redis_client=redis_client)
+
     if not db_user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Usuario no encontrado en la base de datos"
+            detail="User not found"
         )
-    
-    return class_session_service.get_sessions_by_trainer(
-        db, 
-        trainer_id=db_user.id, 
-        skip=skip, 
-        limit=limit, 
+
+    # Optionally verify the user has a trainer role within the gym if the scope isn't sufficient
+    # trainer_membership = await user_service.check_user_gym_membership_cached(...) # Example
+    # if not trainer_membership or trainer_membership.role != GymRoleType.TRAINER:
+    #    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User is not a trainer in this gym")
+
+    return await class_session_service.get_sessions_by_trainer(
+        db,
+        trainer_id=db_user.id,
+        skip=skip,
+        limit=limit,
         upcoming_only=upcoming_only,
-        gym_id=current_gym.id
+        gym_id=current_gym.id,
+        redis_client=redis_client
     )
 
 
 @router.delete("/sessions/{session_id}", response_model=ClassSession)
 async def delete_session(
-    session_id: int = Path(..., description="ID de la sesión"),
+    session_id: int = Path(..., description="ID of the session"),
     db: Session = Depends(get_db),
     current_gym: Gym = Depends(verify_gym_access),
-    user: Auth0User = Security(auth.get_user, scopes=["delete:schedules"])
+    user: Auth0User = Security(auth.get_user, scopes=["delete:schedules"]),
+    redis_client: Redis = Depends(get_redis_client)
 ) -> Any:
     """
-    Eliminar una sesión.
-    Requiere el scope 'delete:schedules' asignado a administradores.
+    Delete Class Session
+
+    Deletes a class session. If participants are already registered, the session
+    is marked as CANCELLED instead of being deleted.
+
+    Args:
+        session_id (int): The ID of the session to delete/cancel.
+        db (Session, optional): Database session dependency. Defaults to Depends(get_db).
+        current_gym (Gym, optional): Current gym context dependency. Defaults to Depends(verify_gym_access).
+        user (Auth0User, optional): Authenticated user dependency. Defaults to Security(auth.get_user, scopes=["delete:schedules"]).
+        redis_client (Redis, optional): Redis client dependency. Defaults to Depends(get_redis_client).
+
+    Permissions:
+        - Requires 'delete:schedules' scope (typically for admins).
+
+    Returns:
+        ClassSessionSchema: The deleted or cancelled session object.
+
+    Raises:
+        HTTPException 401: Invalid or missing token.
+        HTTPException 403: Token lacks required scope.
+        HTTPException 404: Session or Gym not found, or session doesn't belong to this gym.
     """
-    # Obtener la sesión
-    session = class_session_service.get_session(db, session_id=session_id)
+    # Service layer handles checking ownership and deciding whether to delete or cancel
+    # Based on the logic in the original endpoint code
+
+    # Get session and verify ownership first
+    session = await class_session_service.get_session(db, session_id=session_id, gym_id=current_gym.id, redis_client=redis_client)
     if not session:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Sesión no encontrada"
-        )
-    
-    # Verificar que la sesión pertenezca al gimnasio actual
-    if session.gym_id != current_gym.id:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Sesión no encontrada en este gimnasio"
-        )
-    
-    # Verificar si ya hay participantes registrados
-    participants = class_participation_service.get_session_participants(db, session_id=session_id)
+         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found in this gym")
+
+    # Check for participants
+    participants = await class_participation_service.get_session_participants(db, session_id=session_id, gym_id=current_gym.id, limit=1, redis_client=redis_client)
+
     if participants:
-        # Si hay participantes, marcar como cancelada en lugar de eliminar
-        return class_session_service.cancel_session(db, session_id=session_id)
-    
-    # Si no hay participantes, eliminar la sesión
-    return class_session_repository.remove(db, id=session_id) 
+        # Cancel if participants exist
+        return await class_session_service.cancel_session(db, session_id=session_id, gym_id=current_gym.id, redis_client=redis_client)
+    else:
+        # Delete if no participants
+        deleted_session = class_session_repository.remove(db, id=session_id)
+        # Invalidate cache after deletion (consider adding to service layer)
+        await class_session_service._invalidate_session_caches(redis_client, gym_id=current_gym.id, session_id=session_id)
+        return deleted_session 
