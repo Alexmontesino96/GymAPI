@@ -15,6 +15,7 @@ for secure access. Each endpoint is protected with appropriate permission scopes
 from typing import List, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, Body, Path, Query, status, Security
 from sqlalchemy.orm import Session
+import logging # Import logging
 
 from app.db.session import get_db
 from app.core.auth0_fastapi import get_current_user, Auth0User, auth
@@ -29,6 +30,7 @@ from app.schemas.chat import (
 from app.models.user import User
 
 router = APIRouter()
+logger = logging.getLogger("chat_api") # Initialize logger at the module level
 
 @router.get("/token", response_model=StreamTokenResponse)
 async def get_stream_token(
@@ -79,7 +81,7 @@ async def get_stream_token(
     }
 
     # Use internal ID to generate the token
-    token = chat_service.get_user_token(str(internal_user.id), user_data) # Ensure user ID is string for Stream
+    token = chat_service.get_user_token(internal_user.id, user_data) # Ensure user ID is string for Stream
 
     # Call get_settings() to get the settings object
     settings_obj = get_settings()
@@ -134,14 +136,12 @@ async def create_chat_room(
             detail="User profile not found"
         )
 
-    # Ensure creator ID is string for Stream
-    creator_id_str = str(internal_user.id)
+    # Use internal ID (integer) directly for the service
+    creator_id = internal_user.id
 
-    # Convert member IDs to strings for Stream
-    member_ids_str = [str(uid) for uid in room_data.member_ids]
-
-    # Service handles room creation in DB and Stream
-    return chat_service.create_room(db, creator_id_str, room_data.name, member_ids_str)
+    # Service handles room creation in DB and Stream using internal IDs
+    # No need to convert IDs to strings here anymore
+    return chat_service.create_room(db, creator_id, room_data)
 
 @router.get("/rooms/direct/{other_user_id}", response_model=ChatRoom)
 async def get_direct_chat(
@@ -190,11 +190,11 @@ async def get_direct_chat(
             detail="Cannot create a direct chat with yourself"
         )
 
-    # Ensure IDs are strings for Stream
-    user1_id_str = str(internal_user.id)
-    user2_id_str = str(other_user_id)
+    # Use internal IDs (integers) directly
+    user1_id = internal_user.id
+    user2_id = other_user_id
 
-    return chat_service.get_or_create_direct_chat(db, user1_id_str, user2_id_str)
+    return chat_service.get_or_create_direct_chat(db, user1_id, user2_id)
 
 @router.get("/rooms/event/{event_id}", response_model=ChatRoom)
 async def get_event_chat(
@@ -229,8 +229,8 @@ async def get_event_chat(
         HTTPException 503: Chat service timeout/latency issue.
     """
     import time
-    import logging
-    logger = logging.getLogger("chat_api")
+    # import logging # Already imported at module level
+    # logger = logging.getLogger("chat_api") # Already initialized
     start_time = time.time()
 
     # Get local user from auth0_id
@@ -246,7 +246,7 @@ async def get_event_chat(
     try:
         # Quick check if event exists (consider moving to service layer)
         from app.models.event import Event
-        event_exists = db.query(Event.id).filter(Event.id == event_id).first() is not None
+        event_exists = db.query(Event.id).filter(Event.id == event_id).scalar() is not None # More efficient check
 
         if not event_exists:
             logger.warning(f"Event {event_id} not found")
@@ -254,9 +254,9 @@ async def get_event_chat(
 
         # Service layer handles permission check (user registered for event) and room logic
         try:
-            # Ensure user ID is string
-            user_id_str = str(internal_user.id)
-            result = chat_service.get_or_create_event_chat(db, event_id, user_id_str)
+            # Use internal user ID (integer) directly
+            user_id = internal_user.id
+            result = chat_service.get_or_create_event_chat(db, event_id, user_id)
 
             total_time = time.time() - start_time
             logger.info(f"Event chat {event_id} processed in {total_time:.2f}s")
@@ -319,9 +319,8 @@ async def add_member_to_room(
         HTTPException 500: Internal error adding user (e.g., Stream API error).
     """
     try:
-        # Ensure IDs are strings for Stream
-        user_id_str = str(user_id)
-        await chat_service.add_user_to_channel(db, room_id, user_id_str)
+        # Use internal ID (integer) directly
+        chat_service.add_user_to_channel(db, room_id, user_id)
         return {"status": "User added successfully"}
     except ValueError as e:
         # Catch errors like room/user not found from service
@@ -362,9 +361,8 @@ async def remove_member_from_room(
         HTTPException 500: Internal error removing user (e.g., Stream API error).
     """
     try:
-        # Ensure ID is string for Stream
-        user_id_str = str(user_id)
-        await chat_service.remove_user_from_channel(db, room_id, user_id_str)
+        # Use internal ID (integer) directly
+        chat_service.remove_user_from_channel(db, room_id, user_id)
         return {"status": "User removed successfully"}
     except ValueError as e:
         # Catch errors like room/user not found from service
