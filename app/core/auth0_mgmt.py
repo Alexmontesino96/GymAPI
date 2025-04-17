@@ -76,8 +76,8 @@ class RateLimiter:
             current_count = results[0]
             key_ttl = results[1]
             
-            # Si la clave es nueva (TTL era -2), establecer la expiración
-            if key_ttl == -2:
+            # Si la clave es nueva (TTL era -2 o -1), establecer la expiración
+            if key_ttl == -2 or key_ttl == -1:
                 await redis_client.expire(redis_key, ttl)
                 logger_rl.debug(f"Set TTL for {redis_key} to {ttl}s")
                 
