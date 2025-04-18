@@ -726,6 +726,13 @@ async def register_for_event(
             status_code=404,
             detail="Evento no encontrado"
         )
+
+    # <<< Añadir comprobación de estado >>>
+    if event.status == EventStatus.COMPLETED:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No puedes registrarte para un evento que ya ha finalizado."
+        )
     
     # Verificar que el evento pertenece al gimnasio actual
     if event.gym_id != current_gym.id:
@@ -745,19 +752,32 @@ async def register_for_event(
                 detail="Ya estás registrado para este evento"
             )
         elif existing.status == EventParticipationStatus.CANCELLED:
-            # Si el usuario canceló previamente, podemos permitir que se registre de nuevo
-            participation = event_participation_repository.update_participation(
-                db, 
-                db_obj=existing,
-                participation_in=EventParticipationUpdate(status=EventParticipationStatus.REGISTERED)
-            )
+            # Si el usuario canceló previamente, reactivar la participación
+            # Verificar capacidad de nuevo
+            registered_count = db.query(EventParticipation).filter(
+                EventParticipation.event_id == event.id,
+                EventParticipation.status == EventParticipationStatus.REGISTERED
+            ).count()
+
+            if event.max_participants == 0 or registered_count < event.max_participants:
+                existing.status = EventParticipationStatus.REGISTERED
+            else:
+                existing.status = EventParticipationStatus.WAITING_LIST
+            
+            existing.updated_at = datetime.utcnow()
+            db.add(existing)
+            db.commit()
+            db.refresh(existing)
+            participation = existing # Asignar el objeto actualizado a participation
         else:
+            # Por ejemplo, si está en WAITING_LIST, no debería poder registrarse de nuevo por esta vía
             raise HTTPException(
                 status_code=400,
-                detail=f"No puedes registrarte con estado actual: {existing.status}"
+                detail=f"No puedes registrarte de nuevo con estado actual: {existing.status}"
             )
     else:
         # Crear nueva participación
+        # La lógica para determinar REGISTERED o WAITING_LIST ya está en el repositorio
         participation = event_participation_repository.create_participation(
             db, participation_in=participation_in, member_id=user.id
         )
@@ -1016,6 +1036,13 @@ async def cancel_participation(
         raise HTTPException(
             status_code=404,
             detail="Evento no encontrado"
+        )
+
+    # <<< Añadir comprobación de estado >>>
+    if event.status == EventStatus.COMPLETED:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No puedes cancelar la participación en un evento que ya ha finalizado."
         )
     
     # Verificar que el evento pertenece al gimnasio actual
