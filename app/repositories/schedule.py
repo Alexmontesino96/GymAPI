@@ -478,14 +478,18 @@ class ClassSessionRepository(BaseRepository[ClassSession, ClassSessionCreate, Cl
             ClassParticipation.status == ClassParticipationStatus.REGISTERED
         ).count()
         
-        available_spots = class_obj.max_capacity - registered_count
+        # Usar la capacidad de la sesión si está definida, si no, la de la clase
+        capacity = session.override_capacity if session.override_capacity is not None else class_obj.max_capacity
+        
+        available_spots = capacity - registered_count
+        is_full = available_spots <= 0
         
         return {
             "session": session,
             "class": class_obj,
             "registered_count": registered_count,
             "available_spots": available_spots,
-            "is_full": available_spots <= 0
+            "is_full": is_full
         }
     
     def update_participant_count(self, db: Session, *, session_id: int) -> Optional[ClassSession]:

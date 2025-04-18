@@ -278,6 +278,7 @@ class ClassSessionBase(BaseModel):
     is_recurring: bool = False
     recurrence_pattern: Optional[str] = None
     status: ClassSessionStatus = ClassSessionStatus.SCHEDULED
+    override_capacity: Optional[int] = Field(None, gt=0, description="Capacidad específica para esta sesión, si es diferente a la de la clase")
     notes: Optional[str] = None
 
     @validator('end_time', always=True)
@@ -305,6 +306,7 @@ class ClassSessionUpdate(BaseModel):
     status: Optional[ClassSessionStatus] = None
     current_participants: Optional[int] = None
     notes: Optional[str] = None
+    override_capacity: Optional[int] = Field(None, gt=0, description="Capacidad específica para esta sesión, si es diferente a la de la clase")
 
 
 class ClassSession(ClassSessionBase):
@@ -314,6 +316,7 @@ class ClassSession(ClassSessionBase):
     created_at: datetime
     updated_at: Optional[datetime] = None
     created_by: Optional[int] = None
+    override_capacity: Optional[int] = None
 
     class Config:
         from_attributes = True

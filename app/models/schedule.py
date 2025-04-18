@@ -163,6 +163,7 @@ class ClassSession(Base):
     recurrence_pattern = Column(String, nullable=True)  # Patrón de recurrencia (por ejemplo, "WEEKLY:0,2,4" para lunes, miércoles, viernes)
     status = Column(Enum(ClassSessionStatus), default=ClassSessionStatus.SCHEDULED)
     current_participants = Column(Integer, default=0)
+    override_capacity = Column(Integer, nullable=True) # Capacidad específica para esta sesión, si es diferente a la de la clase
     notes = Column(Text, nullable=True)
     
     # Relaciones
