@@ -1909,25 +1909,73 @@ class ClassSessionService:
                 detail="Clase inválida, inactiva o no pertenece a este gimnasio"
             )
         
-        # ... (resto de la lógica para preparar datos base) ...
+        # Preparar datos base para las sesiones
         session_base_data = base_session_data.model_dump()
         session_base_data["gym_id"] = gym_id # Asegurar gym_id
         if created_by_id:
             session_base_data["created_by"] = created_by_id
+            
+        # Marcar que son sesiones recurrentes
+        session_base_data["is_recurring"] = True
+        session_base_data["recurrence_pattern"] = f"WEEKLY:{','.join(map(str, days_of_week))}"
         
-        # ... (lógica para generar fechas y crear sesiones) ...
+        # Obtener la hora de inicio y fin de la sesión base
+        base_start_time = session_base_data["start_time"]
+        base_end_time = session_base_data["end_time"]
+        
+        # Necesitamos solo la hora/minutos, no la fecha
+        base_start_hour = base_start_time.hour
+        base_start_minute = base_start_time.minute
+        
+        # Si end_time está definido, extraer también su hora/minutos
+        if base_end_time:
+            base_end_hour = base_end_time.hour
+            base_end_minute = base_end_time.minute
+            # Calcular duración si no está disponible
+            duration_minutes = ((base_end_hour * 60 + base_end_minute) - 
+                              (base_start_hour * 60 + base_start_minute))
+        else:
+            # Si no hay end_time pero tenemos la duración de la clase
+            duration_minutes = class_obj.duration
+        
         created_sessions = []
         current_date = start_date
+        
+        # Iterar por cada día en el rango
         while current_date <= end_date:
+            # Verificar si el día actual está en la lista de días seleccionados
             if current_date.weekday() in days_of_week:
-                # ... (crear session_data para esta fecha) ...
+                # Crear una copia de los datos base para esta sesión
                 session_data = session_base_data.copy()
-                # ... (ajustar start_time, end_time, etc.) ...
                 
+                # Crear datetime para este día específico con la hora base
+                new_start_datetime = datetime.combine(
+                    current_date, 
+                    time(hour=base_start_hour, minute=base_start_minute)
+                )
+                
+                session_data["start_time"] = new_start_datetime
+                
+                # Calcular end_time basado en la duración
+                if "end_time" in session_data and session_data["end_time"]:
+                    # Si tenemos end_time, crear uno nuevo con la misma fecha
+                    new_end_datetime = datetime.combine(
+                        current_date,
+                        time(hour=base_end_hour, minute=base_end_minute)
+                    )
+                    session_data["end_time"] = new_end_datetime
+                elif duration_minutes:
+                    # Calcular end_time basado en la duración
+                    new_end_datetime = new_start_datetime + timedelta(minutes=duration_minutes)
+                    session_data["end_time"] = new_end_datetime
+                
+                # Crear la sesión
                 session = class_session_repository.create(
-                    db, obj_in=ClassSessionCreate(**session_data)
+                    db, obj_in=session_data
                 )
                 created_sessions.append(session)
+                
+            # Avanzar al siguiente día
             current_date += timedelta(days=1)
             
         # Invalidar cachés relevantes una vez después del bucle
