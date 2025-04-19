@@ -2275,18 +2275,109 @@ class ClassParticipationService:
         )
     
     async def get_member_upcoming_classes(
-        self, db: Session, member_id: int, skip: int = 0, limit: int = 100, gym_id: Optional[int] = None, redis_client: Optional[Redis] = None
+        self, db: Session, member_id: int, gym_id: int, skip: int = 0, limit: int = 100, 
+        redis_client: Optional[Redis] = None
     ) -> List[Dict[str, Any]]:
-        """Obtener las próximas clases de un miembro (con caché)"""
-        # Nota: Añadir gym_id y redis_client
-        cache_key = f"schedule:participations:member_upcoming:{member_id}:gym:{gym_id or 'all'}:skip:{skip}:limit:{limit}"
+        """
+        Get upcoming classes for a member.
+
+        Args:
+            db (Session): Database session
+            member_id (int): ID of the member
+            gym_id (int): ID of the gym
+            skip (int, optional): Pagination skip. Defaults to 0.
+            limit (int, optional): Pagination limit. Defaults to 100.
+            redis_client (Optional[Redis], optional): Redis client. Defaults to None.
+
+        Returns:
+            List[Dict[str, Any]]: List of dictionaries containing participation and session information
+        """
+        now = datetime.utcnow()
         
-        # ... (implementar con cache_service.get_or_set, requiere un esquema combinado o manejo especial)
-        
-        # Por ahora, versión no cacheada
-        return class_participation_repository.get_member_upcoming_classes(
-            db, member_id=member_id, skip=skip, limit=limit, gym_id=gym_id
+        # Get the member's upcoming registrations where start_time > now
+        upcoming_participations = (
+            db.query(ClassParticipation, ClassSession, GymClass)
+            .join(ClassSession, ClassParticipation.session_id == ClassSession.id)
+            .join(GymClass, ClassSession.class_id == GymClass.id)
+            .filter(
+                ClassParticipation.member_id == member_id,
+                ClassParticipation.gym_id == gym_id,
+                ClassSession.start_time > now,
+                # Only include registered (not cancelled, attended, or no-show)
+                ClassParticipation.status == ClassParticipationStatus.REGISTERED
+            )
+            .order_by(ClassSession.start_time.asc())
+            .offset(skip)
+            .limit(limit)
+            .all()
         )
+        
+        # Format the results
+        result = []
+        for participation, session, gym_class in upcoming_participations:
+            result.append({
+                "participation": participation,
+                "session": session,
+                "gym_class": gym_class
+            })
+            
+        return result
+        
+    async def get_member_attendance_history(
+        self, db: Session, member_id: int, gym_id: int, 
+        start_date: Optional[datetime] = None, end_date: Optional[datetime] = None,
+        skip: int = 0, limit: int = 100, redis_client: Optional[Redis] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Get attendance history for a member.
+
+        Args:
+            db (Session): Database session
+            member_id (int): ID of the member
+            gym_id (int): ID of the gym
+            start_date (Optional[datetime], optional): If provided, only include attendances on or after this date
+            end_date (Optional[datetime], optional): If provided, only include attendances on or before this date
+            skip (int, optional): Pagination skip. Defaults to 0.
+            limit (int, optional): Pagination limit. Defaults to 100.
+            redis_client (Optional[Redis], optional): Redis client. Defaults to None.
+
+        Returns:
+            List[Dict[str, Any]]: List of dictionaries containing participation and session information
+        """
+        query = (
+            db.query(ClassParticipation, ClassSession, GymClass)
+            .join(ClassSession, ClassParticipation.session_id == ClassSession.id)
+            .join(GymClass, ClassSession.class_id == GymClass.id)
+            .filter(
+                ClassParticipation.member_id == member_id,
+                ClassParticipation.gym_id == gym_id,
+                # Sessions that have already happened
+                ClassSession.start_time <= datetime.utcnow()
+            )
+        )
+        
+        # Apply date filters if provided
+        if start_date:
+            query = query.filter(ClassSession.start_time >= start_date)
+        if end_date:
+            query = query.filter(ClassSession.start_time <= end_date)
+        
+        # Order by most recent first
+        query = query.order_by(ClassSession.start_time.desc())
+        
+        # Apply pagination
+        history = query.offset(skip).limit(limit).all()
+        
+        # Format the results
+        result = []
+        for participation, session, gym_class in history:
+            result.append({
+                "participation": participation,
+                "session": session,
+                "gym_class": gym_class
+            })
+            
+        return result
 
     # Método helper para invalidar cachés de sesión cuando cambia una participación
     async def _invalidate_session_caches_from_participation(self, session_id: int, gym_id: int, redis_client: Optional[Redis] = None, trainer_id: Optional[int] = None, class_id: Optional[int] = None):

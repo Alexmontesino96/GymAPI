@@ -363,6 +363,40 @@ class ClassParticipation(ClassParticipationBase):
 ClassWithSessions.update_forward_refs()
 ClassSessionWithParticipations.update_forward_refs()
 
+# --- Añadido para historial de asistencia ---
+class ParticipationWithSessionInfo(BaseModel):
+    id: int
+    session_id: int
+    member_id: int
+    status: ClassParticipationStatus  # Usar Enum para mejor tipo
+    registration_time: datetime
+    attendance_time: Optional[datetime] = None
+    cancellation_time: Optional[datetime] = None
+    cancellation_reason: Optional[str] = None
+    session_info: ClassSession  # Usar el esquema ClassSession existente
+    class_info: Class  # Usar el esquema Class existente
+
+    class Config:
+        from_attributes = True
+
+# Helper function to format participation with session info
+# Nota: Esta función debería residir lógicamente en el servicio o endpoint,
+# no en el archivo de esquemas, pero la mantenemos aquí por ahora si la necesitas.
+def format_participation_with_session_info(participation, session, gym_class):
+    return ParticipationWithSessionInfo(
+        id=participation.id,
+        session_id=participation.session_id,
+        member_id=participation.member_id,
+        status=participation.status,
+        registration_time=participation.registration_time,
+        attendance_time=participation.attendance_time,
+        cancellation_time=participation.cancellation_time,
+        cancellation_reason=participation.cancellation_reason,
+        session_info=ClassSession.model_validate(session), # Convertir modelo DB a Pydantic
+        class_info=Class.model_validate(gym_class) # Convertir modelo DB a Pydantic
+    )
+# --- Fin añadido --- 
+
 # ApplyDefaultsRequest
 class ApplyDefaultsRequest(BaseModel):
     start_date: date

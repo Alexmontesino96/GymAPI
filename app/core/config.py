@@ -45,11 +45,7 @@ class Settings(BaseSettings):
         """Asegura que DATABASE_URL esté en el formato correcto y use Heroku si está disponible."""
         # Si hay una URL explícita, usarla
         if v:
-            # Verificar que no sea una URL de Supabase (que ya no funciona)
-            if "ueijlkythlkqadxymzqd.supabase.co" in v:
-                print("⚠️ WARNING: Detectada URL de Supabase, usando la URL de Heroku en su lugar")
-                return "postgresql://u6chpjmhvbacn5:pcc8066ee2c146523c96e94ea9c289bdfb35af0a929c1c0243adbe5dd4ea85546@c6sfjnr30ch74e.cluster-czrs8kj4isg7.us-east-1.rds.amazonaws.com:5432/d8mrfqhqd7jn4k"
-            
+            # Ya no detectamos ni sustituimos la URL de Supabase
             # Asegurar formato postgresql://
             if v.startswith('postgres://'):
                 return 'postgresql://' + v[len('postgres://'):]

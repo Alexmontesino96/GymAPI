@@ -7,9 +7,9 @@ import random
 import os
 
 # Configuración de la prueba
-API_BASE_URL = "http://localhost:8080/api/v1"
+API_BASE_URL = "https://gymapi-eh6m.onrender.com/api/v1"
 # Token con permisos correctos - usar variable de entorno o un token reciente
-AUTH_TOKEN = os.environ.get("TEST_AUTH_TOKEN", "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6InI2YXBIZVNOUEluaXpaeDlYN1NidyJ9.eyJlbWFpbCI6ImFsZXhtb250ZXNpbm85NkBpY2xvdWQuY29tIiwiaXNzIjoiaHR0cHM6Ly9kZXYtZ2Q1Y3JmZTZxYnFsdTIzcC51cy5hdXRoMC5jb20vIiwic3ViIjoiYXV0aDB8NjdkNWQ2NGQ2NGNjZjFjNTIyYTY5NTBiIiwiYXVkIjpbImh0dHBzOi8vZ3ltYXBpIiwiaHR0cHM6Ly9kZXYtZ2Q1Y3JmZTZxYnFsdTIzcC51cy5hdXRoMC5jb20vdXNlcmluZm8iXSwiaWF0IjoxNzQ0MTcyODg3LCJleHAiOjE3NDQyNTkyODcsInNjb3BlIjoib3BlbmlkIHByb2ZpbGUgZW1haWwiLCJhenAiOiJPdUo2SUtFMGxKU2RhTUc2amFXMDRqZnB0c01SYnl2cCIsInBlcm1pc3Npb25zIjpbImFkbWluOmV2ZW50cyIsImFkbWluOmd5bXMiLCJhZG1pbjpyZWxhdGlvbnNoaXBzIiwiYWRtaW46dXNlcnMiLCJjcmVhdGU6Y2hhdF9yb29tcyIsImNyZWF0ZTpldmVudHMiLCJjcmVhdGU6cGFydGljaXBhdGlvbnMiLCJjcmVhdGU6cmVsYXRpb25zaGlwcyIsImNyZWF0ZTpzY2hlZHVsZXMiLCJkZWxldGU6ZXZlbnRzIiwiZGVsZXRlOm93bl9wYXJ0aWNpcGF0aW9ucyIsImRlbGV0ZTpyZWxhdGlvbnNoaXBzIiwiZGVsZXRlOnNjaGVkdWxlcyIsImRlbGV0ZTp1c2VycyIsIm1hbmFnZTpjaGF0X3Jvb21zIiwibWFuYWdlOmNsYXNzX3JlZ2lzdHJhdGlvbnMiLCJyZWFkX2V2ZW50cyIsInJlYWQ6Z3ltcyIsInJlYWQ6bWVtYmVycyIsInJlYWQ6b3duX2V2ZW50cyIsInJlYWQ6b3duX3BhcnRpY2lwYXRpb25zIiwicmVhZDpvd25fcmVsYXRpb25zaGlwcyIsInJlYWQ6b3duX3NjaGVkdWxlcyIsInJlYWQ6cGFydGljaXBhdGlvbnMiLCJyZWFkOnByb2ZpbGUiLCJyZWFkOnNjaGVkdWxlcyIsInJlYWQ6dXNlcnMiLCJyZWRhOmd5bV91c2VycyIsInJlZ2lzdGVyOmNsYXNzZXMiLCJ1cGRhdGU6cGFydGljaXBhdGlvbnMiLCJ1cGRhdGU6cmVsYXRpb25zaGlwcyIsInVwZGF0ZTpzY2hlZHVsZXMiLCJ1cGRhdGU6dXNlcnMiLCJ1c2U6Y2hhdCJdfQ.HI0BQ4H01txsoOmubk5klsO80nNWh5AQSoxHG15AcOkQcGS8pEnMuf_DdIfcUpBYw5TXkfZkFAg007xa7lTUcYkFrUkJczwpS8xRSGIu_qBAzfaPltvERUFlOEIRJQIIOnMWLjTPQssBHBobqfPFVmh-zEeecwq5Nz881wEG87pclxh7od-ifWxemu5fTqGgzFJ7U_2bpXOjuT179Cfz_E-AL_L--PF-n__DGGCHguc87MSCISOjUSSCWGJVrje-cOYQWjkEApwkUGo-4LIM1ynMIERFujTwlrOOIkMWZTT3hRvFuRi3cWO_L6yevH-XG8GLPilDag0W7twiuMmwNw")
+AUTH_TOKEN =  "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6InI2YXBIZVNOUEluaXpaeDlYN1NidyJ9.eyJlbWFpbCI6ImFsZXhtb250ZXNpbm85NkBpY2xvdWQuY29tIiwiaXNzIjoiaHR0cHM6Ly9kZXYtZ2Q1Y3JmZTZxYnFsdTIzcC51cy5hdXRoMC5jb20vIiwic3ViIjoiYXV0aDB8NjdkNWQ2NGQ2NGNjZjFjNTIyYTY5NTBiIiwiYXVkIjpbImh0dHBzOi8vZ3ltYXBpIiwiaHR0cHM6Ly9kZXYtZ2Q1Y3JmZTZxYnFsdTIzcC51cy5hdXRoMC5jb20vdXNlcmluZm8iXSwiaWF0IjoxNzQ1MDIyNjUxLCJleHAiOjE3NDUxMDkwNTEsInNjb3BlIjoib3BlbmlkIHByb2ZpbGUgZW1haWwiLCJhenAiOiJPdUo2SUtFMGxKU2RhTUc2amFXMDRqZnB0c01SYnl2cCIsInBlcm1pc3Npb25zIjpbImFkbWluOmV2ZW50cyIsImFkbWluOmd5bXMiLCJhZG1pbjpyZWxhdGlvbnNoaXBzIiwiYWRtaW46dXNlcnMiLCJjcmVhdGU6Y2hhdF9yb29tcyIsImNyZWF0ZTpldmVudHMiLCJjcmVhdGU6cGFydGljaXBhdGlvbnMiLCJjcmVhdGU6cmVsYXRpb25zaGlwcyIsImNyZWF0ZTpzY2hlZHVsZXMiLCJkZWxldGU6ZXZlbnRzIiwiZGVsZXRlOm93bl9wYXJ0aWNpcGF0aW9ucyIsImRlbGV0ZTpyZWxhdGlvbnNoaXBzIiwiZGVsZXRlOnNjaGVkdWxlcyIsImRlbGV0ZTp1c2VycyIsIm1hbmFnZTpjaGF0X3Jvb21zIiwibWFuYWdlOmNsYXNzX3JlZ2lzdHJhdGlvbnMiLCJyZWFkX2V2ZW50cyIsInJlYWQ6Z3ltcyIsInJlYWQ6bWVtYmVycyIsInJlYWQ6b3duX2V2ZW50cyIsInJlYWQ6b3duX3BhcnRpY2lwYXRpb25zIiwicmVhZDpvd25fcmVsYXRpb25zaGlwcyIsInJlYWQ6b3duX3NjaGVkdWxlcyIsInJlYWQ6cGFydGljaXBhdGlvbnMiLCJyZWFkOnByb2ZpbGUiLCJyZWFkOnNjaGVkdWxlcyIsInJlYWQ6dXNlcnMiLCJyZWRhOmd5bV91c2VycyIsInJlZ2lzdGVyOmNsYXNzZXMiLCJ1cGRhdGU6cGFydGljaXBhdGlvbnMiLCJ1cGRhdGU6cmVsYXRpb25zaGlwcyIsInVwZGF0ZTpzY2hlZHVsZXMiLCJ1cGRhdGU6dXNlcnMiLCJ1c2U6Y2hhdCJdfQ.f6g2l48BuZH8L6P-t7sVzCsk6WSwxTKlPkmiRFtq0eD5KDYqFSwGcJnaihozXLrSy0u5uil25ikgUkyVsMa-cJ6dFkECTmXbSGxdMYEVoCkc-K-T1_tCWMuROmmN_b7cRmCVSUcTBbgdgsirNcUmISNkuKiF-c6IBQxWjImpwIviGN8C9Qh_qA4mj9ZxlYmYi2k9w3e8X6thjjBgvlJvdqVgyAFH5EwpIp-49WTV96f4X9UyOYWzNfg7ii9IUSnb11iuX_Y5gM0-CxMhkI_JHMiSKr5NyklnHe9hMI29SPE5hKEjA1nK0lbv0WL3oAYY_ATsyD-QAAek9HExBUBXYw"
 GYM_ID = 1
 
 # Headers comunes para todas las peticiones
@@ -171,18 +171,17 @@ def create_class(category_id):
         "name": f"Clase de Prueba {int(time.time())}",
         "description": "Esta es una clase creada automáticamente para pruebas de integración",
         "duration": 60,  # Duración en minutos
-        "category": "YOGA",  # Categoría predefinida
+        "category_enum": "YOGA",  # Categoría predefinida
         "category_id": category_id,  # Categoría personalizada
         "max_capacity": 20,
         "difficulty_level": "intermediate",
-        "equipment_needed": "Esterilla, toalla",
         "is_active": True
     }
     
     url = f"{API_BASE_URL}/schedule/classes"
     response = requests.post(url, headers=HEADERS, json=class_data)
     
-    if response.status_code == 200:
+    if response.status_code == 201:  # Código 201 para creaciones exitosas
         created_class = response.json()
         print(f"✅ Clase creada exitosamente con ID: {created_class['id']}")
         print(f"   Nombre: {created_class['name']}")
@@ -207,8 +206,8 @@ def update_class(class_id, original_class):
     update_data = {
         "name": f"{original_class['name']} (Actualizada)",
         "description": f"{original_class['description']} - Esta descripción fue actualizada",
-        "max_capacity": 25,
-        "equipment_needed": "Esterilla, toalla, bloque de yoga"
+        "duration": original_class['duration'] + 15,  # Aumentar duración en 15 minutos
+        "max_capacity": original_class['max_capacity'] + 5  # Aumentar capacidad en 5 personas
     }
     
     url = f"{API_BASE_URL}/schedule/classes/{class_id}"
@@ -219,6 +218,7 @@ def update_class(class_id, original_class):
         print(f"✅ Clase {class_id} actualizada exitosamente")
         print(f"   Nombre nuevo: {updated_class['name']}")
         print(f"   Descripción nueva: {updated_class['description']}")
+        print(f"   Duración nueva: {updated_class['duration']} minutos")
         print(f"   Capacidad máxima nueva: {updated_class['max_capacity']} personas")
         return updated_class
     else:
@@ -248,7 +248,7 @@ def delete_class(class_id):
 
 def get_sessions():
     """Obtiene la lista de sesiones próximas"""
-    print_separator("CONSULTANDO SESIONES")
+    print_separator("CONSULTANDO SESIONES PRÓXIMAS")
     
     url = f"{API_BASE_URL}/schedule/sessions"
     response = requests.get(url, headers=HEADERS)
@@ -257,9 +257,13 @@ def get_sessions():
         sessions = response.json()
         print(f"✅ Sesiones obtenidas exitosamente. Cantidad: {len(sessions)}")
         if sessions:
-            for session in sessions[:3]:  # Mostrar solo las primeras 3 para no saturar la consola
+            for session in sessions[:3]:  # Mostrar solo las primeras 3
                 start_time = datetime.fromisoformat(session['start_time'].replace('Z', '+00:00'))
-                print(f"   ID: {session['id']} - Clase: {session['class_id']} - Fecha: {start_time.strftime('%d/%m/%Y %H:%M')}")
+                end_time = datetime.fromisoformat(session['end_time'].replace('Z', '+00:00'))
+                print(f"   ID: {session['id']} - Clase: {session.get('class_definition', {}).get('name', 'N/A')}")
+                print(f"   Fecha: {start_time.strftime('%d/%m/%Y')} - Hora: {start_time.strftime('%H:%M')} - {end_time.strftime('%H:%M')}")
+                print(f"   Estado: {session['status']}")
+                print()
             if len(sessions) > 3:
                 print(f"   ... y {len(sessions) - 3} más")
         return sessions
@@ -269,38 +273,47 @@ def get_sessions():
         return None
 
 def create_session(class_id):
-    """Crea una nueva sesión"""
-    print_separator("CREANDO SESIÓN")
+    """Crea una nueva sesión de clase"""
+    print_separator(f"CREANDO SESIÓN PARA CLASE {class_id}")
     
-    # Crear fechas para la sesión (mañana)
-    start_time = (datetime.now() + timedelta(days=1)).replace(hour=10, minute=0, second=0)
-    end_time = (datetime.now() + timedelta(days=1)).replace(hour=11, minute=0, second=0)
+    # Fechas para la sesión (próxima semana)
+    start_date = datetime.now() + timedelta(days=7)
+    # Ajustar a las 10:00 AM
+    start_time = datetime(
+        start_date.year, start_date.month, start_date.day, 
+        10, 0, 0, tzinfo=start_date.tzinfo or None
+    )
+    # Sesión de 1 hora
+    end_time = start_time + timedelta(hours=1)
+    
+    # Obtener un ID de entrenador válido (normalmente este sería un entrenador real del gimnasio)
+    trainer_id = 1  # ID de ejemplo - en producción obtener un entrenador real
     
     # Datos de la sesión
     session_data = {
         "class_id": class_id,
+        "trainer_id": trainer_id,
         "start_time": start_time.isoformat(),
         "end_time": end_time.isoformat(),
-        "trainer_id": 6,  # Usando un ID válido para el entrenador
-        "location": "Sala Principal",
-        "max_participants": 15,
-        "is_active": True,
-        "notes": "Sesión creada automáticamente para pruebas de integración",
-        "gym_id": GYM_ID  # Incluir el ID del gimnasio
+        "room": "Sala Principal",
+        "is_recurring": False,
+        "status": "scheduled",
+        "notes": "Sesión creada automáticamente para pruebas",
+        "override_capacity": 25  # Sobreescribir capacidad específica para esta sesión
     }
-    
-    # Imprimir datos para depuración
-    print(f"Datos de sesión: {json.dumps(session_data, indent=2, ensure_ascii=False)}")
     
     url = f"{API_BASE_URL}/schedule/sessions"
     response = requests.post(url, headers=HEADERS, json=session_data)
     
-    if response.status_code == 200:
+    if response.status_code == 201:
         created_session = response.json()
         print(f"✅ Sesión creada exitosamente con ID: {created_session['id']}")
-        print(f"   Clase: {created_session['class_id']}")
-        print(f"   Fecha: {start_time.strftime('%d/%m/%Y %H:%M')}")
-        print(f"   Ubicación: {created_session['location']}")
+        start_time = datetime.fromisoformat(created_session['start_time'].replace('Z', '+00:00'))
+        end_time = datetime.fromisoformat(created_session['end_time'].replace('Z', '+00:00'))
+        print(f"   Clase ID: {created_session['class_id']}")
+        print(f"   Fecha: {start_time.strftime('%d/%m/%Y')}")
+        print(f"   Horario: {start_time.strftime('%H:%M')} - {end_time.strftime('%H:%M')}")
+        print(f"   Sala: {created_session['room']}")
         
         # Añadir a la lista de sesiones creadas para limpiar después
         created_sessions.append(created_session['id'])
@@ -312,64 +325,60 @@ def create_session(class_id):
         return None
 
 def create_recurring_sessions(class_id):
-    """Crea sesiones recurrentes"""
-    print_separator("CREANDO SESIONES RECURRENTES")
+    """Crea sesiones recurrentes para una clase"""
+    print_separator(f"CREANDO SESIONES RECURRENTES PARA CLASE {class_id}")
     
-    # Establecer fechas para la recurrencia
-    start_date = (date.today() + timedelta(days=7))
-    end_date = (date.today() + timedelta(days=21))
+    # Fechas para la sesión base (próxima semana)
+    start_date = datetime.now() + timedelta(days=7)
+    # Ajustar a las 18:00 (6 PM)
+    start_time = datetime(
+        start_date.year, start_date.month, start_date.day, 
+        18, 0, 0, tzinfo=start_date.tzinfo or None
+    )
+    # Sesión de 1 hora
+    end_time = start_time + timedelta(hours=1)
     
-    # Horario base para las sesiones
-    base_session_time = datetime.now().replace(hour=18, minute=0, second=0)
-    end_session_time = datetime.now().replace(hour=19, minute=0, second=0)
+    # Obtener un ID de entrenador válido
+    trainer_id = 1  # ID de ejemplo - en producción obtener un entrenador real
     
-    # Datos para la sesión base
-    base_session = {
-        "class_id": class_id,
-        "start_time": base_session_time.isoformat(),
-        "end_time": end_session_time.isoformat(),
-        "trainer_id": 6,  # Usando un ID válido para el entrenador
-        "location": "Sala de Recurrentes",
-        "max_participants": 10,
-        "is_active": True,
-        "notes": "Sesión recurrente creada automáticamente para pruebas de integración",
-        "gym_id": GYM_ID  # Incluir el ID del gimnasio
-    }
+    # Definir el rango de fechas para la recurrencia (4 semanas)
+    start_date_str = start_date.date().isoformat()
+    end_date_str = (start_date + timedelta(days=28)).date().isoformat()
     
-    # Días de la semana (0=Lunes, 6=Domingo)
-    days_of_week = [1, 3, 5]  # Martes, Jueves, Sábado
+    # Días de la semana para recurrencia (0=Lunes, 1=Martes, 2=Miércoles, etc.)
+    days_of_week = [0, 2, 4]  # Lunes, Miércoles, Viernes
     
-    # Datos completos para la solicitud
-    data = {
-        "base_session": base_session,
-        "start_date": start_date.isoformat(),
-        "end_date": end_date.isoformat(),
+    # Datos para la sesión base y recurrencia
+    session_data = {
+        "base_session": {
+            "class_id": class_id,
+            "trainer_id": trainer_id,
+            "start_time": start_time.isoformat(),
+            "end_time": end_time.isoformat(),
+            "room": "Sala de Entrenamiento",
+            "status": "scheduled",
+            "notes": "Sesión recurrente creada automáticamente para pruebas"
+        },
+        "start_date": start_date_str,
+        "end_date": end_date_str,
         "days_of_week": days_of_week
     }
     
     url = f"{API_BASE_URL}/schedule/sessions/recurring"
-    response = requests.post(url, headers=HEADERS, json=data)
+    response = requests.post(url, headers=HEADERS, json=session_data)
     
-    if response.status_code == 200:
-        created_sessions_list = response.json()
-        print(f"✅ Sesiones recurrentes creadas exitosamente. Cantidad: {len(created_sessions_list)}")
+    if response.status_code == 201:
+        created_sessions_data = response.json()
+        print(f"✅ Sesiones recurrentes creadas exitosamente")
+        print(f"   Cantidad de sesiones creadas: {len(created_sessions_data)}")
+        print(f"   Días de la semana: Lunes, Miércoles, Viernes")
+        print(f"   Periodo: {start_date_str} hasta {end_date_str}")
         
-        # Mostrar detalles de algunas sesiones
-        for session in created_sessions_list[:2]:
-            start_time = datetime.fromisoformat(session['start_time'].replace('Z', '+00:00'))
-            print(f"   ID: {session['id']} - Fecha: {start_time.strftime('%d/%m/%Y %H:%M')}")
-            
-            # Añadir a la lista de sesiones creadas para limpiar después
+        # Añadir a la lista de sesiones creadas para limpiar después
+        for session in created_sessions_data:
             created_sessions.append(session['id'])
-        
-        if len(created_sessions_list) > 2:
-            print(f"   ... y {len(created_sessions_list) - 2} más")
             
-            # Añadir el resto de sesiones a la lista para limpiar
-            for session in created_sessions_list[2:]:
-                created_sessions.append(session['id'])
-        
-        return created_sessions_list
+        return created_sessions_data
     else:
         print(f"❌ Error al crear sesiones recurrentes: {response.status_code}")
         print(response.text)
@@ -381,9 +390,8 @@ def update_session(session_id):
     
     # Datos para actualizar
     update_data = {
-        "location": "Sala Actualizada",
-        "max_participants": 20,
-        "notes": "Sesión actualizada para pruebas"
+        "room": "Sala Actualizada",
+        "notes": f"Sesión actualizada el {datetime.now().strftime('%d/%m/%Y %H:%M')}"
     }
     
     url = f"{API_BASE_URL}/schedule/sessions/{session_id}"
@@ -392,8 +400,8 @@ def update_session(session_id):
     if response.status_code == 200:
         updated_session = response.json()
         print(f"✅ Sesión {session_id} actualizada exitosamente")
-        print(f"   Nueva ubicación: {updated_session['location']}")
-        print(f"   Nueva capacidad: {updated_session['max_participants']}")
+        print(f"   Sala nueva: {updated_session['room']}")
+        print(f"   Notas nuevas: {updated_session['notes']}")
         return updated_session
     else:
         print(f"❌ Error al actualizar sesión {session_id}: {response.status_code}")
@@ -410,9 +418,7 @@ def cancel_session(session_id):
     if response.status_code == 200:
         cancelled_session = response.json()
         print(f"✅ Sesión {session_id} cancelada exitosamente")
-        # Usar .get() para acceder de forma segura a la clave y proporcionar un valor por defecto
-        is_active = cancelled_session.get('is_active', 'No disponible')
-        print(f"   Estado actual: {is_active}")
+        print(f"   Estado actual: {cancelled_session['status']}")
         return cancelled_session
     else:
         print(f"❌ Error al cancelar sesión {session_id}: {response.status_code}")
@@ -422,101 +428,86 @@ def cancel_session(session_id):
 # ===== OPERACIONES CON PARTICIPACIONES =====
 
 def register_for_session(session_id):
-    """Registra al usuario en una sesión"""
-    print_separator(f"REGISTRANDO USUARIO EN SESIÓN {session_id}")
+    """Registra al usuario actual para una sesión"""
+    print_separator(f"REGISTRANDO PARA LA SESIÓN {session_id}")
     
-    url = f"{API_BASE_URL}/schedule/register/{session_id}"
+    url = f"{API_BASE_URL}/schedule/participation/register/{session_id}"
     response = requests.post(url, headers=HEADERS)
     
-    if response.status_code == 200:
+    if response.status_code == 201 or response.status_code == 200:
         participation = response.json()
-        print(f"✅ Usuario registrado exitosamente en sesión {session_id}")
-        print(f"   ID de participación: {participation['id']}")
-        
-        # Añadir a la lista de participaciones creadas
-        created_participations.append((session_id, participation['id']))
-        
+        print(f"✅ Registro exitoso: {json.dumps(participation, indent=2, ensure_ascii=False)}")
+        created_participations.append(participation.get('id'))
         return participation
     else:
-        print(f"❌ Error al registrar en sesión {session_id}: {response.status_code}")
+        print(f"❌ Error al registrarse: {response.status_code}")
         print(response.text)
         return None
 
 def get_my_classes():
-    """Obtiene las clases del usuario actual"""
+    """Obtiene las clases en las que está registrado el usuario actual"""
     print_separator("CONSULTANDO MIS CLASES")
     
-    url = f"{API_BASE_URL}/schedule/my-classes"
+    url = f"{API_BASE_URL}/schedule/participation/my-classes"
     response = requests.get(url, headers=HEADERS)
     
     if response.status_code == 200:
-        classes = response.json()
-        print(f"✅ Clases obtenidas exitosamente. Cantidad: {len(classes)}")
-        if classes:
-            for cls in classes[:3]:
-                start_time = datetime.fromisoformat(cls['session_start_time'].replace('Z', '+00:00'))
-                print(f"   Sesión: {cls['session_id']} - Clase: {cls['class_name']} - Fecha: {start_time.strftime('%d/%m/%Y %H:%M')}")
-            if len(classes) > 3:
-                print(f"   ... y {len(classes) - 3} más")
-        return classes
+        participations = response.json()
+        print(f"✅ Se encontraron {len(participations)} participaciones")
+        for p in participations:
+            print(f"  - Participación ID: {p.get('participation', {}).get('id')}")
+            print(f"    Clase: {p.get('gym_class', {}).get('name')}")
+            print(f"    Sesión: {p.get('session', {}).get('id')} - {p.get('session', {}).get('start_time')}")
+            print(f"    Estado: {p.get('participation', {}).get('status')}")
+        return participations
     else:
-        print(f"❌ Error al obtener mis clases: {response.status_code}")
+        print(f"❌ Error al obtener clases: {response.status_code}")
         print(response.text)
-        return None
+        return []
 
 def get_session_participants(session_id):
-    """Obtiene los participantes de una sesión"""
-    print_separator(f"CONSULTANDO PARTICIPANTES DE SESIÓN {session_id}")
+    """Obtiene la lista de participantes de una sesión"""
+    print_separator(f"CONSULTANDO PARTICIPANTES DE LA SESIÓN {session_id}")
     
-    url = f"{API_BASE_URL}/schedule/session-participants/{session_id}"
+    url = f"{API_BASE_URL}/schedule/participation/session-participants/{session_id}"
     response = requests.get(url, headers=HEADERS)
     
     if response.status_code == 200:
         participants = response.json()
         print(f"✅ Participantes obtenidos exitosamente. Cantidad: {len(participants)}")
-        if participants:
-            for p in participants:
-                print(f"   ID: {p['id']} - Miembro: {p['member_id']}")
         return participants
     else:
-        print(f"❌ Error al obtener participantes de sesión {session_id}: {response.status_code}")
+        print(f"❌ Error al obtener participantes: {response.status_code}")
         print(response.text)
         return None
 
 def cancel_registration(session_id):
-    """Cancela la participación del usuario en una sesión"""
-    print_separator(f"CANCELANDO PARTICIPACIÓN EN SESIÓN {session_id}")
+    """Cancela el registro del usuario actual para una sesión"""
+    print_separator(f"CANCELANDO REGISTRO PARA LA SESIÓN {session_id}")
     
-    url = f"{API_BASE_URL}/schedule/cancel-registration/{session_id}"
+    url = f"{API_BASE_URL}/schedule/participation/cancel-registration/{session_id}"
     response = requests.post(url, headers=HEADERS)
     
     if response.status_code == 200:
         cancelled = response.json()
-        print(f"✅ Participación en sesión {session_id} cancelada exitosamente")
-        
-        # Eliminar de la lista de participaciones creadas
-        for i, (s_id, p_id) in enumerate(created_participations):
-            if s_id == session_id:
-                created_participations.pop(i)
-                break
-        
+        print(f"✅ Registro cancelado exitosamente para la sesión {session_id}")
+        print(f"   Estado actual: {cancelled['status']}")
         return cancelled
     else:
-        print(f"❌ Error al cancelar participación: {response.status_code}")
+        print(f"❌ Error al cancelar registro: {response.status_code}")
         print(response.text)
-        return False
+        return None
 
 def mark_attendance(session_id, member_id):
     """Marca la asistencia de un miembro a una sesión"""
-    print_separator(f"MARCANDO ASISTENCIA DEL MIEMBRO {member_id} A SESIÓN {session_id}")
+    print_separator(f"MARCANDO ASISTENCIA PARA LA SESIÓN {session_id}")
     
-    url = f"{API_BASE_URL}/schedule/mark-attendance/{session_id}/{member_id}"
+    url = f"{API_BASE_URL}/schedule/participation/attendance/{session_id}/{member_id}"
     response = requests.post(url, headers=HEADERS)
     
     if response.status_code == 200:
         attendance = response.json()
-        print(f"✅ Asistencia marcada exitosamente")
-        print(f"   Asistió: {attendance['attended']}")
+        print(f"✅ Asistencia marcada: {json.dumps(attendance, indent=2, ensure_ascii=False)}")
         return attendance
     else:
         print(f"❌ Error al marcar asistencia: {response.status_code}")
@@ -526,126 +517,144 @@ def mark_attendance(session_id, member_id):
 # ===== LIMPIEZA DE RECURSOS =====
 
 def cleanup():
-    """Limpia los recursos creados durante las pruebas"""
+    """Limpia los recursos creados durante la prueba"""
     print_separator("LIMPIEZA DE RECURSOS")
     
-    # Eliminar participaciones creadas
-    for session_id, _ in created_participations:
-        print(f"Cancelando participación en sesión {session_id}...")
-        cancel_registration(session_id)
+    # Cancelar participaciones creadas
+    for participation_id in created_participations:
+        try:
+            # Buscamos primero la sesión asociada a esta participación
+            url = f"{API_BASE_URL}/schedule/participation/{participation_id}"
+            response = requests.get(url, headers=HEADERS)
+            if response.status_code == 200:
+                participation = response.json()
+                url = f"{API_BASE_URL}/schedule/participation/cancel/{participation_id}"
+                cancel_response = requests.post(url, headers=HEADERS)
+                if cancel_response.status_code == 200:
+                    print(f"✅ Participación {participation_id} cancelada")
+                else:
+                    print(f"❌ No se pudo cancelar la participación {participation_id}")
+        except Exception as e:
+            print(f"Error al cancelar participación {participation_id}: {str(e)}")
     
-    # Eliminar sesiones creadas
-    for session_id in list(created_sessions):
-        print(f"Cancelando sesión {session_id}...")
-        cancel_session(session_id)
+    # Cancelar sesiones creadas
+    for session_id in created_sessions:
+        try:
+            url = f"{API_BASE_URL}/schedule/sessions/{session_id}/cancel"
+            response = requests.post(url, headers=HEADERS)
+            if response.status_code == 200:
+                print(f"✅ Sesión {session_id} cancelada")
+            else:
+                print(f"❌ No se pudo cancelar la sesión {session_id}")
+        except Exception as e:
+            print(f"Error al cancelar sesión {session_id}: {str(e)}")
     
     # Eliminar clases creadas
-    for class_id in list(created_classes):
-        print(f"Eliminando clase {class_id}...")
-        delete_class(class_id)
+    for class_id in created_classes:
+        try:
+            url = f"{API_BASE_URL}/schedule/classes/{class_id}"
+            response = requests.delete(url, headers=HEADERS)
+            if response.status_code == 200:
+                print(f"✅ Clase {class_id} eliminada")
+            else:
+                print(f"❌ No se pudo eliminar la clase {class_id}")
+        except Exception as e:
+            print(f"Error al eliminar clase {class_id}: {str(e)}")
     
     # Eliminar categorías creadas
-    for category_id in list(created_categories):
-        print(f"Eliminando categoría {category_id}...")
-        delete_category(category_id)
+    for category_id in created_categories:
+        try:
+            url = f"{API_BASE_URL}/schedule/categories/{category_id}"
+            response = requests.delete(url, headers=HEADERS)
+            if response.status_code == 200:
+                print(f"✅ Categoría {category_id} eliminada")
+            else:
+                print(f"❌ No se pudo eliminar la categoría {category_id}")
+        except Exception as e:
+            print(f"Error al eliminar categoría {category_id}: {str(e)}")
     
     print("✅ Limpieza completada")
 
 # ===== FLUJO PRINCIPAL DE PRUEBA =====
 
 def run_schedule_flow_test():
-    """Ejecuta el flujo completo de prueba CRUD para programación de clases"""
-    print_separator("INICIANDO PRUEBA DE FLUJO COMPLETO PARA PROGRAMACIÓN DE CLASES")
+    """Ejecuta la prueba completa del flujo de programación de clases"""
+    print("\n" + "=" * 80)
+    print(" INICIANDO PRUEBA DE FLUJO COMPLETO PARA PROGRAMACIÓN DE CLASES ".center(80, "="))
+    print("=" * 80 + "\n")
     
     try:
-        # PARTE 1: CLASES
-        print_separator("PARTE 1: PRUEBAS DE CLASES")
+        # PARTE 1: PRUEBAS DE CLASES
+        print("\n" + "=" * 80)
+        print(" PARTE 1: PRUEBAS DE CLASES ".center(80, "="))
+        print("=" * 80 + "\n")
         
-        # Omitiendo pruebas de categorías debido a problemas de compatibilidad
+        # Omitir pruebas de categorías por simplicidad
         print("Nota: Omitiendo pruebas de categorías personalizadas")
         
-        # En lugar de crear una categoría personalizada, usaremos categorías predefinidas
+        # Consultar clases existentes
+        existing_classes = get_classes()
         
-        # Paso 1: Listar clases existentes
-        classes = get_classes()
+        # Crear una clase nueva (sin categoría personalizada)
+        class_obj = create_class(None)
         
-        # Paso 2: Crear una nueva clase con categoría predefinida
-        new_class_data = {
-            "name": f"Clase de Prueba {int(time.time())}",
-            "description": "Esta es una clase creada automáticamente para pruebas de integración",
-            "duration": 60,  # Duración en minutos
-            "category": "YOGA",  # Categoría predefinida
-            "max_capacity": 20,
-            "difficulty_level": "intermediate",
-            "equipment_needed": "Esterilla, toalla",
-            "is_active": True
-        }
-        
-        print_separator("CREANDO CLASE")
-        url = f"{API_BASE_URL}/schedule/classes"
-        response = requests.post(url, headers=HEADERS, json=new_class_data)
-        
-        if response.status_code != 200:
-            print(f"❌ Error al crear clase: {response.status_code}")
-            print(response.text)
-            return
+        if class_obj:
+            # Actualizar la clase creada
+            update_class(class_obj['id'], class_obj)
             
-        new_class = response.json()
-        created_classes.append(new_class['id'])
-        
-        print(f"✅ Clase creada exitosamente con ID: {new_class['id']}")
-        print(f"   Nombre: {new_class['name']}")
-        print(f"   Descripción: {new_class['description']}")
-        
-        class_id = new_class["id"]
-        
-        # Paso 3: Actualizar la clase
-        updated_class = update_class(class_id, new_class)
-        if not updated_class:
-            print("❌ No se pudo actualizar la clase, finalizando prueba")
-            return
+            # PARTE 2: PRUEBAS DE SESIONES
+            print("\n" + "=" * 80)
+            print(" PARTE 2: PRUEBAS DE SESIONES ".center(80, "="))
+            print("=" * 80 + "\n")
             
-        # Paso 4: Intentar crear una sesión para esta clase
-        print_separator("CREANDO SESIÓN")
-        start_time = (datetime.now() + timedelta(days=1)).replace(hour=10, minute=0, second=0)
-        end_time = (datetime.now() + timedelta(days=1)).replace(hour=11, minute=0, second=0)
-        
-        session_data = {
-            "class_id": class_id,
-            "start_time": start_time.isoformat(),
-            "end_time": end_time.isoformat(),
-            "trainer_id": 6,
-            "location": "Sala Principal",
-            "max_participants": 15,
-            "is_active": True,
-            "notes": "Sesión creada automáticamente para pruebas de integración",
-            "gym_id": GYM_ID  # Añadir explícitamente el ID del gimnasio
-        }
-        
-        print(f"Datos de sesión: {json.dumps(session_data, indent=2, ensure_ascii=False)}")
-        
-        url = f"{API_BASE_URL}/schedule/sessions"
-        response = requests.post(url, headers=HEADERS, json=session_data)
-        
-        if response.status_code == 200:
-            created_session = response.json()
-            print(f"✅ Sesión creada exitosamente con ID: {created_session['id']}")
-            created_sessions.append(created_session['id'])
-        else:
-            print(f"❌ Error al crear sesión: {response.status_code}")
-            print(response.text)
+            # Consultar sesiones existentes
+            existing_sessions = get_sessions()
             
-        print("Prueba básica completada con éxito")
+            # Crear una sesión individual
+            session_obj = create_session(class_obj['id'])
+            
+            if session_obj:
+                # Actualizar la sesión
+                update_session(session_obj['id'])
+                
+                # Registrarse para la sesión
+                register_for_session(session_obj['id'])
+                
+                # Consultar mis clases
+                my_classes = get_my_classes()
+                
+                # Consultar participantes de la sesión
+                session_participants = get_session_participants(session_obj['id'])
+                
+                # Cancelar registro
+                cancel_registration(session_obj['id'])
+                
+                # Crear sesiones recurrentes
+                recurring_sessions = create_recurring_sessions(class_obj['id'])
+                
+                if recurring_sessions and len(recurring_sessions) > 0:
+                    # Cancelar una de las sesiones recurrentes
+                    cancel_session(recurring_sessions[0]['id'])
         
-        # Resumen final
-        print_separator("RESUMEN DE LA PRUEBA")
-        print("✅ Prueba de flujo básico para programación de clases ejecutada")
-        print(f"   Clases creadas: {len(created_classes)}")
-        print(f"   Sesiones creadas: {len(created_sessions)}")
+        # PARTE 3: LIMPIEZA
+        print("\n" + "=" * 80)
+        print(" PARTE 3: LIMPIEZA DE RECURSOS ".center(80, "="))
+        print("=" * 80 + "\n")
         
-    finally:
-        # Limpiar recursos creados durante la prueba
+        # Limpiar los recursos creados
         cleanup()
+        
+    except Exception as e:
+        print(f"\n❌ ERROR EN LA PRUEBA: {str(e)}")
+        # Intentar limpiar recursos incluso si hay error
+        try:
+            cleanup()
+        except:
+            pass
+        
+        import traceback
+        traceback.print_exc()
 
+# Ejecutar la prueba si se ejecuta el script directamente
 if __name__ == "__main__":
     run_schedule_flow_test() 
