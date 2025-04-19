@@ -896,25 +896,18 @@ class UserService:
         redis_client: Optional[Redis] = None
     ) -> Optional[UserSchema]:
         """
-        Versión cacheada de get_user_by_auth0_id que usa Redis.
-        
-        Args:
-            db: Sesión de base de datos.
-            auth0_id: ID de Auth0 del usuario.
-            redis_client: Cliente Redis opcional. Si es None, se hace consulta directa a BD.
-            
-        Returns:
-            UserSchema o None si no se encuentra el usuario.
+        Versión cacheada para obtener un usuario por su Auth0 ID.
         """
         if not redis_client:
-            logger.debug(f"Redis no disponible, consultando user_by_auth0_id:{auth0_id} directamente en BD")
+            # Si no hay Redis disponible, usar método directo
+            logger.warning(f"Redis no disponible para get_user_by_auth0_id {auth0_id}")
             user = self.get_user_by_auth0_id(db, auth0_id=auth0_id)
             return UserSchema.model_validate(user) if user else None
         
         cache_key = f"user_by_auth0_id:{auth0_id}"
         
-        # Intentar obtener directamente desde Redis primero
         try:
+            # Intentar obtener de caché primero
             @time_redis_operation
             async def _redis_get(key):
                 return await redis_client.get(key)
@@ -922,57 +915,145 @@ class UserService:
             cached_data = await _redis_get(cache_key)
             
             if cached_data:
-                # Cache HIT: Registrar y deserializar
-                register_cache_hit(cache_key)
+                # Caché hit
+                register_cache_hit(cache_key) 
                 logger.debug(f"Cache HIT para {cache_key}")
                 
                 @time_deserialize_operation
                 def _deserialize(data):
-                    return UserSchema.model_validate(json.loads(data))
+                    return json.loads(data)
+                    
+                user_dict = _deserialize(cached_data)
+                return UserSchema.model_validate(user_dict)
+            else:
+                # Caché miss
+                register_cache_miss(cache_key)
                 
-                return _deserialize(cached_data)
-        
-            # Cache MISS: Registrar el miss y buscar en BD
-            register_cache_miss(cache_key)
-            logger.debug(f"Cache MISS para {cache_key}, consultando BD")
-            
-            # Definir función interna para búsqueda en BD
-            async def db_fetch():
-                async with async_db_query_timer(f"get_user_by_auth0_id({auth0_id})"):
-                    user = self.get_user_by_auth0_id(db, auth0_id=auth0_id)
-                    return UserSchema.model_validate(user) if user else None
-            
-            # Ejecutar la búsqueda en BD
-            user_schema = await db_fetch()
-            
-            # Si encontramos el usuario, guardar en caché
-            if user_schema:
-                @time_redis_operation
-                async def _redis_set(key, value, ex):
-                    await redis_client.set(key, value, ex=ex)
+                # Función para obtener de la BD
+                async def db_fetch():
+                    with async_db_query_timer():
+                        user = self.get_user_by_auth0_id(db, auth0_id=auth0_id)
+                        return user
+
+                user = await db_fetch()
                 
-                # Serializar y guardar en caché de forma asíncrona
-                try:
-                    serialized = user_schema.model_dump_json()
-                    await _redis_set(cache_key, serialized, ex=get_settings().CACHE_TTL_USER_PROFILE)
-                    logger.debug(f"Usuario {auth0_id} almacenado en caché con clave {cache_key}")
-                except Exception as e:
-                    logger.error(f"Error al guardar usuario {auth0_id} en caché: {e}")
-            
-            return user_schema
-            
+                if user:
+                    # Serializar y guardar en caché
+                    user_schema = UserSchema.model_validate(user)
+                    
+                    @time_redis_operation
+                    async def _redis_set(key, value, ex):
+                        await redis_client.set(key, value, ex=ex)
+                    
+                    await _redis_set(
+                        cache_key,
+                        user_schema.model_dump_json(),
+                        ex=300  # 5 minutos TTL
+                    )
+                    
+                    return user_schema
+                return None
+                
         except Exception as e:
-            # Si hay cualquier error con Redis, log y fallback a BD
-            logger.error(f"Error al acceder a caché para usuario {auth0_id}: {e}")
+            logger.error(f"Error al obtener usuario cacheado por auth0_id {auth0_id}: {str(e)}", exc_info=True)
             
-            # Definir función interna para búsqueda fallback en BD
+            # Fallback a consulta directa
             async def db_fallback():
-                async with async_db_query_timer(f"fallback_get_user_by_auth0_id({auth0_id})"):
+                with async_db_query_timer():
                     user = self.get_user_by_auth0_id(db, auth0_id=auth0_id)
                     return UserSchema.model_validate(user) if user else None
-            
-            # Ejecutar la búsqueda fallback en BD
+                    
             return await db_fallback()
+            
+    # Nuevo método para verificar membresía de gimnasio con caché
+    async def check_user_gym_membership_cached(
+        self,
+        db: Session,
+        user_id: int,
+        gym_id: int,
+        redis_client: Optional[Redis] = None
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Verifica si un usuario pertenece a un gimnasio utilizando caché.
+        
+        Args:
+            db: Sesión de base de datos
+            user_id: ID del usuario
+            gym_id: ID del gimnasio
+            redis_client: Cliente Redis opcional
+            
+        Returns:
+            Diccionario con la información de membresía o None si no existe
+        """
+        from app.services.gym import gym_service
+        
+        if not redis_client:
+            # Si no hay Redis disponible, usar método directo
+            logger.warning(f"Redis no disponible para check_user_gym_membership user_id={user_id}, gym_id={gym_id}")
+            user_gym = gym_service.check_user_in_gym(db, user_id=user_id, gym_id=gym_id)
+            if user_gym:
+                return {
+                    "user_id": user_gym.user_id,
+                    "gym_id": user_gym.gym_id,
+                    "role": user_gym.role.value,
+                    "created_at": user_gym.created_at.isoformat() if user_gym.created_at else None
+                }
+            return None
+        
+        cache_key = f"user_gym_membership:{user_id}:{gym_id}"
+        
+        try:
+            # Intentar obtener de caché primero
+            cached_data = await redis_client.get(cache_key)
+            
+            if cached_data:
+                # Caché hit
+                register_cache_hit(cache_key)
+                logger.debug(f"Cache HIT para {cache_key}")
+                return json.loads(cached_data)
+            else:
+                # Caché miss
+                register_cache_miss(cache_key)
+                
+                # Obtener de la BD
+                user_gym = gym_service.check_user_in_gym(db, user_id=user_id, gym_id=gym_id)
+                
+                if user_gym:
+                    # Convertir a diccionario
+                    membership = {
+                        "user_id": user_gym.user_id,
+                        "gym_id": user_gym.gym_id,
+                        "role": user_gym.role.value,
+                        "created_at": user_gym.created_at.isoformat() if user_gym.created_at else None
+                    }
+                    
+                    # Guardar en caché
+                    await redis_client.set(
+                        cache_key,
+                        json.dumps(membership),
+                        ex=300  # 5 minutos TTL
+                    )
+                    
+                    return membership
+                
+                # No existe la membresía
+                # Guardar caché negativa con TTL más corto
+                await redis_client.set(cache_key, "null", ex=60)  # 1 minuto TTL
+                return None
+                
+        except Exception as e:
+            logger.error(f"Error al verificar membresía cacheada user_id={user_id}, gym_id={gym_id}: {str(e)}", exc_info=True)
+            
+            # Fallback a consulta directa
+            user_gym = gym_service.check_user_in_gym(db, user_id=user_id, gym_id=gym_id)
+            if user_gym:
+                return {
+                    "user_id": user_gym.user_id,
+                    "gym_id": user_gym.gym_id,
+                    "role": user_gym.role.value,
+                    "created_at": user_gym.created_at.isoformat() if user_gym.created_at else None
+                }
+            return None
 
 
 user_service = UserService() 
