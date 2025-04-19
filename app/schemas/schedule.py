@@ -196,6 +196,20 @@ class ClassBaseInput(BaseModel):
             values['category_enum'] = v
         return None  # No guardar este campo
     
+    @validator('category_enum', pre=True)
+    def normalize_category_enum(cls, v):
+        """Normaliza el valor del enum a minúsculas para permitir enviar valores en mayúsculas"""
+        if v is not None and isinstance(v, str):
+            # Convertir a minúsculas para que 'YOGA' se convierta a 'yoga'
+            v_lower = v.lower()
+            # Verificar si el valor en minúsculas es válido para el enum
+            try:
+                return ClassCategory(v_lower)
+            except ValueError:
+                # Si no es un valor válido, se dejará que la validación de Pydantic genere el error
+                pass
+        return v
+    
     @validator('category_id', 'category_enum')
     def validate_category(cls, v, values, **kwargs):
         # Versión actualizada que no confía en field.name
@@ -250,6 +264,20 @@ class ClassUpdate(BaseModel):
         if v is not None and 'category_enum' not in values:
             values['category_enum'] = v
         return None  # No guardar este campo
+        
+    @validator('category_enum', pre=True)
+    def normalize_category_enum(cls, v):
+        """Normaliza el valor del enum a minúsculas para permitir enviar valores en mayúsculas"""
+        if v is not None and isinstance(v, str):
+            # Convertir a minúsculas para que 'YOGA' se convierta a 'yoga'
+            v_lower = v.lower()
+            # Verificar si el valor en minúsculas es válido para el enum
+            try:
+                return ClassCategory(v_lower)
+            except ValueError:
+                # Si no es un valor válido, se dejará que la validación de Pydantic genere el error
+                pass
+        return v
 
 
 class Class(ClassBase):
