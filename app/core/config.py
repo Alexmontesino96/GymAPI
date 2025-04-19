@@ -35,10 +35,9 @@ class Settings(BaseSettings):
             return v
         raise ValueError(v)
 
-    # Base de datos - URL explícita y de respaldo para Heroku
-    HEROKU_DB_URL: str = "postgresql://u6chpjmhvbacn5:pcc8066ee2c146523c96e94ea9c289bdfb35af0a929c1c0243adbe5dd4ea85546@c6sfjnr30ch74e.cluster-czrs8kj4isg7.us-east-1.rds.amazonaws.com:5432/d8mrfqhqd7jn4k"
-    DATABASE_URL: str = os.getenv("DATABASE_URL", HEROKU_DB_URL)
-    SQLALCHEMY_DATABASE_URI: Optional[PostgresDsn] = None
+   
+    DATABASE_URL: str = os.getenv("DATABASE_URL")
+    SQLALCHEMY_DATABASE_URI: Optional[str] = None  # Definir explícitamente este campo
     
     @field_validator("DATABASE_URL", mode="before")
     def ensure_proper_url_format(cls, v: Optional[str], info) -> str:
@@ -52,9 +51,9 @@ class Settings(BaseSettings):
             return v
         
         # Si no hay URL, usar la URL de Heroku
-        return "postgresql://u6chpjmhvbacn5:pcc8066ee2c146523c96e94ea9c289bdfb35af0a929c1c0243adbe5dd4ea85546@c6sfjnr30ch74e.cluster-czrs8kj4isg7.us-east-1.rds.amazonaws.com:5432/d8mrfqhqd7jn4k"
+        return
     
-    @field_validator("SQLALCHEMY_DATABASE_URI", mode="before")
+    @field_validator("SQLALCHEMY_DATABASE_URI", mode="before", check_fields=False)
     def assemble_db_connection(cls, v: Optional[str], info) -> Any:
         """Configura la URI de SQLAlchemy basada en DATABASE_URL.
         Siempre prioriza DATABASE_URL si está presente y tiene el formato correcto.

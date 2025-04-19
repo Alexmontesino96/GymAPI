@@ -16,7 +16,8 @@ GYM_ID = 1
 HEADERS = {
     "Authorization": f"Bearer {AUTH_TOKEN}",
     "Content-Type": "application/json",
-    "x-tenant-id": str(GYM_ID)
+    "X-Gym-ID": str(GYM_ID),     # Header principal que espera el backend
+    "x-tenant-id": str(GYM_ID)   # Mantener por compatibilidad
 }
 
 # Lista para almacenar los IDs de los recursos creados durante la prueba
