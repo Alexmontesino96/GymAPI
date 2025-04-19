@@ -44,7 +44,6 @@ class Settings(BaseSettings):
         """Asegura que DATABASE_URL esté en el formato correcto y use Heroku si está disponible."""
         # Si hay una URL explícita, usarla
         if v:
-            # Ya no detectamos ni sustituimos la URL de Supabase
             # Asegurar formato postgresql://
             if v.startswith('postgres://'):
                 return 'postgresql://' + v[len('postgres://'):]
@@ -66,7 +65,7 @@ class Settings(BaseSettings):
             # Asegurar formato postgresql://
             if db_url.startswith('postgres://'):
                 corrected_url = 'postgresql://' + db_url[len('postgres://'):]
-                print(f"INFO: Corrigiendo DATABASE_URL de postgres:// a {corrected_url.split('@')[0]}@...")
+                print(f"INFO: Corrigiendo DATABASE_URL de postgres:// a postgresql://...")
                 return corrected_url
             elif not db_url.startswith('postgresql://'):
                 # Si no empieza con postgresql://, podría ser un formato inválido
