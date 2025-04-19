@@ -931,7 +931,7 @@ class UserService:
                 
                 # Función para obtener de la BD
                 async def db_fetch():
-                    with async_db_query_timer():
+                    async with async_db_query_timer():
                         user = self.get_user_by_auth0_id(db, auth0_id=auth0_id)
                         return user
 
@@ -959,7 +959,7 @@ class UserService:
             
             # Fallback a consulta directa
             async def db_fallback():
-                with async_db_query_timer():
+                async with async_db_query_timer():
                     user = self.get_user_by_auth0_id(db, auth0_id=auth0_id)
                     return UserSchema.model_validate(user) if user else None
                     
