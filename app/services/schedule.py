@@ -19,7 +19,10 @@ from app.models.schedule import (
     DayOfWeek,
     Class,
     GymSpecialHours,
-    ClassCategoryCustom
+    ClassCategoryCustom,
+    ClassParticipation,
+    ClassSession,
+    # GymClass,
 )
 from app.schemas.schedule import (
     GymHoursCreate, 

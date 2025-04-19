@@ -288,7 +288,7 @@ def create_session(class_id):
     end_time = start_time + timedelta(hours=1)
     
     # Obtener un ID de entrenador válido (normalmente este sería un entrenador real del gimnasio)
-    trainer_id = 1  # ID de ejemplo - en producción obtener un entrenador real
+    trainer_id = 5  # ID de ejemplo - en producción obtener un entrenador real
     
     # Datos de la sesión
     session_data = {
@@ -340,7 +340,7 @@ def create_recurring_sessions(class_id):
     end_time = start_time + timedelta(hours=1)
     
     # Obtener un ID de entrenador válido
-    trainer_id = 1  # ID de ejemplo - en producción obtener un entrenador real
+    trainer_id = 5  # ID de ejemplo - en producción obtener un entrenador real
     
     # Definir el rango de fechas para la recurrencia (4 semanas)
     start_date_str = start_date.date().isoformat()
