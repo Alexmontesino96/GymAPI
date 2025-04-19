@@ -38,7 +38,7 @@ def get_categories(active_only=True):
     print_separator("CONSULTANDO CATEGORÍAS DE CLASES")
     
     params = {"active_only": str(active_only).lower()}
-    url = f"{API_BASE_URL}/schedule/categories"
+    url = f"{API_BASE_URL}/schedule/categories/categories"
     response = requests.get(url, headers=HEADERS, params=params)
     
     if response.status_code == 200:
@@ -76,7 +76,7 @@ def create_category():
     
     print(f"Datos de categoría enviados: {json.dumps(category_data, indent=2, ensure_ascii=False)}")
     
-    url = f"{API_BASE_URL}/schedule/categories"
+    url = f"{API_BASE_URL}/schedule/categories/categories"
     response = requests.post(url, headers=HEADERS, json=category_data)
     
     if response.status_code == 200:
@@ -106,7 +106,7 @@ def update_category(category_id, original_category):
         "color": "#" + ''.join([random.choice('0123456789ABCDEF') for _ in range(6)])
     }
     
-    url = f"{API_BASE_URL}/schedule/categories/{category_id}"
+    url = f"{API_BASE_URL}/schedule/categories/categories/{category_id}"
     response = requests.put(url, headers=HEADERS, json=update_data)
     
     if response.status_code == 200:
@@ -125,7 +125,7 @@ def delete_category(category_id):
     """Elimina una categoría existente"""
     print_separator(f"ELIMINANDO CATEGORÍA {category_id}")
     
-    url = f"{API_BASE_URL}/schedule/categories/{category_id}"
+    url = f"{API_BASE_URL}/schedule/categories/categories/{category_id}"
     response = requests.delete(url, headers=HEADERS)
     
     if response.status_code == 200:
@@ -145,7 +145,7 @@ def get_classes():
     """Obtiene la lista de clases"""
     print_separator("CONSULTANDO CLASES")
     
-    url = f"{API_BASE_URL}/schedule/classes"
+    url = f"{API_BASE_URL}/schedule/classes/classes"
     response = requests.get(url, headers=HEADERS)
     
     if response.status_code == 200:
@@ -178,7 +178,7 @@ def create_class(category_id):
         "is_active": True
     }
     
-    url = f"{API_BASE_URL}/schedule/classes"
+    url = f"{API_BASE_URL}/schedule/classes/classes"
     response = requests.post(url, headers=HEADERS, json=class_data)
     
     if response.status_code == 201:  # Código 201 para creaciones exitosas
@@ -210,7 +210,7 @@ def update_class(class_id, original_class):
         "max_capacity": original_class['max_capacity'] + 5  # Aumentar capacidad en 5 personas
     }
     
-    url = f"{API_BASE_URL}/schedule/classes/{class_id}"
+    url = f"{API_BASE_URL}/schedule/classes/classes/{class_id}"
     response = requests.put(url, headers=HEADERS, json=update_data)
     
     if response.status_code == 200:
@@ -230,7 +230,7 @@ def delete_class(class_id):
     """Elimina una clase existente"""
     print_separator(f"ELIMINANDO CLASE {class_id}")
     
-    url = f"{API_BASE_URL}/schedule/classes/{class_id}"
+    url = f"{API_BASE_URL}/schedule/classes/classes/{class_id}"
     response = requests.delete(url, headers=HEADERS)
     
     if response.status_code == 200:
@@ -250,7 +250,7 @@ def get_sessions():
     """Obtiene la lista de sesiones próximas"""
     print_separator("CONSULTANDO SESIONES PRÓXIMAS")
     
-    url = f"{API_BASE_URL}/schedule/sessions"
+    url = f"{API_BASE_URL}/schedule/sessions/sessions"
     response = requests.get(url, headers=HEADERS)
     
     if response.status_code == 200:
@@ -302,7 +302,7 @@ def create_session(class_id):
         "override_capacity": 25  # Sobreescribir capacidad específica para esta sesión
     }
     
-    url = f"{API_BASE_URL}/schedule/sessions"
+    url = f"{API_BASE_URL}/schedule/sessions/sessions"
     response = requests.post(url, headers=HEADERS, json=session_data)
     
     if response.status_code == 201:
@@ -364,7 +364,7 @@ def create_recurring_sessions(class_id):
         "days_of_week": days_of_week
     }
     
-    url = f"{API_BASE_URL}/schedule/sessions/recurring"
+    url = f"{API_BASE_URL}/schedule/sessions/sessions/recurring"
     response = requests.post(url, headers=HEADERS, json=session_data)
     
     if response.status_code == 201:
@@ -394,7 +394,7 @@ def update_session(session_id):
         "notes": f"Sesión actualizada el {datetime.now().strftime('%d/%m/%Y %H:%M')}"
     }
     
-    url = f"{API_BASE_URL}/schedule/sessions/{session_id}"
+    url = f"{API_BASE_URL}/schedule/sessions/sessions/{session_id}"
     response = requests.put(url, headers=HEADERS, json=update_data)
     
     if response.status_code == 200:
@@ -412,7 +412,7 @@ def cancel_session(session_id):
     """Cancela una sesión"""
     print_separator(f"CANCELANDO SESIÓN {session_id}")
     
-    url = f"{API_BASE_URL}/schedule/sessions/{session_id}/cancel"
+    url = f"{API_BASE_URL}/schedule/sessions/sessions/{session_id}/cancel"
     response = requests.post(url, headers=HEADERS)
     
     if response.status_code == 200:
@@ -540,7 +540,7 @@ def cleanup():
     # Cancelar sesiones creadas
     for session_id in created_sessions:
         try:
-            url = f"{API_BASE_URL}/schedule/sessions/{session_id}/cancel"
+            url = f"{API_BASE_URL}/schedule/sessions/sessions/{session_id}/cancel"
             response = requests.post(url, headers=HEADERS)
             if response.status_code == 200:
                 print(f"✅ Sesión {session_id} cancelada")
@@ -552,7 +552,7 @@ def cleanup():
     # Eliminar clases creadas
     for class_id in created_classes:
         try:
-            url = f"{API_BASE_URL}/schedule/classes/{class_id}"
+            url = f"{API_BASE_URL}/schedule/classes/classes/{class_id}"
             response = requests.delete(url, headers=HEADERS)
             if response.status_code == 200:
                 print(f"✅ Clase {class_id} eliminada")
@@ -564,7 +564,7 @@ def cleanup():
     # Eliminar categorías creadas
     for category_id in created_categories:
         try:
-            url = f"{API_BASE_URL}/schedule/categories/{category_id}"
+            url = f"{API_BASE_URL}/schedule/categories/categories/{category_id}"
             response = requests.delete(url, headers=HEADERS)
             if response.status_code == 200:
                 print(f"✅ Categoría {category_id} eliminada")

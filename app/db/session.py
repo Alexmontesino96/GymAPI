@@ -47,9 +47,6 @@ try:
 
 except Exception as e:
     logger.critical(f"¡¡¡FALLO CRÍTICO AL CREAR ENGINE CON URL: {display_url}!!! Error: {e}", exc_info=True)
-    # Fallback a SQLite en memoria para permitir que la app al menos inicie
-    logger.warning("Creando engine SQLite en memoria como fallback.")
-    engine = create_engine("sqlite:///:memory:")
 
 # Crear clase de sesión
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
