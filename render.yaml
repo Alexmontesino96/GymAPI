@@ -4,10 +4,13 @@ services:
     name: gymapi
     runtime: docker # Especifica que usemos el Dockerfile
     envVars:
+      # IMPORTANTE: Configuración explícita para usar Transaction Pooler de Supabase
       - key: DATABASE_URL
-        fromDatabase:
-          name: gymapi-db
-          property: connectionString
+        value: postgresql://postgres.ueijlkythlkqadxymzqd:Mezjo9-gezrox-guggop@aws-0-us-west-1.pooler.supabase.com:6543/postgres
+        # Comentamos la configuración anterior para que no se use la conexión directa
+        # fromDatabase:
+        #   name: gymapi-db
+        #   property: connectionString
       - key: REDIS_URL
         fromService:
           name: gymapi-redis
@@ -40,6 +43,7 @@ services:
     plan: starter # Elige el plan según tus necesidades
 
 # Base de datos PostgreSQL
+# Mantenemos la definición aunque no la usamos directamente
 databases:
   - name: gymapi-db
     databaseName: gymapi

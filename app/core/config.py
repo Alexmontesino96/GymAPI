@@ -2,10 +2,13 @@ import secrets
 import os
 from typing import Any, Dict, List, Optional, Union
 from functools import lru_cache
+import logging
 
 from pydantic import AnyHttpUrl, EmailStr, PostgresDsn, validator, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# Configurar el logger
+logger = logging.getLogger(__name__)
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", case_sensitive=True)
@@ -42,11 +45,20 @@ class Settings(BaseSettings):
     @field_validator("DATABASE_URL", mode="before")
     def ensure_proper_url_format(cls, v: Optional[str], info) -> str:
         """Asegura que DATABASE_URL esté en el formato correcto y use Heroku si está disponible."""
+        # Registrar el valor recibido
+        logger.info(f"DATABASE_URL recibido en validator: {v}")
+        
         # Si hay una URL explícita, usarla
         if v:
+            # Comprobar si es la URL antigua
+            if 'db.ueijlkythlkqadxymzqd.supabase.co:5432' in v:
+                logger.warning(f"¡Detectada URL antigua de Supabase! Se recomienda usar el Transaction Pooler.")
+            
             # Asegurar formato postgresql://
             if v.startswith('postgres://'):
-                return 'postgresql://' + v[len('postgres://'):]
+                corrected = 'postgresql://' + v[len('postgres://'):]
+                logger.info(f"Corrigiendo formato de postgres:// a postgresql:// -> {corrected}")
+                return corrected
             return v
         
         # Si no hay URL, usar la URL de Heroku
@@ -60,27 +72,34 @@ class Settings(BaseSettings):
         values = info.data
         db_url = values.get("DATABASE_URL")
         
+        # Registro explícito
+        logger.info(f"Configurando SQLALCHEMY_DATABASE_URI basado en DATABASE_URL: {db_url}")
+        
         # SIEMPRE usar DATABASE_URL si está definido
         if db_url:
             # Asegurar formato postgresql://
             if db_url.startswith('postgres://'):
                 corrected_url = 'postgresql://' + db_url[len('postgres://'):]
-                print(f"INFO: Corrigiendo DATABASE_URL de postgres:// a postgresql://...")
+                logger.info(f"Corrigiendo DATABASE_URL de postgres:// a postgresql://")
                 return corrected_url
             elif not db_url.startswith('postgresql://'):
                 # Si no empieza con postgresql://, podría ser un formato inválido
-                print(f"WARNING: DATABASE_URL tiene un formato inesperado: {db_url}")
+                logger.warning(f"DATABASE_URL tiene un formato inesperado: {db_url}")
                 # Intentar forzar el prefijo si parece una URL válida
                 if '@' in db_url and ':' in db_url and '/' in db_url:
-                    return f"postgresql://{db_url}"
+                    corrected = f"postgresql://{db_url}"
+                    logger.info(f"Forzando prefijo postgresql:// -> {corrected}")
+                    return corrected
                 else:
                     # Si no se puede corregir, usar la URL de Heroku como fallback seguro
-                    print(f"ERROR: Formato de DATABASE_URL inválido: {db_url}. Usando Heroku DB URL de fallback.")
+                    logger.error(f"Formato de DATABASE_URL inválido. Usando Heroku DB URL de fallback.")
                     return values.get("HEROKU_DB_URL") # Usar la URL explícita de Heroku
+            # Registro final de la URL que se usará
+            logger.info(f"USANDO URL final para SQLAlchemy: {db_url}")
             return db_url # Ya está en formato postgresql://
         
         # Si DATABASE_URL no está definida en .env, usar HEROKU_DB_URL
-        print("INFO: DATABASE_URL no encontrada en .env, usando HEROKU_DB_URL por defecto.")
+        logger.warning("DATABASE_URL no encontrada, usando HEROKU_DB_URL por defecto.")
         return values.get("HEROKU_DB_URL")
 
     # Email
@@ -204,4 +223,7 @@ class Settings(BaseSettings):
 # Usar una función con caché para obtener la configuración
 @lru_cache()
 def get_settings() -> Settings:
-    return Settings() 
+    settings = Settings()
+    # Logging final de la URL de la base de datos
+    logger.info(f"URL final de la base de datos (desde get_settings): {settings.SQLALCHEMY_DATABASE_URI}")
+    return settings 
