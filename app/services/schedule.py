@@ -2143,21 +2143,21 @@ class ClassParticipationService:
                     detail="Ya estás registrado en esta clase"
                 )
         else:
-        # Crear nueva participación
-            participation_data = ClassParticipationCreate(
-                session_id=session_id,
-                member_id=member_id,
-                status=ClassParticipationStatus.REGISTERED,
-                    gym_id=gym_id  # Asignar el gym_id
-            )
+            # Crear nueva participación
+            participation_data = {
+                "session_id": session_id,
+                "member_id": member_id,
+                "status": ClassParticipationStatus.REGISTERED,
+                "gym_id": gym_id  # Asignar el gym_id
+            }
             participation_result = class_participation_repository.create(
-            db, obj_in=participation_data
-        )
+                db, obj_in=participation_data
+            )
         
         # Actualizar contador de participantes y validar resultado
         if participation_result:
             class_session_repository.update_participant_count(db, session_id=session_id)
-                # Invalidar cachés de sesión al final
+            # Invalidar cachés de sesión al final
             await self._invalidate_session_caches(redis_client, gym_id=gym_id, trainer_id=session.trainer_id, class_id=session.class_id)
             return participation_result
         else:
@@ -2299,9 +2299,9 @@ class ClassParticipationService:
         
         # Get the member's upcoming registrations where start_time > now
         upcoming_participations = (
-            db.query(ClassParticipation, ClassSession, GymClass)
+            db.query(ClassParticipation, ClassSession, Class)
             .join(ClassSession, ClassParticipation.session_id == ClassSession.id)
-            .join(GymClass, ClassSession.class_id == GymClass.id)
+            .join(Class, ClassSession.class_id == Class.id)
             .filter(
                 ClassParticipation.member_id == member_id,
                 ClassParticipation.gym_id == gym_id,
@@ -2348,9 +2348,9 @@ class ClassParticipationService:
             List[Dict[str, Any]]: List of dictionaries containing participation and session information
         """
         query = (
-            db.query(ClassParticipation, ClassSession, GymClass)
+            db.query(ClassParticipation, ClassSession, Class)
             .join(ClassSession, ClassParticipation.session_id == ClassSession.id)
-            .join(GymClass, ClassSession.class_id == GymClass.id)
+            .join(Class, ClassSession.class_id == Class.id)
             .filter(
                 ClassParticipation.member_id == member_id,
                 ClassParticipation.gym_id == gym_id,
