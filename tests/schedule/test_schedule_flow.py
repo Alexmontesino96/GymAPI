@@ -689,7 +689,7 @@ def get_classes_by_difficulty(difficulty_level):
     """Obtiene clases por nivel de dificultad (beginner, intermediate, advanced)"""
     print_separator(f"CONSULTANDO CLASES CON DIFICULTAD {difficulty_level}")
     
-    url = f"{API_BASE_URL}/schedule/classes/difficulty/{difficulty_level}"
+    url = f"{API_BASE_URL}/schedule/classes/classes/difficulty/{difficulty_level}"
     response = requests.get(url, headers=HEADERS)
     
     if response.status_code == 200:
