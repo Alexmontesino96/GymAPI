@@ -445,6 +445,23 @@ def register_for_session(session_id):
         print(response.text)
         return None
 
+def register_member_for_session(session_id, member_id):
+    """Registra a un miembro específico para una sesión (función administrativa)"""
+    print_separator(f"REGISTRANDO MIEMBRO {member_id} PARA LA SESIÓN {session_id}")
+    
+    url = f"{API_BASE_URL}/schedule/participation/register/{session_id}/{member_id}"
+    response = requests.post(url, headers=HEADERS)
+    
+    if response.status_code == 201 or response.status_code == 200:
+        participation = response.json()
+        print(f"✅ Registro de miembro exitoso: {json.dumps(participation, indent=2, ensure_ascii=False)}")
+        created_participations.append(participation.get('id'))
+        return participation
+    else:
+        print(f"❌ Error al registrar miembro: {response.status_code}")
+        print(response.text)
+        return None
+
 def get_my_classes():
     """Obtiene las clases en las que está registrado el usuario actual"""
     print_separator("CONSULTANDO MIS CLASES")
@@ -463,6 +480,73 @@ def get_my_classes():
         return participations
     else:
         print(f"❌ Error al obtener clases: {response.status_code}")
+        print(response.text)
+        return []
+
+def get_member_classes(member_id):
+    """Obtiene las clases en las que está registrado un miembro específico"""
+    print_separator(f"CONSULTANDO CLASES DEL MIEMBRO {member_id}")
+    
+    url = f"{API_BASE_URL}/schedule/participation/member-classes/{member_id}"
+    response = requests.get(url, headers=HEADERS)
+    
+    if response.status_code == 200:
+        participations = response.json()
+        print(f"✅ Se encontraron {len(participations)} participaciones para el miembro {member_id}")
+        for p in participations:
+            print(f"  - Participación ID: {p.get('participation', {}).get('id')}")
+            print(f"    Clase: {p.get('gym_class', {}).get('name')}")
+            print(f"    Sesión: {p.get('session', {}).get('id')} - {p.get('session', {}).get('start_time')}")
+            print(f"    Estado: {p.get('participation', {}).get('status')}")
+        return participations
+    else:
+        print(f"❌ Error al obtener clases del miembro: {response.status_code}")
+        print(response.text)
+        return []
+
+def get_my_attendance_history():
+    """Obtiene el historial de asistencia del usuario actual"""
+    print_separator("CONSULTANDO MI HISTORIAL DE ASISTENCIA")
+    
+    url = f"{API_BASE_URL}/schedule/participation/my-history"
+    response = requests.get(url, headers=HEADERS)
+    
+    if response.status_code == 200:
+        history = response.json()
+        print(f"✅ Se encontraron {len(history)} registros de asistencia")
+        for entry in history[:3]:  # Mostrar solo los primeros 3 para brevedad
+            print(f"  - Sesión: {entry.get('session_info', {}).get('id')}")
+            print(f"    Clase: {entry.get('class_info', {}).get('name')}")
+            print(f"    Fecha: {entry.get('session_info', {}).get('start_time')}")
+            print(f"    Estado: {entry.get('status')}")
+        if len(history) > 3:
+            print(f"    ... y {len(history) - 3} registros más")
+        return history
+    else:
+        print(f"❌ Error al obtener historial: {response.status_code}")
+        print(response.text)
+        return []
+
+def get_member_attendance_history(member_id):
+    """Obtiene el historial de asistencia de un miembro específico"""
+    print_separator(f"CONSULTANDO HISTORIAL DE ASISTENCIA DEL MIEMBRO {member_id}")
+    
+    url = f"{API_BASE_URL}/schedule/participation/member/{member_id}/history"
+    response = requests.get(url, headers=HEADERS)
+    
+    if response.status_code == 200:
+        history = response.json()
+        print(f"✅ Se encontraron {len(history)} registros de asistencia para el miembro {member_id}")
+        for entry in history[:3]:  # Mostrar solo los primeros 3 para brevedad
+            print(f"  - Sesión: {entry.get('session_info', {}).get('id')}")
+            print(f"    Clase: {entry.get('class_info', {}).get('name')}")
+            print(f"    Fecha: {entry.get('session_info', {}).get('start_time')}")
+            print(f"    Estado: {entry.get('status')}")
+        if len(history) > 3:
+            print(f"    ... y {len(history) - 3} registros más")
+        return history
+    else:
+        print(f"❌ Error al obtener historial: {response.status_code}")
         print(response.text)
         return []
 
@@ -499,6 +583,23 @@ def cancel_registration(session_id):
         print(response.text)
         return None
 
+def cancel_member_registration(session_id, member_id):
+    """Cancela el registro de un miembro específico para una sesión"""
+    print_separator(f"CANCELANDO REGISTRO DEL MIEMBRO {member_id} PARA LA SESIÓN {session_id}")
+    
+    url = f"{API_BASE_URL}/schedule/participation/cancel-registration/{session_id}/{member_id}"
+    response = requests.post(url, headers=HEADERS)
+    
+    if response.status_code == 200:
+        cancelled = response.json()
+        print(f"✅ Registro cancelado exitosamente para la sesión {session_id}")
+        print(f"   Estado actual: {cancelled['status']}")
+        return cancelled
+    else:
+        print(f"❌ Error al cancelar registro: {response.status_code}")
+        print(response.text)
+        return None
+
 def mark_attendance(session_id, member_id):
     """Marca la asistencia de un miembro a una sesión"""
     print_separator(f"MARCANDO ASISTENCIA PARA LA SESIÓN {session_id}")
@@ -512,6 +613,96 @@ def mark_attendance(session_id, member_id):
         return attendance
     else:
         print(f"❌ Error al marcar asistencia: {response.status_code}")
+        print(response.text)
+        return None
+
+def mark_no_show(session_id, member_id):
+    """Marca a un miembro como no presentado (no-show) a una sesión"""
+    print_separator(f"MARCANDO NO-SHOW PARA LA SESIÓN {session_id}")
+    
+    url = f"{API_BASE_URL}/schedule/participation/mark-no-show/{session_id}/{member_id}"
+    response = requests.post(url, headers=HEADERS)
+    
+    if response.status_code == 200:
+        no_show = response.json()
+        print(f"✅ No-show marcado: {json.dumps(no_show, indent=2, ensure_ascii=False)}")
+        return no_show
+    else:
+        print(f"❌ Error al marcar no-show: {response.status_code}")
+        print(response.text)
+        return None
+
+# ===== OPERACIONES ADICIONALES DE BÚSQUEDA =====
+
+def get_sessions_by_date_range(start_date, end_date):
+    """Obtiene las sesiones dentro de un rango de fechas"""
+    print_separator(f"CONSULTANDO SESIONES ENTRE {start_date} Y {end_date}")
+    
+    # Convertir fechas a formato ISO si son objetos date/datetime
+    if isinstance(start_date, (date, datetime)):
+        start_date = start_date.isoformat()
+    if isinstance(end_date, (date, datetime)):
+        end_date = end_date.isoformat()
+    
+    url = f"{API_BASE_URL}/schedule/sessions/date-range"
+    params = {"start_date": start_date, "end_date": end_date}
+    response = requests.get(url, headers=HEADERS, params=params)
+    
+    if response.status_code == 200:
+        sessions = response.json()
+        print(f"✅ Sesiones obtenidas exitosamente. Cantidad: {len(sessions)}")
+        if sessions:
+            for session in sessions[:3]:  # Mostrar solo las primeras 3
+                start_time = datetime.fromisoformat(session['start_time'].replace('Z', '+00:00'))
+                print(f"   ID: {session['id']} - Fecha: {start_time.strftime('%d/%m/%Y %H:%M')}")
+            if len(sessions) > 3:
+                print(f"   ... y {len(sessions) - 3} más")
+        return sessions
+    else:
+        print(f"❌ Error al obtener sesiones por rango de fechas: {response.status_code}")
+        print(response.text)
+        return None
+
+def get_trainer_sessions(trainer_id):
+    """Obtiene las sesiones asignadas a un entrenador específico"""
+    print_separator(f"CONSULTANDO SESIONES DEL ENTRENADOR {trainer_id}")
+    
+    url = f"{API_BASE_URL}/schedule/sessions/trainer/{trainer_id}"
+    response = requests.get(url, headers=HEADERS)
+    
+    if response.status_code == 200:
+        sessions = response.json()
+        print(f"✅ Sesiones del entrenador obtenidas exitosamente. Cantidad: {len(sessions)}")
+        if sessions:
+            for session in sessions[:3]:  # Mostrar solo las primeras 3
+                start_time = datetime.fromisoformat(session['start_time'].replace('Z', '+00:00'))
+                print(f"   ID: {session['id']} - Fecha: {start_time.strftime('%d/%m/%Y %H:%M')}")
+            if len(sessions) > 3:
+                print(f"   ... y {len(sessions) - 3} más")
+        return sessions
+    else:
+        print(f"❌ Error al obtener sesiones del entrenador: {response.status_code}")
+        print(response.text)
+        return None
+
+def get_classes_by_difficulty(difficulty_level):
+    """Obtiene clases por nivel de dificultad (beginner, intermediate, advanced)"""
+    print_separator(f"CONSULTANDO CLASES CON DIFICULTAD {difficulty_level}")
+    
+    url = f"{API_BASE_URL}/schedule/classes/difficulty/{difficulty_level}"
+    response = requests.get(url, headers=HEADERS)
+    
+    if response.status_code == 200:
+        classes = response.json()
+        print(f"✅ Clases obtenidas exitosamente. Cantidad: {len(classes)}")
+        if classes:
+            for cls in classes[:3]:  # Mostrar solo las primeras 3
+                print(f"   ID: {cls['id']} - Nombre: {cls['name']} - Dificultad: {cls['difficulty_level']}")
+            if len(classes) > 3:
+                print(f"   ... y {len(classes) - 3} más")
+        return classes
+    else:
+        print(f"❌ Error al obtener clases por dificultad: {response.status_code}")
         print(response.text)
         return None
 
@@ -590,8 +781,8 @@ def run_schedule_flow_test():
         print(" PARTE 1: PRUEBAS DE CLASES ".center(80, "="))
         print("=" * 80 + "\n")
         
-        # Omitir pruebas de categorías por simplicidad
-        print("Nota: Omitiendo pruebas de categorías personalizadas")
+        # Consultar clases por dificultad
+        beginner_classes = get_classes_by_difficulty("beginner")
         
         # Consultar clases existentes
         existing_classes = get_classes()
@@ -618,17 +809,63 @@ def run_schedule_flow_test():
                 # Actualizar la sesión
                 update_session(session_obj['id'])
                 
+                # Consultar sesiones por rango de fechas (próximos 30 días)
+                today = datetime.now().date()
+                future_date = today + timedelta(days=30)
+                date_range_sessions = get_sessions_by_date_range(today, future_date)
+                
+                # Consultar sesiones de un entrenador específico
+                trainer_id = session_obj.get('trainer_id', 5)  # Usar el trainer_id de la sesión creada o el valor por defecto
+                trainer_sessions = get_trainer_sessions(trainer_id)
+                
+                # PARTE 3: PRUEBAS DE PARTICIPACIÓN
+                print("\n" + "=" * 80)
+                print(" PARTE 3: PRUEBAS DE PARTICIPACIÓN ".center(80, "="))
+                print("=" * 80 + "\n")
+                
                 # Registrarse para la sesión
-                register_for_session(session_obj['id'])
+                registration = register_for_session(session_obj['id'])
                 
-                # Consultar mis clases
-                my_classes = get_my_classes()
+                if registration:
+                    # Consultar mis clases
+                    my_classes = get_my_classes()
+                    
+                    # Consultar participantes de la sesión
+                    session_participants = get_session_participants(session_obj['id'])
+                    
+                    # Consultar historial de asistencia
+                    my_history = get_my_attendance_history()
+                    
+                    # Cancelar registro
+                    cancel_registration(session_obj['id'])
                 
-                # Consultar participantes de la sesión
-                session_participants = get_session_participants(session_obj['id'])
+                # PARTE 4: PRUEBAS DE ADMINISTRACIÓN DE PARTICIPANTES
+                print("\n" + "=" * 80)
+                print(" PARTE 4: PRUEBAS DE ADMINISTRACIÓN DE PARTICIPANTES ".center(80, "="))
+                print("=" * 80 + "\n")
                 
-                # Cancelar registro
-                cancel_registration(session_obj['id'])
+                # Definir un ID de miembro para pruebas administrativas
+                test_member_id = 3  # Este debe ser un ID válido en el sistema
+                
+                # Registrar miembro a la sesión (función administrativa)
+                member_registration = register_member_for_session(session_obj['id'], test_member_id)
+                
+                if member_registration:
+                    # Consultar clases del miembro
+                    member_classes = get_member_classes(test_member_id)
+                    
+                    # Consultar historial de asistencia del miembro
+                    member_history = get_member_attendance_history(test_member_id)
+                    
+                    # Marcar asistencia o no-show (alternamos para probar ambas funcionalidades)
+                    # En una prueba real, solo marcaríamos una de las dos opciones
+                    if random.choice([True, False]):
+                        mark_attendance(session_obj['id'], test_member_id)
+                    else:
+                        mark_no_show(session_obj['id'], test_member_id)
+                    
+                    # Cancelar registro del miembro
+                    cancel_member_registration(session_obj['id'], test_member_id)
                 
                 # Crear sesiones recurrentes
                 recurring_sessions = create_recurring_sessions(class_obj['id'])
@@ -637,9 +874,9 @@ def run_schedule_flow_test():
                     # Cancelar una de las sesiones recurrentes
                     cancel_session(recurring_sessions[0]['id'])
         
-        # PARTE 3: LIMPIEZA
+        # PARTE 5: LIMPIEZA
         print("\n" + "=" * 80)
-        print(" PARTE 3: LIMPIEZA DE RECURSOS ".center(80, "="))
+        print(" PARTE 5: LIMPIEZA DE RECURSOS ".center(80, "="))
         print("=" * 80 + "\n")
         
         # Limpiar los recursos creados
