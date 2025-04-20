@@ -470,7 +470,7 @@ def get_session_participants(session_id):
     """Obtiene la lista de participantes de una sesión"""
     print_separator(f"CONSULTANDO PARTICIPANTES DE LA SESIÓN {session_id}")
     
-    url = f"{API_BASE_URL}/schedule/participation/session-participants/{session_id}"
+    url = f"{API_BASE_URL}/schedule/participation/participants/{session_id}"
     response = requests.get(url, headers=HEADERS)
     
     if response.status_code == 200:
