@@ -1,6 +1,7 @@
 from app.api.v1.endpoints.schedule.common import *
 from app.core.tenant import verify_gym_access
 from app.models.gym import Gym
+from app.models.user import UserRole
 from app.services.gym import gym_service
 
 router = APIRouter()
