@@ -2206,7 +2206,13 @@ class ClassParticipationService:
         if participation_result:
             class_session_repository.update_participant_count(db, session_id=session_id)
             # Invalidar cachés de sesión al final
-            await self._invalidate_session_caches(redis_client, gym_id=gym_id, trainer_id=session.trainer_id, class_id=session.class_id)
+            await self._invalidate_session_caches_from_participation(
+                session_id=session_id,
+                gym_id=gym_id,
+                redis_client=redis_client,
+                trainer_id=session.trainer_id, 
+                class_id=session.class_id
+            )
             return participation_result
         else:
              # Si por alguna razón no se creó/actualizó la participación
@@ -2240,7 +2246,13 @@ class ClassParticipationService:
             class_session_repository.update_participant_count(db, session_id=session_id)
             # Invalidar cachés de sesión
             if session: # Asegurar que tenemos la sesión
-                await self._invalidate_session_caches(redis_client, gym_id=gym_id, trainer_id=session.trainer_id, class_id=session.class_id)
+                await self._invalidate_session_caches_from_participation(
+                    session_id=session_id,
+                    gym_id=gym_id,
+                    redis_client=redis_client,
+                    trainer_id=session.trainer_id, 
+                    class_id=session.class_id
+                )
             return cancelled_participation
         else:
              raise HTTPException(status_code=500, detail="No se pudo completar la cancelación")
