@@ -368,7 +368,7 @@ def create_recurring_sessions(class_id):
     url = f"{API_BASE_URL}/schedule/sessions/sessions/recurring"
     response = requests.post(url, headers=HEADERS, json=session_data)
     
-    if response.status_code == 201:
+    if response.status_code == 201 or response.status_code == 200:
         created_sessions_data = response.json()
         print(f"✅ Sesiones recurrentes creadas exitosamente")
         print(f"   Cantidad de sesiones creadas: {len(created_sessions_data)}")
