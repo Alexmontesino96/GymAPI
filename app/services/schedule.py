@@ -2375,13 +2375,14 @@ class ClassParticipationService:
             .all()
         )
         
-        # Format the results
+        # Format the results with proper serialization to avoid PydanticSerializationError
         result = []
         for participation, session, gym_class in upcoming_participations:
+            # Convierte los modelos SQLAlchemy a esquemas Pydantic
             result.append({
-                "participation": participation,
-                "session": session,
-                "gym_class": gym_class
+                "participation": ClassParticipation.model_validate(participation),
+                "session": ClassSession.model_validate(session),
+                "gym_class": Class.model_validate(gym_class)
             })
             
         return result
