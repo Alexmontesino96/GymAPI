@@ -845,7 +845,7 @@ def run_schedule_flow_test():
                 print("=" * 80 + "\n")
                 
                 # Definir un ID de miembro para pruebas administrativas
-                test_member_id = 3  # Este debe ser un ID válido en el sistema
+                test_member_id = 5  # Este debe ser un ID válido en el sistema
                 
                 # Registrar miembro a la sesión (función administrativa)
                 member_registration = register_member_for_session(session_obj['id'], test_member_id)
