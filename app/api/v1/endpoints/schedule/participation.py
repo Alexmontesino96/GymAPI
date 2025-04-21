@@ -493,9 +493,20 @@ async def get_member_upcoming_classes(
         )
 
     # Service retrieves upcoming classes for the member within the gym
-    return await class_participation_service.get_member_upcoming_classes(
+    raw_results = await class_participation_service.get_member_upcoming_classes(
         db, member_id=member_id, skip=skip, limit=limit, gym_id=current_gym.id, redis_client=redis_client
     )
+    
+    # Serializar los resultados para evitar el error de Pydantic
+    serialized_results = []
+    for item in raw_results:
+        serialized_results.append({
+            "participation": ClassParticipation.model_validate(item["participation"]),
+            "session": ClassSession.model_validate(item["session"]),
+            "gym_class": Class.model_validate(item["gym_class"])
+        })
+    
+    return serialized_results
 
 
 @router.get("/attendance-history/{member_id}", response_model=List[Dict[str, Any]])
