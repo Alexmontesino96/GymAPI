@@ -47,6 +47,8 @@ from redis.asyncio import Redis
 from app.services.cache_service import cache_service
 from app.schemas.schedule import ClassCategoryCustom as ClassCategoryCustomSchema
 from app.schemas.schedule import Class as ClassSchema # Añadir importación para Class
+from app.schemas.schedule import ClassSession as ClassSessionSchema # Añadir importación para ClassSession
+from app.schemas.schedule import ClassParticipation as ClassParticipationSchema # Añadir importación para ClassParticipation
 # --- Fin importaciones Caché --- 
 
 # --- Añadir logger ---
@@ -2380,9 +2382,9 @@ class ClassParticipationService:
         for participation, session, gym_class in upcoming_participations:
             # Convierte los modelos SQLAlchemy a esquemas Pydantic
             result.append({
-                "participation": ClassParticipation.parse_obj(participation.__dict__),
-                "session": ClassSession.parse_obj(session.__dict__),
-                "gym_class": Class.parse_obj(gym_class.__dict__)
+                "participation": ClassParticipationSchema.parse_obj(participation.__dict__),
+                "session": ClassSessionSchema.parse_obj(session.__dict__),
+                "gym_class": ClassSchema.parse_obj(gym_class.__dict__)
             })
             
         return result

@@ -7,11 +7,11 @@ from pydantic import BaseModel
 
 # Importar los esquemas necesarios
 from app.schemas.schedule import (
-    ClassParticipation,
+    ClassParticipation as ClassParticipationSchema,
     ParticipationWithSessionInfo, 
     format_participation_with_session_info,
-    Class,
-    ClassSession
+    Class as ClassSchema,
+    ClassSession as ClassSessionSchema
 )
 from app.models.user import User
 from app.models.user_gym import UserGym as Member
@@ -19,7 +19,7 @@ from app.services.schedule import ClassParticipationService
 
 router = APIRouter()
 
-@router.post("/register/{session_id}", response_model=ClassParticipation)
+@router.post("/register/{session_id}", response_model=ClassParticipationSchema)
 async def register_for_class(
     session_id: int = Path(..., description="ID of the session"),
     db: Session = Depends(get_db),
@@ -68,7 +68,7 @@ async def register_for_class(
     )
 
 
-@router.post("/register/{session_id}/{member_id}", response_model=ClassParticipation)
+@router.post("/register/{session_id}/{member_id}", response_model=ClassParticipationSchema)
 async def register_member_for_class(
     session_id: int = Path(..., description="ID of the session"),
     member_id: int = Path(..., description="ID of the member to register"),
@@ -122,7 +122,7 @@ async def register_member_for_class(
     )
 
 
-@router.post("/cancel-registration/{session_id}", response_model=ClassParticipation)
+@router.post("/cancel-registration/{session_id}", response_model=ClassParticipationSchema)
 async def cancel_my_registration(
     session_id: int = Path(..., description="ID of the session"),
     reason: Optional[str] = Query(None, description="Reason for cancellation"),
@@ -172,7 +172,7 @@ async def cancel_my_registration(
     )
 
 
-@router.post("/cancel-registration/{session_id}/{member_id}", response_model=ClassParticipation)
+@router.post("/cancel-registration/{session_id}/{member_id}", response_model=ClassParticipationSchema)
 async def cancel_member_registration(
     session_id: int = Path(..., description="ID of the session"),
     member_id: int = Path(..., description="ID of the member whose registration to cancel"),
@@ -225,7 +225,7 @@ async def cancel_member_registration(
     )
 
 
-@router.post("/attendance/{session_id}/{member_id}", response_model=ClassParticipation)
+@router.post("/attendance/{session_id}/{member_id}", response_model=ClassParticipationSchema)
 async def mark_attendance(
     session_id: int = Path(..., description="ID of the session"),
     member_id: int = Path(..., description="ID of the member who attended"),
@@ -276,7 +276,7 @@ async def mark_attendance(
     )
 
 
-@router.post("/mark-no-show/{session_id}/{member_id}", response_model=ClassParticipation)
+@router.post("/mark-no-show/{session_id}/{member_id}", response_model=ClassParticipationSchema)
 async def mark_no_show(
     session_id: int = Path(..., description="ID of the session"),
     member_id: int = Path(..., description="ID of the member who was a no-show"),
@@ -323,7 +323,7 @@ async def mark_no_show(
     )
 
 
-@router.get("/participants/{session_id}", response_model=List[ClassParticipation])
+@router.get("/participants/{session_id}", response_model=List[ClassParticipationSchema])
 async def get_session_participants(
     session_id: int = Path(..., description="ID of the session"),
     skip: int = 0,
@@ -438,9 +438,9 @@ async def get_my_upcoming_classes(
     serialized_results = []
     for item in raw_results:
         serialized_results.append({
-            "participation": ClassParticipation.parse_obj(item["participation"].__dict__),
-            "session": ClassSession.parse_obj(item["session"].__dict__),
-            "gym_class": Class.parse_obj(item["gym_class"].__dict__)
+            "participation": ClassParticipationSchema.parse_obj(item["participation"].__dict__),
+            "session": ClassSessionSchema.parse_obj(item["session"].__dict__),
+            "gym_class": ClassSchema.parse_obj(item["gym_class"].__dict__)
         })
     
     return serialized_results
@@ -501,9 +501,9 @@ async def get_member_upcoming_classes(
     serialized_results = []
     for item in raw_results:
         serialized_results.append({
-            "participation": ClassParticipation.parse_obj(item["participation"].__dict__),
-            "session": ClassSession.parse_obj(item["session"].__dict__),
-            "gym_class": Class.parse_obj(item["gym_class"].__dict__)
+            "participation": ClassParticipationSchema.parse_obj(item["participation"].__dict__),
+            "session": ClassSessionSchema.parse_obj(item["session"].__dict__),
+            "gym_class": ClassSchema.parse_obj(item["gym_class"].__dict__)
         })
     
     return serialized_results
