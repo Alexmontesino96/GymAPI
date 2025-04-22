@@ -2380,9 +2380,9 @@ class ClassParticipationService:
         for participation, session, gym_class in upcoming_participations:
             # Convierte los modelos SQLAlchemy a esquemas Pydantic
             result.append({
-                "participation": ClassParticipation.model_validate(participation.__dict__),
-                "session": ClassSession.model_validate(session.__dict__),
-                "gym_class": Class.model_validate(gym_class.__dict__)
+                "participation": ClassParticipation.parse_obj(participation.__dict__),
+                "session": ClassSession.parse_obj(session.__dict__),
+                "gym_class": Class.parse_obj(gym_class.__dict__)
             })
             
         return result
