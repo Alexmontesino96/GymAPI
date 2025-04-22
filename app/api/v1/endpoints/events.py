@@ -24,6 +24,7 @@ from app.db.session import get_db
 from app.db.redis_client import get_redis_client
 from app.core.auth0_fastapi import get_current_user, get_current_user_with_permissions, Auth0User, auth
 from app.core.tenant import verify_gym_access, get_current_gym, GymSchema
+from app.core.tenant_cache import verify_gym_access_cached
 from app.models.gym import Gym
 from app.schemas.event import (
     Event as EventSchema, 
@@ -92,8 +93,8 @@ async def create_event(
     db: Session = Depends(get_db),
     event_in: EventCreate,
     background_tasks: BackgroundTasks,
-    current_gym: GymSchema = Depends(verify_gym_access),  # Usar GymSchema
-    current_user: Auth0User = Security(auth.get_user, scopes=["create:events"])
+    current_gym: GymSchema = Depends(verify_gym_access_cached),
+    redis_client: Redis = Depends(get_redis_client)
 ) -> JSONResponse:
     """
     Create a new event.
@@ -118,6 +119,9 @@ async def create_event(
         Event: The created event
     """
     start_time = time.time()
+    
+    # Obtener el usuario actual desde la request para evitar duplicación
+    current_user = request.state.current_user
     
     # --- Optimización: Buscar usuario interno UNA SOLA VEZ --- 
     auth0_user_id = current_user.id
@@ -226,8 +230,7 @@ async def read_events(
     location_contains: Optional[str] = None,
     created_by: Optional[int] = None,
     only_available: bool = False,
-    current_gym: GymSchema = Depends(verify_gym_access),  # Usar GymSchema
-    current_user: Auth0User = Security(auth.get_user, scopes=["read_events"]),
+    current_gym: GymSchema = Depends(verify_gym_access_cached),
     redis_client: Redis = Depends(get_redis_client)
 ) -> Any:
     """
@@ -292,8 +295,7 @@ async def read_my_events(
     db: Session = Depends(get_db),
     skip: int = 0,
     limit: int = 100,
-    current_gym: GymSchema = Depends(verify_gym_access),  # Usar GymSchema
-    current_user: Auth0User = Security(auth.get_user, scopes=["read:own_events"]),
+    current_gym: GymSchema = Depends(verify_gym_access_cached),
     redis_client: Redis = Depends(get_redis_client)
 ) -> Any:
     """
@@ -306,6 +308,8 @@ async def read_my_events(
         - Requires 'read:own_events' scope (all authenticated users)
     """
     start_time = time.time()
+    # Obtener el usuario actual desde la request para evitar duplicación
+    current_user = request.state.current_user
     auth0_id = current_user.id
     
     try:
@@ -359,8 +363,7 @@ async def read_event(
     request: Request,
     db: Session = Depends(get_db),
     event_id: int = Path(..., title="ID del evento a obtener", ge=1),
-    current_gym: GymSchema = Depends(verify_gym_access),  # Usar GymSchema
-    current_user: Auth0User = Security(auth.get_user, scopes=["read_events"]),
+    current_gym: GymSchema = Depends(verify_gym_access_cached),
     redis_client: Redis = Depends(get_redis_client)
 ) -> Any:
     """
