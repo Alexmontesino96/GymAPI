@@ -13,7 +13,7 @@ from app.models.schedule import (
 
 # GymHours schemas
 class GymHoursBase(BaseModel):
-    day_of_week: conint(ge=0, le=6)
+    day_of_week: int = Field(..., ge=0, le=6)
     open_time: Optional[time] = None
     close_time: Optional[time] = None
     is_closed: bool = False
@@ -50,8 +50,7 @@ class GymHours(GymHoursBase):
     id: int
     gym_id: int
 
-    class Config:
-        from_attributes = True
+    model_config = {"from_attributes": True}
 
 
 # GymSpecialHours schemas
@@ -140,8 +139,7 @@ class GymSpecialHours(GymSpecialHoursBase):
     updated_at: Optional[datetime] = None
     created_by: Optional[int] = None
 
-    class Config:
-        from_attributes = True
+    model_config = {"from_attributes": True}
 
 
 # Class Category Custom schemas
@@ -172,8 +170,7 @@ class ClassCategoryCustom(ClassCategoryCustomBase):
     updated_at: Optional[datetime] = None
     created_by: Optional[int] = None
 
-    class Config:
-        from_attributes = True
+    model_config = {"from_attributes": True}
 
 
 # Class schemas
@@ -288,8 +285,7 @@ class Class(ClassBase):
     created_by: Optional[int] = None
     custom_category: Optional[ClassCategoryCustom] = None
 
-    class Config:
-        from_attributes = True
+    model_config = {"from_attributes": True}
 
 
 class ClassWithSessions(Class):
@@ -346,8 +342,7 @@ class ClassSession(ClassSessionBase):
     created_by: Optional[int] = None
     override_capacity: Optional[int] = None
 
-    class Config:
-        from_attributes = True
+    model_config = {"from_attributes": True}
 
 
 class ClassSessionWithParticipations(ClassSession):
@@ -383,13 +378,12 @@ class ClassParticipation(ClassParticipationBase):
     created_at: datetime
     updated_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = {"from_attributes": True}
 
 
 # Update forward references
-ClassWithSessions.update_forward_refs()
-ClassSessionWithParticipations.update_forward_refs()
+ClassWithSessions.model_rebuild()
+ClassSessionWithParticipations.model_rebuild()
 
 # --- Añadido para historial de asistencia ---
 class ParticipationWithSessionInfo(BaseModel):
@@ -404,8 +398,7 @@ class ParticipationWithSessionInfo(BaseModel):
     session_info: ClassSession  # Usar el esquema ClassSession existente
     class_info: Class  # Usar el esquema Class existente
 
-    class Config:
-        from_attributes = True
+    model_config = {"from_attributes": True}
 
 # Helper function to format participation with session info
 # Nota: Esta función debería residir lógicamente en el servicio o endpoint,
@@ -420,10 +413,9 @@ def format_participation_with_session_info(participation, session, gym_class):
         attendance_time=participation.attendance_time,
         cancellation_time=participation.cancellation_time,
         cancellation_reason=participation.cancellation_reason,
-        session_info=ClassSession.model_validate(session), # Convertir modelo DB a Pydantic
-        class_info=Class.model_validate(gym_class) # Convertir modelo DB a Pydantic
+        session_info=ClassSession.model_validate(session.__dict__), # Convertir modelo DB a Pydantic
+        class_info=Class.model_validate(gym_class.__dict__) # Convertir modelo DB a Pydantic
     )
-# --- Fin añadido --- 
 
 # ApplyDefaultsRequest
 class ApplyDefaultsRequest(BaseModel):

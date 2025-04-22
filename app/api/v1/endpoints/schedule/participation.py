@@ -438,9 +438,9 @@ async def get_my_upcoming_classes(
     serialized_results = []
     for item in raw_results:
         serialized_results.append({
-            "participation": ClassParticipation.model_validate(item["participation"]),
-            "session": ClassSession.model_validate(item["session"]),
-            "gym_class": Class.model_validate(item["gym_class"])
+            "participation": ClassParticipation.parse_obj(item["participation"].__dict__),
+            "session": ClassSession.parse_obj(item["session"].__dict__),
+            "gym_class": Class.parse_obj(item["gym_class"].__dict__)
         })
     
     return serialized_results
@@ -501,9 +501,9 @@ async def get_member_upcoming_classes(
     serialized_results = []
     for item in raw_results:
         serialized_results.append({
-            "participation": ClassParticipation.model_validate(item["participation"]),
-            "session": ClassSession.model_validate(item["session"]),
-            "gym_class": Class.model_validate(item["gym_class"])
+            "participation": ClassParticipation.parse_obj(item["participation"].__dict__),
+            "session": ClassSession.parse_obj(item["session"].__dict__),
+            "gym_class": Class.parse_obj(item["gym_class"].__dict__)
         })
     
     return serialized_results
