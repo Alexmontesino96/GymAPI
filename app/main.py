@@ -20,7 +20,7 @@ from app.api.v1.api import api_router
 from app.core.config import get_settings
 from app.middleware.timing import TimingMiddleware
 from app.core.scheduler import init_scheduler
-from app.db.redis_client import get_redis_client, close_redis_client
+from app.db.redis_client import initialize_redis_pool, close_redis_client
 
 logger = logging.getLogger(__name__) # Mantener o ajustar según necesidad
 
@@ -39,15 +39,15 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Lifespan: Error al inicializar scheduler: {e}", exc_info=True)
 
-    # Conectar a Redis
-    print("Lifespan: Intentando conectar a Redis...")
+    # Inicializar el pool de conexiones Redis
+    print("Lifespan: Inicializando Redis connection pool...")
     redis_connected = False
     try:
-        await get_redis_client() 
-        logger.info("Lifespan: Conexión Redis establecida (o cliente obtenido).")
+        await initialize_redis_pool()
+        logger.info("Lifespan: Redis connection pool inicializado correctamente.")
         redis_connected = True
     except Exception as e:
-        logger.error(f"Lifespan: Error al conectar a Redis: {e}", exc_info=True)
+        logger.error(f"Lifespan: Error al inicializar Redis connection pool: {e}", exc_info=True)
     print(f"Lifespan: Conexión Redis {'EXITOSA' if redis_connected else 'FALLIDA'}.")
     
     yield # Aplicación en ejecución
@@ -63,14 +63,14 @@ async def lifespan(app: FastAPI):
             logger.error(f"Error shutting down scheduler: {e}", exc_info=True)
     
     # Cerrar conexión Redis
-    print("Lifespan: Intentando cerrar conexión Redis...")
+    print("Lifespan: Intentando cerrar connection pool de Redis...")
     try:
         await close_redis_client()
-        logger.info("Lifespan: Conexión Redis cerrada.")
-        print("Lifespan: Conexión Redis CERRADA exitosamente.")
+        logger.info("Lifespan: Connection pool de Redis cerrado.")
+        print("Lifespan: Connection pool de Redis CERRADO exitosamente.")
     except Exception as e:
-        logger.error(f"Lifespan: Error cerrando Redis: {e}", exc_info=True)
-        print(f"Lifespan: Error al cerrar Redis: {e}")
+        logger.error(f"Lifespan: Error cerrando Redis connection pool: {e}", exc_info=True)
+        print(f"Lifespan: Error al cerrar Redis connection pool: {e}")
 
 app = FastAPI(
     title=settings_instance.PROJECT_NAME,

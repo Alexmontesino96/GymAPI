@@ -184,6 +184,13 @@ class Settings(BaseSettings):
     REDIS_USERNAME: Optional[str] = os.getenv("REDIS_USERNAME", None)
     REDIS_PASSWORD: Optional[str] = os.getenv("REDIS_PASSWORD", None)
     REDIS_URL: str = "redis://localhost:6379/0"
+    
+    # Configuración del pool de conexiones Redis
+    REDIS_POOL_MAX_CONNECTIONS: int = int(os.getenv("REDIS_POOL_MAX_CONNECTIONS", "20"))
+    REDIS_POOL_SOCKET_TIMEOUT: int = int(os.getenv("REDIS_POOL_SOCKET_TIMEOUT", "2"))
+    REDIS_POOL_HEALTH_CHECK_INTERVAL: int = int(os.getenv("REDIS_POOL_HEALTH_CHECK_INTERVAL", "30"))
+    REDIS_POOL_RETRY_ON_TIMEOUT: bool = os.getenv("REDIS_POOL_RETRY_ON_TIMEOUT", "True").lower() in ("true", "1", "t")
+    REDIS_POOL_SOCKET_KEEPALIVE: bool = os.getenv("REDIS_POOL_SOCKET_KEEPALIVE", "True").lower() in ("true", "1", "t")
 
     @field_validator("REDIS_URL", mode="before")
     def assemble_redis_connection(cls, v: Optional[str], info) -> Any:
