@@ -788,7 +788,8 @@ class ChatService:
         Esta función:
         1. Busca la sala asociada al evento
         2. Envía un mensaje de sistema indicando que el evento ha finalizado
-        3. Elimina a todos los usuarios (excepto administradores) del canal
+        3. Congela el canal para que no se puedan enviar más mensajes, pero mantiene 
+           acceso a los usuarios para que puedan ver el histórico de conversaciones
         
         Args:
             db: Sesión de base de datos
@@ -812,44 +813,24 @@ class ChatService:
                 
                 # Enviar mensaje de sistema indicando que el chat se ha cerrado
                 system_message = {
-                    "text": "Este evento ha finalizado y el chat ha sido cerrado. Ya no es posible enviar mensajes.",
+                    "text": "Este evento ha finalizado. El chat ha sido archivado y no es posible enviar nuevos mensajes, pero puedes seguir viendo el historial de conversaciones.",
                     "type": "system"
                 }
                 
                 channel.send_message(system_message, user_id="system")
                 logger.info(f"Mensaje de sistema enviado al chat del evento {event_id}")
                 
-                # Obtener miembros actuales
-                response = channel.query(
-                    messages_limit=0,
-                    watch=False,
-                    presence=False
-                )
+                # Congelar el canal para que no se puedan enviar más mensajes
+                # pero los usuarios puedan seguir viendo los mensajes
+                try:
+                    channel.update({"frozen": True})
+                    logger.info(f"Canal del evento {event_id} congelado exitosamente")
+                except Exception as e:
+                    logger.warning(f"No se pudo congelar el canal: {e}")
+                    # Continuar aunque falle la congelación
                 
-                members = response.get("members", [])
-                member_ids = [member.get("user_id") for member in members if member.get("user_id")]
-                
-                if member_ids:
-                    # Eliminar miembros del canal en Stream
-                    # Nota: esto no elimina administradores del canal, lo cual es un comportamiento deseado
-                    channel.remove_members(member_ids)
-                    logger.info(f"Eliminados {len(member_ids)} miembros del chat del evento {event_id}")
-                    
-                    # Opcionalmente, cambiar el estado del canal a "frozen" si la API lo permite
-                    # Esta línea depende de la API de Stream y podría no estar disponible
-                    try:
-                        channel.update({"frozen": True})
-                        logger.info(f"Canal del evento {event_id} congelado")
-                    except Exception as e:
-                        logger.warning(f"No se pudo congelar el canal: {e}")
-                        # Continuar aunque falle la congelación
-                
-                # Eliminar miembros de la BD local
-                db.query(ChatMember).filter(ChatMember.room_id == room.id).delete()
-                db.commit()
-                
-                # Actualizar sala en BD local (marcar como cerrada o actualizar estado)
-                # Nota: aquí podrías añadir una columna 'is_closed' a ChatRoom si necesitas rastrear este estado
+                # No eliminamos a los miembros ni de Stream ni de la BD local
+                # De esta forma, pueden seguir accediendo para ver el historial
                 
                 return True
                 
