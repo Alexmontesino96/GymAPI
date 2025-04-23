@@ -212,6 +212,13 @@ async def create_event(
     # Retorna la respuesta INMEDIATAMENTE con encabezado de tiempo
     # Usar jsonable_encoder para convertir datetime a string antes de JSONResponse
     event_schema = EventSchema.from_orm(event)
+    
+    # Asegurar que created_at y updated_at tienen valores para serialización
+    if event_schema.created_at is None:
+        event_schema.created_at = datetime.now(timezone.utc)
+    if event_schema.updated_at is None:
+        event_schema.updated_at = datetime.now(timezone.utc)
+        
     json_compatible_content = jsonable_encoder(event_schema)
     return JSONResponse(content=json_compatible_content, headers=headers)
 
