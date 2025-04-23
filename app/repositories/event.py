@@ -1,5 +1,5 @@
 from typing import List, Optional, Dict, Any, Union
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy.orm import Session, joinedload, selectinload
 from sqlalchemy import func, and_, or_, select, update
 
@@ -177,7 +177,7 @@ class EventRepository:
         # Solo persistir si hubo cambios reales
         if modified:
             # Optimización 4: Establecer updated_at manualmente para evitar triggers
-            db_event.updated_at = datetime.utcnow()
+            db_event.updated_at = datetime.now(timezone.utc)
             db.add(db_event)
             db.commit()
         
@@ -372,7 +372,7 @@ class EventRepository:
             return db.query(Event).filter(Event.id == event_id).first()
             
         # Añadir timestamp de actualización
-        update_data['updated_at'] = datetime.utcnow()
+        update_data['updated_at'] = datetime.now(timezone.utc)
         
         try: 
             # En lugar de hacer un UPDATE con RETURNING, que puede tener problemas de mapeo, 
@@ -424,7 +424,7 @@ class EventRepository:
                 
             # Actualizar el estado a COMPLETED
             event.status = EventStatus.COMPLETED
-            event.updated_at = datetime.utcnow()
+            event.updated_at = datetime.now(timezone.utc)
             
             # Guardar los cambios
             db.add(event)
@@ -525,7 +525,7 @@ class EventParticipationRepository:
                 participation_status = EventParticipationStatus.WAITING_LIST
             
             # Crear la participación con todos los datos necesarios
-            now = datetime.utcnow()  # Usar la misma marca de tiempo para ambos campos
+            now = datetime.now(timezone.utc)  # Usar la misma marca de tiempo para ambos campos
             db_participation = EventParticipation(
                 event_id=event_id,
                 member_id=user_id,
@@ -597,7 +597,7 @@ class EventParticipationRepository:
         
         # Solo hacer commit si hubo cambios
         if updated:
-            db_participation.updated_at = datetime.utcnow() # Actualizar timestamp
+            db_participation.updated_at = datetime.now(timezone.utc) # Actualizar timestamp
             db.add(db_participation)
             db.commit()
             db.refresh(db_participation)

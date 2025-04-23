@@ -15,7 +15,7 @@ All endpoints are protected with appropriate permission scopes.
 """
 
 from typing import List, Optional, Any
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Query, Body, Path, status, Security, BackgroundTasks, Request
 from sqlalchemy.orm import Session
 from redis.asyncio import Redis
@@ -767,7 +767,7 @@ async def register_for_event(
             else:
                 existing.status = EventParticipationStatus.WAITING_LIST
             
-            existing.updated_at = datetime.utcnow()
+            existing.updated_at = datetime.now(timezone.utc)
             db.add(existing)
             db.commit()
             db.refresh(existing)

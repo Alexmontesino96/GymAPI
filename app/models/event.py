@@ -3,6 +3,7 @@ from datetime import datetime
 from typing import Optional
 from sqlalchemy import Column, String, Integer, DateTime, ForeignKey, Text, Enum, Boolean, Index
 from sqlalchemy.orm import relationship
+from sqlalchemy.sql import func
 
 from app.db.base_class import Base
 
@@ -24,8 +25,8 @@ class Event(Base):
     
     title = Column(String(100), nullable=False)
     description = Column(Text, nullable=True)
-    start_time = Column(DateTime, nullable=False, index=True)
-    end_time = Column(DateTime, nullable=False, index=True)
+    start_time = Column(DateTime(timezone=True), nullable=False, index=True)
+    end_time = Column(DateTime(timezone=True), nullable=False, index=True)
     location = Column(String(100), nullable=True)
     max_participants = Column(Integer, nullable=False, default=0)  # 0 = sin límite
     status = Column(Enum(EventStatus), default=EventStatus.SCHEDULED, index=True)
@@ -47,8 +48,8 @@ class Event(Base):
     # Relación con las salas de chat
     chat_rooms = relationship("ChatRoom", back_populates="event")
     
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     
     # Índices para mejorar consultas multi-tenant
     __table_args__ = (
@@ -95,8 +96,8 @@ class EventParticipation(Base):
     # Asistencia al evento
     attended = Column(Boolean, default=False)
     
-    registered_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    registered_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     
     # Índices compuestos para mejorar rendimiento
     __table_args__ = (

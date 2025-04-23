@@ -2,7 +2,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.date import DateTrigger
 from sqlalchemy.orm import Session
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import logging
 
 from app.db.session import SessionLocal
@@ -98,7 +98,7 @@ def mark_completed_events():
             from sqlalchemy import and_
             
             # Consultar todos los eventos programados cuya hora de finalización ya pasó
-            current_time = datetime.utcnow()
+            current_time = datetime.now(timezone.utc)
             events_to_complete = db.query(Event).filter(
                 and_(
                     Event.status == EventStatus.SCHEDULED,
@@ -165,6 +165,11 @@ def schedule_event_completion(event_id: int, end_time: datetime):
         logger.error("Scheduler not initialized. Cannot schedule event completion.")
         return
     
+    # Asegurar que end_time tenga información de zona horaria (UTC)
+    if end_time.tzinfo is None:
+        logger.info(f"Converting naive datetime to UTC for event {event_id}: {end_time}")
+        end_time = end_time.replace(tzinfo=timezone.utc)
+    
     # Generar un ID único para la tarea
     job_id = f"event_completion_{event_id}"
     
@@ -183,7 +188,7 @@ def schedule_event_completion(event_id: int, end_time: datetime):
         replace_existing=True
     )
     
-    logger.info(f"Scheduled event {event_id} to be marked as completed at {end_time}")
+    logger.info(f"Scheduled event {event_id} to be marked as completed at {end_time} (UTC)")
 
 def initialize_event_completion_tasks():
     """
@@ -197,7 +202,7 @@ def initialize_event_completion_tasks():
             from app.models.event import Event
             from sqlalchemy import and_
             
-            current_time = datetime.utcnow()
+            current_time = datetime.now(timezone.utc)
             future_events = db.query(Event).filter(
                 and_(
                     Event.status == EventStatus.SCHEDULED,
@@ -220,8 +225,8 @@ def init_scheduler():
     """
     global _scheduler
     
-    logger.info("Initializing scheduler")
-    _scheduler = BackgroundScheduler()
+    logger.info("Initializing scheduler with UTC timezone")
+    _scheduler = BackgroundScheduler(timezone=timezone.utc)
     
     # Recordatorios de clase cada 30 minutos
     _scheduler.add_job(
@@ -250,7 +255,7 @@ def init_scheduler():
     
     # Iniciar el scheduler
     _scheduler.start()
-    logger.info("Scheduler started")
+    logger.info("Scheduler started with UTC timezone")
     
     # Programar tareas para eventos existentes
     initialize_event_completion_tasks()
