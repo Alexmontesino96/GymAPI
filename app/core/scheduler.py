@@ -115,6 +115,18 @@ def mark_completed_events():
                 if result:
                     completion_count += 1
                     logger.info(f"Event {event.id} ({event.title}) marked as completed")
+                    
+                    # Cerrar la sala de chat asociada al evento
+                    try:
+                        from app.services.chat import chat_service
+                        closed = chat_service.close_event_chat(db, event.id)
+                        if closed:
+                            logger.info(f"Chat room for event {event.id} successfully closed")
+                        else:
+                            logger.warning(f"No chat room found or failed to close for event {event.id}")
+                    except Exception as chat_error:
+                        logger.error(f"Error closing chat room for event {event.id}: {chat_error}", exc_info=True)
+                        # No interrumpir el flujo si falla el cierre del chat
             
             logger.info(f"Successfully marked {completion_count} events as completed")
             
@@ -145,6 +157,18 @@ def mark_single_event_completed(event_id: int):
             result = event_repository.mark_event_completed(db, event_id=event_id)
             if result:
                 logger.info(f"Event {event_id} ({event.title}) successfully marked as completed")
+                
+                # Cerrar la sala de chat asociada al evento
+                try:
+                    from app.services.chat import chat_service
+                    closed = chat_service.close_event_chat(db, event_id)
+                    if closed:
+                        logger.info(f"Chat room for event {event_id} successfully closed")
+                    else:
+                        logger.warning(f"No chat room found or failed to close for event {event_id}")
+                except Exception as chat_error:
+                    logger.error(f"Error closing chat room for event {event_id}: {chat_error}", exc_info=True)
+                    # No interrumpir el flujo si falla el cierre del chat
             else:
                 logger.warning(f"Failed to mark event {event_id} as completed")
                 

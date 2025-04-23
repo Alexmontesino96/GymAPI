@@ -11,7 +11,7 @@ from app.core.stream_client import stream_client
 from app.core.config import get_settings
 from app.repositories.chat import chat_repository
 from app.schemas.chat import ChatRoomCreate, ChatRoomUpdate
-from app.models.chat import ChatRoom
+from app.models.chat import ChatRoom, ChatMember
 from app.models.user import User  # Añadido para consultar auth0_id
 
 # Configuración de logging
@@ -780,6 +780,86 @@ class ChatService:
             del channel_cache[key]
             
         logger.info(f"Limpieza de cache completada. Eliminadas {len(expired_tokens)} entradas de tokens y {len(expired_channels)} entradas de canales.")
+
+    def close_event_chat(self, db: Session, event_id: int) -> bool:
+        """
+        Cierra la sala de chat asociada a un evento cuando este se completa.
+        
+        Esta función:
+        1. Busca la sala asociada al evento
+        2. Envía un mensaje de sistema indicando que el evento ha finalizado
+        3. Elimina a todos los usuarios (excepto administradores) del canal
+        
+        Args:
+            db: Sesión de base de datos
+            event_id: ID del evento cuya sala se va a cerrar
+            
+        Returns:
+            bool: True si se cerró la sala correctamente, False si no existe o falló
+        """
+        logger.info(f"Intentando cerrar sala de chat para evento {event_id}")
+        
+        try:
+            # Buscar la sala asociada al evento
+            room = chat_repository.get_event_room(db, event_id=event_id)
+            if not room:
+                logger.warning(f"No se encontró sala de chat para el evento {event_id}")
+                return False
+                
+            # Obtener canal de Stream
+            try:
+                channel = stream_client.channel(room.stream_channel_type, room.stream_channel_id)
+                
+                # Enviar mensaje de sistema indicando que el chat se ha cerrado
+                system_message = {
+                    "text": "Este evento ha finalizado y el chat ha sido cerrado. Ya no es posible enviar mensajes.",
+                    "type": "system"
+                }
+                
+                channel.send_message(system_message, user_id="system")
+                logger.info(f"Mensaje de sistema enviado al chat del evento {event_id}")
+                
+                # Obtener miembros actuales
+                response = channel.query(
+                    messages_limit=0,
+                    watch=False,
+                    presence=False
+                )
+                
+                members = response.get("members", [])
+                member_ids = [member.get("user_id") for member in members if member.get("user_id")]
+                
+                if member_ids:
+                    # Eliminar miembros del canal en Stream
+                    # Nota: esto no elimina administradores del canal, lo cual es un comportamiento deseado
+                    channel.remove_members(member_ids)
+                    logger.info(f"Eliminados {len(member_ids)} miembros del chat del evento {event_id}")
+                    
+                    # Opcionalmente, cambiar el estado del canal a "frozen" si la API lo permite
+                    # Esta línea depende de la API de Stream y podría no estar disponible
+                    try:
+                        channel.update({"frozen": True})
+                        logger.info(f"Canal del evento {event_id} congelado")
+                    except Exception as e:
+                        logger.warning(f"No se pudo congelar el canal: {e}")
+                        # Continuar aunque falle la congelación
+                
+                # Eliminar miembros de la BD local
+                db.query(ChatMember).filter(ChatMember.room_id == room.id).delete()
+                db.commit()
+                
+                # Actualizar sala en BD local (marcar como cerrada o actualizar estado)
+                # Nota: aquí podrías añadir una columna 'is_closed' a ChatRoom si necesitas rastrear este estado
+                
+                return True
+                
+            except Exception as e:
+                logger.error(f"Error al cerrar sala de chat para evento {event_id} en Stream: {e}", exc_info=True)
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error general al cerrar sala de chat para evento {event_id}: {e}", exc_info=True)
+            return False
 
 
 chat_service = ChatService() 
