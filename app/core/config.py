@@ -195,11 +195,50 @@ class Settings(BaseSettings):
     @field_validator("REDIS_URL", mode="before")
     def assemble_redis_connection(cls, v: Optional[str], info) -> Any:
         if isinstance(v, str):
-            return v
+            # Log antes de strip
+            logger.info(f"REDIS_URL original en validator: '{v}'")
+            
+            # Eliminar comentarios (todo lo que sigue a #)
+            if '#' in v:
+                v = v.split('#')[0]
+                logger.info(f"REDIS_URL después de eliminar comentarios: '{v}'")
+            
+            # Eliminar espacios en blanco al principio y final
+            v = v.strip()
+            logger.info(f"REDIS_URL después de strip en validator: '{v}'")
+            
+            # Verificar que REDIS_PORT y REDIS_HOST no tengan valores extraños
+            values = info.data
+            if 'REDIS_PORT' in values:
+                port_value = values.get('REDIS_PORT')
+                logger.info(f"REDIS_PORT en validator: '{port_value}' (tipo: {type(port_value)})")
+                if isinstance(port_value, str):
+                    logger.info(f"REDIS_PORT contiene espacios: {' ' in port_value}")
+                    # Limpiar el puerto si es una cadena
+                    values["REDIS_PORT"] = port_value.strip()
+            
+            # Si la URL es de un proveedor en la nube (rediss://) no usar componentes individuales
+            if v.startswith('rediss://'):
+                logger.info(f"Usando URL segura de Redis directamente (rediss://): {v}")
+                return v
+            else:
+                logger.info(f"Usando REDIS_URL directamente: {v}")
+                return v
         
         values = info.data
         password_part = f":{values.get('REDIS_PASSWORD')}@" if values.get('REDIS_PASSWORD') else ""
-        return f"redis://{password_part}{values.get('REDIS_HOST', 'localhost')}:{values.get('REDIS_PORT', 6379)}/{values.get('REDIS_DB', 0)}"
+        host = values.get('REDIS_HOST', 'localhost')
+        port = values.get('REDIS_PORT', 6379)
+        db = values.get('REDIS_DB', 0)
+        
+        # Asegurarse de que el puerto sea un entero
+        if isinstance(port, str):
+            logger.info(f"REDIS_PORT antes de strip: '{port}', contiene espacios: {' ' in port}")
+            port = int(port.strip())
+            
+        url = f"redis://{password_part}{host}:{port}/{db}"
+        logger.info(f"URL de Redis construida a partir de componentes: {url}")
+        return url
 
     # Auth0 Management API
     AUTH0_MGMT_CLIENT_ID: str = os.getenv("AUTH0_MGMT_CLIENT_ID", "")
@@ -226,6 +265,12 @@ class Settings(BaseSettings):
     CACHE_TTL_NEGATIVE: int = 60 # 1 minuto
     CACHE_TTL_GYM_DETAILS: int = 3600 # 1 hora para detalles del gym
     CACHE_TTL_USER_PROFILE: int = 300 # <<< NUEVO: 5 minutos para perfil de usuario >>>
+    
+    # AWS Configuration
+    AWS_ACCESS_KEY_ID: Optional[str] = None
+    AWS_SECRET_ACCESS_KEY: Optional[str] = None
+    AWS_REGION: str = "us-east-1"
+    SQS_QUEUE_URL: Optional[str] = None
 
 # Usar una función con caché para obtener la configuración
 @lru_cache()

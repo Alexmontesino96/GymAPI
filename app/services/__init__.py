@@ -22,6 +22,8 @@ from app.services.gym import gym_service
 from app.services.auth0_mgmt import auth0_mgmt_service
 from app.services.cache_service import cache_service
 from app.services.event import event_service
+from app.services.aws_sqs import sqs_service
+from app.services.queue_services import queue_service
 
 # Exportar servicios para acceso fácil
 __all__ = [
@@ -30,4 +32,6 @@ __all__ = [
     "trainer_member_service",
     "chat_service",
     "event_service",
+    "sqs_service",
+    "queue_service",
 ] 

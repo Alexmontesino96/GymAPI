@@ -46,10 +46,15 @@ import logging
 import time
 from app.services.event import event_service
 from app.services.chat import chat_service
+from app.core.config import get_settings
+from app.services import sqs_service, queue_service
 
 logger = logging.getLogger("events_api")
 
 router = APIRouter()
+
+# Constante para el tipo de acción SQS
+CREATE_EVENT_CHAT = "create_event_chat"
 
 # --- Funciones para tareas en segundo plano --- 
 async def create_chat_room_background(db_session_factory, event_id: int, user_id: int, event_title: str):
@@ -189,13 +194,25 @@ async def create_event(
         logger.error(f"Error verificando rol de entrenador para auto-registro (evento {event.id}): {e}", exc_info=True)
     
     # --- Desacoplar operaciones lentas --- 
-    # Encolar creación de chat en segundo plano
-    # Necesitamos pasar una forma de obtener una sesión de BD a la tarea
-    from app.db.session import SessionLocal
-    background_tasks.add_task(
-        create_chat_room_background, SessionLocal, event.id, internal_user_id, event.title
-    )
-    logger.info(f"Tarea de creación de chat para evento {event.id} encolada.")
+    # Reemplazar la creación directa del chat por un mensaje a SQS
+    try:
+        # Usar el nuevo servicio de colas para publicar el mensaje
+        queue_response = queue_service.publish_create_event_chat(
+            event_id=event.id,
+            creator_id=internal_user_id,
+            gym_id=gym_id,
+            event_title=event.title
+        )
+        
+        # Verificar si hubo error en la respuesta
+        if "error" in queue_response:
+            logger.error(f"Error al solicitar creación de chat: {queue_response['error']}")
+        else:
+            logger.info(f"Solicitud de creación de chat para evento {event.id} enviada correctamente")
+            
+    except Exception as e:
+        logger.error(f"Excepción al solicitar creación de chat: {str(e)}", exc_info=True)
+        # No fallar la creación del evento si el envío del mensaje falla
 
     # Encolar programación de finalización en segundo plano
     background_tasks.add_task(

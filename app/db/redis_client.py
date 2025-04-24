@@ -46,9 +46,46 @@ async def initialize_redis_pool():
     if REDIS_POOL is None:
         settings = get_settings()
         try:
-            logger.info(f"Inicializando connection pool para Redis en {settings.REDIS_URL}...")
+            # <<< REVERTIDO >>>: Volver a usar la URL desde la configuración
+            redis_url = settings.REDIS_URL
+            logger.info(f"Usando REDIS_URL desde configuración: '{redis_url}'")
+            
+            # Mantener la limpieza de la URL
+            if redis_url:
+                # Eliminar comentarios (todo lo que sigue a #)
+                if '#' in redis_url:
+                    redis_url = redis_url.split('#')[0]
+                    logger.info(f"URL después de eliminar comentarios: '{redis_url}'")
+                # Eliminar espacios en blanco al principio y final
+                redis_url = redis_url.strip()
+                logger.info(f"URL después de strip: '{redis_url}'")
+            else:
+                redis_url = "" # O manejar como error si la URL es requerida
+                logger.warning("REDIS_URL está vacía o no configurada.")
+            
+            # Mantener el resto de la lógica de diagnóstico para ayudar a identificar el problema
+            logger.info(f"Variables de Redis originales:")
+            logger.info(f"REDIS_URL original: '{settings.REDIS_URL}'")
+            logger.info(f"REDIS_HOST: '{settings.REDIS_HOST}'")
+            logger.info(f"REDIS_PORT: '{settings.REDIS_PORT}' (tipo: {type(settings.REDIS_PORT)})")
+            logger.info(f"REDIS_PASSWORD: '{'***' if settings.REDIS_PASSWORD else 'None'}'")
+            
+            # Intentar parsear la URL manualmente para diagnóstico
+            import urllib.parse
+            try:
+                parsed = urllib.parse.urlparse(redis_url)
+                logger.info(f"URL parseada: scheme='{parsed.scheme}', netloc='{parsed.netloc}', port='{parsed.port}'")
+            except Exception as parse_error:
+                logger.error(f"Error al parsear la URL manualmente: {parse_error}")
+            
+            # Si la URL procesada está vacía, lanzar error
+            if not redis_url:
+                 logger.error("La URL de Redis procesada está vacía. No se puede inicializar el pool.")
+                 raise ValueError("La URL de Redis procesada está vacía.")
+            
+            logger.info(f"Inicializando connection pool para Redis en {redis_url}...")
             REDIS_POOL = ConnectionPool.from_url(
-                settings.REDIS_URL,
+                redis_url,
                 encoding="utf-8",
                 decode_responses=True,
                 max_connections=settings.REDIS_POOL_MAX_CONNECTIONS,
