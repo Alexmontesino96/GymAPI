@@ -842,5 +842,22 @@ class ChatService:
             logger.error(f"Error general al cerrar sala de chat para evento {event_id}: {e}", exc_info=True)
             return False
 
+    def get_event_room(self, db: Session, event_id: int) -> Optional[ChatRoom]:
+        """
+        Obtiene la sala de chat asociada a un evento.
+        
+        Args:
+            db: Sesión de base de datos
+            event_id: ID del evento
+            
+        Returns:
+            ChatRoom: La sala encontrada o None si no existe
+        """
+        try:
+            return chat_repository.get_event_room(db, event_id=event_id)
+        except Exception as e:
+            logger.error(f"Error al buscar sala para evento {event_id}: {e}", exc_info=True)
+            return None
+
 
 chat_service = ChatService() 

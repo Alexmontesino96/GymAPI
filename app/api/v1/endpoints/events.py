@@ -57,26 +57,6 @@ router = APIRouter()
 CREATE_EVENT_CHAT = "create_event_chat"
 
 # --- Funciones para tareas en segundo plano --- 
-async def create_chat_room_background(db_session_factory, event_id: int, user_id: int, event_title: str):
-    """Tarea en segundo plano para crear/obtener sala de chat para un evento."""
-    db = None
-    try:
-        # Crear una nueva sesión de BD para la tarea en segundo plano
-        db = db_session_factory()
-        logger.info(f"[BG Task] Iniciando creación de chat para evento {event_id}")
-        
-        # Nota: chat_service.create_room ya maneja la obtención si existe
-        # No necesitamos pasar ChatRoomCreate, solo los datos relevantes
-        chat_service.get_or_create_event_chat(db, event_id, user_id)
-        
-        logger.info(f"[BG Task] Chat para evento {event_id} creado/obtenido.")
-    except Exception as e:
-        logger.error(f"[BG Task] Error creando chat para evento {event_id}: {e}", exc_info=True)
-        # Considera añadir reintentos o notificaciones si falla aquí
-    finally:
-        if db: # Asegurarse de cerrar la sesión de la tarea
-            db.close()
-
 async def schedule_event_completion_background(event_id: int, end_time: datetime):
     """Tarea en segundo plano para programar la finalización automática de un evento."""
     try:

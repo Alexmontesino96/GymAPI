@@ -272,6 +272,9 @@ class Settings(BaseSettings):
     AWS_REGION: str = "us-east-1"
     SQS_QUEUE_URL: Optional[str] = None
 
+    # Configuración para el Worker
+    WORKER_API_KEY: str = os.getenv("WORKER_API_KEY", "")
+
 # Usar una función con caché para obtener la configuración
 @lru_cache()
 def get_settings() -> Settings:
