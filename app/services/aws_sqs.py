@@ -42,37 +42,59 @@ class SQSService:
         else:
             logger.warning("No se pudo inicializar el servicio SQS: faltan credenciales o URL de cola")
     
-    def send_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
+    def send_message(
+        self,
+        message_body: str,
+        message_attributes: Optional[Dict[str, Dict[str, Any]]] = None,
+        delay_seconds: int = 0,
+        message_group_id: Optional[str] = None
+    ) -> Dict[str, Any]:
         """
-        Envía un mensaje a la cola de SQS.
-        
+        Envía un mensaje a la cola SQS configurada.
+
         Args:
-            message: Diccionario con el mensaje a enviar
-            
+            message_body: El cuerpo del mensaje (string).
+            message_attributes: Atributos del mensaje (opcional).
+            delay_seconds: Retraso en segundos para la entrega del mensaje (opcional).
+            message_group_id: El ID del grupo de mensajes, REQUERIDO para colas FIFO.
+
         Returns:
-            Respuesta de SQS o diccionario con error
+            Dict: La respuesta de SQS si tiene éxito.
+
+        Raises:
+            SQSError: Si ocurre un error al enviar el mensaje.
+            ValueError: Si message_group_id es None y la cola es FIFO.
         """
-        if not self.initialized:
-            error_msg = "El servicio SQS no está inicializado correctamente"
-            logger.error(error_msg)
-            return {"error": error_msg}
-            
-        if not self.queue_url:
-            error_msg = "URL de cola SQS no configurada"
-            logger.error(error_msg)
-            return {"error": error_msg}
-        
+        if not self.client or not self.queue_url:
+            raise SQSError("Cliente SQS o URL de la cola no configurados.")
+
+        # Validar si se necesita MessageGroupId (para colas FIFO)
+        is_fifo = self.queue_url.endswith('.fifo')
+        if is_fifo and message_group_id is None:
+            logger.error("Error: MessageGroupId es requerido para colas FIFO pero no se proporcionó.")
+            # Puedes lanzar un error o asignar un valor por defecto si tiene sentido
+            # Por ahora, lanzaremos un error para asegurar que se corrija en el origen
+            raise ValueError("MessageGroupId es requerido para colas FIFO.")
+
         try:
-            # Convertir el mensaje a formato JSON
-            message_body = json.dumps(message)
-            
-            # Enviar el mensaje a SQS
-            response = self.client.send_message(
-                QueueUrl=self.queue_url,
-                MessageBody=message_body
-            )
-            
-            logger.info(f"Mensaje enviado a SQS con MessageId: {response.get('MessageId')}")
+            params = {
+                'QueueUrl': self.queue_url,
+                'MessageBody': message_body,
+                'DelaySeconds': delay_seconds
+            }
+            if message_attributes:
+                params['MessageAttributes'] = message_attributes
+                
+            # Añadir MessageGroupId si es una cola FIFO
+            if is_fifo:
+                params['MessageGroupId'] = message_group_id
+                # Opcional: Añadir MessageDeduplicationId si no usas deduplicación basada en contenido
+                # import hashlib
+                # params['MessageDeduplicationId'] = hashlib.sha256(message_body.encode()).hexdigest()
+
+            logger.debug(f"Enviando mensaje a SQS con parámetros: {params}")
+            response = self.client.send_message(**params)
+            logger.info(f"Mensaje enviado a SQS exitosamente. MessageId: {response.get('MessageId')}")
             return response
         except ClientError as e:
             error_msg = f"Error de boto3 al enviar mensaje a SQS: {str(e)}"

@@ -54,13 +54,19 @@ class QueueService:
                 }
             }
             
-            # Enviar mensaje a SQS
-            response = sqs_service.send_message(message)
+            # Convertir el mensaje a formato JSON para el cuerpo
+            message_body = json.dumps(message)
             
-            if "error" in response:
-                logger.error(f"Error al solicitar creación de chat para evento {event_id} en SQS: {response['error']}")
-            else:
-                logger.info(f"Solicitud de creación de chat para evento {event_id} publicada en SQS con MessageId: {response.get('MessageId')}")
+            # Definir el MessageGroupId (usando event_id)
+            message_group_id = str(event_id)
+            
+            # Enviar mensaje a SQS usando el nuevo método
+            response = sqs_service.send_message(
+                message_body=message_body,
+                message_group_id=message_group_id
+            )
+            
+            logger.info(f"Solicitud de creación de chat para evento {event_id} publicada en SQS con MessageId: {response.get('MessageId')}")
                 
             return response
             
