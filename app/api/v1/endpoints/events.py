@@ -79,7 +79,8 @@ async def create_event(
     event_in: EventCreate,
     background_tasks: BackgroundTasks,
     current_gym: GymSchema = Depends(verify_gym_access_cached),
-    redis_client: Redis = Depends(get_redis_client)
+    redis_client: Redis = Depends(get_redis_client),
+    current_user: Auth0User = Security(auth.get_user, scopes=["admin:events"])
 ) -> JSONResponse:
     """
     Create a new event.
@@ -235,7 +236,8 @@ async def read_events(
     created_by: Optional[int] = None,
     only_available: bool = False,
     current_gym: GymSchema = Depends(verify_gym_access_cached),
-    redis_client: Redis = Depends(get_redis_client)
+    redis_client: Redis = Depends(get_redis_client),
+    current_user: Auth0User = Security(auth.get_user, scopes=["read:events"])
 ) -> Any:
     """
     Obtener lista de eventos con filtros opcionales.
@@ -300,7 +302,8 @@ async def read_my_events(
     skip: int = 0,
     limit: int = 100,
     current_gym: GymSchema = Depends(verify_gym_access_cached),
-    redis_client: Redis = Depends(get_redis_client)
+    redis_client: Redis = Depends(get_redis_client),
+    current_user: Auth0User = Security(auth.get_user, scopes=["read:own_events"])
 ) -> Any:
     """
     Obtener eventos creados por el usuario actual.
@@ -368,7 +371,8 @@ async def read_event(
     db: Session = Depends(get_db),
     event_id: int = Path(..., title="ID del evento a obtener", ge=1),
     current_gym: GymSchema = Depends(verify_gym_access_cached),
-    redis_client: Redis = Depends(get_redis_client)
+    redis_client: Redis = Depends(get_redis_client),
+    current_user: Auth0User = Security(auth.get_user, scopes=["read:events"])
 ) -> Any:
     """
     Obtener detalles de un evento específico.

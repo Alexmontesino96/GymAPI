@@ -6,10 +6,6 @@ from app.core.config import get_settings
 # Definir el esquema de seguridad para la clave API
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
-# Alternativa usando Authorization: Bearer
-# from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-# bearer_scheme = HTTPBearer(auto_error=False)
-
 async def verify_worker_api_key(
     request: Request,
     api_key_header: str = Security(api_key_header)
