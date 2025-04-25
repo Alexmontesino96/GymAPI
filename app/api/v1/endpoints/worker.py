@@ -66,23 +66,31 @@ async def create_event_chat(
     """
     try:
         # Validar que el evento exista
+        logger.info(f"[DEBUG] Verificando evento {request.event_id}")
         event = event_repository.get_event(db, event_id=request.event_id)
         if not event:
+            logger.warning(f"[DEBUG] Evento {request.event_id} no encontrado en la BD")
             return WorkerResponse(
                 success=False,
                 message=f"Evento {request.event_id} no encontrado"
             )
         
+        logger.info(f"[DEBUG] Evento {request.event_id} encontrado, gym_id={event.gym_id}, request.gym_id={request.gym_id}")
+        
         # Validar que el evento pertenezca al gimnasio especificado
         if event.gym_id != request.gym_id:
+            logger.warning(f"[DEBUG] Evento {request.event_id} pertenece al gimnasio {event.gym_id}, no al {request.gym_id}")
             return WorkerResponse(
                 success=False,
                 message=f"Evento {request.event_id} no pertenece al gimnasio {request.gym_id}"
             )
         
         # Verificar si ya existe una sala para este evento
+        logger.info(f"[DEBUG] Verificando si existe sala para evento {request.event_id}")
         existing_room = chat_service.get_event_room(db, request.event_id)
+        
         if existing_room:
+            logger.info(f"[DEBUG] Sala para evento {request.event_id} ya existe: id={existing_room.id}")
             return WorkerResponse(
                 success=True,
                 message=f"Sala de chat para evento {request.event_id} ya existe",
@@ -90,8 +98,18 @@ async def create_event_chat(
             )
             
         # Llamar al servicio de chat para crear la sala
-        logger.info(f"Worker solicitando creación de chat para evento {request.event_id}")
+        logger.info(f"[DEBUG] Creando sala de chat para evento {request.event_id}, creator_id={request.creator_id}")
         room = chat_service.get_or_create_event_chat(db, request.event_id, request.creator_id)
+        
+        # Verificar el resultado
+        logger.info(f"[DEBUG] Resultado de creación: {room}")
+        
+        # Verificar manualmente si la sala se creó
+        verification_room = chat_service.get_event_room(db, request.event_id)
+        if verification_room:
+            logger.info(f"[DEBUG] Verificación positiva: sala creada con id={verification_room.id}")
+        else:
+            logger.warning(f"[DEBUG] Verificación negativa: sala NO encontrada después de creación")
         
         return WorkerResponse(
             success=True,
@@ -100,7 +118,7 @@ async def create_event_chat(
         )
         
     except Exception as e:
-        logger.error(f"Error al crear sala de chat para evento {request.event_id}: {e}", exc_info=True)
+        logger.error(f"[DEBUG] Error al crear sala de chat para evento {request.event_id}: {e}", exc_info=True)
         return WorkerResponse(
             success=False,
             message=f"Error creando sala: {str(e)}"

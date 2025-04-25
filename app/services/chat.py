@@ -120,7 +120,7 @@ class ChatService:
             creator_id: ID interno del creador (en tabla user)
             room_data: Datos de la sala con member_ids como IDs internos
         """
-        logger.info(f"Creando sala con creator_id interno: {creator_id}, nombre: {room_data.name}")
+        logger.info(f"[DEBUG-CREATE] Iniciando create_room con creator_id={creator_id}, room_data.event_id={room_data.event_id}")
         
         # Implementar reintentos con backoff exponencial
         max_retries = 3
@@ -131,6 +131,7 @@ class ChatService:
                 # Obtener el usuario creador
                 creator = db.query(User).filter(User.id == creator_id).first()
                 if not creator:
+                    logger.error(f"[DEBUG-CREATE] Usuario creador {creator_id} no encontrado")
                     raise ValueError(f"Usuario creador {creator_id} no encontrado")
                 
                 # Obtener stream_id para el creador (usando el adaptador)
@@ -152,7 +153,7 @@ class ChatService:
                         member_stream_ids.append(member_stream_id)
                 
                 # Crear usuarios en Stream antes de crear el canal
-                logger.info(f"Asegurando que todos los usuarios existen en Stream: {member_stream_ids}")
+                logger.info(f"[DEBUG-CREATE] Asegurando usuarios en Stream: {member_stream_ids}")
                 for i, stream_id in enumerate(member_stream_ids):
                     try:
                         # Crear un objeto de usuario mínimo en Stream si no existe
@@ -160,9 +161,9 @@ class ChatService:
                             "id": stream_id,
                             "name": getattr(member_users[i], 'email', f"user_{member_users[i].id}"),
                         })
-                        logger.info(f"Usuario {stream_id} (ID interno: {member_users[i].id}) creado/actualizado en Stream")
+                        logger.info(f"[DEBUG-CREATE] Usuario {stream_id} (ID interno: {member_users[i].id}) creado/actualizado en Stream")
                     except Exception as e:
-                        logger.error(f"Error creando usuario {stream_id} en Stream: {str(e)}")
+                        logger.error(f"[DEBUG-CREATE] Error creando usuario {stream_id} en Stream: {str(e)}")
                         # Continuamos aunque haya error para intentar con los demás usuarios
                 
                 # Sanitizar nombre de sala para formato válido en Stream
@@ -195,11 +196,13 @@ class ChatService:
                     # Para eventos, usar el ID del evento y un hash corto del creador
                     creator_hash = hashlib.md5(str(creator_id).encode()).hexdigest()[:8]
                     channel_id = f"event_{room_data.event_id}_{creator_hash}"
+                    logger.info(f"[DEBUG-CREATE] Generando ID para chat de evento: event_id={room_data.event_id}, channel_id={channel_id}")
                     
                     # Verificar si ya existe un canal para este evento
                     existing_room = chat_repository.get_event_room(db, event_id=room_data.event_id)
                     if existing_room:
                         # Reutilizar sala existente para el evento
+                        logger.info(f"[DEBUG-CREATE] Sala existente encontrada para event_id={room_data.event_id}, id={existing_room.id}")
                         return self._get_existing_room_info(db, existing_room)
                 else:
                     # Método 3: Para otros casos, usar un hash MD5 corto basado en IDs internos
@@ -221,18 +224,18 @@ class ChatService:
                 if existing_room:
                     return self._get_existing_room_info(db, existing_room)
                 
-                logger.info(f"ID de canal generado: {channel_id} (longitud: {len(channel_id)})")
+                logger.info(f"[DEBUG-CREATE] ID de canal generado: {channel_id} (longitud: {len(channel_id)})")
                 
                 # PASO 1: Obtener un objeto canal
                 channel = stream_client.channel(channel_type, channel_id)
                 
                 # PASO 2: Crear el canal con el creador
                 response = channel.create(user_id=creator_stream_id)
-                logger.info(f"Canal creado con user_id: {creator_stream_id} (ID interno: {creator_id})")
+                logger.info(f"[DEBUG-CREATE] Canal creado en Stream: user_id={creator_stream_id} (ID interno: {creator_id})")
                 
                 # Extraer datos del canal de la respuesta
                 if not response or 'channel' not in response:
-                    logger.error("Respuesta de creación del canal inválida")
+                    logger.error("[DEBUG-CREATE] Respuesta de creación del canal inválida")
                     raise ValueError("Respuesta de Stream inválida al crear el canal")
                 
                 # Obtener ID y tipo del canal de la respuesta
@@ -241,25 +244,44 @@ class ChatService:
                 stream_channel_type = channel_data.get('type')
                 
                 if not stream_channel_id or not stream_channel_type:
-                    logger.error(f"Datos de canal incompletos: {channel_data}")
+                    logger.error(f"[DEBUG-CREATE] Datos de canal incompletos: {channel_data}")
                     raise ValueError("Datos de canal incompletos en la respuesta de Stream")
                     
-                logger.info(f"Canal creado - ID: {stream_channel_id}, Tipo: {stream_channel_type}")
+                logger.info(f"[DEBUG-CREATE] Canal creado - ID: {stream_channel_id}, Tipo: {stream_channel_type}")
                 
                 # PASO 3: Añadir miembros al canal si es necesario
                 if len(member_stream_ids) > 1:  # No añadir si solo está el creador
                     non_creator_stream_ids = [m for m in member_stream_ids if m != creator_stream_id]
                     if non_creator_stream_ids:
-                        logger.info(f"Añadiendo miembros adicionales: {non_creator_stream_ids}")
+                        logger.info(f"[DEBUG-CREATE] Añadiendo miembros adicionales: {non_creator_stream_ids}")
                         channel.add_members(non_creator_stream_ids)
                 
                 # PASO 4: Guardar en la base de datos local con IDs internos
-                db_room = chat_repository.create_room(
-                    db, 
-                    stream_channel_id=stream_channel_id,
-                    stream_channel_type=stream_channel_type,
-                    room_data=room_data  # Contiene member_ids como IDs internos
-                )
+                logger.info(f"[DEBUG-CREATE] Guardando sala en BD local: stream_channel_id={stream_channel_id}, event_id={room_data.event_id}")
+                try:
+                    # Verificar que event_id siga presente y con el valor correcto
+                    logger.info(f"[DEBUG-CREATE] Verificación pre-creación: room_data.event_id={room_data.event_id}, is_direct={room_data.is_direct}")
+                    
+                    db_room = chat_repository.create_room(
+                        db, 
+                        stream_channel_id=stream_channel_id,
+                        stream_channel_type=stream_channel_type,
+                        room_data=room_data  # Contiene member_ids como IDs internos
+                    )
+                    
+                    # Verificar que se creó correctamente
+                    logger.info(f"[DEBUG-CREATE] Sala creada en BD: id={db_room.id}, event_id={db_room.event_id}, stream_channel_id={db_room.stream_channel_id}")
+                    
+                    # Verificación adicional
+                    verify_room = chat_repository.get_event_room(db, event_id=room_data.event_id)
+                    if verify_room:
+                        logger.info(f"[DEBUG-CREATE] Verificación: sala encontrada por event_id={room_data.event_id}, id={verify_room.id}")
+                    else:
+                        logger.warning(f"[DEBUG-CREATE] Verificación: ¡sala NO encontrada por event_id={room_data.event_id}!")
+                        
+                except Exception as db_error:
+                    logger.error(f"[DEBUG-CREATE] Error al crear sala en BD: {str(db_error)}", exc_info=True)
+                    raise
         
                 # Guardar en la caché para futuras consultas
                 cache_key = f"channel_{db_room.id}"
@@ -269,6 +291,7 @@ class ChatService:
                         "stream_channel_id": stream_channel_id,
                         "stream_channel_type": stream_channel_type,
                         "name": db_room.name,
+                        "event_id": db_room.event_id,  # Añadir event_id a la respuesta
                         "members": self._convert_stream_members_to_internal(
                             channel_data.get("members", []), db
                         )
@@ -277,14 +300,15 @@ class ChatService:
                 }
                 
                 # Construir y devolver resultado
+                logger.info(f"[DEBUG-CREATE] Retornando resultado: id={db_room.id}, event_id={room_data.event_id}, stream_channel_id={stream_channel_id}")
                 return channel_cache[cache_key]["data"]
                 
             except Exception as e:
-                logger.error(f"Intento {attempt+1} fallido: {str(e)}", exc_info=True)
+                logger.error(f"[DEBUG-CREATE] Intento {attempt+1} fallido: {str(e)}", exc_info=True)
                 if attempt < max_retries - 1:
                     # Esperar con backoff exponencial antes de reintentar
                     sleep_time = retry_delay * (2 ** attempt)
-                    logger.info(f"Reintentando en {sleep_time} segundos...")
+                    logger.info(f"[DEBUG-CREATE] Reintentando en {sleep_time} segundos...")
                     time.sleep(sleep_time)
                 else:
                     # Incluir datos específicos para diagnóstico
@@ -294,7 +318,7 @@ class ChatService:
                         "is_direct": room_data.is_direct,
                         "event_id": room_data.event_id
                     }
-                    logger.error(f"Detalles de la solicitud: {error_details}")
+                    logger.error(f"[DEBUG-CREATE] Detalles de la solicitud fallida: {error_details}")
                     raise ValueError(f"Error creando canal en Stream después de {max_retries} intentos: {str(e)}")
     
     def _get_existing_room_info(self, db: Session, room: ChatRoom) -> Dict[str, Any]:
@@ -510,11 +534,12 @@ class ChatService:
         logger = logging.getLogger("chat_service")
         start_time = time.time()
         
-        logger.info(f"Buscando o creando chat para evento {event_id}, usuario interno {creator_id}")
+        logger.info(f"[DEBUG] Buscando o creando chat para evento {event_id}, usuario interno {creator_id}")
         
         # Obtener el auth0_id del creador
         creator = db.query(User).filter(User.id == creator_id).first()
         if not creator or not creator.auth0_id:
+            logger.error(f"[DEBUG] Usuario creador {creator_id} no encontrado o no tiene auth0_id")
             raise ValueError(f"Usuario creador {creator_id} no encontrado o no tiene auth0_id")
             
         auth0_creator_id = creator.auth0_id
@@ -531,23 +556,25 @@ class ChatService:
                         "name": safe_creator_id[:20],  # Limitar longitud del nombre
                     }
                 )
-                logger.info(f"Usuario {safe_creator_id} creado/actualizado en Stream")
+                logger.info(f"[DEBUG] Usuario {safe_creator_id} creado/actualizado en Stream")
             except Exception as e:
-                logger.error(f"Error creando usuario en Stream: {str(e)}")
+                logger.error(f"[DEBUG] Error creando usuario en Stream: {str(e)}")
                 # Continuamos aunque haya error para intentar crear el chat
             
             # Optimización 1: Verificar si el evento existe primero
             from app.models.event import Event
             event = db.query(Event).filter(Event.id == event_id).first()
             if not event:
-                logger.warning(f"Evento {event_id} no encontrado")
+                logger.warning(f"[DEBUG] Evento {event_id} no encontrado")
                 raise ValueError(f"Evento no encontrado: {event_id}")
+            
+            logger.info(f"[DEBUG] Evento encontrado: id={event.id}, title={event.title}, gym_id={event.gym_id}")
             
             # Optimización 2: Buscar sala existente
             room_query_start = time.time()
             db_room = chat_repository.get_event_room(db, event_id=event_id)
             room_query_time = time.time() - room_query_start
-            logger.info(f"Consulta de sala: {room_query_time:.2f}s, encontrada: {bool(db_room)}")
+            logger.info(f"[DEBUG] Consulta de sala: {room_query_time:.2f}s, encontrada: {bool(db_room)}")
             
             if db_room:
                 # Ya existe, intentar recuperar información
@@ -565,7 +592,7 @@ class ChatService:
                         presence=False
                     )
                     stream_query_time = time.time() - stream_query_start
-                    logger.info(f"Consulta a Stream: {stream_query_time:.2f}s")
+                    logger.info(f"[DEBUG] Consulta a Stream: {stream_query_time:.2f}s")
                     
                     # Si llegamos aquí, el canal existe en Stream, verificar miembros
                     members = response.get("members", [])
@@ -573,11 +600,11 @@ class ChatService:
                     
                     # Añadir el usuario actual si no está en el canal
                     if safe_creator_id not in current_members:
-                        logger.info(f"Añadiendo usuario {safe_creator_id} al canal existente")
+                        logger.info(f"[DEBUG] Añadiendo usuario {safe_creator_id} al canal existente")
                         try:
                             channel.add_members([safe_creator_id])
                         except Exception as e:
-                            logger.warning(f"No se pudo añadir miembro al canal: {e}")
+                            logger.warning(f"[DEBUG] No se pudo añadir miembro al canal: {e}")
                             # Continuar aunque falle la adición del miembro
                     
                     # Preparar respuesta
@@ -590,18 +617,19 @@ class ChatService:
                     }
                     
                     total_time = time.time() - start_time
-                    logger.info(f"Sala existente devuelta - tiempo total: {total_time:.2f}s")
+                    logger.info(f"[DEBUG] Sala existente devuelta - tiempo total: {total_time:.2f}s")
                     return result
                     
                 except Exception as e:
                     # Error al acceder al canal, lo registramos para depuración
-                    logger.error(f"Error al recuperar canal existente: {e}")
+                    logger.error(f"[DEBUG] Error al recuperar canal existente: {e}")
                     # Continuamos para crear uno nuevo
             
             # Si llegamos aquí, necesitamos crear un nuevo canal
             # (porque no existe o porque el existente dio error)
             
             # Crear sala con datos mínimos necesarios y usando ID interno
+            logger.info(f"[DEBUG] Construyendo datos para nueva sala, event_id={event_id}")
             room_data = ChatRoomCreate(
                 name=f"Evento {event.title[:20]}",  # Limitar el título a 20 caracteres
                 is_direct=False,
@@ -609,34 +637,45 @@ class ChatService:
                 member_ids=[creator_id]  # Usar ID interno del creador
             )
             
+            # Verificar si room_data está correctamente configurado
+            logger.info(f"[DEBUG] room_data: name={room_data.name}, is_direct={room_data.is_direct}, event_id={room_data.event_id}, member_ids={room_data.member_ids}")
+            
             # Si hay una sala antigua en la base de datos que no funcionó, eliminarla
             if db_room:
-                logger.info(f"Eliminando referencia a sala no válida: {db_room.id}")
+                logger.info(f"[DEBUG] Eliminando referencia a sala no válida: {db_room.id}")
                 db.delete(db_room)
                 db.commit()
             
             # Crear nueva sala con ID interno
             creation_start = time.time()
             try:
+                logger.info(f"[DEBUG] Llamando a create_room con creator_id={creator_id}, event_id={room_data.event_id}")
                 result = self.create_room(db, creator_id, room_data)
                 creation_time = time.time() - creation_start
-                logger.info(f"Creación de sala: {creation_time:.2f}s")
+                logger.info(f"[DEBUG] Creación de sala completada en {creation_time:.2f}s, resultado={result}")
+                
+                # Verificar manualmente si se guardó correctamente
+                verification_room = chat_repository.get_event_room(db, event_id=event_id)
+                if verification_room:
+                    logger.info(f"[DEBUG] Verificación: sala creada correctamente en BD, id={verification_room.id}, event_id={verification_room.event_id}")
+                else:
+                    logger.warning(f"[DEBUG] Verificación: ¡SALA NO ENCONTRADA EN BD después de create_room para event_id={event_id}!")
                 
                 total_time = time.time() - start_time
-                logger.info(f"Nueva sala creada - tiempo total: {total_time:.2f}s")
+                logger.info(f"[DEBUG] Nueva sala creada - tiempo total: {total_time:.2f}s")
                 
                 return result
             except Exception as e:
-                logger.error(f"Error en create_room: {str(e)}")
+                logger.error(f"[DEBUG] Error en create_room: {str(e)}", exc_info=True)
                 raise ValueError(f"Error creando sala de chat: {str(e)}")
                 
         except ValueError as e:
             # Errores específicos que queremos comunicar al usuario
-            logger.warning(f"Error de validación: {e}")
+            logger.warning(f"[DEBUG] Error de validación: {e}")
             raise
         except Exception as e:
             # Otros errores inesperados
-            logger.error(f"Error inesperado al obtener/crear sala de chat: {e}", exc_info=True)
+            logger.error(f"[DEBUG] Error inesperado al obtener/crear sala de chat: {e}", exc_info=True)
             raise ValueError(f"Error al crear sala de chat: {str(e)}")
     
     def add_user_to_channel(self, db: Session, room_id: int, user_id: int) -> Dict[str, Any]:

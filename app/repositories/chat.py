@@ -2,9 +2,13 @@ from typing import List, Optional, Dict, Any
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, and_
 from datetime import datetime
+import logging
 
 from app.models.chat import ChatRoom, ChatMember
 from app.schemas.chat import ChatRoomCreate, ChatRoomUpdate
+
+# Configurar logger
+logger = logging.getLogger("chat_repository")
 
 class ChatRepository:
     def create_room(
@@ -16,27 +20,42 @@ class ChatRepository:
         room_data: ChatRoomCreate
     ) -> ChatRoom:
         """Crea una referencia local a un canal de Stream Chat"""
-        db_room = ChatRoom(
-            stream_channel_id=stream_channel_id,
-            stream_channel_type=stream_channel_type,
-            name=room_data.name,
-            is_direct=room_data.is_direct,
-            event_id=room_data.event_id
-        )
-        db.add(db_room)
-        db.commit()
-        db.refresh(db_room)
-        
-        # Añadir miembros usando IDs internos
-        for member_id in room_data.member_ids:
-            db_member = ChatMember(
-                room_id=db_room.id,
-                user_id=member_id
+        logger.info(f"Iniciando creación de sala en BD: stream_id={stream_channel_id}, event_id={room_data.event_id}")
+        try:
+            db_room = ChatRoom(
+                stream_channel_id=stream_channel_id,
+                stream_channel_type=stream_channel_type,
+                name=room_data.name,
+                is_direct=room_data.is_direct,
+                event_id=room_data.event_id
             )
-            db.add(db_member)
-        db.commit()
-        
-        return db_room
+            logger.debug(f"Objeto ChatRoom creado con: {db_room.__dict__}")
+            db.add(db_room)
+            logger.debug("Objeto añadido a la sesión, realizando commit...")
+            db.commit()
+            logger.debug("Commit realizado con éxito")
+            db.refresh(db_room)
+            logger.debug(f"Objeto actualizado después de refresh: id={db_room.id}, event_id={db_room.event_id}")
+            
+            # Añadir miembros usando IDs internos
+            member_count = 0
+            for member_id in room_data.member_ids:
+                db_member = ChatMember(
+                    room_id=db_room.id,
+                    user_id=member_id
+                )
+                db.add(db_member)
+                member_count += 1
+            
+            logger.debug(f"Añadidos {member_count} miembros, realizando commit final...")
+            db.commit()
+            logger.info(f"Sala creada exitosamente en BD: id={db_room.id}, event_id={db_room.event_id}, stream_id={stream_channel_id}")
+            
+            return db_room
+        except Exception as e:
+            logger.error(f"Error al crear sala en BD: {str(e)}", exc_info=True)
+            db.rollback()
+            raise
     
     def get_room(self, db: Session, *, room_id: int) -> Optional[ChatRoom]:
         """Obtiene una sala por su ID"""
@@ -73,7 +92,9 @@ class ChatRepository:
         """Obtiene la sala asociada a un evento"""
         # Optimización: usar una consulta específica que solo obtiene la sala sin cargar miembros
         # y aprovechar el índice en event_id
-        return db.query(ChatRoom).filter(ChatRoom.event_id == event_id).first()
+        room = db.query(ChatRoom).filter(ChatRoom.event_id == event_id).first()
+        logger.debug(f"Búsqueda de sala para evento {event_id}: {'encontrada' if room else 'no encontrada'}")
+        return room
     
     def update_room(
         self,
