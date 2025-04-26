@@ -1,6 +1,7 @@
 from typing import Optional, List, Dict, Any
 from datetime import datetime
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, ValidationError
+import pytz
 
 from app.models.event import EventStatus, EventParticipationStatus
 
@@ -14,6 +15,29 @@ class EventBase(BaseModel):
     location: Optional[str] = Field(None, max_length=100)
     max_participants: int = Field(0, description="0 significa sin límite de participantes")
     status: EventStatus = EventStatus.SCHEDULED
+    
+    @field_validator('start_time')
+    @classmethod
+    def start_time_must_be_future(cls, v):
+        now = datetime.now(tz=pytz.UTC)
+        if v <= now:
+            raise ValueError("La fecha de inicio debe ser posterior a la hora actual")
+        return v
+        
+    @field_validator('end_time')
+    @classmethod
+    def end_time_must_be_future(cls, v, info):
+        now = datetime.now(tz=pytz.UTC)
+        if v <= now:
+            raise ValueError("La fecha de finalización debe ser posterior a la hora actual")
+            
+        # Verificar que end_time sea posterior a start_time si start_time está presente
+        values = info.data
+        if 'start_time' in values and values['start_time'] is not None:
+            if v <= values['start_time']:
+                raise ValueError("La fecha de finalización debe ser posterior a la fecha de inicio")
+                
+        return v
 
 
 class EventCreate(EventBase):
@@ -30,6 +54,31 @@ class EventUpdate(BaseModel):
     location: Optional[str] = Field(None, max_length=100)
     max_participants: Optional[int] = None
     status: Optional[EventStatus] = None
+    
+    @field_validator('start_time')
+    @classmethod
+    def start_time_must_be_future_if_provided(cls, v):
+        if v is not None:
+            now = datetime.now(tz=pytz.UTC)
+            if v <= now:
+                raise ValueError("La fecha de inicio debe ser posterior a la hora actual")
+        return v
+        
+    @field_validator('end_time')
+    @classmethod
+    def end_time_must_be_future_if_provided(cls, v, info):
+        if v is not None:
+            now = datetime.now(tz=pytz.UTC)
+            if v <= now:
+                raise ValueError("La fecha de finalización debe ser posterior a la hora actual")
+                
+            # Verificar que end_time sea posterior a start_time si start_time está presente y se proporciona
+            values = info.data
+            if 'start_time' in values and values['start_time'] is not None:
+                if v <= values['start_time']:
+                    raise ValueError("La fecha de finalización debe ser posterior a la fecha de inicio")
+                    
+        return v
 
 
 # Base schemas for EventParticipation
