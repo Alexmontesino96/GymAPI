@@ -17,6 +17,7 @@ from app.db.session import get_db
 from app.core.worker_auth import verify_worker_api_key
 from app.services.chat import chat_service
 from app.repositories.event import event_repository
+from app.models.event import EventStatus
 
 # Configurar logger
 logger = logging.getLogger(__name__)
@@ -158,6 +159,18 @@ async def process_event_completion(
             return WorkerResponse(
                 success=False,
                 message=f"Evento {request.event_id} no pertenece al gimnasio {request.gym_id}"
+            )
+        
+        # Verificar si el evento ya está completado
+        if event.status == EventStatus.COMPLETED:
+            logger.warning(f"Se intentó marcar como completado el evento {request.event_id} que ya está en estado COMPLETED")
+            return WorkerResponse(
+                success=True,
+                message=f"Evento {request.event_id} ya estaba marcado como completado",
+                details={
+                    "event_status": event.status.value,
+                    "was_already_completed": True
+                }
             )
         
         # Marcar evento como completado
