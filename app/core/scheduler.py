@@ -1,6 +1,5 @@
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
-from apscheduler.triggers.date import DateTrigger
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta, timezone
 import logging
@@ -85,10 +84,10 @@ def cleanup_old_tokens():
 
 def mark_completed_events():
     """
-    Marca como completados los eventos cuya hora de finalización ya pasó
+    Marca como completados los eventos cuya hora de finalización ya pasó.
     
-    Esta función se mantiene para compatibilidad y como backup del sistema
-    de programación específica por evento.
+    Esta función se ejecuta como respaldo para asegurar que los eventos
+    se marquen como completados incluso si el worker falla.
     """
     logger.info("Running scheduled task: mark_completed_events")
     with SessionLocal() as db:
@@ -133,116 +132,6 @@ def mark_completed_events():
         except Exception as e:
             logger.error(f"Error in mark_completed_events task: {str(e)}", exc_info=True)
 
-def mark_single_event_completed(event_id: int):
-    """
-    Marca un evento específico como completado.
-    Esta función es llamada automáticamente por las tareas programadas específicas.
-    """
-    logger.info(f"Running scheduled task: mark_single_event_completed for event_id={event_id}")
-    with SessionLocal() as db:
-        try:
-            # Verificar que el evento siga programado antes de marcarlo como completado
-            from app.models.event import Event
-            
-            event = db.query(Event).filter(
-                Event.id == event_id,
-                Event.status == EventStatus.SCHEDULED
-            ).first()
-            
-            if not event:
-                logger.warning(f"Event {event_id} not found or not in SCHEDULED status. Skipping completion.")
-                return
-                
-            # Marcar el evento como completado
-            result = event_repository.mark_event_completed(db, event_id=event_id)
-            if result:
-                logger.info(f"Event {event_id} ({event.title}) successfully marked as completed")
-                
-                # Cerrar la sala de chat asociada al evento
-                try:
-                    from app.services.chat import chat_service
-                    closed = chat_service.close_event_chat(db, event_id)
-                    if closed:
-                        logger.info(f"Chat room for event {event_id} successfully closed")
-                    else:
-                        logger.warning(f"No chat room found or failed to close for event {event_id}")
-                except Exception as chat_error:
-                    logger.error(f"Error closing chat room for event {event_id}: {chat_error}", exc_info=True)
-                    # No interrumpir el flujo si falla el cierre del chat
-            else:
-                logger.warning(f"Failed to mark event {event_id} as completed")
-                
-        except Exception as e:
-            logger.error(f"Error marking event {event_id} as completed: {str(e)}", exc_info=True)
-
-def schedule_event_completion(event_id: int, end_time: datetime):
-    """
-    Programa una tarea para marcar un evento como completado en su hora de finalización.
-    
-    Args:
-        event_id: ID del evento a marcar como completado
-        end_time: Hora de finalización del evento
-    """
-    global _scheduler
-    
-    if not _scheduler:
-        logger.error("Scheduler not initialized. Cannot schedule event completion.")
-        return
-    
-    # Asegurar que end_time tenga información de zona horaria (UTC)
-    if end_time.tzinfo is None:
-        logger.info(f"Converting naive datetime to UTC for event {event_id}: {end_time}")
-        end_time = end_time.replace(tzinfo=timezone.utc)
-    
-    # Generar un ID único para la tarea
-    job_id = f"event_completion_{event_id}"
-    
-    # Verificar si ya existe una tarea para este evento y eliminarla
-    existing_job = _scheduler.get_job(job_id)
-    if existing_job:
-        existing_job.remove()
-        logger.info(f"Removed existing completion job for event {event_id}")
-    
-    # Crear una nueva tarea programada para la hora exacta de finalización
-    _scheduler.add_job(
-        mark_single_event_completed,
-        trigger=DateTrigger(run_date=end_time),
-        args=[event_id],
-        id=job_id,
-        replace_existing=True
-    )
-    
-    logger.info(f"Scheduled event {event_id} to be marked as completed at {end_time} (UTC)")
-
-def initialize_event_completion_tasks():
-    """
-    Inicializa tareas de finalización para todos los eventos programados existentes.
-    Esta función se ejecuta al iniciar el sistema.
-    """
-    logger.info("Initializing completion tasks for existing scheduled events")
-    with SessionLocal() as db:
-        try:
-            # Obtener todos los eventos programados cuya hora de finalización es futura
-            from app.models.event import Event
-            from sqlalchemy import and_
-            
-            current_time = datetime.now(timezone.utc)
-            future_events = db.query(Event).filter(
-                and_(
-                    Event.status == EventStatus.SCHEDULED,
-                    Event.end_time > current_time
-                )
-            ).all()
-            
-            logger.info(f"Found {len(future_events)} future events to schedule for completion")
-            
-            # Programar una tarea para cada evento
-            for event in future_events:
-                schedule_event_completion(event.id, event.end_time)
-                
-        except Exception as e:
-            logger.error(f"Error initializing event completion tasks: {str(e)}", exc_info=True)
-
 def init_scheduler():
     """
     Inicializa el programador de tareas
@@ -269,7 +158,7 @@ def init_scheduler():
     )
     
     # Marcar eventos como completados cada hora (como respaldo)
-    # Frecuencia reducida ya que ahora usamos tareas específicas por evento
+    # Esta tarea ahora funciona como respaldo del worker
     _scheduler.add_job(
         mark_completed_events,
         trigger=CronTrigger(minute=0),  # Al inicio de cada hora
@@ -280,9 +169,6 @@ def init_scheduler():
     # Iniciar el scheduler
     _scheduler.start()
     logger.info("Scheduler started with UTC timezone")
-    
-    # Programar tareas para eventos existentes
-    initialize_event_completion_tasks()
     
     return _scheduler
 

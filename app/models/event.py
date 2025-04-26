@@ -46,7 +46,7 @@ class Event(Base):
     )
     
     # Relación con las salas de chat
-    chat_rooms = relationship("ChatRoom", back_populates="event")
+    chat_rooms = relationship("ChatRoom", back_populates="event", cascade="all, delete-orphan")
     
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

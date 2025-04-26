@@ -56,20 +56,6 @@ router = APIRouter()
 # Constante para el tipo de acción SQS
 CREATE_EVENT_CHAT = "create_event_chat"
 
-# --- Funciones para tareas en segundo plano --- 
-async def schedule_event_completion_background(event_id: int, end_time: datetime):
-    """Tarea en segundo plano para programar la finalización automática de un evento."""
-    try:
-        from app.core.scheduler import schedule_event_completion
-        logger.info(f"[BG Task] Programando finalización para evento {event_id} a las {end_time}")
-        schedule_event_completion(event_id, end_time)
-        logger.info(f"[BG Task] Finalización para evento {event_id} programada.")
-    except Exception as e:
-        logger.error(f"[BG Task] Error programando finalización para evento {event_id}: {e}", exc_info=True)
-        # Considera añadir reintentos o notificaciones
-# --- Fin Funciones Background --- 
-
-
 # Event Endpoints
 @router.post("/", response_model=EventSchema, status_code=status.HTTP_201_CREATED)
 async def create_event(
@@ -89,7 +75,8 @@ async def create_event(
     in the system. The current user is automatically assigned as the creator.
     If the creator is a trainer, they will be automatically registered as participant.
     
-    Chat room creation and event completion scheduling are performed in the background.
+    Chat room creation and event completion scheduling are performed through
+    messaging queues for asynchronous processing by worker services.
     
     Permissions:
         - Requires 'create:events' scope (trainers and administrators)
@@ -175,32 +162,27 @@ async def create_event(
         logger.error(f"Error verificando rol de entrenador para auto-registro (evento {event.id}): {e}", exc_info=True)
     
     # --- Desacoplar operaciones lentas --- 
-    # Reemplazar la creación directa del chat por un mensaje a SQS
+    # Enviar un único mensaje a SQS para procesar el evento (crear chat y programar finalización)
     try:
-        # Usar el nuevo servicio de colas para publicar el mensaje
-        queue_response = queue_service.publish_create_event_chat(
+        # Usar el servicio de colas para publicar el mensaje unificado
+        process_response = queue_service.publish_event_processing(
             event_id=event.id,
             creator_id=internal_user_id,
             gym_id=gym_id,
-            event_title=event.title
+            event_title=event.title,
+            end_time=event.end_time
         )
         
         # Verificar si hubo error en la respuesta
-        if "error" in queue_response:
-            logger.error(f"Error al solicitar creación de chat: {queue_response['error']}")
+        if "error" in process_response:
+            logger.error(f"Error al solicitar procesamiento del evento: {process_response['error']}")
         else:
-            logger.info(f"Solicitud de creación de chat para evento {event.id} enviada correctamente")
+            logger.info(f"Solicitud de procesamiento para evento {event.id} enviada correctamente")
             
     except Exception as e:
-        logger.error(f"Excepción al solicitar creación de chat: {str(e)}", exc_info=True)
+        logger.error(f"Excepción al solicitar procesamiento del evento: {str(e)}", exc_info=True)
         # No fallar la creación del evento si el envío del mensaje falla
-
-    # Encolar programación de finalización en segundo plano
-    background_tasks.add_task(
-        schedule_event_completion_background, event.id, event.end_time
-    )
-    logger.info(f"Tarea de programación de finalización para evento {event.id} encolada.")
-    # --- Fin Desacoplamiento --- 
+    # --- Fin Desacoplamiento ---
     
     # Calcular tiempo y añadir encabezado antes de retornar
     process_time = (time.time() - start_time) * 1000 # en ms
@@ -468,6 +450,9 @@ async def update_event(
     and status. Only the creator of the event or administrators can perform
     this operation.
     
+    If the end_time is updated, a message is sent to the queue service to
+    reschedule the event completion.
+    
     Permissions:
         - Requires 'update:events' scope (trainers and administrators)
         - Also requires ownership of the event or admin privileges
@@ -519,21 +504,27 @@ async def update_event(
                 detail="Event not found"
             )
             
-        # Si se actualizó la hora de finalización, registramos que se completará automáticamente
+        # Si se actualizó la hora de finalización, enviar mensaje para procesar el evento
         if 'end_time' in update_data and updated_event.status == EventStatus.SCHEDULED:
             try:
-                # Programar o reprogramar la tarea
-                from app.core.scheduler import schedule_event_completion
-                schedule_event_completion(event_id, updated_event.end_time)
+                # Usar el servicio de colas para enviar mensaje unificado
+                process_response = queue_service.publish_event_processing(
+                    event_id=event_id,
+                    creator_id=user_id,
+                    gym_id=current_gym.id,
+                    event_title=updated_event.title,
+                    end_time=updated_event.end_time
+                )
                 
-                import logging
-                logger = logging.getLogger("events_api")
-                logger.info(f"Evento {updated_event.id} actualizado y reprogramado para completarse automáticamente a las {updated_event.end_time}")
+                # Verificar si hubo error en la respuesta
+                if "error" in process_response:
+                    logger.error(f"Error al solicitar procesamiento del evento: {process_response['error']}")
+                else:
+                    logger.info(f"Solicitud de procesamiento para evento {event_id} enviada correctamente")
+                    
             except Exception as e:
-                # Si falla la programación, solo loggeamos el error sin interrumpir
-                import logging
-                logger = logging.getLogger("events_api")
-                logger.error(f"Error al reprogramar la finalización automática del evento {updated_event.id}: {e}")
+                logger.error(f"Excepción al solicitar procesamiento del evento: {str(e)}", exc_info=True)
+                # No fallar la actualización del evento si el envío del mensaje falla
             
         return updated_event
     
@@ -569,21 +560,27 @@ async def update_event(
         db=db, event_id=event_id, event_in=event_in
     )
     
-    # Si se actualizó la hora de finalización, registramos que se completará automáticamente
+    # Si se actualizó la hora de finalización, enviar mensaje para procesar el evento
     if 'end_time' in update_data and updated_event.status == EventStatus.SCHEDULED:
         try:
-            # Programar o reprogramar la tarea
-            from app.core.scheduler import schedule_event_completion
-            schedule_event_completion(event_id, updated_event.end_time)
+            # Usar el servicio de colas para enviar mensaje unificado
+            process_response = queue_service.publish_event_processing(
+                event_id=event_id,
+                creator_id=creator_id,
+                gym_id=current_gym.id,
+                event_title=updated_event.title,
+                end_time=updated_event.end_time
+            )
             
-            import logging
-            logger = logging.getLogger("events_api")
-            logger.info(f"Evento {updated_event.id} actualizado y reprogramado para completarse automáticamente a las {updated_event.end_time}")
+            # Verificar si hubo error en la respuesta
+            if "error" in process_response:
+                logger.error(f"Error al solicitar procesamiento del evento: {process_response['error']}")
+            else:
+                logger.info(f"Solicitud de procesamiento para evento {event_id} enviada correctamente")
+                
         except Exception as e:
-            # Si falla la programación, solo loggeamos el error sin interrumpir
-            import logging
-            logger = logging.getLogger("events_api")
-            logger.error(f"Error al reprogramar la finalización automática del evento {updated_event.id}: {e}")
+            logger.error(f"Excepción al solicitar procesamiento del evento: {str(e)}", exc_info=True)
+            # No fallar la actualización del evento si el envío del mensaje falla
     
     return updated_event
 
