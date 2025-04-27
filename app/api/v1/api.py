@@ -11,16 +11,16 @@ from app.api.v1.endpoints.schedule import router as schedule_router
 api_router = APIRouter()
 
 # Módulo de autenticación
-api_router.include_router(auth_router, prefix="/auth", tags=["auth"])
+api_router.include_router(auth_router, prefix="/auth")
 
 # Módulo de usuarios
-api_router.include_router(users.router, prefix="/users", tags=["users"])
+api_router.include_router(users.router, prefix="/users")
 
 # Módulo de eventos
 api_router.include_router(events.router, prefix="/events", tags=["events"])
 
 # Módulo de programación (horarios y clases)
-api_router.include_router(schedule_router, prefix="/schedule", tags=["schedule"]) 
+api_router.include_router(schedule_router, prefix="/schedule") 
 
 # Módulo de relaciones entrenador-miembro
 api_router.include_router(trainer_member.router, prefix="/relationships", tags=["relationships"])
