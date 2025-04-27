@@ -8,7 +8,8 @@ procesamiento de eventos completados.
 """
 
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
+from datetime import datetime, timezone
 from pydantic import BaseModel, Field
 from fastapi import APIRouter, Depends, HTTPException, Body, Path, status
 from sqlalchemy.orm import Session
@@ -17,7 +18,8 @@ from app.db.session import get_db
 from app.core.worker_auth import verify_worker_api_key
 from app.services.chat import chat_service
 from app.repositories.event import event_repository
-from app.models.event import EventStatus
+from app.models.event import EventStatus, Event
+from app.schemas.event import Event as EventSchema
 
 # Configurar logger
 logger = logging.getLogger(__name__)
@@ -200,4 +202,48 @@ async def process_event_completion(
         return WorkerResponse(
             success=False,
             message=f"Error procesando evento: {str(e)}"
+        )
+
+
+@router.get("/events/due-completion", response_model=List[EventSchema])
+async def get_events_due_for_completion(
+    db: Session = Depends(get_db),
+    _: bool = Depends(verify_worker_api_key)
+) -> List[EventSchema]:
+    """
+    Obtiene hasta 100 eventos cuyo tiempo de finalización ya pasó.
+    
+    Este endpoint protegido por clave API permite al servicio de 
+    finalización de eventos obtener una lista de eventos que deberían
+    marcarse como completados.
+    
+    Args:
+        db: Sesión de base de datos
+        _: Resultado de la verificación de seguridad (no usado)
+        
+    Returns:
+        Lista de eventos (hasta 100) ordenados por fecha de finalización (más antigua primero).
+    """
+    try:
+        now_utc = datetime.now(timezone.utc)
+        
+        events = db.query(Event).filter(
+            Event.status == EventStatus.SCHEDULED, 
+            Event.end_time < now_utc
+        ).order_by(
+            Event.end_time.asc()
+        ).limit(100).all()
+        
+        logger.info(f"Encontrados {len(events)} eventos cuya finalización está pendiente.")
+        
+        # Convertir a esquema Pydantic para respuesta
+        # Asumiendo que EventSchema es el esquema Pydantic para Event
+        return [EventSchema.from_orm(event) for event in events]
+        
+    except Exception as e:
+        logger.error(f"Error obteniendo eventos pendientes de finalización: {e}", exc_info=True)
+        # Devolver lista vacía o lanzar excepción dependiendo de la política de errores
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error interno al obtener eventos: {str(e)}"
         ) 
