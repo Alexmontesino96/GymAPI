@@ -19,7 +19,7 @@ from app.core.worker_auth import verify_worker_api_key
 from app.services.chat import chat_service
 from app.repositories.event import event_repository
 from app.models.event import EventStatus, Event
-from app.schemas.event import Event as EventSchema
+from app.schemas.event import EventWorkerResponse, Event as EventSchema
 
 # Configurar logger
 logger = logging.getLogger(__name__)
@@ -205,11 +205,11 @@ async def process_event_completion(
         )
 
 
-@router.get("/events/due-completion", response_model=List[EventSchema])
+@router.get("/events/due-completion", response_model=List[EventWorkerResponse])
 async def get_events_due_for_completion(
     db: Session = Depends(get_db),
     _: bool = Depends(verify_worker_api_key)
-) -> List[EventSchema]:
+) -> List[EventWorkerResponse]:
     """
     Obtiene hasta 100 eventos cuyo tiempo de finalización ya pasó.
     
@@ -236,9 +236,8 @@ async def get_events_due_for_completion(
         
         logger.info(f"Encontrados {len(events)} eventos cuya finalización está pendiente.")
         
-        # Convertir a esquema Pydantic para respuesta
-        # Asumiendo que EventSchema es el esquema Pydantic para Event
-        return [EventSchema.from_orm(event) for event in events]
+        # Convertir a esquema Pydantic para respuesta usando el nuevo esquema
+        return [EventWorkerResponse.from_orm(event) for event in events]
         
     except Exception as e:
         logger.error(f"Error obteniendo eventos pendientes de finalización: {e}", exc_info=True)

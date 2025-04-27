@@ -151,4 +151,20 @@ class EventsSearchParams(BaseModel):
     title_contains: Optional[str] = None
     location_contains: Optional[str] = None
     created_by: Optional[int] = None  # ID del creador
-    only_available: Optional[bool] = False  # Solo eventos con plazas disponibles 
+    only_available: Optional[bool] = False  # Solo eventos con plazas disponibles
+
+
+# Schema específico para la respuesta del worker (sin validaciones de fecha futura)
+class EventWorkerResponse(BaseModel):
+    """Esquema para la respuesta del endpoint del worker, sin validaciones de fecha.
+    Contiene información básica del evento necesaria para el worker.
+    """
+    id: int
+    gym_id: int
+    title: str
+    end_time: datetime
+    status: EventStatus
+    creator_id: int
+    
+    class Config:
+        from_attributes = True 
