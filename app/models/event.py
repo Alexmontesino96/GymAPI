@@ -48,6 +48,10 @@ class Event(Base):
     # Relación con las salas de chat
     chat_rooms = relationship("ChatRoom", back_populates="event", cascade="all, delete-orphan")
     
+    # Contador de intentos fallidos de completar el evento
+    completion_attempts = Column(Integer, default=0, nullable=False, 
+                                comment="Número de intentos fallidos de marcar el evento como completado")
+    
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     
