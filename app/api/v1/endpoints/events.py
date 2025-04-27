@@ -520,6 +520,17 @@ async def update_event(
                 if "error" in process_response:
                     logger.error(f"Error al solicitar procesamiento del evento: {process_response['error']}")
                 else:
+                    # Registro específico para EventBridge
+                    if "event_completion" in process_response and process_response["event_completion"].get("success"):
+                        if process_response["event_completion"].get("scheduled"):
+                            logger.info(f"Finalización del evento {event_id} programada en EventBridge: {process_response['event_completion'].get('rule_name')}")
+                        elif process_response["event_completion"].get("immediate"):
+                            logger.info(f"Finalización inmediata del evento {event_id} solicitada")
+                    
+                    # Registro para creación de chat
+                    if "sqs_chat_creation" in process_response and process_response["sqs_chat_creation"].get("success"):
+                        logger.info(f"Solicitud de creación de chat para evento {event_id} enviada correctamente")
+                    
                     logger.info(f"Solicitud de procesamiento para evento {event_id} enviada correctamente")
                     
             except Exception as e:
@@ -576,6 +587,17 @@ async def update_event(
             if "error" in process_response:
                 logger.error(f"Error al solicitar procesamiento del evento: {process_response['error']}")
             else:
+                # Registro específico para EventBridge
+                if "event_completion" in process_response and process_response["event_completion"].get("success"):
+                    if process_response["event_completion"].get("scheduled"):
+                        logger.info(f"Finalización del evento {event_id} programada en EventBridge: {process_response['event_completion'].get('rule_name')}")
+                    elif process_response["event_completion"].get("immediate"):
+                        logger.info(f"Finalización inmediata del evento {event_id} solicitada")
+                
+                # Registro para creación de chat
+                if "sqs_chat_creation" in process_response and process_response["sqs_chat_creation"].get("success"):
+                    logger.info(f"Solicitud de creación de chat para evento {event_id} enviada correctamente")
+                
                 logger.info(f"Solicitud de procesamiento para evento {event_id} enviada correctamente")
                 
         except Exception as e:
