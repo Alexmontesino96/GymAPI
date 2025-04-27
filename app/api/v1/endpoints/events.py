@@ -507,7 +507,7 @@ async def update_event(
         # Si se actualizó la hora de finalización, enviar mensaje para procesar el evento
         if 'end_time' in update_data and updated_event.status == EventStatus.SCHEDULED:
             try:
-                # Usar el servicio de colas para enviar mensaje unificado
+                # Usar el servicio de colas para crear el chat del evento
                 process_response = queue_service.publish_event_processing(
                     event_id=event_id,
                     creator_id=user_id,
@@ -517,18 +517,11 @@ async def update_event(
                 )
                 
                 # Verificar si hubo error en la respuesta
-                if "error" in process_response:
-                    logger.error(f"Error al solicitar procesamiento del evento: {process_response['error']}")
+                if not process_response.get("success", False):
+                    logger.error(f"Error al solicitar creación de chat: {process_response.get('error')}")
                 else:
-                    # Registro específico para EventBridge
-                    if "event_completion" in process_response and process_response["event_completion"].get("success"):
-                        if process_response["event_completion"].get("scheduled"):
-                            logger.info(f"Finalización del evento {event_id} programada en EventBridge: {process_response['event_completion'].get('rule_name')}")
-                        elif process_response["event_completion"].get("immediate"):
-                            logger.info(f"Finalización inmediata del evento {event_id} solicitada")
-                    
                     # Registro para creación de chat
-                    if "sqs_chat_creation" in process_response and process_response["sqs_chat_creation"].get("success"):
+                    if "chat_creation" in process_response and process_response["chat_creation"].get("success"):
                         logger.info(f"Solicitud de creación de chat para evento {event_id} enviada correctamente")
                     
                     logger.info(f"Solicitud de procesamiento para evento {event_id} enviada correctamente")
@@ -574,7 +567,7 @@ async def update_event(
     # Si se actualizó la hora de finalización, enviar mensaje para procesar el evento
     if 'end_time' in update_data and updated_event.status == EventStatus.SCHEDULED:
         try:
-            # Usar el servicio de colas para enviar mensaje unificado
+            # Usar el servicio de colas para crear el chat del evento
             process_response = queue_service.publish_event_processing(
                 event_id=event_id,
                 creator_id=creator_id,
@@ -584,18 +577,11 @@ async def update_event(
             )
             
             # Verificar si hubo error en la respuesta
-            if "error" in process_response:
-                logger.error(f"Error al solicitar procesamiento del evento: {process_response['error']}")
+            if not process_response.get("success", False):
+                logger.error(f"Error al solicitar creación de chat: {process_response.get('error')}")
             else:
-                # Registro específico para EventBridge
-                if "event_completion" in process_response and process_response["event_completion"].get("success"):
-                    if process_response["event_completion"].get("scheduled"):
-                        logger.info(f"Finalización del evento {event_id} programada en EventBridge: {process_response['event_completion'].get('rule_name')}")
-                    elif process_response["event_completion"].get("immediate"):
-                        logger.info(f"Finalización inmediata del evento {event_id} solicitada")
-                
                 # Registro para creación de chat
-                if "sqs_chat_creation" in process_response and process_response["sqs_chat_creation"].get("success"):
+                if "chat_creation" in process_response and process_response["chat_creation"].get("success"):
                     logger.info(f"Solicitud de creación de chat para evento {event_id} enviada correctamente")
                 
                 logger.info(f"Solicitud de procesamiento para evento {event_id} enviada correctamente")
