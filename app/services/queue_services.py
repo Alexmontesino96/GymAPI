@@ -7,7 +7,7 @@ Permite la comunicación asíncrona entre diferentes partes del sistema.
 import logging
 import json
 from typing import Dict, Any, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.orm import Session
 from app.services.aws_sqs import sqs_service
@@ -54,7 +54,7 @@ class QueueService:
             # 1. Enviar mensaje a SQS para crear el chat del evento
             chat_message = {
                 "action": CREATE_EVENT_CHAT,
-                "timestamp": datetime.utcnow().isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
                 "event_data": {
                     "event_id": event_id,
                     "creator_id": creator_id,
@@ -90,7 +90,7 @@ class QueueService:
             
             # 2. Programar la finalización del evento usando EventBridge
             # Verificar si la fecha de finalización ya pasó
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
             
             if end_time <= now:
                 logger.warning(f"La fecha de finalización del evento {event_id} ya pasó, ejecutando finalización inmediata")
