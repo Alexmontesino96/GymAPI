@@ -186,7 +186,6 @@ def process_schedule_event_completion_task(task_data: Dict[str, Any]) -> Dict[st
     """
     Procesa una tarea para programar la finalización de un evento.
     NOTA: Este método solo se usa como compatibilidad con el formato antiguo de mensajes.
-    En la nueva implementación, esto se maneja directamente con EventBridge.
     
     Args:
         task_data: Datos del evento para programar su finalización
@@ -227,9 +226,8 @@ def process_schedule_event_completion_task(task_data: Dict[str, Any]) -> Dict[st
         
         logger.info(f"Programando finalización para {execution_time}")
         
-        # Aquí anteriormente se programaba con un temporizador,
-        # pero ahora enviamos directamente al endpoint ya que EventBridge
-        # maneja la programación temporal
+        # Ejecutar directamente la función para completar el evento
+        # ya que el servicio de verificación se encargará de esta funcionalidad
         return process_event_completion_task(task_data)
         
     except Exception as e:

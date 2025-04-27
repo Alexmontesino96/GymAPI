@@ -133,7 +133,7 @@ class Worker:
                     logger.info(f"Procesando tarea: {task_id} - Tipo: create_event_chat - Datos: {event_data}")
                     result = process_create_event_chat_task(event_data)
                 elif action == 'event_completion':
-                    # Para marcar eventos como completados (de EventBridge)
+                    # Para marcar eventos como completados (del servicio de finalización)
                     event_data = data.get('event_data', {})
                     logger.info(f"Procesando tarea: {task_id} - Tipo: event_completion - Datos: {event_data}")
                     result = process_event_completion_task(event_data)
