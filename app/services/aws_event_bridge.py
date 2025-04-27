@@ -33,11 +33,8 @@ class EventBridgeService:
         # Bus de eventos por defecto
         self.event_bus_name = 'default'
         
-        # ARN del destino SQS
-        self.sqs_target_arn = settings.SQS_QUEUE_URL.replace(
-            'https://sqs.us-east-1.amazonaws.com/891376974297/',
-            'arn:aws:sqs:us-east-1:891376974297:'
-        )
+        # ARN del destino SQS (cola estándar para completar eventos)
+        self.sqs_target_arn = "arn:aws:sqs:us-east-1:891376974297:MarkComplete"
         
         if settings.AWS_ACCESS_KEY_ID and settings.AWS_SECRET_ACCESS_KEY:
             try:
@@ -103,7 +100,7 @@ class EventBridgeService:
                 }
             }
             
-            # Configurar el destino (SQS)
+            # Configurar el destino (SQS - cola estándar)
             target_response = self.client.put_targets(
                 Rule=rule_name,
                 Targets=[
