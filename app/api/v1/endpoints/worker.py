@@ -204,7 +204,6 @@ async def process_event_completion(
             message=f"Error procesando evento: {str(e)}"
         )
 
-
 @router.get("/events/due-completion", response_model=List[EventWorkerResponse])
 async def get_events_due_for_completion(
     db: Session = Depends(get_db),
@@ -216,6 +215,8 @@ async def get_events_due_for_completion(
     Este endpoint protegido por clave API permite al servicio de 
     finalización de eventos obtener una lista de eventos que deberían
     marcarse como completados.
+    
+    Excluye eventos que han fallado más de 10 intentos de finalización.
     
     Args:
         db: Sesión de base de datos
@@ -229,7 +230,8 @@ async def get_events_due_for_completion(
         
         events = db.query(Event).filter(
             Event.status == EventStatus.SCHEDULED, 
-            Event.end_time < now_utc
+            Event.end_time < now_utc,
+            Event.completion_attempts <= 10  # Excluir eventos con más de 10 intentos
         ).order_by(
             Event.end_time.asc()
         ).limit(100).all()
@@ -245,4 +247,72 @@ async def get_events_due_for_completion(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error interno al obtener eventos: {str(e)}"
+        )
+
+@router.post("/events/{event_id}/complete", response_model=EventWorkerResponse)
+async def process_event_completion(
+    event_id: int,
+    db: Session = Depends(get_db),
+    _: bool = Depends(verify_worker_api_key)
+) -> EventWorkerResponse:
+    """
+    Marca un evento como completado y cierra su chat asociado.
+    
+    Este endpoint protegido por clave API permite al servicio de 
+    finalización de eventos procesar la finalización de un evento,
+    marcándolo como completado y cerrando su chat asociado.
+    
+    Si ocurre un error durante el proceso, incrementa el contador 
+    de intentos de finalización fallidos.
+    
+    Args:
+        event_id: ID del evento a completar
+        db: Sesión de base de datos
+        _: Resultado de la verificación de seguridad (no usado)
+        
+    Returns:
+        Evento actualizado
+    """
+    try:
+        # Obtener evento
+        event = db.query(Event).filter(Event.id == event_id).first()
+        if not event:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Evento con ID {event_id} no encontrado"
+            )
+        
+        # Actualizar estado del evento a completado
+        event.status = EventStatus.COMPLETED
+        
+        # Cerrar chat asociado si existe
+        if event.chat_room_id:
+            chat_room = db.query(ChatRoom).filter(ChatRoom.id == event.chat_room_id).first()
+            if chat_room:
+                chat_room.status = ChatRoomStatus.CLOSED
+                logger.info(f"Chat {chat_room.id} cerrado para el evento {event_id}")
+        
+        # Guardar cambios
+        db.commit()
+        logger.info(f"Evento {event_id} marcado como completado correctamente")
+        
+        return EventWorkerResponse.from_orm(event)
+        
+    except Exception as e:
+        db.rollback()
+        # Incrementar contador de intentos fallidos
+        try:
+            event = db.query(Event).filter(Event.id == event_id).first()
+            if event:
+                event.completion_attempts = event.completion_attempts + 1
+                db.commit()
+                logger.warning(f"Incrementado contador de intentos para evento {event_id}: {event.completion_attempts}")
+        except Exception as inner_e:
+            logger.error(f"Error al incrementar contador de intentos: {inner_e}", exc_info=True)
+            db.rollback()
+            
+        logger.error(f"Error al completar evento {event_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error interno al completar evento: {str(e)}"
         ) 
