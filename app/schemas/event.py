@@ -154,14 +154,15 @@ class EventsSearchParams(BaseModel):
     only_available: Optional[bool] = False  # Solo eventos con plazas disponibles
 
 
-# Schema específico para la respuesta del worker (ID, estado y fecha de finalización)
+# Schema específico para la respuesta del worker (ID, gym_id, estado y fecha de finalización)
 class EventWorkerResponse(BaseModel):
     """Esquema simplificado para la respuesta del endpoint del worker,
-    conteniendo el ID, estado y fecha de finalización del evento.
+    conteniendo el ID, gym ID, estado y fecha de finalización del evento.
     """
     event_id: int = Field(..., alias='id') # Mapear 'id' del modelo a 'event_id'
+    gym_id: int # Añadir gym_id
     end_time: datetime
-    status: EventStatus # Añadir el estado
+    status: EventStatus
     
     class Config:
         from_attributes = True
