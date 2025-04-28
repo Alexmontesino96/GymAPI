@@ -1,8 +1,14 @@
-from sqlalchemy import Column, Integer, String, ForeignKey, DateTime, Boolean, Index
+from sqlalchemy import Column, Integer, String, ForeignKey, DateTime, Boolean, Index, Enum
 from sqlalchemy.orm import relationship
 from datetime import datetime
+import enum
 
 from app.db.base_class import Base
+
+class ChatRoomStatus(str, enum.Enum):
+    """Estado de la sala de chat."""
+    ACTIVE = "ACTIVE"     # Sala activa
+    CLOSED = "CLOSED"     # Sala cerrada
 
 class ChatRoom(Base):
     __tablename__ = "chat_rooms"
@@ -14,6 +20,7 @@ class ChatRoom(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     event_id = Column(Integer, ForeignKey("events.id"), nullable=True, index=True)
     is_direct = Column(Boolean, default=False, index=True)
+    status = Column(Enum(ChatRoomStatus), default=ChatRoomStatus.ACTIVE, index=True)
     
     # Relaciones
     event = relationship("Event", back_populates="chat_rooms")

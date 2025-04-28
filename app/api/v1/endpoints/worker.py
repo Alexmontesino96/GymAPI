@@ -19,6 +19,7 @@ from app.core.worker_auth import verify_worker_api_key
 from app.services.chat import chat_service
 from app.repositories.event import event_repository
 from app.models.event import EventStatus, Event
+from app.models.chat import ChatRoom, ChatRoomStatus
 from app.schemas.event import EventWorkerResponse, Event as EventSchema
 
 # Configurar logger
