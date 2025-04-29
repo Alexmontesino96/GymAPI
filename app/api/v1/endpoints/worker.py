@@ -21,6 +21,9 @@ from app.repositories.event import event_repository
 from app.models.event import EventStatus, Event
 from app.models.chat import ChatRoom, ChatRoomStatus
 from app.schemas.event import EventWorkerResponse, Event as EventSchema
+from app.services.event import event_service
+from app.db.redis_client import get_redis_client
+from redis import Redis
 
 # Configurar logger
 logger = logging.getLogger(__name__)
@@ -254,6 +257,7 @@ async def get_events_due_for_completion(
 async def process_event_completion(
     event_id: int,
     db: Session = Depends(get_db),
+    redis_client: Redis = Depends(get_redis_client),
     _: bool = Depends(verify_worker_api_key)
 ) -> EventWorkerResponse:
     """
@@ -269,14 +273,15 @@ async def process_event_completion(
     Args:
         event_id: ID del evento a completar
         db: Sesión de base de datos
+        redis_client: Cliente Redis para caché
         _: Resultado de la verificación de seguridad (no usado)
         
     Returns:
         Evento actualizado
     """
     try:
-        # Obtener evento
-        event = db.query(Event).filter(Event.id == event_id).first()
+        # Obtener evento usando caché con skip_validation
+        event = await event_service.get_event_cached(db, event_id, redis_client, skip_validation=True)
         if not event:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -284,30 +289,57 @@ async def process_event_completion(
             )
         
         # Actualizar estado del evento a completado
-        event.status = EventStatus.COMPLETED
+        # Obtener el objeto SQLAlchemy real para la actualización
+        db_event = db.query(Event).filter(Event.id == event_id).first()
+        if not db_event:
+             # Esto no debería ocurrir si get_event_cached tuvo éxito, pero es una verificación segura
+             raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Evento {event_id} no encontrado en BD para actualización"
+            )
+            
+        db_event.status = EventStatus.COMPLETED
         
         # Cerrar chat asociado si existe
-        if event.chat_room_id:
-            chat_room = db.query(ChatRoom).filter(ChatRoom.id == event.chat_room_id).first()
+        if db_event.chat_room_id:
+            chat_room = db.query(ChatRoom).filter(ChatRoom.id == db_event.chat_room_id).first()
             if chat_room:
                 chat_room.status = ChatRoomStatus.CLOSED
                 logger.info(f"Chat {chat_room.id} cerrado para el evento {event_id}")
         
         # Guardar cambios
+        db.add(db_event) # Asegurar que se añade el objeto de BD
         db.commit()
         logger.info(f"Evento {event_id} marcado como completado correctamente")
         
-        return EventWorkerResponse.from_orm(event)
+        # Obtener gym_id y creator_id para invalidación de caché
+        event_gym_id = getattr(event, 'gym_id', db_event.gym_id) # Usar db_event como fallback
+        event_creator_id = getattr(event, 'creator_id', db_event.creator_id) # Usar db_event como fallback
+       
+        # Invalidar caché del evento y relacionados
+        if redis_client:
+            logger.info(f"Invalidando caché para el evento {event_id}")
+            await event_service.invalidate_event_caches(
+                redis_client, 
+                event_id=event_id,
+                gym_id=event_gym_id,
+                creator_id=event_creator_id
+            )
+        
+        # Devolver el objeto actualizado desde la BD
+        return EventWorkerResponse.from_orm(db_event)
         
     except Exception as e:
         db.rollback()
         # Incrementar contador de intentos fallidos
         try:
-            event = db.query(Event).filter(Event.id == event_id).first()
-            if event:
-                event.completion_attempts = event.completion_attempts + 1
+            # Obtener el objeto de BD para incrementar intentos
+            db_event_fail = db.query(Event).filter(Event.id == event_id).first()
+            if db_event_fail:
+                db_event_fail.completion_attempts = db_event_fail.completion_attempts + 1
+                db.add(db_event_fail)
                 db.commit()
-                logger.warning(f"Incrementado contador de intentos para evento {event_id}: {event.completion_attempts}")
+                logger.warning(f"Incrementado contador de intentos para evento {event_id}: {db_event_fail.completion_attempts}")
         except Exception as inner_e:
             logger.error(f"Error al incrementar contador de intentos: {inner_e}", exc_info=True)
             db.rollback()
