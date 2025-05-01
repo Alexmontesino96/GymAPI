@@ -23,6 +23,7 @@ from app.models.chat import ChatRoom, ChatRoomStatus
 from app.schemas.event import EventWorkerResponse, Event as EventSchema
 from app.services.event import event_service
 from app.db.redis_client import get_redis_client
+from datetime import timedelta
 from redis import Redis
 
 # Configurar logger
@@ -234,7 +235,7 @@ async def get_events_due_for_completion(
         
         events = db.query(Event).filter(
             Event.status == EventStatus.SCHEDULED, 
-            Event.end_time < now_utc,
+            Event.end_time < now_utc + timedelta(days=1),
             Event.completion_attempts <= 10  # Excluir eventos con más de 10 intentos
         ).order_by(
             Event.end_time.asc()

@@ -108,6 +108,47 @@ async def upload_profile_image(
             logger.info(f"Invalidada caché de perfil público tras subir imagen: {public_profile_cache_key}")
     return updated_user
 
+@router.post("/profile/data", response_model=UserSchema, tags=["Profile"])
+async def create_or_update_user_profile_data(
+    profile_data: UserProfileUpdate, # Usamos el esquema existente que excluye email/teléfono
+    db: Session = Depends(get_db),
+    current_user: Auth0User = Security(auth.get_user, scopes=["read:profile"]), # Asegurar autenticación
+    redis_client: redis.Redis = Depends(get_redis_client)
+) -> Any:
+    """
+    Crea o actualiza datos específicos del perfil del usuario autenticado.
+    Este endpoint permite establecer nombre, apellido, fecha de nacimiento, altura, peso, etc.,
+    pero NO modifica el email ni el número de teléfono.
+    """
+    auth0_id = current_user.id
+    if not auth0_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Token inválido")
+
+    db_user = user_service.get_user_by_auth0_id(db, auth0_id=auth0_id)
+    if not db_user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario local no encontrado")
+
+    logger = logging.getLogger("user_endpoint")
+    logger.info(f"Usuario {db_user.id} ({auth0_id}) actualizando datos de perfil.")
+
+    try:
+        updated_user = user_service.update_user_profile(db, user_id=db_user.id, profile_in=profile_data)
+
+        if redis_client:
+            logger.info(f"Invalidando cachés para usuario {db_user.id} tras actualizar datos de perfil.")
+            await cache_service.invalidate_user_caches(redis_client, user_id=db_user.id)
+            public_profile_cache_key = f"user_public_profile:{db_user.id}"
+            await redis_client.delete(public_profile_cache_key)
+            logger.debug(f"Invalidada caché de perfil público: {public_profile_cache_key}")
+
+        return updated_user
+    except Exception as e:
+        logger.error(f"Error actualizando datos de perfil para usuario {db_user.id}: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error interno al actualizar los datos del perfil."
+        )
+
 @router.post("/check-email-availability", response_model=dict, tags=["Email Management"])
 async def check_email_availability(
     *,

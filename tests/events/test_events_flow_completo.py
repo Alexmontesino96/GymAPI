@@ -6,10 +6,11 @@ import time
 import random
 import logging
 import math
+import pytz
 
 # Configuración de la prueba
 API_BASE_URL = "https://gymapi-eh6m.onrender.com/api/v1"
-AUTH_TOKEN = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6InI2YXBIZVNOUEluaXpaeDlYN1NidyJ9.eyJlbWFpbCI6ImFsZXhtb250ZXNpbm85NkBpY2xvdWQuY29tIiwiaXNzIjoiaHR0cHM6Ly9kZXYtZ2Q1Y3JmZTZxYnFsdTIzcC51cy5hdXRoMC5jb20vIiwic3ViIjoiYXV0aDB8NjdkNWQ2NGQ2NGNjZjFjNTIyYTY5NTBiIiwiYXVkIjpbImh0dHBzOi8vZ3ltYXBpIiwiaHR0cHM6Ly9kZXYtZ2Q1Y3JmZTZxYnFsdTIzcC51cy5hdXRoMC5jb20vdXNlcmluZm8iXSwiaWF0IjoxNzQ0NzYyMDM1LCJleHAiOjE3NDQ4NDg0MzUsInNjb3BlIjoib3BlbmlkIHByb2ZpbGUgZW1haWwiLCJhenAiOiJPdUo2SUtFMGxKU2RhTUc2amFXMDRqZnB0c01SYnl2cCIsInBlcm1pc3Npb25zIjpbImFkbWluOmV2ZW50cyIsImFkbWluOmd5bXMiLCJhZG1pbjpyZWxhdGlvbnNoaXBzIiwiYWRtaW46dXNlcnMiLCJjcmVhdGU6Y2hhdF9yb29tcyIsImNyZWF0ZTpldmVudHMiLCJjcmVhdGU6cGFydGljaXBhdGlvbnMiLCJjcmVhdGU6cmVsYXRpb25zaGlwcyIsImNyZWF0ZTpzY2hlZHVsZXMiLCJkZWxldGU6ZXZlbnRzIiwiZGVsZXRlOm93bl9wYXJ0aWNpcGF0aW9ucyIsImRlbGV0ZTpyZWxhdGlvbnNoaXBzIiwiZGVsZXRlOnNjaGVkdWxlcyIsImRlbGV0ZTp1c2VycyIsIm1hbmFnZTpjaGF0X3Jvb21zIiwibWFuYWdlOmNsYXNzX3JlZ2lzdHJhdGlvbnMiLCJyZWFkX2V2ZW50cyIsInJlYWQ6Z3ltcyIsInJlYWQ6bWVtYmVycyIsInJlYWQ6b3duX2V2ZW50cyIsInJlYWQ6b3duX3BhcnRpY2lwYXRpb25zIiwicmVhZDpvd25fcmVsYXRpb25zaGlwcyIsInJlYWQ6b3duX3NjaGVkdWxlcyIsInJlYWQ6cGFydGljaXBhdGlvbnMiLCJyZWFkOnByb2ZpbGUiLCJyZWFkOnNjaGVkdWxlcyIsInJlYWQ6dXNlcnMiLCJyZWRhOmd5bV91c2VycyIsInJlZ2lzdGVyOmNsYXNzZXMiLCJ1cGRhdGU6cGFydGljaXBhdGlvbnMiLCJ1cGRhdGU6cmVsYXRpb25zaGlwcyIsInVwZGF0ZTpzY2hlZHVsZXMiLCJ1cGRhdGU6dXNlcnMiLCJ1c2U6Y2hhdCJdfQ.g2S0TR1z9nAyXsFQaNWDWLutnTXkf91QylZMU6SCLtDPaTtKL2HM45eMNsLzn_RBzLHv16wDKwC0u6MaXtR-foQytTg4SnzFB4nVSbg2DRnUDHoEr4XT0owbmg1kSefeRW8rFq-BKD7rs8igb_Ou_jLNNqgv6vEZl6RgUKgmmQL7ui6iuWX8O8ty371H6pLsvKJpO6i5jmJSGJ1QOOpAeybgGDtVpEsHFICmkcEDeBRn8pWNRhViMlotEgiJshSK979yLh6pPzqQyLb0RaYjeEEEAbvyg726jGetS7gDEmnfVSLPUvLbhOAdM1Ib3DPLaZ2ilG-t9U8hafTnQYWYKQ"
+AUTH_TOKEN = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6InI2YXBIZVNOUEluaXpaeDlYN1NidyJ9.eyJlbWFpbCI6ImFsZXhtb250ZXNpbm85NkBpY2xvdWQuY29tIiwiaXNzIjoiaHR0cHM6Ly9kZXYtZ2Q1Y3JmZTZxYnFsdTIzcC51cy5hdXRoMC5jb20vIiwic3ViIjoiYXV0aDB8NjdkNWQ2NGQ2NGNjZjFjNTIyYTY5NTBiIiwiYXVkIjpbImh0dHBzOi8vZ3ltYXBpIiwiaHR0cHM6Ly9kZXYtZ2Q1Y3JmZTZxYnFsdTIzcC51cy5hdXRoMC5jb20vdXNlcmluZm8iXSwiaWF0IjoxNzQ2MDI5MjgxLCJleHAiOjE3NDYxMTU2ODEsInNjb3BlIjoib3BlbmlkIHByb2ZpbGUgZW1haWwiLCJhenAiOiJPdUo2SUtFMGxKU2RhTUc2amFXMDRqZnB0c01SYnl2cCIsInBlcm1pc3Npb25zIjpbImFkbWluOmV2ZW50cyIsImFkbWluOmd5bXMiLCJhZG1pbjpyZWxhdGlvbnNoaXBzIiwiYWRtaW46dXNlcnMiLCJjcmVhdGU6Y2hhdF9yb29tcyIsImNyZWF0ZTpldmVudHMiLCJjcmVhdGU6cGFydGljaXBhdGlvbnMiLCJjcmVhdGU6cmVsYXRpb25zaGlwcyIsImNyZWF0ZTpzY2hlZHVsZXMiLCJkZWxldGU6ZXZlbnRzIiwiZGVsZXRlOm93bl9wYXJ0aWNpcGF0aW9ucyIsImRlbGV0ZTpyZWxhdGlvbnNoaXBzIiwiZGVsZXRlOnNjaGVkdWxlcyIsImRlbGV0ZTp1c2VycyIsIm1hbmFnZTpjaGF0X3Jvb21zIiwibWFuYWdlOmNsYXNzX3JlZ2lzdHJhdGlvbnMiLCJyZWFkX2V2ZW50cyIsInJlYWQ6Z3ltcyIsInJlYWQ6bWVtYmVycyIsInJlYWQ6b3duX2V2ZW50cyIsInJlYWQ6b3duX3BhcnRpY2lwYXRpb25zIiwicmVhZDpvd25fcmVsYXRpb25zaGlwcyIsInJlYWQ6b3duX3NjaGVkdWxlcyIsInJlYWQ6cGFydGljaXBhdGlvbnMiLCJyZWFkOnByb2ZpbGUiLCJyZWFkOnNjaGVkdWxlcyIsInJlYWQ6dXNlcnMiLCJyZWRhOmd5bV91c2VycyIsInJlZ2lzdGVyOmNsYXNzZXMiLCJ1cGRhdGU6cGFydGljaXBhdGlvbnMiLCJ1cGRhdGU6cmVsYXRpb25zaGlwcyIsInVwZGF0ZTpzY2hlZHVsZXMiLCJ1cGRhdGU6dXNlcnMiLCJ1c2U6Y2hhdCJdfQ.bnidtK96x8zoNyXRJ0B7vRsSZtBxGM8f71nll_MmlLb9LUGxUR1k5uEF-5KoWmMNnRbBgqqFJZ_ZiTnFkQ5UIStfuWaay5Re7d_zrOeO6ycsrQ0pJbLG31NIbAi-T6o__MCvCihRN0__ebXHhUGhsrUTT6ekEuR8ujfyU2t8di0Vjp8AKQjTVdEITx4xfyefZ6uY0H373kLv5mH0WrRJQ08gaPvpCfE5o_zj0avqWSzQlBMJ8oeEsazmPtVBNVsEz1I-xlriBA0YG_40yQI6sHmPmk3M85hM7MlxjxDPNqZ_1h6cF6na3dvv0WNsVdoeqGIzo_G3I-sJC87_RbsloQ"
 GYM_ID = 2
 
 # Configurar logging para ver detalles
@@ -55,9 +56,10 @@ def create_event(event_data=None):
     
     # Si no se proporcionan datos, usar valores predeterminados
     if not event_data:
-        # Crear fechas para el evento (mañana)
-        start_time = (datetime.now() + timedelta(days=1)).replace(hour=10, minute=0, second=0)
-        end_time = (datetime.now() + timedelta(days=1)).replace(hour=12, minute=0, second=0)
+        # Crear fechas para el evento (mañana) - AHORA CON UTC
+        now_utc = datetime.now(pytz.UTC)
+        start_time = (now_utc + timedelta(days=1)).replace(hour=10, minute=0, second=0)
+        end_time = (now_utc + timedelta(days=1)).replace(hour=12, minute=0, second=0)
         
         # Datos del evento
         event_data = {
@@ -356,9 +358,10 @@ def run_participation_tests():
         # Crear un evento para las pruebas de participación
         print("\n📌 PASO 1: CREAR EVENTO PARA PRUEBAS DE PARTICIPACIÓN")
         
-        # Evento con 3 plazas para probar límites de capacidad
-        start_time = (datetime.now() + timedelta(days=1)).replace(hour=10, minute=0, second=0)
-        end_time = (datetime.now() + timedelta(days=1)).replace(hour=12, minute=0, second=0)
+        # Evento con 3 plazas para probar límites de capacidad - AHORA CON UTC
+        now_utc = datetime.now(pytz.UTC)
+        start_time = (now_utc + timedelta(days=1)).replace(hour=10, minute=0, second=0)
+        end_time = (now_utc + timedelta(days=1)).replace(hour=12, minute=0, second=0)
         
         evento_test = create_event({
             "title": f"Evento para Pruebas de Participación {int(time.time())}",
@@ -506,7 +509,7 @@ def run_bulk_operations_test():
         print("\n📌 FASE 1: CREACIÓN MASIVA DE 150 EVENTOS")
         start_bulk_create = time.time()
         for i in range(150):
-            start_time = (datetime.now() + timedelta(days=random.randint(2, 30))).replace(hour=random.randint(8, 18), minute=0, second=0)
+            start_time = (datetime.now(pytz.UTC) + timedelta(days=random.randint(2, 30))).replace(hour=random.randint(8, 18), minute=0, second=0)
             end_time = start_time + timedelta(hours=random.randint(1, 3))
             event_data = {
                 "title": f"Evento Masivo {i+1} - {int(time.time() * 1000)}",
@@ -681,9 +684,10 @@ def run_comprehensive_test():
         # Evento normal
         evento_normal = create_event()
 
-        # Evento para mañana
-        start_time_m = (datetime.now() + timedelta(days=1)).replace(hour=14, minute=0, second=0)
-        end_time_m = (datetime.now() + timedelta(days=1)).replace(hour=16, minute=0, second=0)
+        # Evento para mañana - AHORA CON UTC
+        now_utc = datetime.now(pytz.UTC)
+        start_time_m = (now_utc + timedelta(days=1)).replace(hour=14, minute=0, second=0)
+        end_time_m = (now_utc + timedelta(days=1)).replace(hour=16, minute=0, second=0)
         evento_manana = create_event({
             "title": f"Evento para Mañana {int(time.time())}",
             "description": "Este evento está programado para mañana",
@@ -695,9 +699,10 @@ def run_comprehensive_test():
             "image_url": ""
         })
 
-        # Evento para la próxima semana
-        start_time_s = (datetime.now() + timedelta(days=7)).replace(hour=10, minute=0, second=0)
-        end_time_s = (datetime.now() + timedelta(days=7)).replace(hour=12, minute=0, second=0)
+        # Evento para la próxima semana - AHORA CON UTC
+        now_utc_week = datetime.now(pytz.UTC) # Usar una nueva variable por claridad si es necesario
+        start_time_s = (now_utc_week + timedelta(days=7)).replace(hour=10, minute=0, second=0)
+        end_time_s = (now_utc_week + timedelta(days=7)).replace(hour=12, minute=0, second=0)
         evento_semana = create_event({
             "title": f"Evento para Próxima Semana {int(time.time())}",
             "description": "Este evento está programado para la próxima semana",
