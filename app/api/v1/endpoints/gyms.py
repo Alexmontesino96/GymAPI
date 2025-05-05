@@ -14,7 +14,7 @@ from app.models.gym import Gym
 from app.models.user_gym import UserGym, GymRoleType
 from app.services.gym import gym_service
 from app.services.user import user_service
-from app.schemas.gym import Gym as GymSchema, GymCreate, GymUpdate, GymStatusUpdate, GymWithStats, UserGymMembershipSchema, UserGymRoleUpdate, UserGymSchema
+from app.schemas.gym import Gym as GymSchema, GymCreate, GymUpdate, GymStatusUpdate, GymWithStats, UserGymMembershipSchema, UserGymRoleUpdate, UserGymSchema, GymPublicSchema
 from app.core.auth0_fastapi import auth, get_current_user, Auth0User
 from app.core.tenant import verify_gym_access, verify_admin_role
 from app.db.session import get_db
@@ -87,7 +87,7 @@ async def create_gym(
     return new_gym
 
 
-@router.get("/", response_model=List[GymSchema])
+@router.get("/", response_model=List[GymPublicSchema])
 async def read_gyms(
     *,
     db: Session = Depends(get_db),

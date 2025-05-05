@@ -79,3 +79,12 @@ class UserGymSchema(BaseModel):
 
     class Config:
         from_attributes = True # Permite crear desde el modelo ORM 
+
+# Esquema público para respuestas de gimnasios accesibles públicamente
+class GymPublicSchema(GymBase):
+    """Esquema público de gimnasio para respuestas públicas"""
+    id: int
+    is_active: bool
+
+    class Config:
+        from_attributes = True
