@@ -10,6 +10,7 @@ if TYPE_CHECKING:
     from app.models.schedule import ClassSession, Class, GymHours, GymSpecialHours, ClassParticipation
     from app.models.user_gym import UserGym
     from app.models.event import Event
+    from app.models.gym_module import GymModule
 
 class Gym(Base):
     """
@@ -40,3 +41,6 @@ class Gym(Base):
     gym_hours = relationship("GymHours", back_populates="gym")
     special_hours = relationship("GymSpecialHours", back_populates="gym")
     class_participations = relationship("ClassParticipation", back_populates="gym") 
+    
+    # Relación con módulos
+    modules = relationship("GymModule", back_populates="gym")
