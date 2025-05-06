@@ -36,4 +36,9 @@ class NotificationResponse(BaseModel):
     success: bool
     notification_id: Optional[str] = None
     recipients: Optional[int] = None
-    errors: Optional[List[str]] = None 
+    errors: Optional[List[str]] = None
+
+class GymNotificationRequest(BaseModel):
+    title: str = Field(..., description="Título de la notificación")
+    message: str = Field(..., description="Mensaje de la notificación")
+    data: Optional[dict] = Field(None, description="Datos adicionales para la notificación") 

@@ -3,13 +3,14 @@ from sqlalchemy.orm import Session
 from typing import List
 
 from app.db.session import SessionLocal
-from app.schemas.notification import DeviceTokenCreate, DeviceTokenResponse, NotificationSend, NotificationResponse
+from app.schemas.notification import DeviceTokenCreate, DeviceTokenResponse, NotificationSend, NotificationResponse, GymNotificationRequest
 from app.repositories.notification_repository import notification_repository
 from app.services.notification_service import notification_service
 from app.core.auth0_fastapi import auth, Auth0User
 from fastapi import Security
-from app.core.tenant import verify_gym_access, verify_admin_role
+from app.core.tenant import verify_gym_access, verify_admin_role, get_tenant_id
 from app.models.gym import Gym
+from app.services.user import user_service
 
 
 router = APIRouter()
@@ -85,4 +86,36 @@ async def send_notification(
     return {
         "success": True,
         "message": f"Notification queued for {len(notification_data.user_ids)} recipients"
+    }
+
+@router.post("/send-to-gym", response_model=NotificationResponse)
+async def send_notification_to_gym_users(
+    notification_data: GymNotificationRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    gym_id: int = Depends(get_tenant_id),
+    gym: Gym = Depends(verify_admin_role)
+):
+    """
+    Envía una notificación a todos los usuarios del gimnasio actual (solo para admins)
+    """
+    # Obtener todos los IDs de usuarios del gimnasio
+    user_ids = user_service.get_all_gym_user_ids(db, gym_id)
+    
+    if not user_ids:
+        return {"success": False, "errors": ["No hay usuarios registrados en este gimnasio"]}
+    
+    # Enviar en segundo plano para no bloquear la respuesta
+    background_tasks.add_task(
+        notification_service.send_to_users,
+        user_ids=user_ids,
+        title=notification_data.title,
+        message=notification_data.message,
+        data=notification_data.data,
+        db=db
+    )
+    
+    return {
+        "success": True,
+        "message": f"Notificación programada para {len(user_ids)} usuarios del gimnasio"
     } 

@@ -362,7 +362,27 @@ class UserService:
         return user_repository.is_active(user)
 
     def is_superuser(self, user: UserModel) -> bool:
-        return user_repository.is_superuser(user)
+        """Verifica si un usuario es superadmin."""
+        return user.role == UserRole.SUPERADMIN
+        
+    def get_all_gym_user_ids(self, db: Session, gym_id: int) -> List[str]:
+        """
+        Obtiene todos los IDs de usuarios asociados a un gimnasio específico para notificaciones.
+        
+        Args:
+            db: Sesión de base de datos
+            gym_id: ID del gimnasio
+            
+        Returns:
+            Lista de auth0_ids de usuarios del gimnasio para enviar notificaciones
+        """
+        # La implementación depende de cómo están asociados los usuarios al gimnasio
+        # Típicamente a través de la tabla user_gym 
+        users = user_repository.get_all_gym_users(db, gym_id)
+        
+        # Filtrar usuarios con auth0_id (necesario para notificaciones)
+        # y convertir a lista de IDs
+        return [user.auth0_id for user in users if user.auth0_id]
 
     # Nueva función para búsqueda específica por nombre en gym
     def search_gym_participants_by_name(

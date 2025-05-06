@@ -281,9 +281,28 @@ class UserRepository(BaseRepository[User, UserCreate, UserUpdate]):
 
     def is_superuser(self, user: User) -> bool:
         """
-        Verificar si un usuario es superusuario.
+        Verifica si un usuario es superadmin.
         """
-        return user.is_superuser
+        return user.role == UserRole.SUPERADMIN
+
+    def get_all_gym_users(self, db: Session, gym_id: int) -> List[User]:
+        """
+        Obtiene todos los usuarios asociados a un gimnasio específico.
+        
+        Args:
+            db: Sesión de base de datos
+            gym_id: ID del gimnasio
+            
+        Returns:
+            Lista de usuarios del gimnasio
+        """
+        query = db.query(User)
+        query = query.join(UserGym, User.id == UserGym.user_id)
+        query = query.filter(UserGym.gym_id == gym_id)
+        query = query.filter(User.is_active == True)  # Solo usuarios activos
+        
+        # No aplicamos paginación para obtener todos los usuarios
+        return query.all()
 
 
 user_repository = UserRepository(User) 
