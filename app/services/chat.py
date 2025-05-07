@@ -706,8 +706,7 @@ class ChatService:
             raise ValueError(f"Usuario {user_id} no tiene auth0_id asignado")
         
         # Sanitizar ID de usuario para Stream
-        auth0_user_id = user.auth0_id
-        safe_user_id = re.sub(r'[^a-zA-Z0-9@_\-]', '_', auth0_user_id)
+        safe_user_id = re.sub(r'[^a-zA-Z0-9@_\-]', '_', user.auth0_id)
         
         try:
             # Primero añadir a la base de datos local usando ID interno
@@ -734,7 +733,6 @@ class ChatService:
             return {
                 "room_id": room_id,
                 "user_id": user_id,
-                "auth0_user_id": auth0_user_id,
                 "stream_response": response
             }
         except Exception as e:
@@ -771,8 +769,7 @@ class ChatService:
             raise ValueError(f"Usuario {user_id} no tiene auth0_id asignado")
         
         # Sanitizar ID de usuario para Stream
-        auth0_user_id = user.auth0_id
-        safe_user_id = re.sub(r'[^a-zA-Z0-9@_\-]', '_', auth0_user_id)
+        safe_user_id = re.sub(r'[^a-zA-Z0-9@_\-]', '_', user.auth0_id)
         
         try:
             # Primero intentar eliminar de Stream usando auth0_id sanitizado
@@ -793,7 +790,6 @@ class ChatService:
             return {
                 "room_id": room_id,
                 "user_id": user_id,
-                "auth0_user_id": auth0_user_id,
                 "stream_response": stream_response
             }
         except Exception as e:
@@ -913,7 +909,7 @@ class ChatService:
             logger.error(f"Error deleting channel: {str(e)}", exc_info=True)
             return False
             
-    async def get_channel_members(self, channel_type: str, channel_id: str) -> List[str]:
+    async def get_channel_members(self, channel_type: str, channel_id: str) -> List[int]:
         """
         Get all members of a channel.
         
@@ -922,7 +918,7 @@ class ChatService:
             channel_id: Unique identifier of the channel
             
         Returns:
-            List of user IDs who are members of the channel
+            List of internal user IDs who are members of the channel
         """
         try:
             # Usar stream_client en lugar de self.client
@@ -932,14 +928,42 @@ class ChatService:
             # Log para diagnóstico
             logger.info(f"Respuesta de channel.query: {response}")
             
-            # Extract member IDs from response
+            # Extract member IDs from response (stream_ids)
             if hasattr(response, 'members'):
-                members = [member.get('user_id') for member in response.members]
+                stream_members = [member.get('user_id') for member in response.members]
             else:
                 # Si response no tiene el atributo members, intentar acceder como diccionario
-                members = [member.get('user_id') for member in response.get('members', [])]
+                stream_members = [member.get('user_id') for member in response.get('members', [])]
             
-            return members
+            # Ahora necesitamos convertir los stream_ids (auth0_ids) a internal_ids
+            # Usar una única consulta de base de datos para obtener todos los IDs internos
+            from app.db.session import SessionLocal
+            from app.models.user import User
+            
+            if not stream_members:
+                return []
+                
+            db = SessionLocal()
+            try:
+                # Consulta para obtener los IDs internos correspondientes a los stream_ids
+                internal_members = []
+                users = db.query(User.id, User.auth0_id).filter(
+                    User.auth0_id.in_(stream_members)
+                ).all()
+                
+                # Crear un mapa de auth0_id -> id interno
+                auth0_to_internal = {user.auth0_id: user.id for user in users}
+                
+                # Convertir stream_ids a internal_ids
+                internal_members = [auth0_to_internal.get(stream_id) for stream_id in stream_members 
+                                  if stream_id in auth0_to_internal]
+                
+                # Filtrar cualquier None (por si algún stream_id no tiene correspondencia)
+                internal_members = [member_id for member_id in internal_members if member_id is not None]
+                
+                return internal_members
+            finally:
+                db.close()
             
         except Exception as e:
             logger.error(f"Error getting channel members: {str(e)}", exc_info=True)

@@ -34,7 +34,7 @@ api_router.include_router(trainer_member.router, prefix="/relationships", tags=[
 api_router.include_router(chat.router, prefix="/chat", tags=["chat"])
 
 # Worker endpoints
-api_router.include_router(worker.router, prefix="/worker", tags=["worker"])
+api_router.include_router(worker.router,tags=["worker"])
 
 # Notifications module
 api_router.include_router(notification_router, prefix="/notifications", tags=["notifications"])

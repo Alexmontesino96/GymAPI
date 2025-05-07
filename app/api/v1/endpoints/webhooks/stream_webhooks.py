@@ -83,26 +83,39 @@ async def handle_new_message(
         channel_type = channel.get("type")
         channel_id = channel.get("id")
         
-        # Get message sender
-        user_id = message.get("user", {}).get("id")
+        # Get message sender (Stream user_id - auth0_id sanitizado)
+        stream_user_id = message.get("user", {}).get("id")
         
         # Log para diagnóstico
-        logger.info(f"Webhook recibido - Canal: {channel_id}, Tipo: {channel_type}, Remitente: {user_id}")
+        logger.info(f"Webhook recibido - Canal: {channel_id}, Tipo: {channel_type}, Remitente Stream: {stream_user_id}")
         logger.info(f"Mensaje: {message.get('text', '(sin texto)')}")
         
-        if not all([channel_type, channel_id, user_id]):
+        if not all([channel_type, channel_id, stream_user_id]):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Missing required fields"
             )
             
-        # Get channel members to notify (excluding sender)
+        # Encontrar el ID interno del usuario remitente
+        sender = db.query(User).filter(User.auth0_id == stream_user_id).first()
+        if not sender:
+            logger.warning(f"Usuario remitente no encontrado en la BD: {stream_user_id}")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Sender user not found"
+            )
+        
+        sender_internal_id = sender.id
+        logger.info(f"ID interno del remitente: {sender_internal_id}")
+        
+        # Get channel members to notify (excluding sender) - ahora devuelve IDs internos
         channel_members = await chat_service.get_channel_members(channel_type, channel_id)
         
-        # Log para diagnóstico - miembros del canal
+        # Log para diagnóstico - miembros del canal (ahora son IDs internos)
         logger.info(f"Miembros del canal ({len(channel_members)}): {channel_members}")
         
-        recipients = [member for member in channel_members if member != user_id]
+        # Filtrar al remitente de la lista de destinatarios
+        recipients = [member for member in channel_members if member != sender_internal_id]
         
         # Log para diagnóstico - destinatarios
         logger.info(f"Destinatarios después de filtrar al remitente ({len(recipients)}): {recipients}")
@@ -119,7 +132,7 @@ async def handle_new_message(
                 "channel_id": channel_id,
                 "channel_type": channel_type,
                 "message_id": message.get("id"),
-                "sender_id": user_id
+                "sender_id": sender_internal_id  # Ahora usamos el ID interno
             }
         }
         
@@ -127,7 +140,7 @@ async def handle_new_message(
         background_tasks.add_task(
             notification_service.send_notification_to_users,
             db,
-            recipients,
+            recipients,  # Ahora son IDs internos
             notification_data
         )
         
@@ -136,18 +149,15 @@ async def handle_new_message(
             # Obtener el canal de Stream
             stream_channel = stream_client.channel(channel_type, channel_id)
             
-            # Buscar el usuario que envió el mensaje original
-            sender = db.query(User).filter(User.auth0_id == user_id).first()
-            if sender:
-                # Crear mensaje de respuesta
-                response_message = {
-                    "text": "He recibido tu mensaje y lo estoy procesando.",
-                    "user_id": sender.auth0_id  # Usar auth0_id para Stream
-                }
-                
-                # Enviar mensaje de respuesta
-                stream_channel.send_message(response_message)
-                logger.info(f"Mensaje de respuesta enviado en el canal {channel_id}")
+            # Crear mensaje de respuesta
+            response_message = {
+                "text": "He recibido tu mensaje y lo estoy procesando.",
+                "user_id": stream_user_id  # Seguimos usando auth0_id (sanitizado) para Stream
+            }
+            
+            # Enviar mensaje de respuesta
+            stream_channel.send_message(response_message)
+            logger.info(f"Mensaje de respuesta enviado en el canal {channel_id}")
         except Exception as msg_error:
             logger.error(f"Error enviando mensaje de respuesta: {str(msg_error)}", exc_info=True)
             # No fallar el webhook si el envío del mensaje falla
