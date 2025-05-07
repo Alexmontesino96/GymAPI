@@ -6,12 +6,13 @@ import hashlib
 import logging
 
 from app.db.session import get_db
-from app.core.config import settings
+from app.core.config import get_settings
 from app.services.notification_service import notification_service
 from app.services.chat import chat_service
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+settings = get_settings()
 
 async def verify_stream_webhook_signature(request: Request):
     """
