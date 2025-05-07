@@ -447,7 +447,8 @@ class ChatService:
                     "stream_channel_id": db_room.stream_channel_id,
                     "stream_channel_type": db_room.stream_channel_type,
                     "is_direct": True,
-                    "members": response.get("members", [])
+                    "members": response.get("members", []),
+                    "created_at": db_room.created_at
                 }
                 
                 # Guardar en cache
