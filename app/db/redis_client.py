@@ -31,59 +31,95 @@ from redis.asyncio import ConnectionPool, Redis
 from app.core.config import get_settings # Importar get_settings
 import logging
 from fastapi import HTTPException
+import sys
+import time
+import traceback
 
 logger = logging.getLogger(__name__)
 
+# Configurar logger específico para Redis con salida directa a stdout para máxima visibilidad
+redis_logger = logging.getLogger("redis.client")
+redis_logger.setLevel(logging.DEBUG)
+if not redis_logger.handlers:
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setLevel(logging.DEBUG)
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    handler.setFormatter(formatter)
+    redis_logger.addHandler(handler)
+
 # Declaración global del pool de conexiones
 REDIS_POOL = None
+# Estado para el modo fallback
+REDIS_IN_FALLBACK_MODE = False
+# Contador de intentos de conexión fallidos
+REDIS_FAILED_ATTEMPTS = 0
+# Timestamp del último intento de conexión fallido
+REDIS_LAST_ATTEMPT = 0
 
 async def initialize_redis_pool():
     """
     Inicializa el pool de conexiones a Redis.
     Debe llamarse una sola vez al iniciar la aplicación.
     """
-    global REDIS_POOL
+    global REDIS_POOL, REDIS_IN_FALLBACK_MODE, REDIS_FAILED_ATTEMPTS, REDIS_LAST_ATTEMPT
+    
     if REDIS_POOL is None:
         settings = get_settings()
         try:
-            # <<< REVERTIDO >>>: Volver a usar la URL desde la configuración
-            redis_url = settings.REDIS_URL
-            logger.info(f"Usando REDIS_URL desde configuración: '{redis_url}'")
+            # Verificar si estamos en modo fallback y si ha pasado suficiente tiempo para reintentar
+            current_time = time.time()
+            if REDIS_IN_FALLBACK_MODE and (current_time - REDIS_LAST_ATTEMPT < 60):  # 60 segundos entre reintentos
+                redis_logger.warning(f"Redis en modo fallback. Próximo reintento en {60 - (current_time - REDIS_LAST_ATTEMPT):.1f}s")
+                return
             
-            # Mantener la limpieza de la URL
+            REDIS_LAST_ATTEMPT = current_time
+            
+            # <<< DIAGNÓSTICO EXTENDIDO >>>
+            redis_logger.info("=== INICIANDO CONEXIÓN A REDIS ===")
+            redis_logger.info(f"Obteniendo configuración de Redis...")
+            
+            # Usar la URL desde la configuración
+            redis_url = settings.REDIS_URL
+            redis_logger.info(f"REDIS_URL desde configuración: '{redis_url}'")
+            
+            # Limpiar la URL
             if redis_url:
                 # Eliminar comentarios (todo lo que sigue a #)
                 if '#' in redis_url:
                     redis_url = redis_url.split('#')[0]
-                    logger.info(f"URL después de eliminar comentarios: '{redis_url}'")
                 # Eliminar espacios en blanco al principio y final
                 redis_url = redis_url.strip()
-                logger.info(f"URL después de strip: '{redis_url}'")
+                redis_logger.info(f"URL procesada: '{redis_url}'")
             else:
-                redis_url = "" # O manejar como error si la URL es requerida
-                logger.warning("REDIS_URL está vacía o no configurada.")
+                redis_url = ""
+                redis_logger.warning("REDIS_URL está vacía o no configurada.")
             
-            # Mantener el resto de la lógica de diagnóstico para ayudar a identificar el problema
-            logger.info(f"Variables de Redis originales:")
-            logger.info(f"REDIS_URL original: '{settings.REDIS_URL}'")
-            logger.info(f"REDIS_HOST: '{settings.REDIS_HOST}'")
-            logger.info(f"REDIS_PORT: '{settings.REDIS_PORT}' (tipo: {type(settings.REDIS_PORT)})")
-            logger.info(f"REDIS_PASSWORD: '{'***' if settings.REDIS_PASSWORD else 'None'}'")
+            # Información de diagnóstico
+            redis_logger.info(f"Variables de Redis:")
+            redis_logger.info(f"REDIS_HOST: '{settings.REDIS_HOST}'")
+            redis_logger.info(f"REDIS_PORT: '{settings.REDIS_PORT}' (tipo: {type(settings.REDIS_PORT)})")
+            redis_logger.info(f"REDIS_PASSWORD: '{'***' if settings.REDIS_PASSWORD else 'None'}'")
             
             # Intentar parsear la URL manualmente para diagnóstico
             import urllib.parse
             try:
                 parsed = urllib.parse.urlparse(redis_url)
-                logger.info(f"URL parseada: scheme='{parsed.scheme}', netloc='{parsed.netloc}', port='{parsed.port}'")
+                redis_logger.info(f"URL parseada: scheme='{parsed.scheme}', netloc='{parsed.netloc}', port='{parsed.port}'")
             except Exception as parse_error:
-                logger.error(f"Error al parsear la URL manualmente: {parse_error}")
+                redis_logger.error(f"Error al parsear la URL: {parse_error}")
+                print(f"Error al parsear URL de Redis: {parse_error}")
             
             # Si la URL procesada está vacía, lanzar error
             if not redis_url:
-                 logger.error("La URL de Redis procesada está vacía. No se puede inicializar el pool.")
-                 raise ValueError("La URL de Redis procesada está vacía.")
+                 redis_logger.error("La URL de Redis procesada está vacía.")
+                 raise ValueError("La URL de Redis está vacía.")
             
-            logger.info(f"Inicializando connection pool para Redis en {redis_url}...")
+            redis_logger.info(f"Inicializando connection pool para Redis...")
+            
+            # Agregar prints para diagnóstico inmediato
+            print(f"Redis URL: {redis_url}")
+            print(f"Intentando conectar a Redis...")
+            
             REDIS_POOL = ConnectionPool.from_url(
                 redis_url,
                 encoding="utf-8",
@@ -94,14 +130,70 @@ async def initialize_redis_pool():
                 health_check_interval=settings.REDIS_POOL_HEALTH_CHECK_INTERVAL,
                 retry_on_timeout=settings.REDIS_POOL_RETRY_ON_TIMEOUT
             )
-            logger.info(f"Connection pool de Redis inicializado correctamente (max_connections={settings.REDIS_POOL_MAX_CONNECTIONS}).")
+            
+            # Probar la conexión
+            test_client = Redis(connection_pool=REDIS_POOL)
+            await test_client.ping()
+            await test_client.close()
+            
+            # Si llegamos aquí, la conexión fue exitosa
+            redis_logger.info(f"Connection pool de Redis inicializado correctamente!")
+            print(f"Conexión a Redis EXITOSA")
+            
+            # Restaurar el estado normal si estábamos en fallback
+            if REDIS_IN_FALLBACK_MODE:
+                redis_logger.info("Saliendo del modo fallback de Redis")
+                print("Saliendo del modo fallback de Redis")
+            
+            REDIS_IN_FALLBACK_MODE = False
+            REDIS_FAILED_ATTEMPTS = 0
+            
         except Exception as e:
-            logger.error(f"Error al inicializar connection pool de Redis: {e}", exc_info=True)
+            REDIS_FAILED_ATTEMPTS += 1
+            redis_logger.error(f"Error {REDIS_FAILED_ATTEMPTS} al inicializar Redis: {e}")
+            print(f"Error al conectar a Redis: {e}")
+            print(traceback.format_exc())
+            
+            # Activar modo fallback después de varios intentos fallidos
+            if REDIS_FAILED_ATTEMPTS >= 2:
+                redis_logger.warning(f"Activando modo fallback de Redis después de {REDIS_FAILED_ATTEMPTS} intentos fallidos")
+                print(f"ACTIVANDO MODO FALLBACK DE REDIS - La aplicación seguirá funcionando sin caché")
+                REDIS_IN_FALLBACK_MODE = True
+            
             REDIS_POOL = None
-            raise
+            # No propagar la excepción para evitar bloquear la aplicación
 
 # Variable global para mantener la conexión compartida para compatibilidad
 redis_client = None
+
+class DummyRedis:
+    """
+    Clase que simula las funciones básicas de Redis pero no hace nada.
+    Útil para el modo fallback cuando Redis no está disponible.
+    """
+    async def ping(self):
+        return True
+        
+    async def get(self, key):
+        return None
+        
+    async def set(self, key, value, ex=None):
+        return True
+        
+    async def delete(self, *keys):
+        return 0
+        
+    async def exists(self, *keys):
+        return 0
+        
+    async def close(self):
+        return True
+        
+    async def __aenter__(self):
+        return self
+        
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        return False
 
 async def get_redis_client() -> Redis:
     """
@@ -109,18 +201,32 @@ async def get_redis_client() -> Redis:
     usando el connection pool.
     
     Returns:
-        Redis: Cliente Redis usando el connection pool compartido
+        Redis: Cliente Redis usando el connection pool compartido o un DummyRedis en fallback
     """
-    global REDIS_POOL, redis_client
+    global REDIS_POOL, redis_client, REDIS_IN_FALLBACK_MODE
+    
+    # Si estamos en modo fallback, devolver un cliente dummy que no hará nada
+    if REDIS_IN_FALLBACK_MODE:
+        redis_logger.debug("Usando cliente Redis en modo fallback (dummy)")
+        return DummyRedis()
     
     # Inicializar el pool si no existe
     if REDIS_POOL is None:
-        await initialize_redis_pool()
+        try:
+            await initialize_redis_pool()
+        except Exception as e:
+            redis_logger.error(f"Error al inicializar Redis: {e}")
+            print(f"Error al inicializar Redis: {e}")
+            # Activar modo fallback para evitar futuros intentos
+            REDIS_IN_FALLBACK_MODE = True
+            return DummyRedis()
         
     if REDIS_POOL is None:
-        # Si aún es None después de intentar inicializar, hay un problema
-        logger.error("No se pudo establecer el connection pool de Redis")
-        raise HTTPException(status_code=503, detail="No se pudo conectar a Redis")
+        # Si aún es None después de intentar inicializar, activar fallback
+        redis_logger.warning("No se pudo establecer el connection pool de Redis, usando fallback")
+        print("Redis no disponible - Usando modo fallback")
+        REDIS_IN_FALLBACK_MODE = True
+        return DummyRedis()
     
     try:
         # Para mantener compatibilidad con código existente que usa la variable redis_client
@@ -128,38 +234,52 @@ async def get_redis_client() -> Redis:
             redis_client = Redis(connection_pool=REDIS_POOL)
             
         # Verificar conexión
-        await redis_client.ping()
-        return redis_client
-    except Exception as e:
-        logger.error(f"Error al obtener conexión del pool de Redis: {e}", exc_info=True)
-        
-        # Reintentar inicializando de nuevo el pool
         try:
-            logger.info("Intentando reinicializar el connection pool...")
-            REDIS_POOL = None
-            await initialize_redis_pool()
-            redis_client = Redis(connection_pool=REDIS_POOL)
             await redis_client.ping()
             return redis_client
-        except Exception as retry_e:
-            logger.error(f"Error al reintentar conexión con Redis: {retry_e}", exc_info=True)
-            raise HTTPException(status_code=503, detail=f"No se pudo conectar a Redis: {retry_e}")
+        except Exception as ping_error:
+            # Si la conexión falla, intentar crear una nueva
+            redis_logger.warning(f"Ping a Redis falló: {ping_error}, creando nueva conexión")
+            redis_client = Redis(connection_pool=REDIS_POOL)
+            await redis_client.ping()  # Si esto falla, pasará a la excepción general
+            return redis_client
+            
+    except Exception as e:
+        redis_logger.error(f"Error con conexión Redis: {e}")
+        print(f"Error con conexión Redis: {e}")
+        traceback.print_exc()
+        
+        # Activar modo fallback para evitar futuros intentos
+        REDIS_IN_FALLBACK_MODE = True
+        return DummyRedis()
 
 async def close_redis_client():
     """
     Cierra el pool de conexiones Redis al finalizar la aplicación.
     """
-    global REDIS_POOL, redis_client
+    global REDIS_POOL, redis_client, REDIS_IN_FALLBACK_MODE
+    
+    # No hacer nada si estamos en modo fallback
+    if REDIS_IN_FALLBACK_MODE:
+        redis_logger.info("Redis en modo fallback, no hay conexiones que cerrar")
+        return
+    
     if redis_client:
-        logger.info("Cerrando cliente Redis...")
-        await redis_client.close()
+        redis_logger.info("Cerrando cliente Redis...")
+        try:
+            await redis_client.close()
+        except Exception as e:
+            redis_logger.error(f"Error al cerrar cliente Redis: {e}")
         redis_client = None
     
     if REDIS_POOL:
-        logger.info("Cerrando connection pool de Redis...")
-        await REDIS_POOL.disconnect()
+        redis_logger.info("Cerrando connection pool de Redis...")
+        try:
+            await REDIS_POOL.disconnect()
+            redis_logger.info("Connection pool de Redis cerrado correctamente")
+        except Exception as e:
+            redis_logger.error(f"Error al cerrar connection pool de Redis: {e}")
         REDIS_POOL = None
-        logger.info("Connection pool de Redis cerrado.")
 
 # Puedes añadir listeners de eventos de FastAPI en main.py para llamar a 
 # get_redis_client (al inicio) y close_redis_client (al cerrar)

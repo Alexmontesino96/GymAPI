@@ -13,6 +13,9 @@ from datetime import datetime, timezone
 from pydantic import BaseModel, Field
 from fastapi import APIRouter, Depends, HTTPException, Body, Path, status
 from sqlalchemy.orm import Session
+import sys
+import time
+import traceback
 
 from app.db.session import get_db
 from app.core.worker_auth import verify_worker_api_key
@@ -253,25 +256,95 @@ async def get_events_due_for_completion(
     Returns:
         List of events (up to 100) ordered by end time (oldest first).
     """
+    # Crear logger específico para este endpoint
+    endpoint_logger = logging.getLogger("endpoint.events_due_completion")
+    endpoint_logger.setLevel(logging.DEBUG)
+    
+    # Asegurar que los logs sean visibles
+    if not endpoint_logger.handlers:
+        handler = logging.StreamHandler(sys.stdout)
+        handler.setLevel(logging.DEBUG)
+        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        handler.setFormatter(formatter)
+        endpoint_logger.addHandler(handler)
+    
+    print("\n=== INICIO ENDPOINT GET_EVENTS_DUE_FOR_COMPLETION ===")
+    endpoint_logger.info("Iniciando búsqueda de eventos pendientes de completar")
+    
     try:
+        # Obtener timestamp actual
         now_utc = datetime.now(timezone.utc)
+        print(f"Timestamp actual: {now_utc.isoformat()}")
+        endpoint_logger.debug(f"Timestamp actual: {now_utc.isoformat()}")
         
-        events = db.query(Event).filter(
+        # Imprimir criterios de filtrado
+        search_end_time = now_utc + timedelta(days=1)
+        search_criteria = {
+            "status": EventStatus.SCHEDULED.value,
+            "end_time_antes_de": search_end_time.isoformat(),
+            "max_completion_attempts": 10,
+            "limit": 100
+        }
+        print(f"Criterios de búsqueda: {search_criteria}")
+        endpoint_logger.debug(f"Criterios de búsqueda: {search_criteria}")
+        
+        # Construir la consulta
+        query = db.query(Event).filter(
             Event.status == EventStatus.SCHEDULED, 
-            Event.end_time < now_utc + timedelta(days=1),
-            Event.completion_attempts <= 10  # Exclude events with more than 10 attempts
+            Event.end_time < search_end_time,
+            Event.completion_attempts <= 10
         ).order_by(
             Event.end_time.asc()
-        ).limit(100).all()
+        ).limit(100)
         
-        logger.info(f"Found {len(events)} events with pending completion.")
+        print(f"SQL Query: {str(query)}")
+        endpoint_logger.debug(f"SQL Query: {str(query)}")
         
-        # Convert to Pydantic schema for response using the new schema
-        return [EventWorkerResponse.from_orm(event) for event in events]
+        # Ejecutar la consulta y medir el tiempo
+        start_time = time.time()
+        events = query.all()
+        query_time = time.time() - start_time
+        
+        # Registrar resultado
+        event_count = len(events)
+        result_msg = f"Encontrados {event_count} eventos pendientes de completar en {query_time:.4f}s"
+        print(result_msg)
+        endpoint_logger.info(result_msg)
+        logger.info(f"Found {event_count} events with pending completion.")
+        
+        # Imprimir detalles de los primeros eventos para diagnóstico
+        if events:
+            print("Primeros eventos encontrados:")
+            for i, event in enumerate(events[:5]):  # Primeros 5 eventos
+                event_info = f"  {i+1}. ID={event.id}, Título={event.title}, Fin={event.end_time}, Intentos={event.completion_attempts}"
+                print(event_info)
+                endpoint_logger.debug(event_info)
+        
+        # Convertir a esquema de respuesta
+        print("Convirtiendo eventos a esquema de respuesta...")
+        start_conversion = time.time()
+        response = [EventWorkerResponse.from_orm(event) for event in events]
+        conversion_time = time.time() - start_conversion
+        print(f"Conversión completada en {conversion_time:.4f}s")
+        
+        # Log final
+        end_msg = f"Procesamiento completado con éxito: {event_count} eventos listos para completar"
+        print(f"=== FIN ENDPOINT ({end_msg}) ===\n")
+        endpoint_logger.info(end_msg)
+        
+        return response
         
     except Exception as e:
+        # Capturar y registrar el error
+        error_msg = f"Error al obtener eventos pendientes: {str(e)}"
+        print(f"ERROR: {error_msg}")
+        print(f"Traceback: {traceback.format_exc()}")
+        endpoint_logger.exception(error_msg)
         logger.error(f"Error getting events pending completion: {e}", exc_info=True)
-        # Return empty list or raise exception depending on error policy
+        
+        print("=== FIN ENDPOINT (ERROR) ===\n")
+        
+        # Lanzar excepción HTTP con detalles
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Internal error getting events: {str(e)}"

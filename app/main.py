@@ -21,6 +21,7 @@ from app.core.config import get_settings
 from app.middleware.timing import TimingMiddleware
 from app.core.scheduler import init_scheduler
 from app.db.redis_client import initialize_redis_pool, close_redis_client
+from app.middleware.logging_middleware import RequestLoggingMiddleware
 
 logger = logging.getLogger(__name__) # Mantener o ajustar según necesidad
 
@@ -89,7 +90,11 @@ app = FastAPI(
     }
 )
 
-# <<< AÑADIR MIDDLEWARE DE LOGGING AQUÍ >>>
+# Añadir el nuevo middleware de logging RequestLoggingMiddleware como primer middleware
+# Este será más detallado y registrará información adicional sobre las solicitudes y respuestas
+app.add_middleware(RequestLoggingMiddleware)
+
+# Mantener el middleware existente como backup
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
     # Añadir un print para diagnóstico inmediato
@@ -104,7 +109,6 @@ async def log_requests(request: Request, call_next):
     # Cambiar a logger.info
     logger.info(f"Middleware: Enviando respuesta: {response.status_code}")
     return response
-# <<< FIN MIDDLEWARE DE LOGGING >>>
 
 # Añadir middleware para medir el tiempo de respuesta
 # Asegurarse que este middleware esté DESPUÉS del de logging si quieres loguear antes de medir

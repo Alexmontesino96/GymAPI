@@ -1,12 +1,22 @@
 import secrets
 import logging
+import sys
+import traceback
 from fastapi import Security, HTTPException, status, Request
 from fastapi.security import APIKeyHeader
 from app.core.config import get_settings
 
-# Configurar logger con nivel DEBUG para asegurar que muestra todos los logs
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)  # Forzar nivel DEBUG para este módulo
+# Configurar logger específico para autenticación
+auth_logger = logging.getLogger("auth.worker")
+auth_logger.setLevel(logging.DEBUG)
+
+# Asegurar que haya un handler para stdout
+if not auth_logger.handlers:
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setLevel(logging.DEBUG)
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    handler.setFormatter(formatter)
+    auth_logger.addHandler(handler)
 
 # Definir el esquema de seguridad para la clave API
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
@@ -26,86 +36,80 @@ async def verify_worker_api_key(
 ):
     """
     Verifica que la petición provenga del worker SQS autorizado
-    mediante la validación de la clave API.
-    
-    Args:
-        request: La petición HTTP
-        api_key_header: La clave API extraída de la cabecera
-        
-    Returns:
-        True si la autenticación es exitosa
-        
-    Raises:
-        HTTPException: 401 si la clave es inválida o ausente,
-                      500 si hay un error de configuración
+    mediante la clave API.
     """
+    print("\n=== VERIFICACIÓN DE API KEY ===")
+    print(f"URL: {request.url.path}")
+    print(f"Método: {request.method}")
+    
     try:
-        # Registrar información completa de la petición para depuración
-        client_ip = request.client.host if request.client else "unknown"
-        endpoint = request.url.path
+        auth_logger.info(f"Iniciando verificación de API key para {request.url.path}")
         
-        logger.debug(f"==== INICIO VERIFICACIÓN API KEY ====")
-        logger.debug(f"Petición desde IP: {client_ip} a endpoint: {endpoint}")
-        logger.debug(f"Headers recibidos: {request.headers}")
+        # Obtener configuración
+        try:
+            settings = get_settings()
+            expected_key = settings.WORKER_API_KEY
+            auth_logger.debug("Configuración obtenida correctamente")
+            print("Configuración obtenida correctamente")
+        except Exception as config_error:
+            error_msg = f"Error al obtener configuración: {str(config_error)}"
+            print(f"ERROR: {error_msg}")
+            auth_logger.error(error_msg)
+            traceback.print_exc()
+            # Continuar para evitar fallar silenciosamente
+            expected_key = None
         
-        # Salida con print explícito para garantizar visibilidad
+        # Imprimir claves enmascaradas
+        print(f"API Key recibida: {mask_key(api_key_header)}")
+        print(f"API Key esperada: {mask_key(expected_key)}")
+        auth_logger.debug(f"API Key recibida: {mask_key(api_key_header)}")
+        auth_logger.debug(f"API Key esperada: {mask_key(expected_key)}")
+        
+        # Verificar si la clave API está presente
         if not api_key_header:
-            print(f"⚠️ ERROR: No se recibió clave de API en el encabezado X-API-Key.")
-            logger.critical("No se recibió clave de API en encabezado X-API-Key")
+            error_msg = "Falta cabecera X-API-Key"
+            print(f"ERROR: {error_msg}")
+            auth_logger.error(error_msg)
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="API key required"
+            )
+        
+        # Verificar si la clave API coincide
+        if api_key_header != expected_key:
+            error_msg = "Las claves API no coinciden"
+            print(f"ERROR: {error_msg}")
+            auth_logger.error(f"API key inválida: {mask_key(api_key_header)} != {mask_key(expected_key)}")
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="API key requerida"
+                detail="Invalid API key"
             )
         
-        # Usar patrón anti-timing-attack para la comparación
-        expected_api_key = get_settings().WORKER_API_KEY
-        
-        # Prints explícitos para depuración
-        print(f"🔑 API KEY RECIBIDA: {mask_key(api_key_header)}")
-        print(f"🔑 API KEY ESPERADA: {mask_key(expected_api_key)}")
-        print(f"🔍 LONGITUDES: Recibida={len(api_key_header)} caracteres, Esperada={len(expected_api_key)} caracteres")
-        
-        # Log detallado para debugging
-        logger.debug(f"Comparando API keys - Recibida: {mask_key(api_key_header)}, Esperada: {mask_key(expected_api_key)}")
-        
-        if not expected_api_key:
-            print("⚠️ ERROR: WORKER_API_KEY no está configurada en el servidor")
-            logger.critical("WORKER_API_KEY no está configurada en el servidor")
-            # No revelar este error en la respuesta
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Error de configuración del servidor"
-            )
-        
-        is_valid = secrets.compare_digest(api_key_header, expected_api_key)
-        
-        print(f"🔐 AUTENTICACIÓN: {'✅ VÁLIDA' if is_valid else '❌ INVÁLIDA'}")
-        
-        # Logs detallados para distintos escenarios
-        if is_valid:
-            logger.debug("Autenticación exitosa para API key de worker")
-            return True
-        else:
-            logger.error(f"Autenticación fallida para API key, recibida {mask_key(api_key_header)}")
-            print(f"⚠️ ERROR: Clave API inválida")
-            
-            # Verificar si tiene misma longitud pero caracteres diferentes
-            if len(api_key_header) == len(expected_api_key):
-                print("📝 NOTA: Las claves tienen la misma longitud pero valores diferentes")
-                logger.warning("Las claves API tienen la misma longitud pero valores diferentes")
-            
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="API key inválida"
-            )
+        # Si llega aquí, la clave es válida
+        success_msg = "Verificación de API key exitosa"
+        print(f"ÉXITO: {success_msg}")
+        auth_logger.info(success_msg)
+        return True
         
     except HTTPException:
-        logger.debug(f"==== FIN VERIFICACIÓN API KEY (FALLIDA) ====")
+        # Re-lanzar excepciones HTTP para que FastAPI las maneje
+        print("=== FIN VERIFICACIÓN (ERROR HTTP) ===")
         raise
+        
     except Exception as e:
-        logger.error(f"Error inesperado durante la verificación de la API key: {str(e)}", exc_info=True)
-        logger.debug(f"==== FIN VERIFICACIÓN API KEY (ERROR) ====")
+        # Capturar y registrar cualquier otra excepción
+        error_msg = f"Error inesperado durante verificación: {str(e)}"
+        print(f"ERROR CRÍTICO: {error_msg}")
+        auth_logger.exception(error_msg)
+        
+        # Imprimir traceback para debugging
+        print("Traceback:")
+        traceback.print_exc()
+        
+        # Relanzar como HTTPException para que FastAPI la maneje adecuadamente
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error interno durante la autenticación: {str(e)}"
+            detail=f"Internal server error during authentication: {str(e)}"
         )
+    finally:
+        print("=== FIN VERIFICACIÓN DE API KEY ===\n")
