@@ -6,7 +6,8 @@ import time
 from app.core.config import get_settings
 from app.core.stream_client import stream_client
 
-settings = get_settings()
+# Usar un valor de webhook secret fijo para pruebas
+WEBHOOK_SECRET = "test_webhook_secret_for_local_testing"
 
 def test_chat_webhook():
     """
@@ -40,7 +41,8 @@ def test_chat_webhook():
         
     chat_data = response.json()
     channel_id = chat_data["stream_channel_id"]
-    print(f"Canal creado: {channel_id}")
+    channel_type = chat_data["stream_channel_type"]
+    print(f"Canal creado: {channel_id}, tipo: {channel_type}")
     
     # 2. Enviar 3 mensajes como usuario 4
     messages = [
@@ -49,40 +51,49 @@ def test_chat_webhook():
         "Y este es el tercer mensaje para completar la prueba"
     ]
     
+    # ID de Auth0 del usuario que envía los mensajes
+    user_auth0_id = "auth0_67d5d64d64ccf1c522a6950b"
+    
+    # Obtener token de Stream para el usuario 4 (no es necesario para enviar mensajes en este caso)
+    token = stream_client.create_token(user_auth0_id)
+    
     for i, message in enumerate(messages, 1):
         print(f"\nEnviando mensaje {i}: {message}")
         
         # Enviar mensaje a través de Stream
-        channel = stream_client.channel("messaging", channel_id)
-        response = channel.send_message({
-            "text": message,
-            "user_id": "auth0_67d5d64d64ccf1c522a6950b"  # ID de Stream del usuario 4
-        })
+        channel = stream_client.channel(channel_type, channel_id)
+        
+        # Basado en cómo se usa en chat.py en close_event_chat:
+        # channel.send_message(system_message, user_id="system")
+        message_data = {"text": message}
+        message_response = channel.send_message(message_data, user_id=user_auth0_id)
+        print(f"Mensaje enviado - ID: {message_response['message']['id']}")
         
         # Simular el webhook de Stream
         webhook_payload = {
             "message": {
-                "id": response["message"]["id"],
+                "id": message_response["message"]["id"],
                 "text": message,
                 "user": {
-                    "id": "auth0_67d5d64d64ccf1c522a6950b"
+                    "id": user_auth0_id
                 }
             },
             "channel": {
                 "id": channel_id,
-                "type": "messaging",
+                "type": channel_type,
                 "name": chat_data["name"]
             }
         }
         
-        # Calcular firma del webhook
+        # Calcular firma del webhook usando el secreto fijo
         body = json.dumps(webhook_payload).encode()
         signature = hmac.new(
-            settings.STREAM_WEBHOOK_SECRET.encode(),
+            WEBHOOK_SECRET.encode(),
             body,
             hashlib.sha256
         ).hexdigest()
         
+        print(f"Enviando webhook con firma: {signature}")
         # Enviar webhook
         webhook_response = requests.post(
             f"{base_url}/webhooks/stream/new-message",
