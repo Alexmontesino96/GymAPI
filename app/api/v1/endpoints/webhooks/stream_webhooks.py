@@ -86,6 +86,10 @@ async def handle_new_message(
         # Get message sender
         user_id = message.get("user", {}).get("id")
         
+        # Log para diagnóstico
+        logger.info(f"Webhook recibido - Canal: {channel_id}, Tipo: {channel_type}, Remitente: {user_id}")
+        logger.info(f"Mensaje: {message.get('text', '(sin texto)')}")
+        
         if not all([channel_type, channel_id, user_id]):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -94,10 +98,17 @@ async def handle_new_message(
             
         # Get channel members to notify (excluding sender)
         channel_members = await chat_service.get_channel_members(channel_type, channel_id)
+        
+        # Log para diagnóstico - miembros del canal
+        logger.info(f"Miembros del canal ({len(channel_members)}): {channel_members}")
+        
         recipients = [member for member in channel_members if member != user_id]
         
+        # Log para diagnóstico - destinatarios
+        logger.info(f"Destinatarios después de filtrar al remitente ({len(recipients)}): {recipients}")
+        
         if not recipients:
-            logger.info(f"No recipients to notify for message in channel {channel_id}")
+            logger.info(f"No hay destinatarios para notificar en el canal {channel_id}")
             return {"status": "success", "message": "No recipients to notify"}
         
         # Prepare notification data

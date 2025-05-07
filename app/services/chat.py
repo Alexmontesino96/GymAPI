@@ -907,10 +907,10 @@ class ChatService:
         Delete a channel from Stream Chat.
         """
         try:
-            await self.client.delete_channel(channel_type, channel_id)
+            await stream_client.delete_channel(channel_type, channel_id)
             return True
         except Exception as e:
-            logger.error(f"Error deleting channel: {str(e)}")
+            logger.error(f"Error deleting channel: {str(e)}", exc_info=True)
             return False
             
     async def get_channel_members(self, channel_type: str, channel_id: str) -> List[str]:
@@ -925,15 +925,24 @@ class ChatService:
             List of user IDs who are members of the channel
         """
         try:
-            channel = self.client.channel(channel_type, channel_id)
+            # Usar stream_client en lugar de self.client
+            channel = stream_client.channel(channel_type, channel_id)
             response = await channel.query(members={'limit': 100})  # Adjust limit if needed
             
+            # Log para diagnóstico
+            logger.info(f"Respuesta de channel.query: {response}")
+            
             # Extract member IDs from response
-            members = [member.get('user_id') for member in response.members]
+            if hasattr(response, 'members'):
+                members = [member.get('user_id') for member in response.members]
+            else:
+                # Si response no tiene el atributo members, intentar acceder como diccionario
+                members = [member.get('user_id') for member in response.get('members', [])]
+            
             return members
             
         except Exception as e:
-            logger.error(f"Error getting channel members: {str(e)}")
+            logger.error(f"Error getting channel members: {str(e)}", exc_info=True)
             return []
 
 
