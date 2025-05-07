@@ -294,7 +294,8 @@ class ChatService:
                         "event_id": db_room.event_id,  # Añadir event_id a la respuesta
                         "members": self._convert_stream_members_to_internal(
                             channel_data.get("members", []), db
-                        )
+                        ),
+                        "created_at": db_room.created_at  # Añadir created_at
                     },
                     "timestamp": time.time()
                 }
@@ -352,7 +353,8 @@ class ChatService:
                 "is_direct": room.is_direct,
                 "event_id": room.event_id,
                 "name": room.name,
-                "members": members
+                "members": members,
+                "created_at": room.created_at
             }
         except Exception as e:
             logger.error(f"Error obteniendo información de sala existente: {e}")
@@ -364,7 +366,8 @@ class ChatService:
                 "is_direct": room.is_direct,
                 "event_id": room.event_id,
                 "name": room.name,
-                "members": []
+                "members": [],
+                "created_at": room.created_at
             }
         
     def _convert_stream_members_to_internal(self, stream_members: List[Dict[str, Any]], db: Session) -> List[Dict[str, Any]]:
