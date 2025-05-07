@@ -898,5 +898,39 @@ class ChatService:
             logger.error(f"Error al buscar sala para evento {event_id}: {e}", exc_info=True)
             return None
 
+    async def delete_channel(self, channel_type: str, channel_id: str) -> bool:
+        """
+        Delete a channel from Stream Chat.
+        """
+        try:
+            await self.client.delete_channel(channel_type, channel_id)
+            return True
+        except Exception as e:
+            logger.error(f"Error deleting channel: {str(e)}")
+            return False
+            
+    async def get_channel_members(self, channel_type: str, channel_id: str) -> List[str]:
+        """
+        Get all members of a channel.
+        
+        Args:
+            channel_type: Type of channel (messaging, gaming, etc)
+            channel_id: Unique identifier of the channel
+            
+        Returns:
+            List of user IDs who are members of the channel
+        """
+        try:
+            channel = self.client.channel(channel_type, channel_id)
+            response = await channel.query(members={'limit': 100})  # Adjust limit if needed
+            
+            # Extract member IDs from response
+            members = [member.get('user_id') for member in response.members]
+            return members
+            
+        except Exception as e:
+            logger.error(f"Error getting channel members: {str(e)}")
+            return []
+
 
 chat_service = ChatService() 

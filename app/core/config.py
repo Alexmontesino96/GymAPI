@@ -136,8 +136,9 @@ class Settings(BaseSettings):
         return ""
     
     # Configuración de Stream.io para el chat
-    STREAM_API_KEY: str
-    STREAM_API_SECRET: str
+    STREAM_API_KEY: str = os.getenv("STREAM_API_KEY", "")
+    STREAM_API_SECRET: str = os.getenv("STREAM_API_SECRET", "")
+    STREAM_WEBHOOK_SECRET: str = os.getenv("STREAM_WEBHOOK_SECRET", "")
 
     # Configuración de OneSignal para notificaciones push
     ONESIGNAL_APP_ID: Optional[str] = None
