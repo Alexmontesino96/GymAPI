@@ -34,6 +34,7 @@ def process_create_event_chat_task(task_data: Dict[str, Any]) -> Dict[str, Any]:
     creator_id = task_data.get('creator_id')
     gym_id = task_data.get('gym_id')
     event_title = task_data.get('event_title', '')
+    first_message_chat = task_data.get('first_message_chat')
     
     # Validar datos mínimos requeridos
     if not event_id or not creator_id or not gym_id:
@@ -48,6 +49,11 @@ def process_create_event_chat_task(task_data: Dict[str, Any]) -> Dict[str, Any]:
         "gym_id": gym_id,
         "event_title": event_title
     }
+    
+    # Añadir first_message_chat al payload si se proporcionó
+    if first_message_chat:
+        request_data["first_message_chat"] = first_message_chat
+        logger.info(f"Se incluye mensaje inicial para el chat del evento {event_id}")
     
     # Configurar headers con API key para autenticación
     headers = {

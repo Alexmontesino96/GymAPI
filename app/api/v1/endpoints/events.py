@@ -170,7 +170,8 @@ async def create_event(
             creator_id=internal_user_id,
             gym_id=gym_id,
             event_title=event.title,
-            end_time=event.end_time
+            end_time=event.end_time,
+            first_message_chat=event_in.first_message_chat if hasattr(event_in, 'first_message_chat') else None
         )
         
         # Verificar si hubo error en la respuesta
@@ -513,7 +514,8 @@ async def update_event(
                     creator_id=user_id,
                     gym_id=current_gym.id,
                     event_title=updated_event.title,
-                    end_time=updated_event.end_time
+                    end_time=updated_event.end_time,
+                    first_message_chat=event_in.first_message_chat if hasattr(event_in, 'first_message_chat') else None
                 )
                 
                 # Verificar si hubo error en la respuesta
@@ -573,7 +575,8 @@ async def update_event(
                 creator_id=creator_id,
                 gym_id=current_gym.id,
                 event_title=updated_event.title,
-                end_time=updated_event.end_time
+                end_time=updated_event.end_time,
+                first_message_chat=event_in.first_message_chat if hasattr(event_in, 'first_message_chat') else None
             )
             
             # Verificar si hubo error en la respuesta

@@ -1,10 +1,10 @@
 """
-Endpoints Worker - Endpoints protegidos para operaciones del worker SQS
+Worker Endpoints - Protected endpoints for SQS worker operations
 
-Este módulo define endpoints que solo deben ser llamados por el 
-worker SQS mediante autenticación con clave API. Estos endpoints manejan 
-tareas asincrónicas como la creación de chats para eventos y el 
-procesamiento de eventos completados.
+This module defines endpoints that should only be called by the
+SQS worker using API key authentication. These endpoints handle
+asynchronous tasks such as creating chats for events and
+processing completed events.
 """
 
 import logging
@@ -20,182 +20,206 @@ from app.services.chat import chat_service
 from app.repositories.event import event_repository
 from app.models.event import EventStatus, Event
 from app.models.chat import ChatRoom, ChatRoomStatus
+from app.models.user import User
 from app.schemas.event import EventWorkerResponse, Event as EventSchema
 from app.services.event import event_service
 from app.db.redis_client import get_redis_client
+from app.core.stream_client import stream_client
 from datetime import timedelta
 from redis import Redis
 
-# Configurar logger
+# Configure logger
 logger = logging.getLogger(__name__)
 
-# Crear router con prefijo /worker
+# Create router with prefix /worker
 router = APIRouter(prefix="/worker", tags=["worker"])
 
-# Modelos de datos para los endpoints
+# Data models for endpoints
 class EventChatRequest(BaseModel):
-    """Datos para crear un chat de evento."""
+    """Data for creating an event chat."""
     event_id: int
     creator_id: int
     gym_id: int = Field(..., gt=0)
     event_title: Optional[str] = None
+    first_message_chat: Optional[str] = None
 
 class EventCompletionRequest(BaseModel):
-    """Datos para procesar un evento completado."""
+    """Data for processing a completed event."""
     event_id: int
     gym_id: int = Field(..., gt=0)
 
 class WorkerResponse(BaseModel):
-    """Respuesta estándar para endpoints del worker."""
+    """Standard response for worker endpoints."""
     success: bool
     message: str
     details: Optional[Dict[str, Any]] = None
 
-# Endpoints protegidos con la dependencia de autenticación
+# Endpoints protected with authentication dependency
 @router.post("/event-chat", response_model=WorkerResponse)
 async def create_event_chat(
     request: EventChatRequest,
     db: Session = Depends(get_db),
-    _: bool = Depends(verify_worker_api_key)  # Dependencia de seguridad
+    _: bool = Depends(verify_worker_api_key)  # Security dependency
 ):
     """
-    Crea una sala de chat para un evento.
+    Creates a chat room for an event.
     
-    Este endpoint solo debe ser llamado por el worker SQS.
-    Requiere autenticación mediante clave API.
+    This endpoint should only be called by the SQS worker.
+    Requires authentication via API key.
     
     Args:
-        request: Datos del evento para el que crear el chat
-        db: Sesión de base de datos
-        _: Resultado de la verificación de seguridad (no usado directamente)
+        request: Event data for which to create the chat
+        db: Database session
+        _: Result of security verification (not used directly)
         
     Returns:
-        WorkerResponse: Respuesta indicando éxito o fallo
+        WorkerResponse: Response indicating success or failure
     """
     try:
-        # Validar que el evento exista
-        logger.info(f"[DEBUG] Verificando evento {request.event_id}")
+        # Validate that the event exists
+        logger.info(f"[DEBUG] Verifying event {request.event_id}")
         event = event_repository.get_event(db, event_id=request.event_id)
         if not event:
-            logger.warning(f"[DEBUG] Evento {request.event_id} no encontrado en la BD")
+            logger.warning(f"[DEBUG] Event {request.event_id} not found in DB")
             return WorkerResponse(
                 success=False,
-                message=f"Evento {request.event_id} no encontrado"
+                message=f"Event {request.event_id} not found"
             )
         
-        logger.info(f"[DEBUG] Evento {request.event_id} encontrado, gym_id={event.gym_id}, request.gym_id={request.gym_id}")
+        logger.info(f"[DEBUG] Event {request.event_id} found, gym_id={event.gym_id}, request.gym_id={request.gym_id}")
         
-        # Validar que el evento pertenezca al gimnasio especificado
+        # Validate that the event belongs to the specified gym
         if event.gym_id != request.gym_id:
-            logger.warning(f"[DEBUG] Evento {request.event_id} pertenece al gimnasio {event.gym_id}, no al {request.gym_id}")
+            logger.warning(f"[DEBUG] Event {request.event_id} belongs to gym {event.gym_id}, not {request.gym_id}")
             return WorkerResponse(
                 success=False,
-                message=f"Evento {request.event_id} no pertenece al gimnasio {request.gym_id}"
+                message=f"Event {request.event_id} does not belong to gym {request.gym_id}"
             )
         
-        # Verificar si ya existe una sala para este evento
-        logger.info(f"[DEBUG] Verificando si existe sala para evento {request.event_id}")
+        # Check if a room already exists for this event
+        logger.info(f"[DEBUG] Checking if room exists for event {request.event_id}")
         existing_room = chat_service.get_event_room(db, request.event_id)
         
         if existing_room:
-            logger.info(f"[DEBUG] Sala para evento {request.event_id} ya existe: id={existing_room.id}")
+            logger.info(f"[DEBUG] Room for event {request.event_id} already exists: id={existing_room.id}")
             return WorkerResponse(
                 success=True,
-                message=f"Sala de chat para evento {request.event_id} ya existe",
+                message=f"Chat room for event {request.event_id} already exists",
                 details={"room_id": existing_room.id, "stream_channel_id": existing_room.stream_channel_id}
             )
             
-        # Llamar al servicio de chat para crear la sala
-        logger.info(f"[DEBUG] Creando sala de chat para evento {request.event_id}, creator_id={request.creator_id}")
+        # Call the chat service to create the room
+        logger.info(f"[DEBUG] Creating chat room for event {request.event_id}, creator_id={request.creator_id}")
         room = chat_service.get_or_create_event_chat(db, request.event_id, request.creator_id)
         
-        # Verificar el resultado
-        logger.info(f"[DEBUG] Resultado de creación: {room}")
+        # Verify the result
+        logger.info(f"[DEBUG] Creation result: {room}")
         
-        # Verificar manualmente si la sala se creó
+        # Manually verify if the room was created
         verification_room = chat_service.get_event_room(db, request.event_id)
         if verification_room:
-            logger.info(f"[DEBUG] Verificación positiva: sala creada con id={verification_room.id}")
+            logger.info(f"[DEBUG] Positive verification: room created with id={verification_room.id}")
+            
+            # Send initial message if provided
+            if request.first_message_chat and verification_room.stream_channel_id:
+                try:
+                    # Get the Stream channel
+                    channel = stream_client.channel(verification_room.stream_channel_type, verification_room.stream_channel_id)
+                    
+                    # Find the creator user to use their ID in the message
+                    creator = db.query(User).filter(User.id == request.creator_id).first()
+                    if creator and creator.auth0_id:
+                        # Create message with appropriate format
+                        message_response = channel.send_message({
+                            "text": request.first_message_chat,
+                            "user_id": creator.auth0_id  # Use auth0_id for Stream
+                        })
+                        logger.info(f"[DEBUG] Initial message sent to event chat {request.event_id}")
+                    else:
+                        logger.warning(f"[DEBUG] Could not find creator {request.creator_id} to send initial message")
+                except Exception as msg_error:
+                    logger.error(f"[DEBUG] Error sending initial message: {str(msg_error)}", exc_info=True)
+                    # Don't fail room creation if message sending fails
         else:
-            logger.warning(f"[DEBUG] Verificación negativa: sala NO encontrada después de creación")
+            logger.warning(f"[DEBUG] Negative verification: room NOT found after creation")
         
         return WorkerResponse(
             success=True,
-            message=f"Sala de chat para evento {request.event_id} creada exitosamente",
+            message=f"Chat room for event {request.event_id} successfully created",
             details={"room_id": room.get("id"), "stream_channel_id": room.get("stream_channel_id")}
         )
         
     except Exception as e:
-        logger.error(f"[DEBUG] Error al crear sala de chat para evento {request.event_id}: {e}", exc_info=True)
+        logger.error(f"[DEBUG] Error creating chat room for event {request.event_id}: {e}", exc_info=True)
         return WorkerResponse(
             success=False,
-            message=f"Error creando sala: {str(e)}"
+            message=f"Error creating room: {str(e)}"
         )
 
 @router.post("/event-completion", response_model=WorkerResponse)
 async def process_event_completion(
     request: EventCompletionRequest,
     db: Session = Depends(get_db),
-    _: bool = Depends(verify_worker_api_key)  # Dependencia de seguridad
+    _: bool = Depends(verify_worker_api_key)  # Security dependency
 ):
     """
-    Procesa un evento como completado.
+    Processes an event as completed.
     
-    Este endpoint solo debe ser llamado por el worker SQS.
-    Requiere autenticación mediante clave API.
+    This endpoint should only be called by the SQS worker.
+    Requires authentication via API key.
     
     Args:
-        request: Datos del evento a marcar como completado
-        db: Sesión de base de datos
-        _: Resultado de la verificación de seguridad (no usado directamente)
+        request: Data of the event to mark as completed
+        db: Database session
+        _: Result of security verification (not used directly)
         
     Returns:
-        WorkerResponse: Respuesta indicando éxito o fallo
+        WorkerResponse: Response indicating success or failure
     """
     try:
-        # Validar que el evento exista
+        # Validate that the event exists
         event = event_repository.get_event(db, event_id=request.event_id)
         if not event:
             return WorkerResponse(
                 success=False,
-                message=f"Evento {request.event_id} no encontrado"
+                message=f"Event {request.event_id} not found"
             )
         
-        # Validar que el evento pertenezca al gimnasio especificado
+        # Validate that the event belongs to the specified gym
         if event.gym_id != request.gym_id:
             return WorkerResponse(
                 success=False,
-                message=f"Evento {request.event_id} no pertenece al gimnasio {request.gym_id}"
+                message=f"Event {request.event_id} does not belong to gym {request.gym_id}"
             )
         
-        # Verificar si el evento ya está completado
+        # Check if the event is already completed
         if event.status == EventStatus.COMPLETED:
-            logger.warning(f"Se intentó marcar como completado el evento {request.event_id} que ya está en estado COMPLETED")
+            logger.warning(f"Attempted to mark event {request.event_id} as completed when it's already in COMPLETED state")
             return WorkerResponse(
                 success=True,
-                message=f"Evento {request.event_id} ya estaba marcado como completado",
+                message=f"Event {request.event_id} was already marked as completed",
                 details={
                     "event_status": event.status.value,
                     "was_already_completed": True
                 }
             )
         
-        # Marcar evento como completado
-        logger.info(f"Worker solicitando marcar evento {request.event_id} como completado")
+        # Mark event as completed
+        logger.info(f"Worker requesting to mark event {request.event_id} as completed")
         updated_event = event_repository.mark_event_completed(db, event_id=request.event_id)
         
         if not updated_event:
             return WorkerResponse(
                 success=False,
-                message=f"No se pudo actualizar el evento {request.event_id}"
+                message=f"Could not update event {request.event_id}"
             )
         
-        # Cerrar sala de chat
+        # Close chat room
         chat_result = chat_service.close_event_chat(db, request.event_id)
         
         return WorkerResponse(
             success=True,
-            message=f"Evento {request.event_id} marcado como completado",
+            message=f"Event {request.event_id} marked as completed",
             details={
                 "event_status": updated_event.status.value if updated_event else None,
                 "chat_closed": chat_result
@@ -203,10 +227,10 @@ async def process_event_completion(
         )
         
     except Exception as e:
-        logger.error(f"Error al procesar evento {request.event_id} como completado: {e}", exc_info=True)
+        logger.error(f"Error processing event {request.event_id} as completed: {e}", exc_info=True)
         return WorkerResponse(
             success=False,
-            message=f"Error procesando evento: {str(e)}"
+            message=f"Error processing event: {str(e)}"
         )
 
 @router.get("/events/due-completion", response_model=List[EventWorkerResponse])
@@ -215,20 +239,19 @@ async def get_events_due_for_completion(
     _: bool = Depends(verify_worker_api_key)
 ) -> List[EventWorkerResponse]:
     """
-    Obtiene hasta 100 eventos cuyo tiempo de finalización ya pasó.
+    Gets up to 100 events whose end time has already passed.
     
-    Este endpoint protegido por clave API permite al servicio de 
-    finalización de eventos obtener una lista de eventos que deberían
-    marcarse como completados.
+    This endpoint protected by API key allows the event completion
+    service to get a list of events that should be marked as completed.
     
-    Excluye eventos que han fallado más de 10 intentos de finalización.
+    Excludes events that have failed more than 10 completion attempts.
     
     Args:
-        db: Sesión de base de datos
-        _: Resultado de la verificación de seguridad (no usado)
+        db: Database session
+        _: Result of security verification (not used)
         
     Returns:
-        Lista de eventos (hasta 100) ordenados por fecha de finalización (más antigua primero).
+        List of events (up to 100) ordered by end time (oldest first).
     """
     try:
         now_utc = datetime.now(timezone.utc)
@@ -236,22 +259,22 @@ async def get_events_due_for_completion(
         events = db.query(Event).filter(
             Event.status == EventStatus.SCHEDULED, 
             Event.end_time < now_utc + timedelta(days=1),
-            Event.completion_attempts <= 10  # Excluir eventos con más de 10 intentos
+            Event.completion_attempts <= 10  # Exclude events with more than 10 attempts
         ).order_by(
             Event.end_time.asc()
         ).limit(100).all()
         
-        logger.info(f"Encontrados {len(events)} eventos cuya finalización está pendiente.")
+        logger.info(f"Found {len(events)} events with pending completion.")
         
-        # Convertir a esquema Pydantic para respuesta usando el nuevo esquema
+        # Convert to Pydantic schema for response using the new schema
         return [EventWorkerResponse.from_orm(event) for event in events]
         
     except Exception as e:
-        logger.error(f"Error obteniendo eventos pendientes de finalización: {e}", exc_info=True)
-        # Devolver lista vacía o lanzar excepción dependiendo de la política de errores
+        logger.error(f"Error getting events pending completion: {e}", exc_info=True)
+        # Return empty list or raise exception depending on error policy
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error interno al obtener eventos: {str(e)}"
+            detail=f"Internal error getting events: {str(e)}"
         )
 
 @router.post("/events/{event_id}/complete", response_model=EventWorkerResponse)
@@ -262,64 +285,64 @@ async def process_event_completion(
     _: bool = Depends(verify_worker_api_key)
 ) -> EventWorkerResponse:
     """
-    Marca un evento como completado y cierra su chat asociado.
+    Marks an event as completed and closes its associated chat.
     
-    Este endpoint protegido por clave API permite al servicio de 
-    finalización de eventos procesar la finalización de un evento,
-    marcándolo como completado y cerrando su chat asociado.
+    This endpoint protected by API key allows the event completion
+    service to process an event's completion, marking it as completed
+    and closing its associated chat.
     
-    Si ocurre un error durante el proceso, incrementa el contador 
-    de intentos de finalización fallidos.
+    If an error occurs during the process, it increments the counter
+    of failed completion attempts.
     
     Args:
-        event_id: ID del evento a completar
-        db: Sesión de base de datos
-        redis_client: Cliente Redis para caché
-        _: Resultado de la verificación de seguridad (no usado)
+        event_id: ID of the event to complete
+        db: Database session
+        redis_client: Redis client for cache
+        _: Result of security verification (not used)
         
     Returns:
-        Evento actualizado
+        Updated event
     """
     try:
-        # Obtener evento usando caché con skip_validation
+        # Get event using cache with skip_validation
         event = await event_service.get_event_cached(db, event_id, redis_client, skip_validation=True)
         if not event:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Evento con ID {event_id} no encontrado"
+                detail=f"Event with ID {event_id} not found"
             )
         
-        # Actualizar estado del evento a completado
-        # Obtener el objeto SQLAlchemy real para la actualización
+        # Update event status to completed
+        # Get the real SQLAlchemy object for the update
         db_event = db.query(Event).filter(Event.id == event_id).first()
         if not db_event:
-             # Esto no debería ocurrir si get_event_cached tuvo éxito, pero es una verificación segura
+             # This shouldn't happen if get_event_cached was successful, but it's a safe check
              raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Evento {event_id} no encontrado en BD para actualización"
+                detail=f"Event {event_id} not found in DB for update"
             )
             
         db_event.status = EventStatus.COMPLETED
         
-        # Cerrar chat asociado si existe
+        # Close associated chat if it exists
         if db_event.chat_room_id:
             chat_room = db.query(ChatRoom).filter(ChatRoom.id == db_event.chat_room_id).first()
             if chat_room:
                 chat_room.status = ChatRoomStatus.CLOSED
-                logger.info(f"Chat {chat_room.id} cerrado para el evento {event_id}")
+                logger.info(f"Chat {chat_room.id} closed for event {event_id}")
         
-        # Guardar cambios
-        db.add(db_event) # Asegurar que se añade el objeto de BD
+        # Save changes
+        db.add(db_event) # Ensure the DB object is added
         db.commit()
-        logger.info(f"Evento {event_id} marcado como completado correctamente")
+        logger.info(f"Event {event_id} successfully marked as completed")
         
-        # Obtener gym_id y creator_id para invalidación de caché
-        event_gym_id = getattr(event, 'gym_id', db_event.gym_id) # Usar db_event como fallback
-        event_creator_id = getattr(event, 'creator_id', db_event.creator_id) # Usar db_event como fallback
+        # Get gym_id and creator_id for cache invalidation
+        event_gym_id = getattr(event, 'gym_id', db_event.gym_id) # Use db_event as fallback
+        event_creator_id = getattr(event, 'creator_id', db_event.creator_id) # Use db_event as fallback
        
-        # Invalidar caché del evento y relacionados
+        # Invalidate event cache and related
         if redis_client:
-            logger.info(f"Invalidando caché para el evento {event_id}")
+            logger.info(f"Invalidating cache for event {event_id}")
             await event_service.invalidate_event_caches(
                 redis_client, 
                 event_id=event_id,
@@ -327,26 +350,26 @@ async def process_event_completion(
                 creator_id=event_creator_id
             )
         
-        # Devolver el objeto actualizado desde la BD
+        # Return the updated object from the DB
         return EventWorkerResponse.from_orm(db_event)
         
     except Exception as e:
         db.rollback()
-        # Incrementar contador de intentos fallidos
+        # Increment failed attempts counter
         try:
-            # Obtener el objeto de BD para incrementar intentos
+            # Get the DB object to increment attempts
             db_event_fail = db.query(Event).filter(Event.id == event_id).first()
             if db_event_fail:
                 db_event_fail.completion_attempts = db_event_fail.completion_attempts + 1
                 db.add(db_event_fail)
                 db.commit()
-                logger.warning(f"Incrementado contador de intentos para evento {event_id}: {db_event_fail.completion_attempts}")
+                logger.warning(f"Incremented attempts counter for event {event_id}: {db_event_fail.completion_attempts}")
         except Exception as inner_e:
-            logger.error(f"Error al incrementar contador de intentos: {inner_e}", exc_info=True)
+            logger.error(f"Error incrementing attempts counter: {inner_e}", exc_info=True)
             db.rollback()
             
-        logger.error(f"Error al completar evento {event_id}: {e}", exc_info=True)
+        logger.error(f"Error completing event {event_id}: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error interno al completar evento: {str(e)}"
+            detail=f"Internal error completing event: {str(e)}"
         ) 

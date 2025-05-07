@@ -26,7 +26,8 @@ class QueueService:
         creator_id: int,
         gym_id: int,
         event_title: str,
-        end_time: datetime
+        end_time: datetime,
+        first_message_chat: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Publica un mensaje para crear el chat de un evento.
@@ -43,6 +44,7 @@ class QueueService:
             gym_id: ID del gimnasio
             event_title: Título del evento
             end_time: Fecha y hora de finalización del evento (solo para referencia)
+            first_message_chat: Mensaje inicial opcional que se enviará al crear la sala de chat
             
         Returns:
             Resultado del envío del mensaje a SQS
@@ -56,7 +58,8 @@ class QueueService:
                     "event_id": event_id,
                     "creator_id": creator_id,
                     "gym_id": gym_id,
-                    "event_title": event_title
+                    "event_title": event_title,
+                    "first_message_chat": first_message_chat
                 }
             }
             
