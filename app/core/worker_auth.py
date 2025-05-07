@@ -48,72 +48,56 @@ async def verify_worker_api_key(
         logger.debug(f"Petición desde IP: {client_ip} a endpoint: {endpoint}")
         logger.debug(f"Headers recibidos: {request.headers}")
         
-        # Obtener la clave API esperada desde settings
-        settings = get_settings()
-        expected_api_key = settings.WORKER_API_KEY
+        # Salida con print explícito para garantizar visibilidad
+        if not api_key_header:
+            print(f"⚠️ ERROR: No se recibió clave de API en el encabezado X-API-Key.")
+            logger.critical("No se recibió clave de API en encabezado X-API-Key")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="API key requerida"
+            )
         
-        # Registrar las claves (enmascaradas) para depuración
-        # Usar DEBUG para asegurar que se muestra siempre
-        logger.debug(f"X-API-Key recibida: '{api_key_header}'")
-        logger.debug(f"X-API-Key esperada: '{expected_api_key}'")
+        # Usar patrón anti-timing-attack para la comparación
+        expected_api_key = get_settings().WORKER_API_KEY
         
-        # Versión enmascarada para INFO logs
-        logger.info(f"Autenticación worker - Clave recibida (enmascarada): '{mask_key(api_key_header)}', Clave esperada (enmascarada): '{mask_key(expected_api_key)}'")
+        # Prints explícitos para depuración
+        print(f"🔑 API KEY RECIBIDA: {mask_key(api_key_header)}")
+        print(f"🔑 API KEY ESPERADA: {mask_key(expected_api_key)}")
+        print(f"🔍 LONGITUDES: Recibida={len(api_key_header)} caracteres, Esperada={len(expected_api_key)} caracteres")
+        
+        # Log detallado para debugging
+        logger.debug(f"Comparando API keys - Recibida: {mask_key(api_key_header)}, Esperada: {mask_key(expected_api_key)}")
         
         if not expected_api_key:
-            logger.error("Error de configuración: WORKER_API_KEY no está definida en la configuración")
+            print("⚠️ ERROR: WORKER_API_KEY no está configurada en el servidor")
+            logger.critical("WORKER_API_KEY no está configurada en el servidor")
+            # No revelar este error en la respuesta
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Error de configuración: WORKER_API_KEY no está definida"
+                detail="Error de configuración del servidor"
             )
         
-        if not api_key_header:
-            logger.warning(f"Autenticación de worker faltante desde IP: {client_ip}")
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail=f"Autenticación de worker faltante desde IP: {client_ip}"
-            )
-        
-        # Registrar la longitud de ambas claves para verificar si hay problemas de espacio/formato
-        logger.debug(f"Longitud clave recibida: {len(api_key_header)} caracteres")
-        logger.debug(f"Longitud clave esperada: {len(expected_api_key)} caracteres")
-        
-        # Verificar si hay espacios en blanco o caracteres invisibles
-        if api_key_header.strip() != api_key_header:
-            logger.warning(f"La clave API recibida contiene espacios en blanco o caracteres invisibles")
-            # Intentar limpiar la clave
-            api_key_header = api_key_header.strip()
-            logger.debug(f"Clave API después de limpiar: '{api_key_header}', longitud: {len(api_key_header)}")
-        
-        # Comparación segura que previene ataques de temporización
         is_valid = secrets.compare_digest(api_key_header, expected_api_key)
         
-        # Registrar el resultado de la validación
-        logger.info(f"Resultado validación worker: {'SUCCESS' if is_valid else 'FAILED'}")
+        print(f"🔐 AUTENTICACIÓN: {'✅ VÁLIDA' if is_valid else '❌ INVÁLIDA'}")
         
-        if not is_valid:
-            # Registrar detalles adicionales que pueden ayudar a diagnosticar
-            logger.warning(f"Clave API del worker inválida desde IP: {client_ip}")
-            logger.debug(f"Datos para diagnóstico - Recibida: '{api_key_header}', Esperada: '{expected_api_key}'")
+        # Logs detallados para distintos escenarios
+        if is_valid:
+            logger.debug("Autenticación exitosa para API key de worker")
+            return True
+        else:
+            logger.error(f"Autenticación fallida para API key, recibida {mask_key(api_key_header)}")
+            print(f"⚠️ ERROR: Clave API inválida")
             
-            # Comparar carácter por carácter para identificar el punto exacto del fallo
-            min_len = min(len(api_key_header), len(expected_api_key))
-            for i in range(min_len):
-                if api_key_header[i] != expected_api_key[i]:
-                    logger.debug(f"Primera diferencia encontrada en la posición {i}: '{api_key_header[i]}' != '{expected_api_key[i]}'")
-                    break
-            
-            # Verificar si las longitudes son diferentes
-            if len(api_key_header) != len(expected_api_key):
-                logger.debug(f"Longitudes diferentes: recibida ({len(api_key_header)}) != esperada ({len(expected_api_key)})")
+            # Verificar si tiene misma longitud pero caracteres diferentes
+            if len(api_key_header) == len(expected_api_key):
+                print("📝 NOTA: Las claves tienen la misma longitud pero valores diferentes")
+                logger.warning("Las claves API tienen la misma longitud pero valores diferentes")
             
             raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail=f"Clave API del worker inválida desde IP: {client_ip}"
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="API key inválida"
             )
-        
-        logger.debug(f"==== FIN VERIFICACIÓN API KEY (ÉXITO) ====")
-        return True
         
     except HTTPException:
         logger.debug(f"==== FIN VERIFICACIÓN API KEY (FALLIDA) ====")
