@@ -6,8 +6,10 @@ import time
 from app.core.config import get_settings
 from app.core.stream_client import stream_client
 
-# Usar un valor de webhook secret fijo para pruebas
-WEBHOOK_SECRET = "test_webhook_secret_for_local_testing"
+# Necesitamos el API_SECRET para firmar los mensajes en el lado del cliente
+# Esto simula lo que Stream hace cuando envía un webhook
+settings = get_settings()
+API_SECRET = settings.STREAM_API_SECRET
 
 def test_chat_webhook():
     """
@@ -85,10 +87,13 @@ def test_chat_webhook():
             }
         }
         
-        # Calcular firma del webhook usando el secreto fijo
+        # Convertir el payload a JSON para enviar en el webhook
         body = json.dumps(webhook_payload).encode()
+        
+        # Generar la firma usando el mismo algoritmo que usa Stream (HMAC-SHA256)
+        # Stream usa el API_SECRET para firmar el payload
         signature = hmac.new(
-            WEBHOOK_SECRET.encode(),
+            API_SECRET.encode(),
             body,
             hashlib.sha256
         ).hexdigest()

@@ -21,16 +21,11 @@ settings = get_settings()
 
 async def verify_stream_webhook_signature(request: Request):
     """
-    Verify the webhook signature from GetStream.
-    """
-    # Obtener el secreto de webhook configurado o usar el de prueba
-    webhook_secret = settings.STREAM_WEBHOOK_SECRET
-
-    # Si no hay secreto configurado, verificar si es una prueba
-    if not webhook_secret:
-        logger.warning("STREAM_WEBHOOK_SECRET no configurado, intentando usar secreto de prueba")
-        webhook_secret = TEST_WEBHOOK_SECRET
+    Verifica la firma del webhook de Stream Chat usando HMAC-SHA256.
     
+    Esta implementación usa directamente el STREAM_API_SECRET para calcular y verificar
+    la firma, igual que lo hace el script de prueba.
+    """
     signature = request.headers.get("X-Signature")
     if not signature:
         raise HTTPException(
@@ -38,17 +33,22 @@ async def verify_stream_webhook_signature(request: Request):
             detail="Missing signature"
         )
     
-    # Get raw body
+    # Obtener el cuerpo del request
     body = await request.body()
     
-    # Calculate expected signature
+    # Obtener el API_SECRET de la configuración
+    api_secret = settings.STREAM_API_SECRET
+    
+    # Calcular la firma esperada
     expected_signature = hmac.new(
-        webhook_secret.encode(),
+        api_secret.encode(),
         body,
         hashlib.sha256
     ).hexdigest()
     
+    # Comparar firmas de manera segura
     if not hmac.compare_digest(signature, expected_signature):
+        logger.warning(f"Firma del webhook inválida. Esperada: {expected_signature}, Recibida: {signature}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid signature"
