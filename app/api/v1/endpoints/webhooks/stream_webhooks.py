@@ -96,14 +96,24 @@ async def handle_new_message(
                 detail="Missing required fields"
             )
             
-        # Encontrar el ID interno del usuario remitente
+        # Inicializar ID interno del remitente
+        sender_internal_id = None
+        
+        # Manejar mensajes del sistema de manera especial
+        if stream_user_id == "system":
+            logger.info("Mensaje del sistema detectado, no requiere notificaciones")
+            return {"status": "success", "message": "System message acknowledged, no notifications needed"}
+        
+        # Para usuarios normales, intentar encontrar su ID interno
         sender = db.query(User).filter(User.auth0_id == stream_user_id).first()
         if not sender:
             logger.warning(f"Usuario remitente no encontrado en la BD: {stream_user_id}")
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Sender user not found"
-            )
+            # En vez de lanzar una excepción, simplemente devolvemos una respuesta exitosa
+            # Esto evita que Stream siga reintentando el webhook
+            return {
+                "status": "success", 
+                "message": "User not found in database, but webhook acknowledged"
+            }
         
         sender_internal_id = sender.id
         logger.info(f"ID interno del remitente: {sender_internal_id}")
