@@ -230,7 +230,7 @@ async def read_events(
     Los resultados son paginados y ordenados cronológicamente.
     
     Permissions:
-        - Requires 'read_events' scope (all authenticated users)
+        - Requires 'read:events' scope (all authenticated users)
     """
     start_time = time.time()
     
@@ -286,7 +286,7 @@ async def read_my_events(
     limit: int = 100,
     current_gym: GymSchema = Depends(verify_gym_access_cached),
     redis_client: Redis = Depends(get_redis_client),
-    current_user: Auth0User = Security(auth.get_user, scopes=["read:own_events"])
+    current_user: Auth0User = Security(auth.get_user, scopes=["read:events"])
 ) -> Any:
     """
     Obtener eventos creados por el usuario actual.
