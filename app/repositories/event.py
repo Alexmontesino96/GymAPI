@@ -15,6 +15,11 @@ class EventRepository:
         """Crear un nuevo evento. Espera un ID de creador interno (int)."""
         event_data = event_in.dict()
         
+        # Eliminar el campo first_message_chat si existe, ya que no es parte del modelo Event
+        # Este campo solo se usa para enviar un mensaje inicial al crear la sala de chat
+        if 'first_message_chat' in event_data:
+            event_data.pop('first_message_chat')
+        
         # Ya no se maneja creator_id como string (Auth0 ID) aquí.
         # Se asume que el creator_id recibido es el ID interno del usuario.
         
