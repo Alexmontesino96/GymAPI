@@ -132,8 +132,7 @@ async def create_event_chat(
                         # Create message with appropriate format
                         message_response = channel.send_message({
                             "text": request.first_message_chat,
-                            "user_id": creator.auth0_id  # Use auth0_id for Stream
-                        })
+                        }, user_id=creator.auth0_id)  # Use auth0_id for Stream as positional argument
                         logger.info(f"[DEBUG] Initial message sent to event chat {request.event_id}")
                     else:
                         logger.warning(f"[DEBUG] Could not find creator {request.creator_id} to send initial message")
