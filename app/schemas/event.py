@@ -15,7 +15,10 @@ class EventBase(BaseModel):
     location: Optional[str] = Field(None, max_length=100)
     max_participants: int = Field(0, description="0 significa sin límite de participantes")
     status: EventStatus = EventStatus.SCHEDULED
-    
+
+
+# Esquema para usar en CREATE con validadores estrictos
+class EventCreateBase(EventBase):
     @field_validator('start_time')
     @classmethod
     def start_time_must_be_future(cls, v):
@@ -40,7 +43,7 @@ class EventBase(BaseModel):
         return v
 
 
-class EventCreate(EventBase):
+class EventCreate(EventCreateBase):
     """Esquema para crear un evento."""
     first_message_chat: Optional[str] = Field(None, max_length=500, description="Primer mensaje que se enviará automáticamente al crear la sala de chat del evento")
 
