@@ -27,6 +27,7 @@ from app.db.redis_client import get_redis_client
 from app.core.stream_client import stream_client
 from datetime import timedelta
 from redis import Redis
+import re
 
 # Configure logger
 logger = logging.getLogger(__name__)
@@ -129,10 +130,13 @@ async def create_event_chat(
                     # Find the creator user to use their ID in the message
                     creator = db.query(User).filter(User.id == request.creator_id).first()
                     if creator and creator.auth0_id:
+                        # Sanitizar el ID para Stream (siguiendo el mismo patrón del servicio de chat)
+                        safe_user_id = re.sub(r'[^a-zA-Z0-9@_\-]', '_', creator.auth0_id)
+                        
                         # Create message with appropriate format
                         message_response = channel.send_message({
                             "text": request.first_message_chat,
-                        }, user_id=creator.auth0_id)  # Use auth0_id for Stream as positional argument
+                        }, user_id=safe_user_id)  # Use sanitized auth0_id for Stream
                         logger.info(f"[DEBUG] Initial message sent to event chat {request.event_id}")
                     else:
                         logger.warning(f"[DEBUG] Could not find creator {request.creator_id} to send initial message")
