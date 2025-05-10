@@ -209,22 +209,61 @@ class Auth0:
             token_scope_str: str = payload.get('scope', '')
             token_scopes = []
             
+            logger.info(f"Verificando permisos. Requeridos: {security_scopes.scopes}")
+            logger.info(f"Token scope string: '{token_scope_str}'")
+            
             if isinstance(token_scope_str, str):
                 token_scopes = token_scope_str.split()
+                logger.info(f"Token scopes después de split: {token_scopes}")
             else:
                 # Este caso es poco probable, pero lo manejamos por seguridad
                 # (quizás auth0 cambie el formato del scope)
+                logger.error(f"Token scope no es string, tipo: {type(token_scope_str)}")
                 raise Auth0UnauthorizedException(detail='Token "scope" field must be a string')
             
             # Comprobar también en permissions (como array)
             token_permissions = payload.get('permissions', [])
+            logger.info(f"Token permissions: {token_permissions}")
+            
             if isinstance(token_permissions, list):
                 token_scopes.extend(token_permissions)
+                logger.info(f"Token scopes después de añadir permissions: {token_scopes}")
             
+            # Registrar tipo de segurity_scopes
+            logger.info(f"security_scopes tipo: {type(security_scopes)}")
+            logger.info(f"security_scopes.scopes tipo: {type(security_scopes.scopes)}")
+            
+            # Verificar permisos requeridos
             for scope in security_scopes.scopes:
+                logger.info(f"Verificando permiso: '{scope}' (tipo: {type(scope)})")
+                
+                # Conversion para verificar si hay alguna transformación interna
+                alt_scope_format = scope.replace(':', '_') if ':' in scope else scope.replace('_', ':')
+                logger.info(f"Permiso en formato alternativo: '{alt_scope_format}'")
+                
                 if scope not in token_scopes:
+                    logger.warning(f"Permiso '{scope}' no encontrado en token_scopes")
+                    logger.warning(f"¿Formato alternativo '{alt_scope_format}' en token_scopes? {alt_scope_format in token_scopes}")
+                    
+                    # Verificar cada elemento del token_scopes para buscar similitudes
+                    for ts in token_scopes:
+                        similarity = 0
+                        if ts.lower() == scope.lower():
+                            similarity = 1
+                        elif ts.replace(':', '_') == scope.replace(':', '_'):
+                            similarity = 2
+                        elif ts.replace('_', ':') == scope.replace('_', ':'):
+                            similarity = 3
+                        
+                        if similarity > 0:
+                            logger.warning(f"Permiso similar encontrado: '{ts}' (similitud tipo {similarity})")
+                    
                     raise Auth0UnauthorizedException(detail=f'Missing "{scope}" scope',
                                                    headers={'WWW-Authenticate': f'Bearer scope="{security_scopes.scope_str}"'})
+                else:
+                    logger.info(f"Permiso '{scope}' encontrado en token_scopes")
+                    
+            logger.info("Verificación de permisos completada con éxito")
         
         try:
             # Extraer el email de diferentes posibles lugares en el payload
