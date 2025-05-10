@@ -229,6 +229,18 @@ class Auth0:
                 token_scopes.extend(token_permissions)
                 logger.info(f"Token scopes después de añadir permissions: {token_scopes}")
             
+            # Crear versiones normalizadas de los permisos del token
+            normalized_token_scopes = []
+            for ts in token_scopes:
+                normalized_token_scopes.append(ts)  # Agregar original
+                # Agregar versión alternativa (con _ en lugar de : o viceversa)
+                if ':' in ts:
+                    normalized_token_scopes.append(ts.replace(':', '_'))
+                elif '_' in ts:
+                    normalized_token_scopes.append(ts.replace('_', ':'))
+            
+            logger.info(f"Token scopes normalizados (incluyendo ambos formatos): {normalized_token_scopes}")
+            
             # Registrar tipo de segurity_scopes
             logger.info(f"security_scopes tipo: {type(security_scopes)}")
             logger.info(f"security_scopes.scopes tipo: {type(security_scopes.scopes)}")
@@ -237,13 +249,16 @@ class Auth0:
             for scope in security_scopes.scopes:
                 logger.info(f"Verificando permiso: '{scope}' (tipo: {type(scope)})")
                 
-                # Conversion para verificar si hay alguna transformación interna
+                # Verificar tanto el formato original como con : y _ intercambiados
                 alt_scope_format = scope.replace(':', '_') if ':' in scope else scope.replace('_', ':')
                 logger.info(f"Permiso en formato alternativo: '{alt_scope_format}'")
                 
-                if scope not in token_scopes:
-                    logger.warning(f"Permiso '{scope}' no encontrado en token_scopes")
-                    logger.warning(f"¿Formato alternativo '{alt_scope_format}' en token_scopes? {alt_scope_format in token_scopes}")
+                # Comprobación flexible: aceptar cualquier formato
+                if scope in normalized_token_scopes or alt_scope_format in normalized_token_scopes:
+                    logger.info(f"Permiso '{scope}' (o su alternativa '{alt_scope_format}') encontrado en token_scopes")
+                else:
+                    logger.warning(f"Permiso '{scope}' no encontrado en token_scopes normalizados")
+                    logger.warning(f"Token scopes normalizados: {normalized_token_scopes}")
                     
                     # Verificar cada elemento del token_scopes para buscar similitudes
                     for ts in token_scopes:
@@ -260,9 +275,7 @@ class Auth0:
                     
                     raise Auth0UnauthorizedException(detail=f'Missing "{scope}" scope',
                                                    headers={'WWW-Authenticate': f'Bearer scope="{security_scopes.scope_str}"'})
-                else:
-                    logger.info(f"Permiso '{scope}' encontrado en token_scopes")
-                    
+            
             logger.info("Verificación de permisos completada con éxito")
         
         try:
