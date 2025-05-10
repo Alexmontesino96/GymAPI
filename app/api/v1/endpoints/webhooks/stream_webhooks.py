@@ -11,6 +11,7 @@ from app.services.notification_service import notification_service
 from app.services.chat import chat_service
 from app.core.stream_client import stream_client
 from app.models.user import User
+from app.models.chat import ChatRoom
 
 # Valor de webhook secret fijo para pruebas
 TEST_WEBHOOK_SECRET = "test_webhook_secret_for_local_testing"
