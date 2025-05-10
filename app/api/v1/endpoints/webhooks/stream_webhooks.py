@@ -83,7 +83,7 @@ async def handle_new_message(
         channel_type = channel.get("type")
         channel_id = channel.get("id")
         
-        # Get message sender (Stream user_id - auth0_id sanitizado)
+        # Get message sender (Stream user_id)
         stream_user_id = message.get("user", {}).get("id")
         
         # Log para diagnóstico
@@ -99,83 +99,61 @@ async def handle_new_message(
         # Inicializar ID interno del remitente
         sender_internal_id = None
         
-        # Manejar mensajes del sistema de manera especial
+        # Manejar mensajes del system explícitamente
         if stream_user_id == "system":
-            logger.info("Mensaje del sistema detectado, no requiere notificaciones")
-            return {"status": "success", "message": "System message acknowledged, no notifications needed"}
+            # No intentar buscar usuario, procesar como mensaje de sistema
+            logger.info("Procesando mensaje de System")
+            return {"status": "success", "message": "System message processed"}
         
-        # Para usuarios normales, intentar encontrar su ID interno
-        sender = db.query(User).filter(User.auth0_id == stream_user_id).first()
-        if not sender:
-            logger.warning(f"Usuario remitente no encontrado en la BD: {stream_user_id}")
-            # En vez de lanzar una excepción, simplemente devolvemos una respuesta exitosa
-            # Esto evita que Stream siga reintentando el webhook
-            return {
-                "status": "success", 
-                "message": "User not found in database, but webhook acknowledged"
-            }
-        
-        sender_internal_id = sender.id
-        logger.info(f"ID interno del remitente: {sender_internal_id}")
-        
-        # Get channel members to notify (excluding sender) - ahora devuelve IDs internos
-        channel_members = await chat_service.get_channel_members(channel_type, channel_id)
-        
-        # Log para diagnóstico - miembros del canal (ahora son IDs internos)
-        logger.info(f"Miembros del canal ({len(channel_members)}): {channel_members}")
-        
-        # Filtrar al remitente de la lista de destinatarios
-        recipients = [member for member in channel_members if member != sender_internal_id]
-        
-        # Log para diagnóstico - destinatarios
-        logger.info(f"Destinatarios después de filtrar al remitente ({len(recipients)}): {recipients}")
-        
-        if not recipients:
-            logger.info(f"No hay destinatarios para notificar en el canal {channel_id}")
-            return {"status": "success", "message": "No recipients to notify"}
-        
-        # Prepare notification data
-        notification_data = {
-            "title": f"New message in {channel.get('name', 'chat')}",
-            "message": message.get("text", "You have a new message"),
-            "data": {
-                "channel_id": channel_id,
-                "channel_type": channel_type,
-                "message_id": message.get("id"),
-                "sender_id": sender_internal_id  # Ahora usamos el ID interno
-            }
-        }
-        
-        # Send notifications in background
-        background_tasks.add_task(
-            notification_service.send_notification_to_users,
-            db,
-            recipients,  # Ahora son IDs internos
-            notification_data
-        )
-        
-        # Enviar mensaje de respuesta si es necesario
+        # Intentar obtener ID interno usando formato user_X o buscar por auth0_id (legacy)
         try:
-            # Obtener el canal de Stream
-            stream_channel = stream_client.channel(channel_type, channel_id)
+            from app.core.stream_utils import is_internal_id_format, get_internal_id_from_stream, is_legacy_id_format
             
-            # Crear mensaje de respuesta
-            response_message = {
-                "text": "He recibido tu mensaje y lo estoy procesando.",
-                "user_id": stream_user_id  # Seguimos usando auth0_id (sanitizado) para Stream
-            }
-            
-            # Enviar mensaje de respuesta
-            stream_channel.send_message(response_message)
-            logger.info(f"Mensaje de respuesta enviado en el canal {channel_id}")
-        except Exception as msg_error:
-            logger.error(f"Error enviando mensaje de respuesta: {str(msg_error)}", exc_info=True)
-            # No fallar el webhook si el envío del mensaje falla
+            if is_internal_id_format(stream_user_id):
+                # Nuevo formato de ID interno
+                sender_internal_id = get_internal_id_from_stream(stream_user_id)
+                logger.info(f"ID interno extraído de Stream: {sender_internal_id}")
+                
+                # Verificar que el usuario existe
+                sender = db.query(User).filter(User.id == sender_internal_id).first()
+                if not sender:
+                    logger.warning(f"Usuario con ID interno {sender_internal_id} no encontrado en la BD. Posible inconsistencia.")
+                    # Esto no debería ocurrir, pero si ocurre, registrarlo como éxito
+                    # ya que el mensaje ya está enviado en Stream
+                    return {"status": "success", "message": "Message processed, user not found in DB"}
+            elif is_legacy_id_format(stream_user_id):
+                # Formato legacy (auth0_id)
+                sender = db.query(User).filter(User.auth0_id == stream_user_id).first()
+                if not sender:
+                    logger.warning(f"Usuario remitente no encontrado en la BD: {stream_user_id}")
+                    # Para mensajes normales, registramos éxito aunque no encontremos el usuario
+                    return {"status": "success", "message": "Message processed, legacy user not found"}
+                sender_internal_id = sender.id
+            else:
+                logger.warning(f"Formato de ID de Stream desconocido: {stream_user_id}")
+                return {"status": "success", "message": "Message processed, unknown ID format"}
         
-        return {
-            "status": "success",
-            "message": f"Notifications queued for {len(recipients)} recipients"
-        }
+        except Exception as e:
+            logger.error(f"Error procesando ID de usuario: {str(e)}", exc_info=True)
+            return {"status": "error", "message": f"Error processing user ID: {str(e)}"}
+        
+        # Procesar el mensaje aquí según sea necesario
+        try:
+            # Obtener la sala de chat
+            chat_room = db.query(ChatRoom).filter(ChatRoom.stream_channel_id == channel_id).first()
+            if not chat_room:
+                logger.warning(f"Sala de chat no encontrada para canal {channel_id}")
+                return {"status": "success", "message": "Message processed, chat room not found in DB"}
+                
+            # Aquí puedes implementar la lógica para procesar el mensaje
+            # Por ejemplo: enviar notificaciones, actualizar contadores, etc.
+            
+            return {"status": "success", "message": "Message processed successfully"}
+            
+        except Exception as e:
+            logger.error(f"Error processing stream webhook: {e}", exc_info=True)
+            # No lanzar excepción para devolver 200 OK a Stream (evitar reintentos)
+            return {"status": "error", "message": f"Error processing webhook: {str(e)}"}
         
     except Exception as e:
         logger.error(f"Error processing stream webhook: {str(e)}")

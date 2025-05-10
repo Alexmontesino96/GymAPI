@@ -28,6 +28,7 @@ from app.core.stream_client import stream_client
 from datetime import timedelta
 from redis import Redis
 import re
+from app.core.stream_utils import get_stream_id_from_internal
 
 # Configure logger
 logger = logging.getLogger(__name__)
@@ -127,19 +128,46 @@ async def create_event_chat(
                     # Get the Stream channel
                     channel = stream_client.channel(verification_room.stream_channel_type, verification_room.stream_channel_id)
                     
-                    # Find the creator user to use their ID in the message
-                    creator = db.query(User).filter(User.id == request.creator_id).first()
-                    if creator and creator.auth0_id:
-                        # Sanitizar el ID para Stream (siguiendo el mismo patrón del servicio de chat)
-                        safe_user_id = re.sub(r'[^a-zA-Z0-9@_\-]', '_', creator.auth0_id)
-                        
-                        # Create message with appropriate format
-                        message_response = channel.send_message({
-                            "text": request.first_message_chat,
-                        }, user_id=safe_user_id)  # Use sanitized auth0_id for Stream
-                        logger.info(f"[DEBUG] Initial message sent to event chat {request.event_id}")
-                    else:
-                        logger.warning(f"[DEBUG] Could not find creator {request.creator_id} to send initial message")
+                    # Use creator_id directly as the internal ID
+                    from app.core.stream_utils import get_stream_id_from_internal
+                    
+                    # Generate Stream-compatible ID from internal ID
+                    message_sender_id = get_stream_id_from_internal(request.creator_id)
+                    
+                    # Verificar si el usuario existe en Stream
+                    user_exists_in_stream = True
+                    try:
+                        # Intentar actualizar/crear el usuario en Stream
+                        stream_client.update_user({
+                            "id": message_sender_id,
+                            "name": f"Usuario {request.creator_id}",
+                        })
+                        logger.info(f"[DEBUG] Usuario {message_sender_id} creado/actualizado en Stream")
+                    except Exception as e:
+                        logger.error(f"[DEBUG] Error creando usuario en Stream: {str(e)}")
+                        # Verificar si el error es porque el usuario fue eliminado
+                        if "was deleted" in str(e):
+                            user_exists_in_stream = False
+                            logger.warning(f"[DEBUG] Usuario {message_sender_id} fue eliminado en Stream. Usaremos system como alternativa.")
+                    
+                    # Si el usuario no existe, usamos "system"
+                    if not user_exists_in_stream:
+                        message_sender_id = "system"
+                        # Asegurarse de que existe el usuario system
+                        try:
+                            stream_client.update_user({
+                                "id": "system",
+                                "name": "System Bot",
+                            })
+                        except:
+                            # Ignorar errores, solo es un intento de creación
+                            pass
+                    
+                    # Create message with appropriate format
+                    message_response = channel.send_message({
+                        "text": request.first_message_chat,
+                    }, user_id=message_sender_id)
+                    logger.info(f"[DEBUG] Initial message sent to event chat {request.event_id} using user {message_sender_id}")
                 except Exception as msg_error:
                     logger.error(f"[DEBUG] Error sending initial message: {str(msg_error)}", exc_info=True)
                     # Don't fail room creation if message sending fails

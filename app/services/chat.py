@@ -103,13 +103,12 @@ class ChatService:
             user: Objeto de usuario de la base de datos
             
         Returns:
-            str: ID sanitizado para usar con Stream
+            str: ID para usar con Stream
         """
-        # Por ahora, seguimos usando auth0_id para Stream debido a su requisito de IDs de string
-        stream_id = user.auth0_id
+        from app.core.stream_utils import get_stream_id_from_internal
         
-        # Sanitizar ID para formato válido en Stream
-        return re.sub(r'[^a-zA-Z0-9@_\-]', '_', stream_id)
+        # Usamos el ID interno del usuario para generar el ID de Stream
+        return get_stream_id_from_internal(user.id)
     
     def create_room(self, db: Session, creator_id: int, room_data: ChatRoomCreate) -> Dict[str, Any]:
         """
@@ -381,15 +380,29 @@ class ChatService:
         Returns:
             List: Lista de miembros con IDs internos
         """
+        from app.core.stream_utils import get_internal_id_from_stream, is_internal_id_format, is_legacy_id_format
+        
         result = []
         for member in stream_members:
             stream_id = member.get("user_id")
             if not stream_id:
                 continue
             
-            # Buscar usuario por auth0_id (stream_id es auth0_id sanitizado)
-            # Esto podría optimizarse con una consulta en lote
-            user = db.query(User).filter(User.auth0_id == stream_id).first()
+            user = None
+            
+            # Determinar tipo de ID y buscar usuario apropiadamente
+            if is_internal_id_format(stream_id):
+                # Nuevo formato - obtener ID interno directamente
+                try:
+                    internal_id = get_internal_id_from_stream(stream_id)
+                    user = db.query(User).filter(User.id == internal_id).first()
+                except ValueError:
+                    logger.warning(f"ID de Stream con formato inválido: {stream_id}")
+                    continue
+            elif is_legacy_id_format(stream_id):
+                # Formato legacy - buscar por auth0_id
+                user = db.query(User).filter(User.auth0_id == stream_id).first()
+            
             if user:
                 # Añadir información del usuario interno
                 member_info = {
@@ -535,34 +548,39 @@ class ChatService:
         import time
         import logging
         import re
+        from app.core.stream_utils import get_stream_id_from_internal
+        
         logger = logging.getLogger("chat_service")
         start_time = time.time()
         
         logger.info(f"[DEBUG] Buscando o creando chat para evento {event_id}, usuario interno {creator_id}")
         
-        # Obtener el auth0_id del creador
+        # Obtener el usuario creador
         creator = db.query(User).filter(User.id == creator_id).first()
-        if not creator or not creator.auth0_id:
-            logger.error(f"[DEBUG] Usuario creador {creator_id} no encontrado o no tiene auth0_id")
-            raise ValueError(f"Usuario creador {creator_id} no encontrado o no tiene auth0_id")
+        if not creator:
+            logger.error(f"[DEBUG] Usuario creador {creator_id} no encontrado")
+            raise ValueError(f"Usuario creador {creator_id} no encontrado")
             
-        auth0_creator_id = creator.auth0_id
-        
-        # Sanitizar el creator_id para evitar errores de formato
-        safe_creator_id = re.sub(r'[^a-zA-Z0-9@_\-]', '_', auth0_creator_id)
+        # Obtener ID para Stream usando adaptador interno
+        creator_stream_id = get_stream_id_from_internal(creator_id)
         
         try:
-            # Asegurar que el creador existe en Stream
+            # Verificar si el usuario existe en Stream
+            user_exists_in_stream = True
             try:
                 stream_client.update_user(
                     {
-                        "id": safe_creator_id,
-                        "name": safe_creator_id[:20],  # Limitar longitud del nombre
+                        "id": creator_stream_id,
+                        "name": f"Usuario {creator_id}",  # Nombre genérico basado en ID
                     }
                 )
-                logger.info(f"[DEBUG] Usuario {safe_creator_id} creado/actualizado en Stream")
+                logger.info(f"[DEBUG] Usuario {creator_stream_id} creado/actualizado en Stream")
             except Exception as e:
                 logger.error(f"[DEBUG] Error creando usuario en Stream: {str(e)}")
+                # Verificar si el error es porque el usuario fue eliminado
+                if "was deleted" in str(e):
+                    user_exists_in_stream = False
+                    logger.warning(f"[DEBUG] Usuario {creator_stream_id} fue eliminado en Stream. Usaremos system como alternativa.")
                 # Continuamos aunque haya error para intentar crear el chat
             
             # Optimización 1: Verificar si el evento existe primero
@@ -602,11 +620,11 @@ class ChatService:
                     members = response.get("members", [])
                     current_members = [member.get("user_id", "") for member in members]
                     
-                    # Añadir el usuario actual si no está en el canal
-                    if safe_creator_id not in current_members:
-                        logger.info(f"[DEBUG] Añadiendo usuario {safe_creator_id} al canal existente")
+                    # Añadir el usuario actual si no está en el canal y existe en Stream
+                    if user_exists_in_stream and creator_stream_id not in current_members:
+                        logger.info(f"[DEBUG] Añadiendo usuario {creator_stream_id} al canal existente")
                         try:
-                            channel.add_members([safe_creator_id])
+                            channel.add_members([creator_stream_id])
                         except Exception as e:
                             logger.warning(f"[DEBUG] No se pudo añadir miembro al canal: {e}")
                             # Continuar aunque falle la adición del miembro
@@ -650,37 +668,67 @@ class ChatService:
                 db.delete(db_room)
                 db.commit()
             
-            # Crear nueva sala con ID interno
-            creation_start = time.time()
+            # Crear la sala
             try:
-                logger.info(f"[DEBUG] Llamando a create_room con creator_id={creator_id}, event_id={room_data.event_id}")
-                result = self.create_room(db, creator_id, room_data)
-                creation_time = time.time() - creation_start
-                logger.info(f"[DEBUG] Creación de sala completada en {creation_time:.2f}s, resultado={result}")
-                
-                # Verificar manualmente si se guardó correctamente
-                verification_room = chat_repository.get_event_room(db, event_id=event_id)
-                if verification_room:
-                    logger.info(f"[DEBUG] Verificación: sala creada correctamente en BD, id={verification_room.id}, event_id={verification_room.event_id}")
+                # Si el usuario existe en Stream, usar su ID
+                if user_exists_in_stream:
+                    result = self.create_room(db, creator_id, room_data)
+                    logger.info(f"[DEBUG] Nueva sala creada - tiempo total: {time.time() - start_time:.2f}s")
+                    return result
                 else:
-                    logger.warning(f"[DEBUG] Verificación: ¡SALA NO ENCONTRADA EN BD después de create_room para event_id={event_id}!")
-                
-                total_time = time.time() - start_time
-                logger.info(f"[DEBUG] Nueva sala creada - tiempo total: {total_time:.2f}s")
-                
-                return result
+                    # Si el usuario no existe en Stream (fue eliminado), crear sala usando "system"
+                    logger.info("[DEBUG] Creando sala con usuario system ya que el creador fue eliminado en Stream")
+                    # Crear usuario system en Stream si no existe
+                    try:
+                        stream_client.update_user({
+                            "id": "system",
+                            "name": "System Bot",
+                        })
+                        logger.info("[DEBUG] Usuario system creado/actualizado en Stream")
+                    except Exception as system_error:
+                        logger.error(f"[DEBUG] Error creando usuario system en Stream: {system_error}")
+                    
+                    # Crear canal usando "system" como ID de usuario
+                    channel_type = "messaging"
+                    creator_hash = "system"  # Usar system en lugar del hash del creador
+                    channel_id = f"event_{room_data.event_id}_{creator_hash}"
+                    
+                    try:
+                        # Crear canal de manera manual
+                        channel = stream_client.channel(channel_type, channel_id)
+                        response = channel.create(user_id="system")
+                        
+                        if response and 'channel' in response:
+                            # Guardar en base de datos local
+                            db_room = chat_repository.create_room(
+                                db,
+                                stream_channel_id=channel_id,
+                                stream_channel_type=channel_type,
+                                room_data=room_data
+                            )
+                            
+                            return {
+                                "id": db_room.id,
+                                "stream_channel_id": channel_id,
+                                "stream_channel_type": channel_type,
+                                "event_id": event_id,
+                                "name": room_data.name,
+                                "members": [],
+                                "created_at": db_room.created_at
+                            }
+                        else:
+                            logger.error("[DEBUG] Respuesta inválida al crear canal con system")
+                            raise ValueError("Respuesta inválida al crear canal con system")
+                    except Exception as channel_error:
+                        logger.error(f"[DEBUG] Error creando canal con system: {channel_error}")
+                        raise
             except Exception as e:
                 logger.error(f"[DEBUG] Error en create_room: {str(e)}", exc_info=True)
                 raise ValueError(f"Error creando sala de chat: {str(e)}")
                 
-        except ValueError as e:
-            # Errores específicos que queremos comunicar al usuario
-            logger.warning(f"[DEBUG] Error de validación: {e}")
-            raise
         except Exception as e:
-            # Otros errores inesperados
-            logger.error(f"[DEBUG] Error inesperado al obtener/crear sala de chat: {e}", exc_info=True)
-            raise ValueError(f"Error al crear sala de chat: {str(e)}")
+            logger.warning(f"[DEBUG] Error de validación: {str(e)}")
+            raise ValueError(f"Error creando sala de chat: {str(e)}")
     
     def add_user_to_channel(self, db: Session, room_id: int, user_id: int) -> Dict[str, Any]:
         """
