@@ -29,7 +29,7 @@ from app.models.user import User, UserRole
 from app.models.gym import Gym
 from app.models.user_gym import UserGym, GymRoleType
 from app.services.user import user_service
-from app.schemas.user import User as UserSchema, UserCreate, UserUpdate, UserRoleUpdate, UserProfileUpdate, UserSearchParams, EmailAvailabilityCheck, UserPublicProfile, Auth0EmailChangeRequest, UserSyncFromAuth0, GymUserSummary
+from app.schemas.user import User as UserSchema, UserCreate, UserUpdate, UserRoleUpdate, UserProfileUpdate, UserSearchParams, EmailAvailabilityCheck, UserPublicProfile, Auth0EmailChangeRequest, UserSyncFromAuth0, GymUserSummary, UserProfile
 from app.services.auth0_mgmt import auth0_mgmt_service
 from app.core.tenant import verify_gym_access, verify_gym_admin_access, verify_gym_trainer_access, get_current_gym, GymSchema
 from app.core.auth0_fastapi import auth, get_current_user, Auth0User
@@ -147,6 +147,170 @@ async def create_or_update_user_profile_data(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Error interno al actualizar los datos del perfil."
+        )
+
+@router.get("/profile/me", response_model=UserProfile, tags=["Profile"])
+async def get_my_profile(
+    db: Session = Depends(get_db),
+    current_user: Auth0User = Depends(get_current_user),
+    redis_client: redis.Redis = Depends(get_redis_client)
+) -> Any:
+    """
+    Obtiene el perfil detallado del usuario autenticado sin incluir información sensible.
+    
+    Este endpoint devuelve información detallada del perfil del usuario actual,
+    pero excluye datos sensibles como email y número de teléfono. Incluye información
+    como nombre, foto de perfil, biografía, metas, altura, peso y fecha de nacimiento.
+    """
+    logger = logging.getLogger("user_endpoint")
+    
+    # Obtener ID de Auth0
+    auth0_id = current_user.id
+    if not auth0_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Token inválido")
+    
+    try:
+        # Obtener usuario desde la BD
+        db_user = user_service.get_user_by_auth0_id(db, auth0_id=auth0_id)
+        if not db_user:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario no encontrado")
+        
+        # Crear y devolver objeto UserProfile
+        user_profile = UserProfile(
+            id=db_user.id,
+            first_name=db_user.first_name,
+            last_name=db_user.last_name,
+            picture=db_user.picture,
+            role=db_user.role,
+            bio=db_user.bio,
+            goals=db_user.goals,
+            height=db_user.height,
+            weight=db_user.weight,
+            birth_date=db_user.birth_date,
+            is_active=db_user.is_active,
+            created_at=db_user.created_at
+        )
+        
+        return user_profile
+    except HTTPException as e:
+        # Re-lanzar excepciones HTTP
+        raise e
+    except Exception as e:
+        logger.error(f"Error obteniendo perfil propio: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error interno al obtener perfil de usuario"
+        )
+
+@router.get("/profile/{user_id}", response_model=UserProfile, tags=["Profile"])
+async def get_user_profile_by_id(
+    user_id: int = Path(..., title="ID del usuario", ge=1),
+    db: Session = Depends(get_db),
+    current_user: Auth0User = Depends(get_current_user),
+    current_gym: GymSchema = Depends(verify_gym_access),
+    redis_client: redis.Redis = Depends(get_redis_client)
+) -> Any:
+    """
+    Obtiene el perfil detallado de un usuario si ambos pertenecen al mismo gimnasio.
+    
+    Este endpoint permite ver el perfil de otro usuario, pero solo si el usuario actual
+    y el usuario objetivo pertenecen al mismo gimnasio. Devuelve información de perfil
+    sin incluir datos sensibles como email o número de teléfono.
+    """
+    logger = logging.getLogger("user_endpoint")
+    gym_id = current_gym.id # ID del gimnasio actual
+    
+    # Obtener ID del usuario actual
+    auth0_id = current_user.id
+    if not auth0_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Token inválido")
+    
+    # Obtener ID interno del usuario actual
+    current_db_user = user_service.get_user_by_auth0_id(db, auth0_id=auth0_id)
+    if not current_db_user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario actual no encontrado")
+    
+    try:
+        # Verificar que el usuario objetivo pertenece al mismo gimnasio
+        target_belongs_to_gym = False
+        
+        if redis_client:
+            # Verificar usando caché
+            membership_cache_key = f"user_gym_membership:{user_id}:{gym_id}"
+            cached_role = await redis_client.get(membership_cache_key)
+            
+            if cached_role is not None:
+                if cached_role == "__NONE__":
+                    target_belongs_to_gym = False
+                else:
+                    target_belongs_to_gym = True
+            else:
+                # Cache miss, verificar en BD
+                user_gym = db.query(UserGym).filter(
+                    UserGym.user_id == user_id,
+                    UserGym.gym_id == gym_id
+                ).first()
+                
+                if user_gym:
+                    target_belongs_to_gym = True
+                    # Actualizar caché
+                    await redis_client.set(
+                        membership_cache_key, 
+                        user_gym.role.value, 
+                        ex=get_settings().CACHE_TTL_USER_MEMBERSHIP
+                    )
+                else:
+                    # Guardar resultado negativo en caché
+                    await redis_client.set(
+                        membership_cache_key, 
+                        "__NONE__", 
+                        ex=get_settings().CACHE_TTL_NEGATIVE
+                    )
+        else:
+            # Sin Redis, verificar directamente en BD
+            user_gym = db.query(UserGym).filter(
+                UserGym.user_id == user_id,
+                UserGym.gym_id == gym_id
+            ).first()
+            target_belongs_to_gym = user_gym is not None
+        
+        if not target_belongs_to_gym:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Usuario no encontrado o no pertenece al mismo gimnasio"
+            )
+        
+        # Obtener usuario objetivo
+        target_user = user_service.get_user(db, user_id=user_id)
+        if not target_user:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario no encontrado")
+        
+        # Crear y devolver objeto UserProfile
+        user_profile = UserProfile(
+            id=target_user.id,
+            first_name=target_user.first_name,
+            last_name=target_user.last_name,
+            picture=target_user.picture,
+            role=target_user.role,
+            bio=target_user.bio,
+            goals=target_user.goals,
+            height=target_user.height,
+            weight=target_user.weight,
+            birth_date=target_user.birth_date,
+            is_active=target_user.is_active,
+            created_at=target_user.created_at
+        )
+        
+        return user_profile
+        
+    except HTTPException as e:
+        # Re-lanzar excepciones HTTP
+        raise e
+    except Exception as e:
+        logger.error(f"Error obteniendo perfil de usuario {user_id}: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error interno al obtener perfil de usuario"
         )
 
 @router.post("/check-email-availability", response_model=dict, tags=["Email Management"])

@@ -214,3 +214,23 @@ class GymUserSummary(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# Esquema para información detallada del perfil (sin datos sensibles)
+class UserProfile(BaseModel):
+    """Esquema para mostrar la información detallada del perfil de usuario sin datos sensibles."""
+    id: int
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    picture: Optional[str] = None
+    role: UserRole
+    bio: Optional[str] = None
+    goals: Optional[str] = None
+    height: Optional[float] = None
+    weight: Optional[float] = None
+    birth_date: Optional[datetime] = None
+    is_active: bool = True
+    created_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
