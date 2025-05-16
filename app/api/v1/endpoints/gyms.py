@@ -40,7 +40,7 @@ async def create_gym(
     [ADMIN] Crear un nuevo gimnasio.
     
     Este endpoint permite a administradores crear un nuevo gimnasio en el sistema.
-    El usuario que crea el gimnasio automáticamente se convierte en administrador del mismo.
+    El gimnasio se crea sin usuarios asignados inicialmente.
     
     Permissions:
         - Requiere scope "admin:gyms"
@@ -54,8 +54,7 @@ async def create_gym(
         Gym: El nuevo gimnasio creado
         
     Raises:
-        HTTPException: 400 si ya existe un gimnasio con el mismo subdominio,
-                      404 si el usuario no se encuentra en la base de datos
+        HTTPException: 400 si ya existe un gimnasio con el mismo subdominio
     """
     # Verificar que el subdominio es único
     db_gym = gym_service.get_gym_by_subdomain(db, subdomain=gym_in.subdomain)
@@ -65,24 +64,8 @@ async def create_gym(
             detail=f"Ya existe un gimnasio con el subdominio '{gym_in.subdomain}'"
         )
     
-    # Obtener el usuario local de Auth0
-    db_user = user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
-    if not db_user:
-        raise HTTPException(
-            status_code=404,
-            detail="Usuario no encontrado en la base de datos local"
-        )
-    
     # Crear el gimnasio
     new_gym = gym_service.create_gym(db, gym_in=gym_in)
-    
-    # Añadir al creador como administrador del gimnasio
-    gym_service.add_user_to_gym(
-        db, 
-        gym_id=new_gym.id, 
-        user_id=db_user.id, 
-        role=GymRoleType.OWNER  # El creador es el OWNER
-    )
     
     return new_gym
 
@@ -770,3 +753,106 @@ async def update_user_gym_role(
         db.rollback()
         logger.error(f"Error actualizando rol de gym para user {user_id} en gym {gym_id}: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error interno al actualizar rol en gimnasio.") 
+
+@router.put("/{gym_id}/owner", response_model=UserGymSchema)
+async def assign_gym_owner(
+    *,
+    db: Session = Depends(get_db),
+    gym_id: int = Path(..., title="ID del gimnasio"),
+    user_id: int = Query(..., title="ID del usuario a asignar como OWNER"),
+    redis_client: redis.Redis = Depends(get_redis_client),
+    current_user: Auth0User = Security(auth.get_user)
+) -> Any:
+    """
+    [SUPER_ADMIN] Asignar un OWNER a un gimnasio.
+    
+    Este endpoint permite a los administradores de plataforma (SUPER_ADMIN) 
+    asignar a un usuario como OWNER de un gimnasio específico.
+    Si el usuario ya pertenece al gimnasio, se actualiza su rol a OWNER.
+    Si no pertenece al gimnasio, se le añade con rol OWNER.
+    
+    Permissions:
+        - Requiere ser SUPER_ADMIN
+        
+    Args:
+        db: Sesión de base de datos
+        gym_id: ID del gimnasio
+        user_id: ID del usuario a asignar como OWNER
+        redis_client: Cliente Redis para actualizar caché
+        current_user: Usuario SUPER_ADMIN autenticado
+        
+    Returns:
+        UserGymSchema: La relación usuario-gimnasio creada o actualizada
+        
+    Raises:
+        HTTPException: 403 si el usuario no es SUPER_ADMIN,
+                       404 si el gimnasio o usuario no existe
+    """
+    logger = logging.getLogger("gym_endpoint")
+    logger.info(f"Intentando asignar OWNER al gimnasio {gym_id}, usuario {user_id}")
+    
+    # Verificar que quien llama es SUPER_ADMIN
+    db_caller = user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
+    if not db_caller or db_caller.role != UserRole.SUPER_ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Esta acción solo está permitida para administradores de plataforma"
+        )
+    
+    # Verificar que el gimnasio existe
+    gym = gym_service.get_gym(db, gym_id=gym_id)
+    if not gym:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Gimnasio no encontrado"
+        )
+    
+    # Verificar que el usuario existe
+    user = user_service.get_user(db, user_id=user_id)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Usuario no encontrado"
+        )
+    
+    # Comprobar si el usuario ya pertenece al gimnasio
+    user_gym = gym_service.check_user_in_gym(db, user_id=user_id, gym_id=gym_id)
+    
+    try:
+        if user_gym:
+            # Si ya existe, actualizar el rol a OWNER
+            user_gym.role = GymRoleType.OWNER
+            db.add(user_gym)
+            logger.info(f"Actualizando rol de usuario {user_id} a OWNER en gimnasio {gym_id}")
+        else:
+            # Si no existe, crear nueva relación
+            user_gym = UserGym(
+                user_id=user_id,
+                gym_id=gym_id,
+                role=GymRoleType.OWNER
+            )
+            db.add(user_gym)
+            logger.info(f"Añadiendo usuario {user_id} como OWNER al gimnasio {gym_id}")
+        
+        db.commit()
+        db.refresh(user_gym)
+        
+        # Actualizar caché
+        if redis_client:
+            # Actualizar caché de membresía específica
+            membership_cache_key = f"user_gym_membership:{user_id}:{gym_id}"
+            await redis_client.set(membership_cache_key, user_gym.role.value, ex=get_settings().CACHE_TTL_USER_MEMBERSHIP)
+            logger.info(f"Cache de membresía {membership_cache_key} actualizada a {user_gym.role.value}")
+            
+            # Invalidar cachés relacionadas
+            await cache_service.delete_pattern(redis_client, f"gym:{gym_id}:users:*")
+            await cache_service.invalidate_user_caches(redis_client, user_id=user_id)
+            
+        return user_gym
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error asignando OWNER al gimnasio {gym_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error interno al asignar OWNER: {str(e)}"
+        ) 
