@@ -673,6 +673,8 @@ async def update_user_gym_role(
     redis_client: redis.Redis = Depends(get_redis_client),
     # Verificar que el llamante es ADMIN del gym actual o SUPER_ADMIN
     current_gym_verified: Gym = Depends(verify_admin_role), 
+    # Añadir la dependencia para obtener el usuario actual
+    current_user: Auth0User = Depends(auth.get_user)
 ) -> Any:
     """
     [ADMIN ONLY] Actualizar el rol de un usuario DENTRO del gimnasio actual.
@@ -702,8 +704,8 @@ async def update_user_gym_role(
         )
         
     # Obtener usuario llamante para verificar si es SUPER_ADMIN (ya que verify_admin_role lo permite)
-    current_auth_user = await get_current_user() # Necesitamos al usuario autenticado
-    caller = user_service.get_user_by_auth0_id(db, auth0_id=current_auth_user.id)
+    # Usar directamente current_user que ya está inyectado como dependencia
+    caller = user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
     is_super_admin = caller and caller.role == UserRole.SUPER_ADMIN
 
     # Obtener la membresía actual del usuario objetivo en el gimnasio
@@ -731,7 +733,7 @@ async def update_user_gym_role(
         if redis_client:
             # Actualizar caché de membresía específica
             membership_cache_key = f"user_gym_membership:{user_id}:{gym_id}"
-            await redis_client.set(membership_cache_key, updated_membership.role.value, ex=settings.CACHE_TTL_USER_MEMBERSHIP)
+            await redis_client.set(membership_cache_key, updated_membership.role.value, ex=get_settings().CACHE_TTL_USER_MEMBERSHIP)
             logging.info(f"Cache de membresía {membership_cache_key} actualizada a {updated_membership.role.value}")
 
             # Invalidar caché general de usuarios del gym
