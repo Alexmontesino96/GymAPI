@@ -22,7 +22,7 @@ api_router.include_router(users.router, prefix="/users")
 api_router.include_router(events.router, prefix="/events", tags=["events"])
 
 # Schedule module (timetables and classes)
-api_router.include_router(schedule_router, prefix="/schedule", tags=["schedule"])
+api_router.include_router(schedule_router, prefix="/schedule")
 
 # Gyms module
 api_router.include_router(gyms.router, prefix="/gyms", tags=["gyms"])
