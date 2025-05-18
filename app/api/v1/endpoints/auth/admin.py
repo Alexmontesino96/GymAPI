@@ -1,5 +1,20 @@
 from app.api.v1.endpoints.auth.common import *
 from app.repositories.user import user_repository
+from fastapi import APIRouter, Depends, HTTPException, Security, BackgroundTasks, status
+from sqlalchemy.orm import Session
+from typing import Any, Dict
+
+from app.core.auth0_fastapi import auth
+from app.models.user import UserRole
+from app.services.auth0_sync import auth0_sync_service
+from app.db.session import get_db
+from app.services.user import user_service
+from app.services.cache_service import cache_service
+from app.core.security import verify_auth0_webhook_secret
+from app.core.auth0_fastapi import Auth0User
+
+# Definir logger para este módulo
+logger = logging.getLogger("auth_admin_endpoint")
 
 router = APIRouter()
 
@@ -423,4 +438,43 @@ async def create_platform_admin(
             "role": db_user.role.value if hasattr(db_user.role, 'value') else db_user.role,
             "is_superuser": db_user.is_superuser
         }
+    }
+
+@router.post("/sync-roles-to-auth0", response_model=Dict[str, Any])
+async def migrate_roles_to_auth0(
+    *,
+    db: Session = Depends(get_db),
+    background_tasks: BackgroundTasks,
+    current_user: Auth0User = Security(auth.get_user, scopes=["tenant:admin"])
+) -> Any:
+    """
+    [SUPER_ADMIN] Migra el rol más alto de todos los usuarios a Auth0.
+    
+    Este endpoint inicia una tarea en segundo plano para determinar y actualizar
+    el rol más alto de cada usuario en Auth0 mediante app_metadata. Esto permitirá
+    que Auth0 asigne los permisos correctos al emitir tokens.
+    
+    Args:
+        db: Sesión de base de datos
+        background_tasks: Tareas en segundo plano
+        current_user: Usuario autenticado (debe ser SUPER_ADMIN)
+        
+    Returns:
+        Dict: Estado de la operación
+    """
+    # Verificar que el usuario es SUPER_ADMIN
+    user = user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
+    if not user or user.role != UserRole.SUPER_ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Se requiere rol SUPER_ADMIN para esta operación"
+        )
+    
+    # Ejecutar como tarea en segundo plano
+    background_tasks.add_task(auth0_sync_service.run_initial_migration, db)
+    
+    return {
+        "status": "success",
+        "message": "Migración de roles iniciada en segundo plano",
+        "detail": "Este proceso puede tomar varios minutos dependiendo del número de usuarios."
     } 

@@ -23,6 +23,9 @@ from app.services.cache_service import cache_service
 import logging
 from app.core.config import get_settings
 
+# Definir logger para este módulo
+logger = logging.getLogger("gym_endpoint")
+
 router = APIRouter()
 
 # ======================================================================
@@ -244,6 +247,15 @@ async def add_user_to_current_gym(
     
     # Añadir usuario al gimnasio
     user_gym = gym_service.add_user_to_gym(db, gym_id=gym_id, user_id=user_id)
+    
+    # Actualizar el rol más alto en Auth0
+    from app.services.auth0_sync import auth0_sync_service
+    try:
+        await auth0_sync_service.update_highest_role_in_auth0(db, user_id)
+        logger.info(f"Rol más alto de usuario {user_id} actualizado en Auth0 después de añadirlo al gimnasio {gym_id}")
+    except Exception as e:
+        logger.error(f"Error actualizando rol en Auth0 para usuario {user_id}: {str(e)}")
+        # No falla la operación principal si la sincronización falla
     
     # Invalidar/Actualizar caché de membresía y roles (usando el redis_client inyectado)
     if redis_client:
@@ -677,84 +689,111 @@ async def update_user_gym_role(
     current_user: Auth0User = Depends(auth.get_user)
 ) -> Any:
     """
-    [ADMIN ONLY] Actualizar el rol de un usuario DENTRO del gimnasio actual.
+    [ADMIN ONLY] Actualizar el rol de un usuario DENTRO DEL GIMNASIO ACTUAL.
     
-    Permite cambiar el rol específico (MEMBER, TRAINER, ADMIN) de un usuario 
-    dentro del gimnasio identificado por X-Gym-ID.
+    Este endpoint permite a los administradores cambiar el rol de un usuario
+    dentro del gimnasio actual (identificado por X-Gym-ID).
     
-    Restricciones:
-    - No se puede asignar/modificar el rol OWNER aquí.
-    - No se puede modificar el rol de un SUPER_ADMIN global.
-    - Un admin no puede modificar el rol de otro admin/owner.
+    Restrictions:
+    - Un usuario no puede actualizar su propio rol.
+    - Solo se pueden actualizar usuarios que ya pertenecen al gimnasio.
     
     Permissions:
-        - Requiere ser ADMIN/OWNER del gimnasio actual (X-Gym-ID) o SUPER_ADMIN.
+        - Requiere ser ADMIN/OWNER del gimnasio actual (identificado por X-Gym-ID) o SUPER_ADMIN.
+        
+    Args:
+        db: Sesión de base de datos
+        user_id: ID del usuario a modificar
+        role_in: Nuevo rol
+        redis_client: Cliente de Redis inyectado
+        current_gym_verified: Gimnasio actual verificado
+        
+    Returns:
+        UserGymSchema: El usuario con su rol actualizado
+        
+    Raises:
+        HTTPException: 404 si el usuario no existe o no pertenece al gimnasio,
+                      400 si se intenta cambiar al rol OWNER y ya hay un OWNER,
+                      403 si se intenta modificar el propio rol.
     """
     gym_id = current_gym_verified.id
-    logger = logging.getLogger("gym_endpoint")
-    logger.info(f"Intentando actualizar rol de gym para user {user_id} a {role_in.role.name} en gym {gym_id}")
-
-    # La dependencia verify_admin_role ya verifica los permisos del llamante
     
-    # Validar el rol solicitado
-    if role_in.role == GymRoleType.OWNER:
+    # Verificar que el ID del autenticado está en la BD
+    auth_user = await user_service.get_user_by_auth0_id_cached(db, current_user.id, redis_client)
+    if not auth_user:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, 
-            detail="No se puede asignar el rol OWNER a través de este endpoint."
+            status_code=status.HTTP_403_FORBIDDEN, 
+            detail="Usuario autenticado no encontrado en la BD"
         )
-        
-    # Obtener usuario llamante para verificar si es SUPER_ADMIN (ya que verify_admin_role lo permite)
-    # Usar directamente current_user que ya está inyectado como dependencia
-    caller = user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
-    is_super_admin = caller and caller.role == UserRole.SUPER_ADMIN
-
-    # Obtener la membresía actual del usuario objetivo en el gimnasio
-    target_user_membership = gym_service.check_user_in_gym(db, user_id=user_id, gym_id=gym_id)
-    if not target_user_membership:
-        raise HTTPException(status_code=404, detail="El usuario no pertenece a este gimnasio")
-
-    # Impedir que un ADMIN modifique a otro ADMIN/OWNER
-    if not is_super_admin and target_user_membership.role in [GymRoleType.ADMIN, GymRoleType.OWNER]:
-        raise HTTPException(status_code=403, detail="Los administradores no pueden modificar el rol de otros administradores u owners.")
-
-    try:
-        # Llamar al servicio para actualizar el rol específico del gym
-        updated_membership = gym_service.update_user_role_in_gym(
-            db=db, 
-            gym_id=gym_id, 
-            user_id=user_id, 
-            role=role_in.role
+    
+    # Verificar que no está intentando cambiar su propio rol
+    if auth_user.id == user_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No puedes cambiar tu propio rol en el gimnasio"
         )
-        db.commit()
-        db.refresh(updated_membership)
-        logger.info(f"Rol de gym actualizado para user {user_id} en gym {gym_id} a {updated_membership.role.name}")
+    
+    # Verificar que el usuario objetivo existe en el gimnasio
+    target_user_gym = gym_service.check_user_in_gym(db, user_id=user_id, gym_id=gym_id)
+    if not target_user_gym:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Usuario no pertenece al gimnasio actual"
+        )
+    
+    old_role = target_user_gym.role
+    
+    # Si se intenta cambiar a OWNER, verificar que no haya un OWNER ya
+    if role_in.role == GymRoleType.OWNER and old_role != GymRoleType.OWNER:
+        existing_owner = gym_service.check_gym_has_owner(db, gym_id=gym_id)
+        if existing_owner:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"El gimnasio ya tiene un propietario (User ID: {existing_owner.user_id})"
+            )
+    
+    # Actualizar el rol
+    updated_user_gym = gym_service.update_user_gym_role(
+        db, user_id=user_id, gym_id=gym_id, role=role_in.role
+    )
+    
+    # Si el rol cambió, actualizar en Auth0
+    if old_role != role_in.role:
+        from app.services.auth0_sync import auth0_sync_service
+        try:
+            await auth0_sync_service.update_highest_role_in_auth0(db, user_id)
+            logger.info(f"Rol más alto de usuario {user_id} actualizado en Auth0 después de cambio de rol en gimnasio {gym_id}")
+        except Exception as e:
+            logger.error(f"Error actualizando rol en Auth0 para usuario {user_id}: {str(e)}")
+            # No falla la operación principal si la sincronización falla
+    
+    # Invalidar cachés relevantes
+    if redis_client:
+        # Actualizar caché de membresía específica
+        membership_cache_key = f"user_gym_membership:{user_id}:{gym_id}"
+        try:
+            await redis_client.set(
+                membership_cache_key, 
+                role_in.role.value, 
+                ex=settings.CACHE_TTL_USER_MEMBERSHIP
+            )
+            logging.info(f"Cache de membresía {membership_cache_key} actualizada a {role_in.role.value}")
+        except Exception as e:
+            logging.error(f"Error al actualizar cache de membresía {membership_cache_key}: {e}")
         
-        # Invalidar/Actualizar caché (usando el redis_client inyectado)
-        if redis_client:
-            # Actualizar caché de membresía específica
-            membership_cache_key = f"user_gym_membership:{user_id}:{gym_id}"
-            await redis_client.set(membership_cache_key, updated_membership.role.value, ex=get_settings().CACHE_TTL_USER_MEMBERSHIP)
-            logging.info(f"Cache de membresía {membership_cache_key} actualizada a {updated_membership.role.value}")
-
-            # Invalidar caché general de usuarios del gym
-            # Podría ser más específico si tuviéramos caché por rol de gym
-            await cache_service.delete_pattern(redis_client, f"gym:{gym_id}:users:*")
-            
-            # También invalidar caché de roles globales si el rol global del usuario podría verse afectado
-            target_user = user_service.get_user(db, user_id=user_id)
+        # Si cambió el rol, invalidar cachés adicionales
+        if old_role != role_in.role:
+            # Obtener usuario para invalidar la caché de su rol global
+            target_user = db.query(User).filter(User.id == user_id).first()
             if target_user:
-                 await user_service.invalidate_role_cache(redis_client, role=target_user.role, gym_id=gym_id)
-                 await cache_service.invalidate_user_caches(redis_client, user_id=user_id) # Añadir invalidación de caché de usuario
-            
-        return updated_membership
-        
-    except HTTPException as http_exc:
-        db.rollback()
-        raise http_exc
-    except Exception as e:
-        db.rollback()
-        logger.error(f"Error actualizando rol de gym para user {user_id} en gym {gym_id}: {e}", exc_info=True)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error interno al actualizar rol en gimnasio.") 
+                # Invalidar caché del usuario individual
+                await cache_service.invalidate_user_caches(redis_client, user_id=user_id)
+                # Invalidar cachés de listados por rol
+                await user_service.invalidate_role_cache(redis_client, role=target_user.role, gym_id=gym_id)
+                # Invalidar caché de GymUserSummary (si existe)
+                await cache_service.delete_pattern(redis_client, f"gym:{gym_id}:users:*")
+    
+    return updated_user_gym
 
 @router.put("/{gym_id}/owner", response_model=UserGymSchema)
 async def assign_gym_owner(
