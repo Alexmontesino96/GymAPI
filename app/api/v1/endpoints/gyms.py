@@ -77,23 +77,23 @@ async def read_gyms(
     skip: int = 0,
     limit: int = 100,
     is_active: Optional[bool] = None,
-    current_user: Auth0User = Security(auth.get_user, scopes=["read:gyms"])
+    current_user: Auth0User = Depends(auth.get_user)
 ) -> Any:
     """
-    [ADMIN or TRAINER] Obtener todos los gimnasios.
+    Obtener todos los gimnasios.
     
-    Este endpoint permite a administradores y entrenadores ver todos los gimnasios
+    Este endpoint permite a cualquier usuario autenticado ver todos los gimnasios
     registrados en el sistema. Se puede filtrar por estado (activo/inactivo).
     
     Permissions:
-        - Requiere scope "read:gyms"
+        - Requiere autenticación básica
         
     Args:
         db: Sesión de base de datos
         skip: Número de registros a omitir (paginación)
         limit: Número máximo de registros a devolver
         is_active: Filtrar por estado activo/inactivo
-        current_user: Usuario administrador o entrenador autenticado
+        current_user: Usuario autenticado
         
     Returns:
         List[Gym]: Lista de gimnasios
