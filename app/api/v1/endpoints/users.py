@@ -112,7 +112,7 @@ async def upload_profile_image(
 async def create_or_update_user_profile_data(
     profile_data: UserProfileUpdate, # Usamos el esquema existente que excluye email/teléfono
     db: Session = Depends(get_db),
-    current_user: Auth0User = Security(auth.get_user, scopes=["read:profile"]), # Asegurar autenticación
+    current_user: Auth0User = Security(auth.get_user, scopes=["user:read"]), # Asegurar autenticación
     redis_client: redis.Redis = Depends(get_redis_client)
 ) -> Any:
     """
@@ -413,11 +413,33 @@ async def read_gym_participants(
     db: Session = Depends(get_db),
     skip: int = 0,
     limit: int = 100,
-    current_user: Auth0User = Security(auth.get_user, scopes=["read:members"]),
+    current_user: Auth0User = Security(auth.get_user, scopes=["user:read"]),
     redis_client: redis.Redis = Depends(get_redis_client),
-    current_gym: GymSchema = Depends(verify_gym_access)
+    current_gym: GymSchema = Depends(verify_gym_admin_access)
 ) -> Any:
-    """Obtiene miembros y/o entrenadores del gimnasio actual."""
+    """
+    [ADMIN ONLY] Obtiene miembros y/o entrenadores del gimnasio actual.
+    
+    Este endpoint permite a administradores, propietarios y super administradores ver 
+    todos los miembros y/o entrenadores registrados en el gimnasio actual.
+    
+    Permissions:
+        - Requiere scope "user:read"
+        - Requiere ser ADMIN u OWNER del gimnasio actual, o SUPER_ADMIN
+        
+    Args:
+        request: Objeto de solicitud
+        role: Filtrar por rol (MEMBER o TRAINER). Omitir para ambos
+        db: Sesión de base de datos
+        skip: Número de registros a omitir (paginación)
+        limit: Número máximo de registros a devolver
+        current_user: Usuario administrador autenticado
+        redis_client: Cliente de Redis
+        current_gym: Gimnasio actual verificado
+        
+    Returns:
+        List[UserSchema]: Lista de usuarios con el rol especificado
+    """
     logger = logging.getLogger("user_endpoint")
     allowed_roles = [UserRole.MEMBER, UserRole.TRAINER]
     roles_to_fetch = [role] if role else allowed_roles
@@ -449,11 +471,34 @@ async def read_public_gym_participants(
     db: Session = Depends(get_db),
     skip: int = 0,
     limit: int = 100,
-    current_user: Auth0User = Security(auth.get_user, scopes=["read:members"]),
+    current_user: Auth0User = Security(auth.get_user, scopes=["resource:read"]),
     redis_client: redis.Redis = Depends(get_redis_client),
     current_gym: GymSchema = Depends(verify_gym_access)
 ) -> Any:
-    """Obtiene perfiles públicos de miembros y/o entrenadores del gimnasio actual."""
+    """
+    Obtiene perfiles públicos de miembros y/o entrenadores del gimnasio actual.
+    
+    Este endpoint permite a cualquier miembro del gimnasio ver los perfiles
+    públicos de otros miembros del mismo gimnasio.
+    
+    Permissions:
+        - Requiere scope "resource:read"
+        - Requiere pertenecer al gimnasio actual
+        
+    Args:
+        request: Objeto de solicitud
+        role: Filtrar por rol (MEMBER o TRAINER). Omitir para ambos
+        name_contains: Filtrar por nombre/apellido (búsqueda parcial)
+        db: Sesión de base de datos
+        skip: Número de registros a omitir (paginación)
+        limit: Número máximo de registros a devolver
+        current_user: Usuario autenticado
+        redis_client: Cliente de Redis
+        current_gym: Gimnasio actual verificado
+        
+    Returns:
+        List[UserPublicProfile]: Lista de perfiles públicos de usuarios
+    """
     logger = logging.getLogger("user_endpoint")
     allowed_roles = [UserRole.MEMBER, UserRole.TRAINER]
     roles_to_fetch = [role] if role else allowed_roles
@@ -486,11 +531,34 @@ async def read_public_user_profile(
     request: Request,
     user_id: int,
     db: Session = Depends(get_db),
-    current_user: Auth0User = Security(auth.get_user, scopes=["read:members"]),
+    current_user: Auth0User = Security(auth.get_user, scopes=["resource:read"]),
     current_gym: GymSchema = Depends(verify_gym_access),
     redis_client: redis.Redis = Depends(get_redis_client)
 ) -> Any:
-    """Obtiene el perfil público de un usuario específico del gimnasio actual."""
+    """
+    Obtiene el perfil público de un usuario específico del gimnasio actual.
+    
+    Este endpoint permite a cualquier miembro del gimnasio ver el perfil público
+    de otro miembro del mismo gimnasio.
+    
+    Permissions:
+        - Requiere scope "resource:read"
+        - Requiere pertenecer al gimnasio actual
+        
+    Args:
+        request: Objeto de solicitud
+        user_id: ID del usuario cuyo perfil se quiere ver
+        db: Sesión de base de datos
+        current_user: Usuario autenticado
+        current_gym: Gimnasio actual verificado
+        redis_client: Cliente de Redis
+        
+    Returns:
+        UserPublicProfile: Perfil público del usuario solicitado
+        
+    Raises:
+        HTTPException 404: Si el usuario no existe o no pertenece al gimnasio actual
+    """
     logger = logging.getLogger("user_endpoint")
     gym_id = current_gym.id # ID del gimnasio actual
 
@@ -555,7 +623,7 @@ async def read_gym_users(
     skip: int = 0,
     limit: int = 100,
     role: Optional[UserRole] = Query(None, description="Filtrar por rol de usuario global"),
-    current_user: Auth0User = Security(auth.get_user, scopes=["read:users"]),
+    current_user: Auth0User = Security(auth.get_user, scopes=["user:read"]),
     redis_client: redis.Redis = Depends(get_redis_client),
     current_gym: GymSchema = Depends(verify_gym_admin_access)
 ) -> Any:
@@ -740,7 +808,7 @@ async def read_user_by_id(
 async def read_user_by_auth0_id(
     auth0_id: str,
     db: Session = Depends(get_db),
-    user: Auth0User = Security(auth.get_user, scopes=["read:users"]),
+    user: Auth0User = Security(auth.get_user, scopes=["user:read"]),
 ) -> Any:
     """Obtiene un usuario específico por su ID de Auth0."""
     db_user = user_service.get_user_by_auth0_id(db, auth0_id=auth0_id)
@@ -756,7 +824,7 @@ async def read_users(
     db: Session = Depends(get_db),
     skip: int = 0,
     limit: int = 100,
-    current_user: Auth0User = Security(auth.get_user, scopes=["read:users"]),
+    current_user: Auth0User = Security(auth.get_user, scopes=["user:read"]),
     redis_client: redis.Redis = Depends(get_redis_client)
 ) -> Any:
     """[SUPER_ADMIN] Obtiene todos los usuarios de la plataforma."""
@@ -901,7 +969,7 @@ async def update_user_by_auth0_id(
     auth0_id: str,
     user_in: UserUpdate,
     db: Session = Depends(get_db),
-    user: Auth0User = Security(auth.get_user, scopes=["update:users"]),
+    user: Auth0User = Security(auth.get_user, scopes=["user:write"]),
     redis_client: redis.Redis = Depends(get_redis_client)
 ) -> Any:
     """[SUPER_ADMIN] Actualiza un usuario específico por su ID de Auth0."""

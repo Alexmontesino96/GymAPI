@@ -26,7 +26,7 @@ router = APIRouter()
 async def get_all_gym_hours(
     db: Session = Depends(get_db),
     current_gym: Gym = Depends(verify_gym_access),
-    user: Auth0User = Security(auth.get_user, scopes=["read:schedules"]),
+    user: Auth0User = Security(auth.get_user, scopes=["resource:read"]),
     redis_client: Redis = Depends(get_redis_client)
 ) -> Any:
     """
@@ -37,7 +37,7 @@ async def get_all_gym_hours(
     Args:
         db (Session, optional): Database session dependency. Defaults to Depends(get_db).
         current_gym (Gym, optional): Current gym context dependency. Defaults to Depends(verify_gym_access).
-        user (Auth0User, optional): Authenticated user dependency. Defaults to Security(auth.get_user, scopes=["read:schedules"]).
+        user (Auth0User, optional): Authenticated user dependency. Defaults to Security(auth.get_user, scopes=["resource:read"]).
         redis_client (Redis, optional): Redis client dependency. Defaults to Depends(get_redis_client).
 
     Permissions:
@@ -59,7 +59,7 @@ async def get_gym_hours_by_day(
     day: int = Path(..., ge=0, le=6, description="Day of the week (0=Monday, 6=Sunday)"),
     db: Session = Depends(get_db),
     current_gym: Gym = Depends(verify_gym_access),
-    user: Auth0User = Security(auth.get_user, scopes=["read:schedules"]),
+    user: Auth0User = Security(auth.get_user, scopes=["resource:read"]),
     redis_client: Redis = Depends(get_redis_client)
 ) -> Any:
     """
@@ -73,7 +73,7 @@ async def get_gym_hours_by_day(
         day (int): The day of the week (0=Monday, 6=Sunday).
         db (Session, optional): Database session dependency. Defaults to Depends(get_db).
         current_gym (Gym, optional): Current gym context dependency. Defaults to Depends(verify_gym_access).
-        user (Auth0User, optional): Authenticated user dependency. Defaults to Security(auth.get_user, scopes=["read:schedules"]).
+        user (Auth0User, optional): Authenticated user dependency. Defaults to Security(auth.get_user, scopes=["resource:read"]).
         redis_client (Redis, optional): Redis client dependency. Defaults to Depends(get_redis_client).
 
     Permissions:
@@ -164,7 +164,7 @@ async def get_gym_hours_by_date(
     date: date = Path(..., description="Date (YYYY-MM-DD)"),
     db: Session = Depends(get_db),
     current_gym: Gym = Depends(verify_gym_access),
-    user: Auth0User = Security(auth.get_user, scopes=["read:schedules"]),
+    user: Auth0User = Security(auth.get_user, scopes=["resource:read"]),
     redis_client: Redis = Depends(get_redis_client)
 ) -> Any:
     """
@@ -177,7 +177,7 @@ async def get_gym_hours_by_date(
         date (date): The specific date to query (YYYY-MM-DD format).
         db (Session, optional): Database session dependency. Defaults to Depends(get_db).
         current_gym (Gym, optional): Current gym context dependency. Defaults to Depends(verify_gym_access).
-        user (Auth0User, optional): Authenticated user dependency. Defaults to Security(auth.get_user, scopes=["read:schedules"]).
+        user (Auth0User, optional): Authenticated user dependency. Defaults to Security(auth.get_user, scopes=["resource:read"]).
         redis_client (Redis, optional): Redis client dependency. Defaults to Depends(get_redis_client).
 
     Permissions:

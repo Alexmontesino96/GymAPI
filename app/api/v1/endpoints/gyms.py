@@ -34,7 +34,7 @@ async def create_gym(
     *,
     db: Session = Depends(get_db),
     gym_in: GymCreate,
-    current_user: Auth0User = Security(auth.get_user, scopes=["admin:gyms"])
+    current_user: Auth0User = Security(auth.get_user, scopes=["tenant:admin"])
 ) -> Any:
     """
     [ADMIN] Crear un nuevo gimnasio.
@@ -407,7 +407,7 @@ async def read_gym(
     *,
     db: Session = Depends(get_db),
     gym_id: int = Path(..., title="ID del gimnasio"),
-    current_user: Auth0User = Security(auth.get_user, scopes=["read:gyms"])
+    current_user: Auth0User = Security(auth.get_user, scopes=["tenant:read"])
 ) -> Any:
     """
     [ADMIN or TRAINER] Obtener detalles de un gimnasio específico.
@@ -446,7 +446,7 @@ async def update_gym(
     db: Session = Depends(get_db),
     gym_id: int = Path(..., title="ID del gimnasio"),
     gym_in: GymUpdate,
-    current_user: Auth0User = Security(auth.get_user, scopes=["admin:gyms"])
+    current_user: Auth0User = Security(auth.get_user, scopes=["tenant:admin"])
 ) -> Any:
     """
     [ADMIN] Actualizar la información de un gimnasio.
@@ -497,7 +497,7 @@ async def update_gym_status(
     db: Session = Depends(get_db),
     gym_id: int = Path(..., title="ID del gimnasio"),
     status_in: GymStatusUpdate,
-    current_user: Auth0User = Security(auth.get_user, scopes=["admin:gyms"])
+    current_user: Auth0User = Security(auth.get_user, scopes=["tenant:admin"])
 ) -> Any:
     """
     [ADMIN] Activar o desactivar un gimnasio.

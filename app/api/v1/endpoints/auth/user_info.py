@@ -3,7 +3,7 @@ from app.api.v1.endpoints.auth.common import *
 router = APIRouter()
 
 @router.get("/me")
-async def read_users_me(user: Auth0User = Security(auth.get_user, scopes=["read:profile"])):
+async def read_users_me(user: Auth0User = Security(auth.get_user, scopes=["user:read"])):
     """
     Returns the information of the currently authenticated user.
     
@@ -21,7 +21,7 @@ async def read_users_me(user: Auth0User = Security(auth.get_user, scopes=["read:
 
 
 @router.get("/test-email")
-async def test_email_in_token(request: Request, user: Auth0User = Security(auth.get_user, scopes=["read:profile"])):
+async def test_email_in_token(request: Request, user: Auth0User = Security(auth.get_user, scopes=["user:read"])):
     """
     Test endpoint to verify the presence of email in the token.
     
@@ -59,7 +59,7 @@ async def test_email_in_token(request: Request, user: Auth0User = Security(auth.
 
 
 @router.get("/get-user-email")
-async def get_user_email(user: Auth0User = Security(auth.get_user, scopes=["read:profile"])):
+async def get_user_email(user: Auth0User = Security(auth.get_user, scopes=["user:read"])):
     """
     Returns the email of the authenticated user.
     
@@ -86,7 +86,7 @@ async def get_user_email(user: Auth0User = Security(auth.get_user, scopes=["read
 
 
 @router.get("/check-permissions")
-async def check_permissions(current_user: Auth0User = Security(auth.get_user, scopes=["read:profile"])):
+async def check_permissions(current_user: Auth0User = Security(auth.get_user, scopes=["user:read"])):
     """
     Verifies the permissions of the current user.
     

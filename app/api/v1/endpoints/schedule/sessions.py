@@ -12,7 +12,7 @@ async def get_upcoming_sessions(
     limit: int = 100,
     db: Session = Depends(get_db),
     current_gym: Gym = Depends(verify_gym_access),
-    user: Auth0User = Security(auth.get_user, scopes=["read:schedules"]),
+    user: Auth0User = Security(auth.get_user, scopes=["resource:read"]),
     redis_client: Redis = Depends(get_redis_client)
 ) -> Any:
     """
@@ -25,7 +25,7 @@ async def get_upcoming_sessions(
         limit (int, optional): Maximum number of records to return. Defaults to 100.
         db (Session, optional): Database session dependency. Defaults to Depends(get_db).
         current_gym (Gym, optional): Current gym context dependency. Defaults to Depends(verify_gym_access).
-        user (Auth0User, optional): Authenticated user dependency. Defaults to Security(auth.get_user, scopes=["read:schedules"]).
+        user (Auth0User, optional): Authenticated user dependency. Defaults to Security(auth.get_user, scopes=["resource:read"]).
         redis_client (Redis, optional): Redis client dependency. Defaults to Depends(get_redis_client).
 
     Permissions:
@@ -53,7 +53,7 @@ async def get_session_with_details(
     session_id: int = Path(..., description="ID of the session"),
     db: Session = Depends(get_db),
     current_gym: Gym = Depends(verify_gym_access),
-    user: Auth0User = Security(auth.get_user, scopes=["read:schedules"]),
+    user: Auth0User = Security(auth.get_user, scopes=["resource:read"]),
     redis_client: Redis = Depends(get_redis_client)
 ) -> Any:
     """
@@ -66,7 +66,7 @@ async def get_session_with_details(
         session_id (int): The ID of the class session.
         db (Session, optional): Database session dependency. Defaults to Depends(get_db).
         current_gym (Gym, optional): Current gym context dependency. Defaults to Depends(verify_gym_access).
-        user (Auth0User, optional): Authenticated user dependency. Defaults to Security(auth.get_user, scopes=["read:schedules"]).
+        user (Auth0User, optional): Authenticated user dependency. Defaults to Security(auth.get_user, scopes=["resource:read"]).
         redis_client (Redis, optional): Redis client dependency. Defaults to Depends(get_redis_client).
 
     Permissions:
@@ -100,7 +100,7 @@ async def create_session(
     session_data: ClassSessionCreate = Body(...),
     db: Session = Depends(get_db),
     current_gym: Gym = Depends(verify_gym_access),
-    user: Auth0User = Security(auth.get_user, scopes=["create:schedules"]),
+    user: Auth0User = Security(auth.get_user, scopes=["resource:write"]),
     redis_client: Redis = Depends(get_redis_client)
 ) -> Any:
     """
@@ -112,7 +112,7 @@ async def create_session(
         session_data (ClassSessionCreate): Data for the new session.
         db (Session, optional): Database session dependency. Defaults to Depends(get_db).
         current_gym (Gym, optional): Current gym context dependency. Defaults to Depends(verify_gym_access).
-        user (Auth0User, optional): Authenticated user dependency. Defaults to Security(auth.get_user, scopes=["create:schedules"]).
+        user (Auth0User, optional): Authenticated user dependency. Defaults to Security(auth.get_user, scopes=["resource:write"]).
         redis_client (Redis, optional): Redis client dependency. Defaults to Depends(get_redis_client).
 
     Permissions:
@@ -173,7 +173,7 @@ async def create_recurring_sessions(
         ..., description="Days of week (0=Mon, 6=Sun)", example=[0, 2, 4]
     ),
     db: Session = Depends(get_db),
-    user: Auth0User = Security(auth.get_user, scopes=["create:schedules"]),
+    user: Auth0User = Security(auth.get_user, scopes=["resource:write"]),
     current_gym: Gym = Depends(verify_gym_access),
     redis_client: Redis = Depends(get_redis_client)
 ) -> Any:
@@ -188,7 +188,7 @@ async def create_recurring_sessions(
         end_date (date): Last date to potentially create a session.
         days_of_week (List[int]): List of integers representing days (0=Monday, 6=Sunday) for recurrence.
         db (Session, optional): Database session dependency. Defaults to Depends(get_db).
-        user (Auth0User, optional): Authenticated user dependency. Defaults to Security(auth.get_user, scopes=["create:schedules"]).
+        user (Auth0User, optional): Authenticated user dependency. Defaults to Security(auth.get_user, scopes=["resource:write"]).
         current_gym (Gym, optional): Current gym context dependency. Defaults to Depends(verify_gym_access).
         redis_client (Redis, optional): Redis client dependency. Defaults to Depends(get_redis_client).
 
@@ -244,7 +244,7 @@ async def update_session(
     session_data: ClassSessionUpdate = Body(...),
     db: Session = Depends(get_db),
     current_gym: Gym = Depends(verify_gym_access),
-    user: Auth0User = Security(auth.get_user, scopes=["update:schedules"]),
+    user: Auth0User = Security(auth.get_user, scopes=["resource:write"]),
     redis_client: Redis = Depends(get_redis_client)
 ) -> Any:
     """
@@ -257,7 +257,7 @@ async def update_session(
         session_data (ClassSessionUpdate): Fields to update.
         db (Session, optional): Database session dependency. Defaults to Depends(get_db).
         current_gym (Gym, optional): Current gym context dependency. Defaults to Depends(verify_gym_access).
-        user (Auth0User, optional): Authenticated user dependency. Defaults to Security(auth.get_user, scopes=["update:schedules"]).
+        user (Auth0User, optional): Authenticated user dependency. Defaults to Security(auth.get_user, scopes=["resource:write"]).
         redis_client (Redis, optional): Redis client dependency. Defaults to Depends(get_redis_client).
 
     Permissions:
@@ -295,7 +295,7 @@ async def cancel_session(
     session_id: int = Path(..., description="ID of the session"),
     db: Session = Depends(get_db),
     current_gym: Gym = Depends(verify_gym_access),
-    user: Auth0User = Security(auth.get_user, scopes=["update:schedules"]),
+    user: Auth0User = Security(auth.get_user, scopes=["resource:write"]),
     redis_client: Redis = Depends(get_redis_client)
 ) -> Any:
     """
@@ -307,7 +307,7 @@ async def cancel_session(
         session_id (int): The ID of the session to cancel.
         db (Session, optional): Database session dependency. Defaults to Depends(get_db).
         current_gym (Gym, optional): Current gym context dependency. Defaults to Depends(verify_gym_access).
-        user (Auth0User, optional): Authenticated user dependency. Defaults to Security(auth.get_user, scopes=["update:schedules"]).
+        user (Auth0User, optional): Authenticated user dependency. Defaults to Security(auth.get_user, scopes=["resource:write"]).
         redis_client (Redis, optional): Redis client dependency. Defaults to Depends(get_redis_client).
 
     Permissions:
@@ -333,7 +333,7 @@ async def get_sessions_by_date_range(
     limit: int = 100,
     db: Session = Depends(get_db),
     current_gym: Gym = Depends(verify_gym_access),
-    user: Auth0User = Security(auth.get_user, scopes=["read:schedules"]),
+    user: Auth0User = Security(auth.get_user, scopes=["resource:read"]),
     redis_client: Redis = Depends(get_redis_client)
 ) -> Any:
     """
@@ -348,7 +348,7 @@ async def get_sessions_by_date_range(
         limit (int, optional): Pagination limit. Defaults to 100.
         db (Session, optional): Database session dependency. Defaults to Depends(get_db).
         current_gym (Gym, optional): Current gym context dependency. Defaults to Depends(verify_gym_access).
-        user (Auth0User, optional): Authenticated user dependency. Defaults to Security(auth.get_user, scopes=["read:schedules"]).
+        user (Auth0User, optional): Authenticated user dependency. Defaults to Security(auth.get_user, scopes=["resource:read"]).
         redis_client (Redis, optional): Redis client dependency. Defaults to Depends(get_redis_client).
 
     Permissions:
@@ -384,7 +384,7 @@ async def get_trainer_sessions(
     limit: int = 100,
     db: Session = Depends(get_db),
     current_gym: Gym = Depends(verify_gym_access),
-    user: Auth0User = Security(auth.get_user, scopes=["read:schedules"]),
+    user: Auth0User = Security(auth.get_user, scopes=["resource:read"]),
     redis_client: Redis = Depends(get_redis_client)
 ) -> Any:
     """
@@ -402,7 +402,7 @@ async def get_trainer_sessions(
         current_gym (Gym, optional): Current gym context dependency. Defaults to Depends(verify_gym_access).
         user (Auth0User, optional): Authenticated user dependency. Requires 'read:schedules' or 
                                     'read:trainer_schedules' if viewing another trainer's schedule.
-                                    Defaults to Security(auth.get_user, scopes=["read:schedules"]).
+                                    Defaults to Security(auth.get_user, scopes=["resource:read"]).
         redis_client (Redis, optional): Redis client dependency. Defaults to Depends(get_redis_client).
 
     Permissions:
@@ -460,7 +460,7 @@ async def get_my_sessions(
     limit: int = 100,
     db: Session = Depends(get_db),
     current_gym: Gym = Depends(verify_gym_access),
-    user: Auth0User = Security(auth.get_user, scopes=["read:own_schedules"]),
+    user: Auth0User = Security(auth.get_user, scopes=["resource:read"]),
     redis_client: Redis = Depends(get_redis_client)
 ) -> Any:
     """
@@ -475,7 +475,7 @@ async def get_my_sessions(
         limit (int, optional): Pagination limit. Defaults to 100.
         db (Session, optional): Database session dependency. Defaults to Depends(get_db).
         current_gym (Gym, optional): Current gym context dependency. Defaults to Depends(verify_gym_access).
-        user (Auth0User, optional): Authenticated user dependency. Defaults to Security(auth.get_user, scopes=["read:own_schedules"]).
+        user (Auth0User, optional): Authenticated user dependency. Defaults to Security(auth.get_user, scopes=["resource:read"]).
         redis_client (Redis, optional): Redis client dependency. Defaults to Depends(get_redis_client).
 
     Permissions:
@@ -520,7 +520,7 @@ async def delete_session(
     session_id: int = Path(..., description="ID of the session"),
     db: Session = Depends(get_db),
     current_gym: Gym = Depends(verify_gym_access),
-    user: Auth0User = Security(auth.get_user, scopes=["delete:schedules"]),
+    user: Auth0User = Security(auth.get_user, scopes=["resource:admin"]),
     redis_client: Redis = Depends(get_redis_client)
 ) -> Any:
     """
@@ -533,7 +533,7 @@ async def delete_session(
         session_id (int): The ID of the session to delete/cancel.
         db (Session, optional): Database session dependency. Defaults to Depends(get_db).
         current_gym (Gym, optional): Current gym context dependency. Defaults to Depends(verify_gym_access).
-        user (Auth0User, optional): Authenticated user dependency. Defaults to Security(auth.get_user, scopes=["delete:schedules"]).
+        user (Auth0User, optional): Authenticated user dependency. Defaults to Security(auth.get_user, scopes=["resource:admin"]).
         redis_client (Redis, optional): Redis client dependency. Defaults to Depends(get_redis_client).
 
     Permissions:

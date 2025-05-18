@@ -24,7 +24,7 @@ async def verify_gym_access_cached(
     request: Request,
     db: Session = Depends(get_db),
     current_gym_schema: Optional[GymSchema] = Depends(get_current_gym),
-    current_user: Auth0User = Security(get_current_user_cached, scopes=["read_events"]),
+    current_user: Auth0User = Security(get_current_user_cached, scopes=["resource:read"]),
     redis_client: redis.Redis = Depends(get_redis_client)
 ) -> GymSchema:
     """
@@ -47,7 +47,7 @@ async def verify_gym_admin_access_cached(
     request: Request,
     db: Session = Depends(get_db),
     current_gym_schema: Optional[GymSchema] = Depends(get_current_gym),
-    current_user: Auth0User = Security(get_current_user_cached, scopes=["admin:events"]),
+    current_user: Auth0User = Security(get_current_user_cached, scopes=["resource:admin"]),
     redis_client: redis.Redis = Depends(get_redis_client)
 ) -> GymSchema:
     """Dependencia optimizada: Verifica rol ADMIN u OWNER en el gimnasio."""
@@ -60,7 +60,7 @@ async def verify_gym_trainer_access_cached(
     request: Request,
     db: Session = Depends(get_db),
     current_gym_schema: Optional[GymSchema] = Depends(get_current_gym),
-    current_user: Auth0User = Security(get_current_user_cached, scopes=["create:events"]),
+    current_user: Auth0User = Security(get_current_user_cached, scopes=["resource:write"]),
     redis_client: redis.Redis = Depends(get_redis_client)
 ) -> GymSchema:
     """Dependencia optimizada: Verifica rol TRAINER, ADMIN u OWNER en el gimnasio."""

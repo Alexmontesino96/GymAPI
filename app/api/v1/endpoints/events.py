@@ -66,7 +66,7 @@ async def create_event(
     background_tasks: BackgroundTasks,
     current_gym: GymSchema = Depends(verify_gym_access_cached),
     redis_client: Redis = Depends(get_redis_client),
-    current_user: Auth0User = Security(auth.get_user, scopes=["admin:events"])
+    current_user: Auth0User = Security(auth.get_user, scopes=["resource:admin"])
 ) -> JSONResponse:
     """
     Create a new event.
@@ -220,7 +220,7 @@ async def read_events(
     only_available: bool = False,
     current_gym: GymSchema = Depends(verify_gym_access_cached),
     redis_client: Redis = Depends(get_redis_client),
-    current_user: Auth0User = Security(auth.get_user, scopes=["read:events"])
+    current_user: Auth0User = Security(auth.get_user, scopes=["resource:read"])
 ) -> Any:
     """
     Obtener lista de eventos con filtros opcionales.
@@ -286,7 +286,7 @@ async def read_my_events(
     limit: int = 100,
     current_gym: GymSchema = Depends(verify_gym_access_cached),
     redis_client: Redis = Depends(get_redis_client),
-    current_user: Auth0User = Security(auth.get_user, scopes=["read:events"])
+    current_user: Auth0User = Security(auth.get_user, scopes=["resource:read"])
 ) -> Any:
     """
     Obtener eventos creados por el usuario actual.
@@ -355,7 +355,7 @@ async def read_event(
     event_id: int = Path(..., title="ID del evento a obtener", ge=1),
     current_gym: GymSchema = Depends(verify_gym_access_cached),
     redis_client: Redis = Depends(get_redis_client),
-    current_user: Auth0User = Security(auth.get_user, scopes=["read:events"])
+    current_user: Auth0User = Security(auth.get_user, scopes=["resource:read"])
 ) -> Any:
     """
     Obtener detalles de un evento específico.
@@ -441,7 +441,7 @@ async def update_event(
     event_id: int = Path(..., title="Event ID"),
     event_in: EventUpdate,
     current_gym: GymSchema = Depends(verify_gym_access),  # Usar GymSchema
-    current_user: Auth0User = Security(auth.get_user, scopes=["admin:events"])
+    current_user: Auth0User = Security(auth.get_user, scopes=["resource:admin"])
 ) -> Any:
     """
     Update an existing event.
@@ -603,7 +603,7 @@ async def delete_event(
     db: Session = Depends(get_db),
     event_id: int = Path(..., title="Event ID"),
     current_gym: GymSchema = Depends(verify_gym_access),  # Usar GymSchema
-    current_user: Auth0User = Security(auth.get_user, scopes=["delete:events"])
+    current_user: Auth0User = Security(auth.get_user, scopes=["resource:admin"])
 ) -> None:
     """
     Delete an event.
@@ -662,7 +662,7 @@ async def admin_delete_event(
     db: Session = Depends(get_db),
     event_id: int = Path(..., title="Event ID"),
     current_gym: GymSchema = Depends(verify_gym_access),  # Usar GymSchema
-    current_user: Auth0User = Security(auth.get_user, scopes=["admin:events"])
+    current_user: Auth0User = Security(auth.get_user, scopes=["resource:admin"])
 ) -> None:
     """
     Administrative endpoint to delete any event regardless of ownership.
@@ -715,7 +715,7 @@ async def register_for_event(
     db: Session = Depends(get_db),
     participation_in: EventParticipationCreate = Body(...),
     current_gym: GymSchema = Depends(verify_gym_access),  # Usar GymSchema
-    current_user: Auth0User = Security(auth.get_user, scopes=["create:participations"]),
+    current_user: Auth0User = Security(auth.get_user, scopes=["resource:write"]),
     redis_client: Redis = Depends(get_redis_client)
 ) -> EventParticipationSchema:
     """
@@ -831,7 +831,7 @@ async def read_my_participations(
     db: Session = Depends(get_db),
     participation_status: Optional[EventParticipationStatus] = None,
     current_gym: GymSchema = Depends(verify_gym_access),  # Usar GymSchema
-    current_user: Auth0User = Security(auth.get_user, scopes=["read:own_participations"])
+    current_user: Auth0User = Security(auth.get_user, scopes=["resource:read"])
 ) -> List[EventParticipationWithEvent]:
     """
     Retrieve participations of the authenticated user, including event details.
@@ -906,7 +906,7 @@ async def read_event_participations(
     event_id: int = Path(..., title="Event ID"),
     participation_status: Optional[EventParticipationStatus] = None,
     current_gym: GymSchema = Depends(verify_gym_access),  # Usar GymSchema
-    current_user: Auth0User = Security(auth.get_user, scopes=["read:participations"])
+    current_user: Auth0User = Security(auth.get_user, scopes=["resource:read"])
 ) -> Any:
     """
     Retrieve participations for a specific event.
@@ -1026,7 +1026,7 @@ async def cancel_participation(
     db: Session = Depends(get_db),
     event_id: int = Path(..., title="Event ID"),
     current_gym: GymSchema = Depends(verify_gym_access),  # Usar GymSchema
-    current_user: Auth0User = Security(auth.get_user, scopes=["delete:own_participations"]),
+    current_user: Auth0User = Security(auth.get_user, scopes=["resource:write"]),
     redis_client: Redis = Depends(get_redis_client)
 ) -> None:
     """
@@ -1107,7 +1107,7 @@ async def update_attendance(
     user_id: int = Path(..., title="Internal User ID of the participant"),
     attendance_data: EventParticipationUpdate = Body(...),
     current_gym: GymSchema = Depends(verify_gym_access),
-    current_user: Auth0User = Security(auth.get_user, scopes=["update:participations"])
+    current_user: Auth0User = Security(auth.get_user, scopes=["resource:write"])
 ) -> EventParticipationSchema:
     """
     Update a specific user's attendance for a specific event.

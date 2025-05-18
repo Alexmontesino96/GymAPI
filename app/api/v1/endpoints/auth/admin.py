@@ -331,7 +331,7 @@ class CreateAdminRequest(BaseModel):
 async def create_platform_admin(
     request_data: CreateAdminRequest,
     db: Session = Depends(get_db),
-    current_user: Auth0User = Security(auth.get_user, scopes=["admin:users"]),
+    current_user: Auth0User = Security(auth.get_user, scopes=["user:write"]),
 ):
     """
     Creates a platform administrator (super admin) user.

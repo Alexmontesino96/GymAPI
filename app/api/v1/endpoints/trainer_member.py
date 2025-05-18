@@ -45,7 +45,7 @@ async def create_trainer_member_relationship(
     request: Request,
     relationship_in: TrainerMemberRelationshipCreate,
     db: Session = Depends(get_db),
-    user: Auth0User = Security(auth.get_user, scopes=["create:relationships"]),
+    user: Auth0User = Security(auth.get_user, scopes=["resource:write"]),
     current_gym: GymSchema = Depends(verify_gym_access)
 ) -> Any:
     """
@@ -97,7 +97,7 @@ async def read_relationships(
     skip: int = 0,
     limit: int = 100,
     db: Session = Depends(get_db),
-    user: Auth0User = Security(auth.get_user, scopes=["admin:relationships"]),
+    user: Auth0User = Security(auth.get_user, scopes=["resource:admin"]),
 ) -> Any:
     """
     Retrieve all trainer-member relationships.
@@ -128,7 +128,7 @@ async def read_members_by_trainer(
     skip: int = 0,
     limit: int = 100,
     db: Session = Depends(get_db),
-    user: Auth0User = Security(auth.get_user, scopes=["read:relationships"]),
+    user: Auth0User = Security(auth.get_user, scopes=["resource:read"]),
     current_gym: GymSchema = Depends(verify_gym_access)
 ) -> Any:
     """
@@ -185,7 +185,7 @@ async def read_trainers_by_member(
     skip: int = 0,
     limit: int = 100,
     db: Session = Depends(get_db),
-    user: Auth0User = Security(auth.get_user, scopes=["read:relationships"]),
+    user: Auth0User = Security(auth.get_user, scopes=["resource:read"]),
 ) -> Any:
     """
     Retrieve all trainers assigned to a specific member.
@@ -239,7 +239,7 @@ async def read_my_trainers(
     skip: int = 0,
     limit: int = 100,
     db: Session = Depends(get_db),
-    user: Auth0User = Security(auth.get_user, scopes=["read:own_relationships"]),
+    user: Auth0User = Security(auth.get_user, scopes=["resource:read"]),
 ) -> Any:
     """
     Retrieve all trainers of the authenticated member.
@@ -291,7 +291,7 @@ async def read_my_members(
     skip: int = 0,
     limit: int = 100,
     db: Session = Depends(get_db),
-    user: Auth0User = Security(auth.get_user, scopes=["read:own_relationships"]),
+    user: Auth0User = Security(auth.get_user, scopes=["resource:read"]),
 ) -> Any:
     """
     Retrieve all members of the authenticated trainer.
@@ -343,7 +343,7 @@ async def read_relationship(
     request: Request,
     relationship_id: int,
     db: Session = Depends(get_db),
-    user: Auth0User = Security(auth.get_user, scopes=["read:relationships"]),
+    user: Auth0User = Security(auth.get_user, scopes=["resource:read"]),
     current_gym: GymSchema = Depends(verify_gym_access)
 ) -> Any:
     """
@@ -400,7 +400,7 @@ async def update_relationship(
     relationship_id: int,
     relationship_update: TrainerMemberRelationshipUpdate,
     db: Session = Depends(get_db),
-    user: Auth0User = Security(auth.get_user, scopes=["update:relationships"]),
+    user: Auth0User = Security(auth.get_user, scopes=["resource:write"]),
 ) -> Any:
     """
     Update an existing trainer-member relationship.
@@ -461,7 +461,7 @@ async def update_relationship(
 async def delete_relationship(
     relationship_id: int,
     db: Session = Depends(get_db),
-    user: Auth0User = Security(auth.get_user, scopes=["delete:relationships"]),
+    user: Auth0User = Security(auth.get_user, scopes=["resource:admin"]),
 ) -> Any:
     """
     Delete a trainer-member relationship.

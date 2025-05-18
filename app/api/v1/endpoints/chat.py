@@ -36,7 +36,7 @@ logger = logging.getLogger("chat_api") # Initialize logger at the module level
 async def get_stream_token(
     *,
     db: Session = Depends(get_db),
-    current_user: Auth0User = Security(auth.get_user, scopes=["use:chat"])
+    current_user: Auth0User = Security(auth.get_user, scopes=["resource:read"])
 ):
     """
     Get Stream Chat Token
@@ -49,7 +49,7 @@ async def get_stream_token(
 
     Args:
         db (Session, optional): Database session dependency. Defaults to Depends(get_db).
-        current_user (Auth0User, optional): Authenticated user dependency. Defaults to Security(auth.get_user, scopes=["use:chat"]).
+        current_user (Auth0User, optional): Authenticated user dependency. Defaults to Security(auth.get_user, scopes=["resource:read"]).
 
     Permissions:
         - Requires 'use:chat' scope (granted to all authenticated users).
@@ -96,7 +96,7 @@ async def create_chat_room(
     *,
     db: Session = Depends(get_db),
     room_data: ChatRoomCreate,
-    current_user: Auth0User = Security(auth.get_user, scopes=["create:chat_rooms"])
+    current_user: Auth0User = Security(auth.get_user, scopes=["resource:write"])
 ):
     """
     Create Chat Room
@@ -107,7 +107,7 @@ async def create_chat_room(
     Args:
         db (Session, optional): Database session dependency. Defaults to Depends(get_db).
         room_data (ChatRoomCreate): Data for the new room, including name and initial member IDs.
-        current_user (Auth0User, optional): Authenticated user dependency. Defaults to Security(auth.get_user, scopes=["create:chat_rooms"]).
+        current_user (Auth0User, optional): Authenticated user dependency. Defaults to Security(auth.get_user, scopes=["resource:write"]).
 
     Permissions:
         - Requires 'create:chat_rooms' scope (typically for trainers/admins).
@@ -148,7 +148,7 @@ async def get_direct_chat(
     *,
     db: Session = Depends(get_db),
     other_user_id: int = Path(..., title="Internal user ID for direct chat"),
-    current_user: Auth0User = Security(auth.get_user, scopes=["use:chat"])
+    current_user: Auth0User = Security(auth.get_user, scopes=["resource:read"])
 ):
     """
     Get or Create Direct Chat Room
@@ -161,7 +161,7 @@ async def get_direct_chat(
     Args:
         db (Session, optional): Database session dependency. Defaults to Depends(get_db).
         other_user_id (int): The internal database ID of the other user to chat with.
-        current_user (Auth0User, optional): Authenticated user dependency. Defaults to Security(auth.get_user, scopes=["use:chat"]).
+        current_user (Auth0User, optional): Authenticated user dependency. Defaults to Security(auth.get_user, scopes=["resource:read"]).
 
     Permissions:
         - Requires 'use:chat' scope.
@@ -201,7 +201,7 @@ async def get_event_chat(
     *,
     db: Session = Depends(get_db),
     event_id: int = Path(..., title="Event ID"),
-    current_user: Auth0User = Security(auth.get_user, scopes=["use:chat"])
+    current_user: Auth0User = Security(auth.get_user, scopes=["resource:read"])
 ):
     """
     Get or Create Event Chat Room
@@ -212,7 +212,7 @@ async def get_event_chat(
     Args:
         db (Session, optional): Database session dependency. Defaults to Depends(get_db).
         event_id (int): The ID of the event.
-        current_user (Auth0User, optional): Authenticated user dependency. Defaults to Security(auth.get_user, scopes=["use:chat"]).
+        current_user (Auth0User, optional): Authenticated user dependency. Defaults to Security(auth.get_user, scopes=["resource:read"]).
 
     Permissions:
         - Requires 'use:chat' scope.
@@ -293,7 +293,7 @@ async def add_member_to_room(
     db: Session = Depends(get_db),
     room_id: int = Path(..., title="Local Chat room ID from DB"),
     user_id: int = Path(..., title="Internal user ID to add"),
-    current_user: Auth0User = Security(auth.get_user, scopes=["manage:chat_rooms"])
+    current_user: Auth0User = Security(auth.get_user, scopes=["resource:admin"])
 ):
     """
     Add Member to Chat Room
@@ -304,7 +304,7 @@ async def add_member_to_room(
         db (Session, optional): Database session dependency. Defaults to Depends(get_db).
         room_id (int): The local database ID of the chat room.
         user_id (int): The internal database ID of the user to add.
-        current_user (Auth0User, optional): Authenticated user dependency. Defaults to Security(auth.get_user, scopes=["manage:chat_rooms"]).
+        current_user (Auth0User, optional): Authenticated user dependency. Defaults to Security(auth.get_user, scopes=["resource:admin"]).
 
     Permissions:
         - Requires 'manage:chat_rooms' scope (typically for trainers/admins).
@@ -335,7 +335,7 @@ async def remove_member_from_room(
     db: Session = Depends(get_db),
     room_id: int = Path(..., title="Local Chat room ID from DB"),
     user_id: int = Path(..., title="Internal user ID to remove"),
-    current_user: Auth0User = Security(auth.get_user, scopes=["manage:chat_rooms"])
+    current_user: Auth0User = Security(auth.get_user, scopes=["resource:admin"])
 ):
     """
     Remove Member from Chat Room
@@ -346,7 +346,7 @@ async def remove_member_from_room(
         db (Session, optional): Database session dependency. Defaults to Depends(get_db).
         room_id (int): The local database ID of the chat room.
         user_id (int): The internal database ID of the user to remove.
-        current_user (Auth0User, optional): Authenticated user dependency. Defaults to Security(auth.get_user, scopes=["manage:chat_rooms"]).
+        current_user (Auth0User, optional): Authenticated user dependency. Defaults to Security(auth.get_user, scopes=["resource:admin"]).
 
     Permissions:
         - Requires 'manage:chat_rooms' scope (typically for trainers/admins).

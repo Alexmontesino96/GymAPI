@@ -21,7 +21,7 @@ async def get_categories(
     active_only: bool = True,
     db: Session = Depends(get_db),
     current_gym: GymSchema = Depends(verify_gym_access),
-    user: Auth0User = Security(auth.get_user, scopes=["read:schedules"]),
+    user: Auth0User = Security(auth.get_user, scopes=["resource:read"]),
     redis_client: Redis = Depends(get_redis_client)
 ) -> Any:
     """
@@ -35,7 +35,7 @@ async def get_categories(
         active_only (bool, optional): If true (default), only returns active categories. Defaults to True.
         db (Session, optional): Database session dependency. Defaults to Depends(get_db).
         current_gym (GymSchema, optional): Current gym context dependency. Defaults to Depends(verify_gym_access).
-        user (Auth0User, optional): Authenticated user dependency. Defaults to Security(auth.get_user, scopes=["read:schedules"]).
+        user (Auth0User, optional): Authenticated user dependency. Defaults to Security(auth.get_user, scopes=["resource:read"]).
         redis_client (Redis, optional): Redis client dependency. Defaults to Depends(get_redis_client).
 
     Permissions:
@@ -59,7 +59,7 @@ async def get_category(
     category_id: int = Path(..., description="ID of the category"),
     db: Session = Depends(get_db),
     current_gym: GymSchema = Depends(verify_gym_access),
-    user: Auth0User = Security(auth.get_user, scopes=["read:schedules"]),
+    user: Auth0User = Security(auth.get_user, scopes=["resource:read"]),
     redis_client: Redis = Depends(get_redis_client)
 ) -> Any:
     """
@@ -73,7 +73,7 @@ async def get_category(
         category_id (int): The ID of the category to retrieve.
         db (Session, optional): Database session dependency. Defaults to Depends(get_db).
         current_gym (GymSchema, optional): Current gym context dependency. Defaults to Depends(verify_gym_access).
-        user (Auth0User, optional): Authenticated user dependency. Defaults to Security(auth.get_user, scopes=["read:schedules"]).
+        user (Auth0User, optional): Authenticated user dependency. Defaults to Security(auth.get_user, scopes=["resource:read"]).
         redis_client (Redis, optional): Redis client dependency. Defaults to Depends(get_redis_client).
 
     Permissions:
@@ -97,7 +97,7 @@ async def create_category(
     category_data: ClassCategoryCustomCreate = Body(...),
     db: Session = Depends(get_db),
     current_gym: GymSchema = Depends(verify_trainer_role), # Requires TRAINER or higher
-    user: Auth0User = Security(auth.get_user, scopes=["create:schedules"]),
+    user: Auth0User = Security(auth.get_user, scopes=["resource:write"]),
     redis_client: Redis = Depends(get_redis_client)
 ) -> Any:
     """
@@ -110,7 +110,7 @@ async def create_category(
         category_data (ClassCategoryCustomCreate): Data for the new category.
         db (Session, optional): Database session dependency. Defaults to Depends(get_db).
         current_gym (GymSchema, optional): Current gym context dependency (requires TRAINER or ADMIN role). Defaults to Depends(verify_trainer_role).
-        user (Auth0User, optional): Authenticated user dependency. Defaults to Security(auth.get_user, scopes=["create:schedules"]).
+        user (Auth0User, optional): Authenticated user dependency. Defaults to Security(auth.get_user, scopes=["resource:write"]).
         redis_client (Redis, optional): Redis client dependency. Defaults to Depends(get_redis_client).
 
     Permissions:
@@ -154,7 +154,7 @@ async def update_category(
     category_data: ClassCategoryCustomUpdate = Body(...),
     db: Session = Depends(get_db),
     current_gym: GymSchema = Depends(verify_trainer_role), # Requires TRAINER or higher
-    user: Auth0User = Security(auth.get_user, scopes=["update:schedules"]),
+    user: Auth0User = Security(auth.get_user, scopes=["resource:write"]),
     redis_client: Redis = Depends(get_redis_client)
 ) -> Any:
     """
@@ -168,7 +168,7 @@ async def update_category(
         category_data (ClassCategoryCustomUpdate): Data fields to update.
         db (Session, optional): Database session dependency. Defaults to Depends(get_db).
         current_gym (GymSchema, optional): Current gym context dependency (requires TRAINER or ADMIN role). Defaults to Depends(verify_trainer_role).
-        user (Auth0User, optional): Authenticated user dependency. Defaults to Security(auth.get_user, scopes=["update:schedules"]).
+        user (Auth0User, optional): Authenticated user dependency. Defaults to Security(auth.get_user, scopes=["resource:write"]).
         redis_client (Redis, optional): Redis client dependency. Defaults to Depends(get_redis_client).
 
     Permissions:
@@ -208,7 +208,7 @@ async def delete_category(
     category_id: int = Path(..., description="ID of the category"),
     db: Session = Depends(get_db),
     current_gym: GymSchema = Depends(verify_admin_role), # Requires ADMIN role
-    user: Auth0User = Security(auth.get_user, scopes=["delete:schedules"]),
+    user: Auth0User = Security(auth.get_user, scopes=["resource:admin"]),
     redis_client: Redis = Depends(get_redis_client)
 ) -> None:
     """
@@ -223,7 +223,7 @@ async def delete_category(
         category_id (int): The ID of the category to delete/deactivate.
         db (Session, optional): Database session dependency. Defaults to Depends(get_db).
         current_gym (GymSchema, optional): Current gym context dependency (requires ADMIN role). Defaults to Depends(verify_admin_role).
-        user (Auth0User, optional): Authenticated user dependency. Defaults to Security(auth.get_user, scopes=["delete:schedules"]).
+        user (Auth0User, optional): Authenticated user dependency. Defaults to Security(auth.get_user, scopes=["resource:admin"]).
         redis_client (Redis, optional): Redis client dependency. Defaults to Depends(get_redis_client).
 
     Permissions:
