@@ -29,6 +29,37 @@ GYM_ROLE_PRIORITY = {
     None: 0
 }
 
+# Permisos asignados a cada rol
+# Nota: Esto es solo documentación/referencia. 
+# Los permisos reales se asignan en la Action de Auth0.
+ROLE_PERMISSIONS = {
+    "SUPER_ADMIN": [
+      "tenant:admin", "tenant:read", 
+      "user:admin", "user:write", "user:read", 
+      "resource:admin", "resource:write", "resource:read"
+    ],
+    "ADMIN": [
+      "tenant:read", 
+      "user:write", "user:read", 
+      "resource:admin", "resource:write", "resource:read"
+    ],
+    "OWNER": [
+      "tenant:admin", "tenant:read", 
+      "user:write", "user:read", 
+      "resource:admin", "resource:write", "resource:read"
+    ],
+    "TRAINER": [
+      "tenant:read", 
+      "user:read", 
+      "resource:write", "resource:read"
+    ],
+    "MEMBER": [
+      "tenant:read", 
+      "user:read", 
+      "resource:write", "resource:read"
+    ]
+}
+
 def determine_highest_role(global_role: UserRole, gym_roles: List[GymRoleType]) -> str:
     """
     Determina el rol más alto de un usuario basado en su rol global y roles de gimnasio.
