@@ -897,24 +897,25 @@ async def update_user(
     if not target_user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario a actualizar no encontrado")
     old_role = target_user.role
-    try:
-        updated_user = await user_service.update_user(db=db, user_id=user_id, user_in=user_in, redis_client=redis_client)
-        if redis_client:
-            await cache_service.invalidate_user_caches(redis_client, user_id=user_id)
-            if old_role != updated_user.role:
-                await user_service.invalidate_role_cache(redis_client, role=old_role)
-                await user_service.invalidate_role_cache(redis_client, role=updated_user.role)
-            # <<< Invalidar caché de perfil público específico >>>
-            public_profile_cache_key = f"user_public_profile:{user_id}"
-            await redis_client.delete(public_profile_cache_key)
-            logger = logging.getLogger("user_endpoint")
-            logger.info(f"(Superadmin Update) Invalidada caché de perfil público: {public_profile_cache_key}")
-        return updated_user
-    except HTTPException as e:
-         raise e
-    except Exception as e:
-        logging.getLogger("user_endpoint").error(f"Error inesperado al actualizar usuario {user_id}: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error interno al actualizar usuario.")
+    
+    # Actualizar usuario
+    updated_user = user_service.update_user(db, db_obj=target_user, obj_in=user_in)
+    
+    # Si el rol cambió, actualizar en Auth0
+    if old_role != updated_user.role:
+        from app.services.auth0_sync import auth0_sync_service
+        try:
+            await auth0_sync_service.update_highest_role_in_auth0(db, user_id)
+            logger.info(f"Rol más alto de usuario {user_id} actualizado en Auth0 después de cambio de rol global")
+        except Exception as e:
+            logger.error(f"Error actualizando rol en Auth0 para usuario {user_id}: {str(e)}")
+            # No falla la operación principal si la sincronización falla
+
+    # Invalidar caché del usuario
+    if redis_client:
+        await cache_service.invalidate_user_caches(redis_client, user_id=user_id, auth0_id=target_user.auth0_id)
+    
+    return updated_user
 
 @router.delete("/admin/users/{user_id}", response_model=UserSchema, tags=["Platform Admin"])
 async def admin_delete_user(

@@ -54,7 +54,7 @@ exports.onExecutePostLogin = async (event, api) => {
     "MEMBER": [
       "tenant:read", 
       "user:read", 
-      "resource:write", "resource:read"
+      "resource:read"
     ]
   };
 

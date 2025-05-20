@@ -99,10 +99,39 @@ class Auth0ManagementService:
         self.audience = get_settings().AUTH0_MGMT_AUDIENCE
         self.token = None
         self.token_expires_at = 0
+        self._initialized = False
         
         # Rate limiters para diferentes operaciones
         self.email_change_limiter = RateLimiter()
         self.verification_limiter = RateLimiter()
+    
+    def is_initialized(self) -> bool:
+        """
+        Verifica si el servicio ha sido inicializado.
+
+        Returns:
+            bool: True si el servicio está inicializado, False en caso contrario
+        """
+        return self._initialized
+    
+    async def initialize(self) -> bool:
+        """
+        Inicializa el servicio y verifica la conexión con Auth0.
+
+        Returns:
+            bool: True si la inicialización fue exitosa, False en caso contrario
+        """
+        try:
+            # Intentar obtener un token para verificar la conexión
+            self.get_auth_token()
+            self._initialized = True
+            return True
+        except Exception as e:
+            import logging
+            logger = logging.getLogger("auth0_service")
+            logger.error(f"Error inicializando Auth0 Management Service: {str(e)}")
+            self._initialized = False
+            return False
     
     def get_auth_token(self) -> str:
         """
@@ -400,6 +429,65 @@ class Auth0ManagementService:
         # Convertir a minutos y redondear hacia arriba
         import math
         return math.ceil(seconds_remaining / 60)
+
+    async def update_user_metadata(self, auth0_id: str, metadata: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Actualiza el app_metadata de un usuario en Auth0.
+        
+        Args:
+            auth0_id: ID de Auth0 del usuario (auth0|xxxx)
+            metadata: Diccionario con los metadatos a actualizar
+            
+        Returns:
+            Dict[str, Any]: Información del usuario actualizada
+            
+        Raises:
+            HTTPException: Si hay un error al actualizar los metadatos
+        """
+        token = self.get_auth_token()
+        url = f"https://{self.domain}/api/v2/users/{auth0_id}"
+        
+        payload = {
+            "app_metadata": metadata
+        }
+        
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json"
+        }
+        
+        try:
+            import logging
+            logger = logging.getLogger("auth0_service")
+            logger.info(f"Actualizando app_metadata para {auth0_id}: {json.dumps(metadata)}")
+            
+            response = requests.patch(url, json=payload, headers=headers)
+            response.raise_for_status()
+            
+            logger.info(f"app_metadata actualizado exitosamente para {auth0_id}")
+            return response.json()
+        except requests.RequestException as e:
+            error_detail = f"Error al actualizar app_metadata en Auth0: {str(e)}"
+            
+            # Intentar obtener el mensaje de error detallado de Auth0
+            if hasattr(e, 'response') and e.response:
+                try:
+                    error_data = e.response.json()
+                    error_message = error_data.get('message', error_detail)
+                    error_detail = f"{error_detail} - {error_message}"
+                except:
+                    pass
+            
+            logger.error(error_detail)
+            
+            status_code = 500
+            if hasattr(e, 'response') and e.response:
+                status_code = e.response.status_code
+                
+            raise HTTPException(
+                status_code=status_code,
+                detail=error_detail
+            )
 
 
 # Instancia global del servicio

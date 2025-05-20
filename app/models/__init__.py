@@ -3,4 +3,8 @@ from app.models.trainer_member import TrainerMemberRelationship, RelationshipSta
 from app.models.event import Event, EventParticipation
 from app.models.chat import ChatRoom, ChatMember
 from app.models.schedule import GymHours, GymSpecialHours, ClassCategoryCustom, Class, ClassSession, ClassParticipation
-from app.models.notification import DeviceToken 
+from app.models.notification import DeviceToken
+from app.models.gym import Gym
+from app.models.gym_module import GymModule
+from app.models.module import Module
+from app.models.user_gym import UserGym, GymRoleType 
