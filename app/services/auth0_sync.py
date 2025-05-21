@@ -11,6 +11,15 @@ from app.core.config import get_settings
 
 logger = logging.getLogger("auth0_sync_service")
 
+# Mapeo de nombres de roles internos a nombres de roles en Auth0
+ROLE_NAME_MAPPING = {
+    "SUPER_ADMIN": "SuperAdmin",
+    "ADMIN": "Admin",
+    "OWNER": "Owner",
+    "TRAINER": "Trainer",
+    "MEMBER": "Member"
+}
+
 # Mapeo de roles de usuario global a nivel de prioridad (mayor número = mayor prioridad)
 USER_ROLE_PRIORITY = {
     UserRole.SUPER_ADMIN: 100,
@@ -118,12 +127,28 @@ async def update_highest_role_in_auth0(db: Session, user_id: int):
         highest_role = determine_highest_role(global_role, gym_roles)
         logger.info(f"Rol más alto para usuario {user_id}: {highest_role}")
         
-        # Actualizar en Auth0
-        metadata = {"app_metadata": {"highest_role": highest_role}}
-        await auth0_mgmt_service.update_user_metadata(user.auth0_id, metadata)
-        logger.info(f"Metadata actualizada para usuario Auth0 {user.auth0_id}")
+        # Convertir el nombre del rol interno al formato de Auth0
+        auth0_role_name = ROLE_NAME_MAPPING.get(highest_role)
+        if not auth0_role_name:
+            logger.error(f"No se encontró mapeo para el rol '{highest_role}'")
+            return highest_role  # Devolver rol original para compatibilidad
+            
+        logger.info(f"Rol mapeado para Auth0: {highest_role} -> {auth0_role_name}")
         
-        return highest_role
+        # CAMBIO: Asignar rol en Auth0 en lugar de actualizar metadata
+        try:
+            # Actualizar el rol directamente en Auth0
+            success = await auth0_mgmt_service.assign_roles_to_user(user.auth0_id, [auth0_role_name])
+            if success:
+                logger.info(f"Rol {auth0_role_name} asignado a usuario {user.auth0_id} en Auth0")
+            else:
+                logger.error(f"Error asignando rol {auth0_role_name} a usuario {user.auth0_id} en Auth0")
+            
+            return highest_role
+            
+        except Exception as e:
+            logger.error(f"Error actualizando rol en Auth0: {str(e)}", exc_info=True)
+            raise
         
     except Exception as e:
         logger.error(f"Error actualizando rol más alto en Auth0 para usuario {user_id}: {str(e)}", exc_info=True)

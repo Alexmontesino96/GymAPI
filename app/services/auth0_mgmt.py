@@ -2,7 +2,7 @@ import os
 import json
 import time
 import requests
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from fastapi import HTTPException
 from app.core.config import get_settings
 
@@ -488,6 +488,155 @@ class Auth0ManagementService:
                 status_code=status_code,
                 detail=error_detail
             )
+
+    async def get_roles(self) -> List[Dict[str, Any]]:
+        """
+        Obtiene todos los roles definidos en Auth0.
+        
+        Returns:
+            List[Dict[str, Any]]: Lista de roles disponibles en Auth0
+            
+        Raises:
+            HTTPException: Si hay un error en la comunicación con Auth0
+        """
+        token = self.get_auth_token()
+        url = f"https://{self.domain}/api/v2/roles"
+        
+        headers = {
+            "Authorization": f"Bearer {token}"
+        }
+        
+        try:
+            import logging
+            logger = logging.getLogger("auth0_service")
+            logger.info(f"Obteniendo lista de roles de Auth0")
+            
+            response = requests.get(url, headers=headers)
+            response.raise_for_status()
+            
+            logger.info(f"Roles obtenidos exitosamente")
+            return response.json()
+        except requests.RequestException as e:
+            error_detail = f"Error al obtener roles de Auth0: {str(e)}"
+            
+            if hasattr(e, 'response') and e.response:
+                try:
+                    error_data = e.response.json()
+                    error_message = error_data.get('message', error_detail)
+                    error_detail = f"{error_detail} - {error_message}"
+                except:
+                    pass
+            
+            logger.error(error_detail)
+            
+            status_code = 500
+            if hasattr(e, 'response') and e.response:
+                status_code = e.response.status_code
+                
+            raise HTTPException(
+                status_code=status_code,
+                detail=error_detail
+            )
+
+    async def get_role_by_name(self, role_name: str) -> Optional[Dict[str, Any]]:
+        """
+        Busca un rol por su nombre en Auth0.
+        
+        Args:
+            role_name: Nombre del rol a buscar
+            
+        Returns:
+            Dict[str, Any]: Información del rol si se encuentra, None en caso contrario
+            
+        Raises:
+            HTTPException: Si hay un error en la comunicación con Auth0
+        """
+        roles = await self.get_roles()
+        
+        for role in roles:
+            if role.get('name') == role_name:
+                return role
+                
+        return None
+
+    async def assign_roles_to_user(self, auth0_id: str, role_names: List[str]) -> bool:
+        """
+        Asigna roles a un usuario en Auth0.
+        
+        Args:
+            auth0_id: ID de Auth0 del usuario
+            role_names: Lista de nombres de roles a asignar
+            
+        Returns:
+            bool: True si se asignaron correctamente
+            
+        Raises:
+            HTTPException: Si hay un error en la comunicación con Auth0
+        """
+        import logging
+        logger = logging.getLogger("auth0_service")
+        
+        # Primero, obtener los roles actuales del usuario
+        token = self.get_auth_token()
+        roles_url = f"https://{self.domain}/api/v2/users/{auth0_id}/roles"
+        
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json"
+        }
+        
+        try:
+            # Obtener roles actuales
+            current_roles_response = requests.get(roles_url, headers=headers)
+            current_roles_response.raise_for_status()
+            current_roles = current_roles_response.json()
+            
+            # Eliminar roles actuales
+            if current_roles:
+                current_role_ids = [role["id"] for role in current_roles]
+                delete_url = f"https://{self.domain}/api/v2/users/{auth0_id}/roles"
+                delete_payload = {"roles": current_role_ids}
+                
+                delete_response = requests.delete(delete_url, json=delete_payload, headers=headers)
+                delete_response.raise_for_status()
+                logger.info(f"Roles eliminados para usuario {auth0_id}")
+            
+            # Obtener IDs de los nuevos roles
+            role_ids = []
+            for role_name in role_names:
+                role = await self.get_role_by_name(role_name)
+                if role:
+                    role_ids.append(role["id"])
+                else:
+                    logger.warning(f"Rol '{role_name}' no encontrado en Auth0")
+            
+            if not role_ids:
+                logger.warning(f"No se encontraron roles válidos para asignar a {auth0_id}")
+                return False
+            
+            # Asignar nuevos roles
+            assign_url = f"https://{self.domain}/api/v2/users/{auth0_id}/roles"
+            assign_payload = {"roles": role_ids}
+            
+            assign_response = requests.post(assign_url, json=assign_payload, headers=headers)
+            assign_response.raise_for_status()
+            
+            logger.info(f"Roles asignados exitosamente a usuario {auth0_id}: {', '.join(role_names)}")
+            return True
+            
+        except requests.RequestException as e:
+            error_detail = f"Error asignando roles a usuario {auth0_id}: {str(e)}"
+            
+            if hasattr(e, 'response') and e.response:
+                try:
+                    error_data = e.response.json()
+                    error_message = error_data.get('message', error_detail)
+                    error_detail = f"{error_detail} - {error_message}"
+                except:
+                    pass
+            
+            logger.error(error_detail)
+            return False
 
 
 # Instancia global del servicio

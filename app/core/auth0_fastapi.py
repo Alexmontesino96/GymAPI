@@ -225,21 +225,13 @@ class Auth0:
             token_permissions = payload.get('permissions', [])
             logger.info(f"Token permissions: {token_permissions}")
             
+            # Si la JWT contiene alguna información del usuario
             if isinstance(token_permissions, list):
                 token_scopes.extend(token_permissions)
-                logger.info(f"Token scopes después de añadir permissions: {token_scopes}")
             
             # Crear versiones normalizadas de los permisos del token
-            normalized_token_scopes = []
-            for ts in token_scopes:
-                normalized_token_scopes.append(ts)  # Agregar original
-                # Agregar versión alternativa (con _ en lugar de : o viceversa)
-                if ':' in ts:
-                    normalized_token_scopes.append(ts.replace(':', '_'))
-                elif '_' in ts:
-                    normalized_token_scopes.append(ts.replace('_', ':'))
-            
-            logger.info(f"Token scopes normalizados (incluyendo ambos formatos): {normalized_token_scopes}")
+            normalized_scopes = normalize_scopes(token_scopes)
+            logger.info(f"Scopes normalizados: {normalized_scopes}")
             
             # Registrar tipo de segurity_scopes
             logger.info(f"security_scopes tipo: {type(security_scopes)}")
@@ -249,32 +241,18 @@ class Auth0:
             for scope in security_scopes.scopes:
                 logger.info(f"Verificando permiso: '{scope}' (tipo: {type(scope)})")
                 
-                # Verificar tanto el formato original como con : y _ intercambiados
+                # Crear versión alternativa para permitir tanto formato con : como con _
                 alt_scope_format = scope.replace(':', '_') if ':' in scope else scope.replace('_', ':')
-                logger.info(f"Permiso en formato alternativo: '{alt_scope_format}'")
                 
-                # Comprobación flexible: aceptar cualquier formato
-                if scope in normalized_token_scopes or alt_scope_format in normalized_token_scopes:
-                    logger.info(f"Permiso '{scope}' (o su alternativa '{alt_scope_format}') encontrado en token_scopes")
+                # Verificar si el scope requerido está en los scopes normalizados del token
+                if scope in normalized_scopes or alt_scope_format in normalized_scopes:
+                    logger.info(f"Permiso '{scope}' encontrado en token_scopes")
                 else:
-                    logger.warning(f"Permiso '{scope}' no encontrado en token_scopes normalizados")
-                    logger.warning(f"Token scopes normalizados: {normalized_token_scopes}")
-                    
-                    # Verificar cada elemento del token_scopes para buscar similitudes
-                    for ts in token_scopes:
-                        similarity = 0
-                        if ts.lower() == scope.lower():
-                            similarity = 1
-                        elif ts.replace(':', '_') == scope.replace(':', '_'):
-                            similarity = 2
-                        elif ts.replace('_', ':') == scope.replace('_', ':'):
-                            similarity = 3
-                        
-                        if similarity > 0:
-                            logger.warning(f"Permiso similar encontrado: '{ts}' (similitud tipo {similarity})")
-                    
-                    raise Auth0UnauthorizedException(detail=f'Missing "{scope}" scope',
-                                                   headers={'WWW-Authenticate': f'Bearer scope="{security_scopes.scope_str}"'})
+                    logger.warning(f"Permiso '{scope}' no encontrado en token_scopes")
+                    raise Auth0UnauthorizedException(
+                        detail=f'Missing "{scope}" scope',
+                        headers={'WWW-Authenticate': f'Bearer scope="{security_scopes.scope_str}"'}
+                    )
             
             logger.info("Verificación de permisos completada con éxito")
         
@@ -287,11 +265,7 @@ class Auth0:
             potential_email_claims = [
                 'email', 
                 f'{auth0_rule_namespace}email', 
-                'mail', 
-                'e-mail',
-                'https://example.com/email',
-                'https://gymapi.com/email',
-                'https://gymapi/email'
+                'mail'
             ]
             
             # Buscar en los claims principales
@@ -310,10 +284,7 @@ class Auth0:
             # Buscar email_verified en claims comunes
             potential_verified_claims = [
                 'email_verified', 
-                f'{auth0_rule_namespace}email_verified',
-                'https://example.com/email_verified',
-                'https://gymapi.com/email_verified',
-                'https://gymapi/email_verified'
+                f'{auth0_rule_namespace}email_verified'
             ]
             
             for claim in potential_verified_claims:
@@ -360,6 +331,27 @@ class Auth0:
                 raise Auth0UnauthorizedException(detail='Error parsing Auth0User')
             else:
                 return None
+
+
+def normalize_scopes(scopes: List[str]) -> List[str]:
+    """
+    Normaliza un conjunto de scopes para permitir tanto : como _ en los nombres.
+    
+    Args:
+        scopes: Lista de strings con los scopes
+        
+    Returns:
+        Lista de scopes normalizados, incluyendo versiones alternativas
+    """
+    normalized = []
+    for scope in scopes:
+        normalized.append(scope)  # Añadir versión original
+        # Añadir versión alternativa
+        if ':' in scope:
+            normalized.append(scope.replace(':', '_'))
+        elif '_' in scope:
+            normalized.append(scope.replace('_', ':'))
+    return normalized
 
 
 # Función para inicializar Auth0 usando get_settings
