@@ -1512,14 +1512,15 @@ class ClassService:
         """
         Obtener todas las clases, opcionalmente filtradas por gimnasio (con caché).
         """
+        # Si no hay gym_id, no usar caché y ejecutar consulta directa
         if gym_id is None:
-            # No soportaremos caché para todas las clases sin gym_id por ahora
-            logger.warning("Attempted to get classes without gym_id. Cache disabled for this request.")
-        query = db.query(Class)
-        if active_only:
-            query = query.filter(Class.is_active == True)
+            logger.warning("Attempted to get classes without gym_id. Cache disabled and no gym filtering applied.")
+            query = db.query(Class)
+            if active_only:
+                query = query.filter(Class.is_active == True)
             return query.offset(skip).limit(limit).all()
         
+        # Si tenemos gym_id, usar caché
         cache_key = f"schedule:classes:gym:{gym_id}:active:{active_only}:skip:{skip}:limit:{limit}"
         
         async def db_fetch():
