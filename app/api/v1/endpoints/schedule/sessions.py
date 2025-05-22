@@ -435,11 +435,11 @@ async def get_trainer_sessions(
     is_gym_admin_or_owner = False
     if db_user:
         # Verificar el rol del usuario en este gimnasio usando el servicio
-        user_gym_role = await user_service.get_user_gym_role_cached(
+        user_gym_membership = await user_service.check_user_gym_membership_cached(
             db=db, user_id=db_user.id, gym_id=current_gym.id, redis_client=redis_client
         )
         # Verificar si tiene rol ADMIN u OWNER
-        if user_gym_role and user_gym_role.role in [GymRoleType.ADMIN, GymRoleType.OWNER]:
+        if user_gym_membership and user_gym_membership.role in [GymRoleType.ADMIN, GymRoleType.OWNER]:
             is_gym_admin_or_owner = True
 
     if not (is_own_schedule or is_super_admin or has_permission or is_gym_admin_or_owner):
