@@ -2,6 +2,7 @@ from app.api.v1.endpoints.schedule.common import *
 from app.core.tenant import verify_gym_access
 from app.models.gym import Gym
 from app.models.user import UserRole
+from app.models.user_gym import GymRoleType
 from app.services.gym import gym_service
 
 router = APIRouter()
@@ -407,7 +408,11 @@ async def get_trainer_sessions(
 
     Permissions:
         - Requires 'read:schedules' scope.
-        - To view another trainer's schedule, requires 'read:trainer_schedules' scope OR user must be a SuperAdmin.
+        - To view another trainer's schedule, requires one of the following:
+          * 'read:trainer_schedules' scope
+          * User is a SuperAdmin
+          * User is an Admin or Owner of the gym
+          * User is viewing their own schedule
 
     Returns:
         List[ClassSessionSchema]: A list of session objects taught by the specified trainer.
@@ -425,8 +430,19 @@ async def get_trainer_sessions(
     is_own_schedule = db_user and db_user.id == trainer_id
     is_super_admin = db_user and db_user.role == UserRole.SUPER_ADMIN # Assuming UserRole enum exists
     has_permission = "read:trainer_schedules" in (getattr(user, "permissions", []) or [])
+    
+    # Verificar si el usuario es ADMIN u OWNER en este gimnasio
+    is_gym_admin_or_owner = False
+    if db_user:
+        # Verificar el rol del usuario en este gimnasio usando el servicio
+        user_gym_role = await user_service.get_user_gym_role_cached(
+            db=db, user_id=db_user.id, gym_id=current_gym.id, redis_client=redis_client
+        )
+        # Verificar si tiene rol ADMIN u OWNER
+        if user_gym_role and user_gym_role.role in [GymRoleType.ADMIN, GymRoleType.OWNER]:
+            is_gym_admin_or_owner = True
 
-    if not (is_own_schedule or is_super_admin or has_permission):
+    if not (is_own_schedule or is_super_admin or has_permission or is_gym_admin_or_owner):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Insufficient permissions to view this trainer's schedule"
