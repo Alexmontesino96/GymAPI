@@ -40,6 +40,7 @@ class User(Base):
     bio = Column(Text, nullable=True)
     goals = Column(Text, nullable=True)  # objetivos de fitness (JSON)
     health_conditions = Column(Text, nullable=True)  # condiciones de salud (JSON)
+    qr_code = Column(String, unique=True, index=True, nullable=True)  # Código QR único para cada usuario
     
     # Relaciones para multi-tenant
     gyms = relationship("UserGym", back_populates="user")

@@ -22,6 +22,7 @@ class UserBase(BaseModel):
     goals: Optional[str] = None
     health_conditions: Optional[str] = None
     gym_role: Optional[GymRoleType] = None  # Añadir el rol del gimnasio
+    qr_code: Optional[str] = None  # Código QR único para cada usuario
 
 
 # Propiedades para recibir a través de API al crear usuario

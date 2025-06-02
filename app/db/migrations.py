@@ -25,7 +25,8 @@ def run_migrations():
                 'weight': "FLOAT",
                 'bio': "TEXT",
                 'goals': "TEXT",
-                'health_conditions': "TEXT"
+                'health_conditions': "TEXT",
+                'qr_code': "VARCHAR(255) UNIQUE"
             }
             
             # Añadir columnas faltantes

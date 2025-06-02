@@ -1,7 +1,7 @@
 from fastapi import APIRouter
 
 # Import routers from modules
-from app.api.v1.endpoints import users, gyms, trainer_member, chat, events, worker
+from app.api.v1.endpoints import users, gyms, trainer_member, chat, events, worker, attendance
 from app.api.v1.endpoints.notification import router as notification_router
 from app.api.v1.endpoints.webhooks.stream_webhooks import router as stream_webhooks_router
 
@@ -44,3 +44,6 @@ api_router.include_router(modules_router, prefix="/modules", tags=["modules"])
 
 # Stream webhooks
 api_router.include_router(stream_webhooks_router, prefix="/webhooks", tags=["webhooks"])
+
+# Attendance module
+api_router.include_router(attendance.router, prefix="/attendance", tags=["attendance"])

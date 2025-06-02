@@ -22,6 +22,7 @@ from app.db.redis_client import get_redis_client, redis
 from app.services.cache_service import cache_service
 import logging
 from app.core.config import get_settings
+from app.services.attendance import attendance_service
 
 # Definir logger para este módulo
 logger = logging.getLogger("gym_endpoint")
@@ -246,7 +247,7 @@ async def add_user_to_current_gym(
         )
     
     # Añadir usuario al gimnasio
-    user_gym = gym_service.add_user_to_gym(db, gym_id=gym_id, user_id=user_id)
+    user_gym = await gym_service.add_user_to_gym(db, gym_id=gym_id, user_id=user_id)
     
     # Actualizar el rol más alto en Auth0
     from app.services.auth0_sync import auth0_sync_service
@@ -805,39 +806,39 @@ async def assign_gym_owner(
     current_user: Auth0User = Security(auth.get_user)
 ) -> Any:
     """
-    [SUPER_ADMIN] Asignar un OWNER a un gimnasio.
+    [SUPER_ADMIN ONLY] Asignar un usuario como OWNER de un gimnasio.
     
-    Este endpoint permite a los administradores de plataforma (SUPER_ADMIN) 
-    asignar a un usuario como OWNER de un gimnasio específico.
-    Si el usuario ya pertenece al gimnasio, se actualiza su rol a OWNER.
-    Si no pertenece al gimnasio, se le añade con rol OWNER.
+    Este endpoint permite a los SUPER_ADMIN asignar un usuario como OWNER de un gimnasio.
+    Si el usuario no pertenece al gimnasio, se le añade automáticamente.
+    Si ya pertenece, se actualiza su rol a OWNER.
     
-    Permissions:
-        - Requiere ser SUPER_ADMIN
-        
     Args:
         db: Sesión de base de datos
         gym_id: ID del gimnasio
         user_id: ID del usuario a asignar como OWNER
-        redis_client: Cliente Redis para actualizar caché
-        current_user: Usuario SUPER_ADMIN autenticado
+        redis_client: Cliente de Redis inyectado
+        current_user: Usuario autenticado (debe ser SUPER_ADMIN)
         
     Returns:
-        UserGymSchema: La relación usuario-gimnasio creada o actualizada
+        UserGymSchema: La relación usuario-gimnasio actualizada
         
     Raises:
-        HTTPException: 403 si el usuario no es SUPER_ADMIN,
-                       404 si el gimnasio o usuario no existe
+        HTTPException: 403 si quien llama no es SUPER_ADMIN,
+                       404 si el gimnasio o usuario no existen
     """
-    logger = logging.getLogger("gym_endpoint")
-    logger.info(f"Intentando asignar OWNER al gimnasio {gym_id}, usuario {user_id}")
-    
     # Verificar que quien llama es SUPER_ADMIN
-    db_caller = user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
-    if not db_caller or db_caller.role != UserRole.SUPER_ADMIN:
+    auth0_id = current_user.id
+    if not auth0_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Token no contiene información de usuario (sub)"
+        )
+    
+    db_user = user_service.get_user_by_auth0_id(db, auth0_id=auth0_id)
+    if not db_user or db_user.role != UserRole.SUPER_ADMIN:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Esta acción solo está permitida para administradores de plataforma"
+            detail="Solo los SUPER_ADMIN pueden asignar OWNERS"
         )
     
     # Verificar que el gimnasio existe
@@ -874,6 +875,11 @@ async def assign_gym_owner(
             )
             db.add(user_gym)
             logger.info(f"Añadiendo usuario {user_id} como OWNER al gimnasio {gym_id}")
+            
+            # Generar código QR para el usuario
+            qr_code = await attendance_service.generate_qr_code(user_id=user_id, gym_id=gym_id)
+            user.qr_code = qr_code
+            db.add(user)
         
         db.commit()
         db.refresh(user_gym)
@@ -890,10 +896,11 @@ async def assign_gym_owner(
             await cache_service.invalidate_user_caches(redis_client, user_id=user_id)
             
         return user_gym
+        
     except Exception as e:
         db.rollback()
-        logger.error(f"Error asignando OWNER al gimnasio {gym_id}: {e}", exc_info=True)
+        logger.error(f"Error al asignar OWNER: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error interno al asignar OWNER: {str(e)}"
+            detail=f"Error al asignar OWNER: {str(e)}"
         ) 

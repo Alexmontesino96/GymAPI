@@ -17,6 +17,7 @@ from app.models.user import UserRole
 from redis.asyncio import Redis # Importar Redis
 from app.services.cache_service import cache_service # Importar cache_service
 from app.schemas.user import GymUserSummary # Importar schema de respuesta
+from app.services.attendance import attendance_service # Importar servicio de asistencia
 
 class GymService:
     def create_gym(self, db: Session, *, gym_in: GymCreate) -> Gym:
@@ -137,62 +138,54 @@ class GymService:
             
         return gym_repository.remove(db, id=gym_id)
     
-    def add_user_to_gym(
-        self, db: Session, *, gym_id: int, user_id: int
+    async def add_user_to_gym(
+        self,
+        db: Session,
+        *,
+        gym_id: int,
+        user_id: int,
+        role: GymRoleType = GymRoleType.MEMBER
     ) -> UserGym:
         """
-        Añadir un usuario a un gimnasio SIEMPRE con el rol MEMBER.
-        Impide añadir usuarios SUPER_ADMIN.
-        Si el usuario ya existe en el gimnasio, lanza un error 409.
-
+        Añade un usuario a un gimnasio con el rol especificado.
+        Por defecto, el rol es MEMBER.
+        
         Args:
             db: Sesión de base de datos
             gym_id: ID del gimnasio
-            user_id: ID del usuario a añadir
-
+            user_id: ID del usuario
+            role: Rol del usuario en el gimnasio (default: MEMBER)
+            
         Returns:
-            La asociación UserGym creada (antes de commit).
-
+            UserGym: La relación usuario-gimnasio creada
+            
         Raises:
-            HTTPException 404: Si el usuario a añadir no existe.
-            HTTPException 400: Si se intenta añadir un SUPER_ADMIN.
-            HTTPException 409: Si el usuario ya pertenece al gimnasio.
+            ValueError: Si el usuario ya pertenece al gimnasio
         """
-        # Verificar que el usuario a añadir existe Y NO es SUPER_ADMIN
-        user_to_add = db.query(User).filter(User.id == user_id).first()
-        if not user_to_add:
-             raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Usuario con ID {user_id} no encontrado."
-            )
-        if user_to_add.role == UserRole.SUPER_ADMIN:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="No se pueden añadir administradores de plataforma a gimnasios."
-            )
-            
-        # Verificar si el usuario ya pertenece al gimnasio
-        existing: Optional[UserGym] = db.query(UserGym).filter(
-            UserGym.user_id == user_id,
-            UserGym.gym_id == gym_id
-        ).first()
-
+        # Verificar que el usuario no pertenece ya al gimnasio
+        existing = self.check_user_in_gym(db, user_id=user_id, gym_id=gym_id)
         if existing:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=f"El usuario {user_id} ya pertenece al gimnasio {gym_id}."
-            )
-        else:
-            user_gym = UserGym(
-                user_id=user_id,
-                gym_id=gym_id,
-                role=GymRoleType.MEMBER
-            )
-            db.add(user_gym)
-            db.commit()  # Confirmar los cambios en la BD
-            db.refresh(user_gym)  # Actualizar el objeto con los valores de BD
-            
-            return user_gym
+            raise ValueError(f"El usuario {user_id} ya pertenece al gimnasio {gym_id}")
+        
+        # Crear la relación usuario-gimnasio
+        user_gym = UserGym(
+            user_id=user_id,
+            gym_id=gym_id,
+            role=role
+        )
+        db.add(user_gym)
+        
+        # Generar código QR para el usuario
+        user = db.query(User).filter(User.id == user_id).first()
+        if user and not user.qr_code:  # Solo si no tiene un QR code
+            qr_code = await attendance_service.generate_qr_code(user_id=user_id, gym_id=gym_id)
+            user.qr_code = qr_code
+            db.add(user)
+        
+        db.commit()
+        db.refresh(user_gym)
+        
+        return user_gym
     
     def remove_user_from_gym(self, db: Session, *, gym_id: int, user_id: int) -> None:
         """
