@@ -173,7 +173,7 @@ class UserRepository(BaseRepository[User, UserCreate, UserUpdate]):
         """
         Obtiene usuarios completos (modelo User) de un gym, filtrados por rol y paginados.
         """
-        query = db.query(User)
+        query = db.query(User, UserGym.role.label('gym_role'))
         query = query.join(UserGym, User.id == UserGym.user_id)
         query = query.filter(UserGym.gym_id == gym_id)
         query = query.filter(User.role.in_(roles)) # Filtrar por lista de roles
@@ -183,7 +183,15 @@ class UserRepository(BaseRepository[User, UserCreate, UserUpdate]):
         query = query.order_by(User.first_name, User.last_name, User.id)
 
         # Aplicar paginación directamente en la consulta SQL
-        return query.offset(skip).limit(limit).all()
+        results = query.offset(skip).limit(limit).all()
+        
+        # Procesar los resultados para incluir el rol del gimnasio
+        users_with_roles = []
+        for user, gym_role in results:
+            user.gym_role = gym_role  # Añadir el rol del gimnasio al objeto usuario
+            users_with_roles.append(user)
+            
+        return users_with_roles
 
     def create(self, db: Session, *, obj_in: UserCreate) -> User:
         """

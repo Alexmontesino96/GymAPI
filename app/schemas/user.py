@@ -21,6 +21,7 @@ class UserBase(BaseModel):
     bio: Optional[str] = None
     goals: Optional[str] = None
     health_conditions: Optional[str] = None
+    gym_role: Optional[GymRoleType] = None  # Añadir el rol del gimnasio
 
 
 # Propiedades para recibir a través de API al crear usuario
