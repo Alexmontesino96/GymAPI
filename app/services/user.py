@@ -11,11 +11,13 @@ from redis.asyncio import Redis
 from app.repositories.user import user_repository
 from app.schemas.user import UserCreate, UserUpdate, User, UserRoleUpdate, UserProfileUpdate, UserSearchParams, UserSyncFromAuth0, UserPublicProfile, User as UserSchema
 from app.models.user import User as UserModel, UserRole
+from app.models.user_gym import UserGym, GymRoleType
 from app.services.storage import get_storage_service
 from app.core.config import get_settings
 from app.db.redis_client import get_redis_client
 from app.core.auth0_mgmt import auth0_mgmt_service
 from app.core.profiling import time_redis_operation, time_db_query, time_deserialize_operation, register_cache_hit, register_cache_miss, async_db_query_timer
+from app.services.attendance import attendance_service
 
 
 # --- Constantes para Tokens de Confirmación ---
@@ -147,20 +149,29 @@ class UserService:
             limit=search_params.limit
         )
 
-    def create_user(self, db: Session, user_in: UserCreate) -> UserModel:
+    async def create_user(self, db: Session, user_data: UserCreate, redis_client: Optional[Redis] = None) -> UserModel:
         """
-        Crear un nuevo usuario.
+        Crea un nuevo usuario y genera su código QR único.
         """
-        user = self.get_user_by_email(db, email=user_in.email)
-        if user:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Ya existe un usuario con este email en el sistema",
-            )
-        # TODO: Considerar si la creación aquí debería interactuar con Auth0 también
-        #       o si este método es solo para creación administrativa interna.
-        #       Si es para uso general, necesitaría contraseña y creación en Auth0.
-        return user_repository.create(db, obj_in=user_in)
+        # Crear el usuario
+        db_user = UserModel(**user_data.model_dump())
+        db.add(db_user)
+        db.commit()
+        db.refresh(db_user)
+        
+        # Generar código QR único para el usuario
+        qr_code = await attendance_service.generate_qr_code(db_user.id)
+        db_user.qr_code = qr_code
+        
+        db.add(db_user)
+        db.commit()
+        db.refresh(db_user)
+        
+        # Invalidar caché si existe
+        if redis_client:
+            await self._invalidate_user_cache(redis_client, db_user.id, db_user.auth0_id)
+        
+        return db_user
 
     def create_or_update_auth0_user(self, db: Session, auth0_user: Dict) -> UserModel:
         """
@@ -657,7 +668,6 @@ class UserService:
     async def get_gym_participants_cached(
         self, 
         db: Session, 
-        # role: UserRole, # Ya no es un solo rol
         *,
         gym_id: int, # No es opcional aquí
         roles: List[UserRole], # Recibe lista de roles
@@ -678,10 +688,6 @@ class UserService:
             return user_repository.get_gym_participants(db, gym_id=gym_id, roles=roles, skip=skip, limit=limit)
         
         # Crear clave única de caché combinada
-        # cache_key = f"users:role:{role.name}" # Clave antigua
-        # if gym_id:
-        #     cache_key += f":gym:{gym_id}"
-        # cache_key += f":skip:{skip}:limit:{limit}"
         role_str = "_".join(sorted([r.name for r in roles]))
         cache_key = f"users:full_profile:gym:{gym_id}:roles:{role_str}:skip:{skip}:limit:{limit}"
         
@@ -723,23 +729,6 @@ class UserService:
         if not redis_client:
             return
             
-        # --- LÓGICA DE INVALIDACIÓN ANTIGUA (Necesita ajuste) ---
-        # Construir patrón de invalidación
-        # pattern = "users:role:" # Clave antigua
-        # if role:
-        #     pattern += f"{role.name}"
-        # else:
-        #     pattern += "*"
-        #     
-        # if gym_id:
-        #     pattern += f":gym:{gym_id}"
-        # else:
-        #     pattern += ":gym:*"
-        #     
-        # # Invalidar todas las variantes de paginación
-        # pattern += ":skip:*:limit:*"
-        # --- FIN LÓGICA ANTIGUA ---
-
         # --- NUEVA LÓGICA DE INVALIDACIÓN --- 
         # Invalidar cachés de perfiles completos para el gym afectado
         base_pattern = f"users:full_profile:gym:{gym_id if gym_id else '*'}:roles:*"
@@ -747,16 +736,6 @@ class UserService:
         pattern = f"{base_pattern}:skip:*:limit:*"
         count = await cache_service.delete_pattern(redis_client, pattern)
         logger.info(f"Caché de participantes de gym invalidada con patrón: {pattern} ({count} claves)")
-
-        # Podríamos ser más específicos si sabemos qué rol cambió, pero
-        # invalidar todo para el gym es más simple y seguro por ahora.
-        # Si el rol específico es conocido:
-        # if role:
-        #     # Invalidar claves que incluyan ESE rol
-        #     specific_pattern = f"users:full_profile:gym:{gym_id}:roles:*_{role.name}_*:skip:*:limit:*"
-        #     await cache_service.delete_pattern(redis_client, specific_pattern)
-        #     specific_pattern_single = f"users:full_profile:gym:{gym_id}:roles:{role.name}:skip:*:limit:*"
-        #     await cache_service.delete_pattern(redis_client, specific_pattern_single)
 
     # <<< NUEVO MÉTODO CACHEADO PARA TODOS LOS USUARIOS >>>
     async def get_users_cached(

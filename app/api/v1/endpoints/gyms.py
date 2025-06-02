@@ -22,7 +22,6 @@ from app.db.redis_client import get_redis_client, redis
 from app.services.cache_service import cache_service
 import logging
 from app.core.config import get_settings
-from app.services.attendance import attendance_service
 
 # Definir logger para este módulo
 logger = logging.getLogger("gym_endpoint")
@@ -246,8 +245,8 @@ async def add_user_to_current_gym(
             detail=f"El usuario ya pertenece al gimnasio con rol {existing_membership.role.value}"
         )
     
-    # Añadir usuario al gimnasio
-    user_gym = await gym_service.add_user_to_gym(db, gym_id=gym_id, user_id=user_id)
+    # Añadir usuario al gimnasio (ahora síncrono)
+    user_gym = gym_service.add_user_to_gym(db, gym_id=gym_id, user_id=user_id)
     
     # Actualizar el rol más alto en Auth0
     from app.services.auth0_sync import auth0_sync_service
@@ -875,11 +874,6 @@ async def assign_gym_owner(
             )
             db.add(user_gym)
             logger.info(f"Añadiendo usuario {user_id} como OWNER al gimnasio {gym_id}")
-            
-            # Generar código QR para el usuario
-            qr_code = await attendance_service.generate_qr_code(user_id=user_id, gym_id=gym_id)
-            user.qr_code = qr_code
-            db.add(user)
         
         db.commit()
         db.refresh(user_gym)

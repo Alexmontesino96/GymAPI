@@ -9,16 +9,17 @@ from redis.asyncio import Redis
 from app.models.user import User
 from app.models.schedule import ClassSession, ClassParticipation, ClassParticipationStatus
 from app.services.schedule import class_participation_service, class_session_service
+from app.services.gym import gym_service
+from app.repositories.schedule import class_participation_repository
 
 class AttendanceService:
-    async def generate_qr_code(self, user_id: int, gym_id: int) -> str:
+    async def generate_qr_code(self, user_id: int) -> str:
         """
         Genera un código QR único para un usuario.
-        El formato es: GYM{gym_id}U{user_id}_{hash}
+        El formato es: U{user_id}_{hash}
         
         Args:
             user_id: ID del usuario
-            gym_id: ID del gimnasio
             
         Returns:
             str: Código QR único
@@ -26,13 +27,13 @@ class AttendanceService:
         # Generar un string aleatorio para hacer el código más único
         random_str = ''.join(random.choices(string.ascii_letters + string.digits, k=6))
         
-        # Crear un hash usando user_id, gym_id y el string aleatorio
-        hash_input = f"{user_id}_{gym_id}_{random_str}"
+        # Crear un hash usando user_id y el string aleatorio
+        hash_input = f"{user_id}_{random_str}"
         hash_obj = hashlib.sha256(hash_input.encode())
         hash_short = hash_obj.hexdigest()[:8]
         
-        # Formato final: GYM{gym_id}U{user_id}_{hash}
-        return f"GYM{gym_id}U{user_id}_{hash_short}"
+        # Formato final: U{user_id}_{hash}
+        return f"U{user_id}_{hash_short}"
 
     async def process_check_in(
         self,
@@ -54,21 +55,18 @@ class AttendanceService:
         Returns:
             Dict con el resultado del check-in
         """
-        # Extraer user_id y gym_id del código QR
+        # Extraer user_id del código QR
         try:
-            # El formato es GYM{gym_id}U{user_id}_{hash}
+            # El formato es U{user_id}_{hash}
             parts = qr_code.split('_')[0]  # Tomar la parte antes del _
-            gym_part = parts.split('U')[0]  # Separar la parte del gym
-            user_part = parts.split('U')[1]  # Separar la parte del usuario
+            user_id = int(parts.replace('U', ''))
             
-            qr_gym_id = int(gym_part.replace('GYM', ''))
-            user_id = int(user_part)
-            
-            # Verificar que el código corresponde al gimnasio actual
-            if qr_gym_id != gym_id:
+            # Verificar que el usuario pertenece al gimnasio actual
+            membership = gym_service.check_user_in_gym(db, user_id=user_id, gym_id=gym_id)
+            if not membership:
                 return {
                     "success": False,
-                    "message": "Código QR no válido para este gimnasio"
+                    "message": "Usuario no pertenece a este gimnasio"
                 }
                 
         except (ValueError, IndexError):
@@ -110,42 +108,27 @@ class AttendanceService:
         )
         
         # Verificar si el usuario ya tiene participación en esta sesión
-        existing_participation = await class_participation_service.get_participation(
+        existing_participation = class_participation_repository.get_by_session_and_member(
             db,
             session_id=closest_session.id,
-            user_id=user_id
+            member_id=user_id,
+            gym_id=gym_id
         )
         
         if existing_participation:
-            if existing_participation.status == ClassParticipationStatus.CHECKED_IN:
+            if existing_participation.status == ClassParticipationStatus.ATTENDED:
                 return {
                     "success": False,
                     "message": "Ya has hecho check-in en esta clase"
                 }
-            # Actualizar estado a CHECKED_IN
-            existing_participation.status = ClassParticipationStatus.CHECKED_IN
-            db.add(existing_participation)
-            db.commit()
-            db.refresh(existing_participation)
-            
-            return {
-                "success": True,
-                "message": "Check-in realizado correctamente",
-                "session": {
-                    "id": closest_session.id,
-                    "name": closest_session.class_info.name,
-                    "start_time": closest_session.start_time,
-                    "end_time": closest_session.end_time
+            # Actualizar estado a ATTENDED
+            updated_participation = class_participation_repository.update(
+                db, 
+                db_obj=existing_participation,
+                obj_in={
+                    "status": ClassParticipationStatus.ATTENDED,
+                    "attendance_time": now
                 }
-            }
-        else:
-            # Crear nueva participación con estado CHECKED_IN
-            participation = await class_participation_service.create_participation(
-                db,
-                session_id=closest_session.id,
-                user_id=user_id,
-                status=ClassParticipationStatus.CHECKED_IN,
-                gym_id=gym_id
             )
             
             return {
@@ -153,7 +136,30 @@ class AttendanceService:
                 "message": "Check-in realizado correctamente",
                 "session": {
                     "id": closest_session.id,
-                    "name": closest_session.class_info.name,
+                    "start_time": closest_session.start_time,
+                    "end_time": closest_session.end_time
+                }
+            }
+        else:
+            # Crear nueva participación con estado ATTENDED
+            participation_data = {
+                "session_id": closest_session.id,
+                "member_id": user_id,
+                "status": ClassParticipationStatus.ATTENDED,
+                "gym_id": gym_id,
+                "attendance_time": now
+            }
+            
+            new_participation = class_participation_repository.create(
+                db,
+                obj_in=participation_data
+            )
+            
+            return {
+                "success": True,
+                "message": "Check-in realizado correctamente",
+                "session": {
+                    "id": closest_session.id,
                     "start_time": closest_session.start_time,
                     "end_time": closest_session.end_time
                 }

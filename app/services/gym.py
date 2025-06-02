@@ -17,7 +17,6 @@ from app.models.user import UserRole
 from redis.asyncio import Redis # Importar Redis
 from app.services.cache_service import cache_service # Importar cache_service
 from app.schemas.user import GymUserSummary # Importar schema de respuesta
-from app.services.attendance import attendance_service # Importar servicio de asistencia
 
 class GymService:
     def create_gym(self, db: Session, *, gym_in: GymCreate) -> Gym:
@@ -138,7 +137,7 @@ class GymService:
             
         return gym_repository.remove(db, id=gym_id)
     
-    async def add_user_to_gym(
+    def add_user_to_gym(
         self,
         db: Session,
         *,
@@ -174,14 +173,6 @@ class GymService:
             role=role
         )
         db.add(user_gym)
-        
-        # Generar código QR para el usuario
-        user = db.query(User).filter(User.id == user_id).first()
-        if user and not user.qr_code:  # Solo si no tiene un QR code
-            qr_code = await attendance_service.generate_qr_code(user_id=user_id, gym_id=gym_id)
-            user.qr_code = qr_code
-            db.add(user)
-        
         db.commit()
         db.refresh(user_gym)
         
