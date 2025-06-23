@@ -10,6 +10,7 @@ from app.repositories.notification_repository import notification_repository
 from app.repositories.schedule import class_repository, class_session_repository, class_participation_repository
 from app.repositories.event import EventRepository
 from app.models.event import EventStatus
+from app.models.schedule import ClassSession, ClassSessionStatus
 
 logger = logging.getLogger(__name__)
 event_repository = EventRepository()
@@ -132,6 +133,68 @@ def mark_completed_events():
         except Exception as e:
             logger.error(f"Error in mark_completed_events task: {str(e)}", exc_info=True)
 
+def mark_completed_sessions():
+    """
+    Marca como completadas las sesiones cuya hora de finalización ya pasó.
+    También actualiza sesiones a IN_PROGRESS cuando están dentro del horario.
+    
+    Esta función se ejecuta cada 15 minutos para mantener estados actualizados
+    y proporcionar mejor experiencia de usuario.
+    """
+    logger.info("Running scheduled task: mark_completed_sessions")
+    with SessionLocal() as db:
+        try:
+            from sqlalchemy import and_, or_
+            
+            current_time = datetime.now(timezone.utc)
+            
+            # 1. Marcar sesiones como IN_PROGRESS
+            # (Sesiones que ya empezaron pero aún no terminan)
+            sessions_in_progress = db.query(ClassSession).filter(
+                and_(
+                    ClassSession.status == ClassSessionStatus.SCHEDULED,
+                    ClassSession.start_time <= current_time,
+                    ClassSession.end_time > current_time
+                )
+            ).all()
+            
+            progress_count = 0
+            for session in sessions_in_progress:
+                session.status = ClassSessionStatus.IN_PROGRESS
+                db.add(session)
+                progress_count += 1
+                logger.debug(f"Session {session.id} marked as IN_PROGRESS")
+            
+            # 2. Marcar sesiones como COMPLETED
+            # (Sesiones cuya hora de finalización ya pasó)
+            sessions_to_complete = db.query(ClassSession).filter(
+                and_(
+                    or_(
+                        ClassSession.status == ClassSessionStatus.SCHEDULED,
+                        ClassSession.status == ClassSessionStatus.IN_PROGRESS
+                    ),
+                    ClassSession.end_time <= current_time
+                )
+            ).all()
+            
+            completion_count = 0
+            for session in sessions_to_complete:
+                session.status = ClassSessionStatus.COMPLETED
+                db.add(session)
+                completion_count += 1
+                logger.info(f"Session {session.id} marked as completed")
+            
+            # Confirmar cambios si hay actualizaciones
+            if progress_count > 0 or completion_count > 0:
+                db.commit()
+                logger.info(f"Session status updates: {progress_count} to IN_PROGRESS, {completion_count} to COMPLETED")
+            else:
+                logger.debug("No sessions needed status updates")
+                
+        except Exception as e:
+            logger.error(f"Error in mark_completed_sessions task: {str(e)}", exc_info=True)
+            db.rollback()
+
 def init_scheduler():
     """
     Inicializa el programador de tareas
@@ -166,9 +229,18 @@ def init_scheduler():
         replace_existing=True
     )
     
+    # Marcar sesiones como completadas cada 15 minutos
+    # Ejecuta más frecuentemente que eventos para mejor UX
+    _scheduler.add_job(
+        mark_completed_sessions,
+        trigger=CronTrigger(minute='*/15'),  # Cada 15 minutos
+        id='session_completion',
+        replace_existing=True
+    )
+    
     # Iniciar el scheduler
     _scheduler.start()
-    logger.info("Scheduler started with UTC timezone")
+    logger.info("Scheduler started with UTC timezone - includes session completion task")
     
     return _scheduler
 
