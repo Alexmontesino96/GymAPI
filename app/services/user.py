@@ -20,11 +20,6 @@ from app.core.profiling import time_redis_operation, time_db_query, time_deseria
 from app.services.attendance import attendance_service
 
 
-# --- Constantes para Tokens de Confirmación ---
-# Mover a config si se usan en otros lugares
-# SECRET_KEY = settings.SECRET_KEY
-# ALGORITHM = "HS256"
-# ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
 logger = logging.getLogger(__name__) # Logger a nivel de módulo
 
