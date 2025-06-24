@@ -277,8 +277,8 @@ class Settings(BaseSettings):
     WORKER_API_KEY: str = os.getenv("WORKER_API_KEY", "")
 
     # Stripe Configuration
-    STRIPE_PUBLISHABLE_KEY: str
-    STRIPE_SECRET_KEY: str  
+    STRIPE_PUBLISHABLE_KEY: str = os.getenv("STRIPE_PUBLISHABLE_KEY")
+    STRIPE_SECRET_KEY: str = os.getenv("STRIPE_SECRET_KEY")
     STRIPE_WEBHOOK_SECRET: str = "whsec_4s_E3leBjuII-VSYIoiBh3YN_jyW_wXMwVtQ_cB_EV8"
     STRIPE_SUCCESS_URL: str = "http://localhost:8080/membership/success"
     STRIPE_CANCEL_URL: str = "http://localhost:8080/membership/cancel"
