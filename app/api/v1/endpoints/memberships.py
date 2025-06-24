@@ -472,7 +472,8 @@ async def purchase_membership(
             checkout_url=checkout_data['checkout_url'],
             session_id=checkout_data['checkout_session_id'],
             plan_name=checkout_data['plan_name'],
-            price_euros=checkout_data['price']
+            price_amount=checkout_data['price'],
+            currency=checkout_data['currency']
         )
         
     except ValueError as e:

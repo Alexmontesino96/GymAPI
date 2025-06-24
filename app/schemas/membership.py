@@ -67,14 +67,15 @@ class MembershipPlan(MembershipPlanBase):
     updated_at: Optional[datetime] = None
 
     # Campos calculados
-    price_euros: Optional[float] = None
+    price_amount: Optional[float] = None
     is_recurring: Optional[bool] = None
 
     class Config:
         from_attributes = True
 
-    @validator('price_euros', always=True)
-    def calculate_price_euros(cls, v, values):
+    @validator('price_amount', always=True)
+    def calculate_price_amount(cls, v, values):
+        """Convertir price_cents a la unidad principal de la moneda"""
         if 'price_cents' in values:
             return values['price_cents'] / 100.0
         return v
@@ -163,7 +164,8 @@ class PurchaseMembershipResponse(BaseModel):
     checkout_url: str = Field(..., description="URL de checkout de Stripe")
     session_id: str = Field(..., description="ID de sesión de Stripe")
     plan_name: str
-    price_euros: float
+    price_amount: float
+    currency: str
 
 
 # === Esquemas para listados ===

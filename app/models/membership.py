@@ -57,8 +57,8 @@ class MembershipPlan(Base):
         return f"<MembershipPlan(id={self.id}, name='{self.name}', gym_id={self.gym_id})>"
     
     @property
-    def price_euros(self) -> float:
-        """Convertir precio de centavos a euros"""
+    def price_amount(self) -> float:
+        """Convertir precio de centavos a la unidad principal de la moneda"""
         return self.price_cents / 100.0
     
     @property
