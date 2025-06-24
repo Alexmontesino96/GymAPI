@@ -13,7 +13,17 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 
 # Configurar Stripe
-stripe.api_key = settings.SECRET_KEY
+stripe.api_key = settings.STRIPE_SECRET_KEY
+
+# 🔍 DEBUG: Logging temporal para diagnosticar problema
+logger.info(f"🔍 STRIPE_SECRET_KEY cargada: {settings.STRIPE_SECRET_KEY[:20] if settings.STRIPE_SECRET_KEY else 'None'}...{settings.STRIPE_SECRET_KEY[-10:] if settings.STRIPE_SECRET_KEY and len(settings.STRIPE_SECRET_KEY) > 30 else settings.STRIPE_SECRET_KEY}")
+
+if not settings.STRIPE_SECRET_KEY:
+    logger.error("❌ STRIPE_SECRET_KEY está vacía o None!")
+elif "your_sec" in str(settings.STRIPE_SECRET_KEY).lower():
+    logger.error("❌ STRIPE_SECRET_KEY parece ser un placeholder!")
+else:
+    logger.info("✅ STRIPE_SECRET_KEY configurada correctamente")
 
 class StripeService:
     def __init__(self, membership_service: MembershipService):
