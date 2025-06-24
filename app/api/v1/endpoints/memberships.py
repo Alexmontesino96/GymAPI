@@ -433,32 +433,50 @@ async def purchase_membership(
     """
     try:
         # Verificar que el plan pertenece al gimnasio actual
+        logger.info(f"🔍 Buscando plan {purchase_data.plan_id} para gym {current_gym.id}")
         plan = membership_service.get_membership_plan(db, purchase_data.plan_id)
-        if not plan or plan.gym_id != current_gym.id:
+        
+        if not plan:
+            logger.error(f"❌ Plan {purchase_data.plan_id} no encontrado")
+            raise HTTPException(
+                status_code=404,
+                detail="Plan de membresía no encontrado"
+            )
+            
+        if plan.gym_id != current_gym.id:
+            logger.error(f"❌ Plan {purchase_data.plan_id} pertenece a gym {plan.gym_id}, no a {current_gym.id}")
             raise HTTPException(
                 status_code=404,
                 detail="Plan de membresía no encontrado en este gimnasio"
             )
         
+        logger.info(f"✅ Plan encontrado: {plan.name} - Activo: {plan.is_active}")
+        
         if not plan.is_active:
+            logger.error(f"❌ Plan {purchase_data.plan_id} está inactivo")
             raise HTTPException(
                 status_code=400,
                 detail="Este plan de membresía no está disponible"
             )
 
         # Obtener usuario local para usar su ID numérico
+        logger.info(f"🔍 Buscando usuario local para auth0_id: {current_user.id}")
         redis_client = get_redis_client()
         local_user = await user_service.get_user_by_auth0_id_cached(
             db, current_user.id, redis_client
         )
         
         if not local_user:
+            logger.error(f"❌ Usuario {current_user.id} no encontrado en sistema local")
             raise HTTPException(
                 status_code=404,
                 detail="Usuario no encontrado en el sistema local"
             )
+            
+        logger.info(f"✅ Usuario local encontrado: ID {local_user.id}")
 
         # Crear sesión de checkout con Stripe
+        logger.info(f"🔍 Creando checkout session - User: {local_user.id}, Gym: {current_gym.id}, Plan: {purchase_data.plan_id}")
         checkout_data = await stripe_service.create_checkout_session(
             db=db,
             user_id=str(local_user.id),  # Stripe necesita string
@@ -479,9 +497,13 @@ async def purchase_membership(
         )
         
     except ValueError as e:
+        logger.error(f"❌ ValueError en compra: {str(e)}")
         raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        # Re-raise HTTPExceptions para mantener el status code original
+        raise
     except Exception as e:
-        logger.error(f"Error inesperado en compra: {str(e)}")
+        logger.error(f"❌ Error inesperado en compra: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail="Error interno del servidor")
 
 
