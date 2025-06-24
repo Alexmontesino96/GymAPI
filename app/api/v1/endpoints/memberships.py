@@ -432,22 +432,35 @@ async def purchase_membership(
         HTTPException: 404 si el plan no existe, 400 si hay error de Stripe
     """
     try:
-        # Verificar que el plan pertenece al gimnasio actual
-        logger.info(f"🔍 Buscando plan {purchase_data.plan_id} para gym {current_gym.id}")
+        # Log del request recibido
+        logger.info(f"📥 Solicitud de compra recibida - Plan ID: {purchase_data.plan_id}, Usuario: {current_user.id}, Gym: {current_gym.id}")
+        
+        # Verificar que el plan existe y pertenece al gimnasio actual
+        logger.info(f"🔍 Validando plan {purchase_data.plan_id} para gym {current_gym.id}")
         plan = membership_service.get_membership_plan(db, purchase_data.plan_id)
         
         if not plan:
-            logger.error(f"❌ Plan {purchase_data.plan_id} no encontrado")
-            raise HTTPException(
-                status_code=404,
-                detail="Plan de membresía no encontrado"
+            logger.error(f"❌ Plan {purchase_data.plan_id} no encontrado en la base de datos")
+            
+            # Obtener planes disponibles para sugerir al usuario
+            available_plans = membership_service.get_membership_plans(
+                db, gym_id=current_gym.id, active_only=True, skip=0, limit=10
             )
+            available_ids = [p.id for p in available_plans]
+            
+            detail_msg = f"El plan de membresía con ID {purchase_data.plan_id} no existe."
+            if available_ids:
+                detail_msg += f" Planes disponibles: {available_ids}"
+            else:
+                detail_msg += " No hay planes activos disponibles en este gimnasio."
+                
+            raise HTTPException(status_code=404, detail=detail_msg)
             
         if plan.gym_id != current_gym.id:
             logger.error(f"❌ Plan {purchase_data.plan_id} pertenece a gym {plan.gym_id}, no a {current_gym.id}")
             raise HTTPException(
-                status_code=404,
-                detail="Plan de membresía no encontrado en este gimnasio"
+                status_code=403,
+                detail=f"El plan '{plan.name}' no está disponible en este gimnasio. Contacta al administrador."
             )
         
         logger.info(f"✅ Plan encontrado: {plan.name} - Activo: {plan.is_active}")
@@ -456,7 +469,15 @@ async def purchase_membership(
             logger.error(f"❌ Plan {purchase_data.plan_id} está inactivo")
             raise HTTPException(
                 status_code=400,
-                detail="Este plan de membresía no está disponible"
+                detail=f"El plan '{plan.name}' está temporalmente desactivado. Selecciona otro plan o contacta al gimnasio."
+            )
+            
+        # Verificar que el plan tenga configuración de Stripe
+        if not plan.stripe_price_id:
+            logger.error(f"❌ Plan {purchase_data.plan_id} no tiene configuración de Stripe")
+            raise HTTPException(
+                status_code=503,
+                detail=f"El plan '{plan.name}' no está configurado para pagos. Contacta al administrador del gimnasio."
             )
 
         # Obtener usuario local para usar su ID numérico
@@ -498,13 +519,23 @@ async def purchase_membership(
         
     except ValueError as e:
         logger.error(f"❌ ValueError en compra: {str(e)}")
-        raise HTTPException(status_code=400, detail=str(e))
+        # Los ValueError de Stripe suelen ser problemas de configuración
+        if "stripe" in str(e).lower():
+            raise HTTPException(
+                status_code=503, 
+                detail=f"Error de configuración de pagos: {str(e)}"
+            )
+        else:
+            raise HTTPException(status_code=400, detail=str(e))
     except HTTPException:
         # Re-raise HTTPExceptions para mantener el status code original
         raise
     except Exception as e:
         logger.error(f"❌ Error inesperado en compra: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Error interno del servidor")
+        raise HTTPException(
+            status_code=500, 
+            detail="Error interno del servidor. Si el problema persiste, contacta al soporte técnico."
+        )
 
 
 @router.post("/purchase/success")

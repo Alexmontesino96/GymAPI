@@ -154,7 +154,7 @@ class MembershipStatus(BaseModel):
 
 class PurchaseMembershipRequest(BaseModel):
     """Solicitud para comprar una membresía"""
-    plan_id: int = Field(..., description="ID del plan a comprar")
+    plan_id: int = Field(..., gt=0, description="ID del plan a comprar (debe ser mayor a 0)")
     success_url: Optional[str] = Field(None, description="URL de éxito personalizada")
     cancel_url: Optional[str] = Field(None, description="URL de cancelación personalizada")
 
