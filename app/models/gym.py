@@ -11,6 +11,7 @@ if TYPE_CHECKING:
     from app.models.user_gym import UserGym
     from app.models.event import Event
     from app.models.gym_module import GymModule
+    from app.models.membership import MembershipPlan
 
 class Gym(Base):
     """
@@ -44,3 +45,6 @@ class Gym(Base):
     
     # Relación con módulos
     modules = relationship("GymModule", back_populates="gym")
+    
+    # Relación con planes de membresía
+    membership_planes = relationship("MembershipPlan", back_populates="gym")

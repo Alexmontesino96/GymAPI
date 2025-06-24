@@ -19,6 +19,7 @@ pytz==2025.2
 schedule==1.2.1
 psutil==5.9.6
 requests==2.32.3
+stripe==8.11.0
 
 # Dependencias para despliegue y servicios
 gunicorn==21.2.0

@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional, Union
 from functools import lru_cache
 import logging
 
-from pydantic import AnyHttpUrl, EmailStr, PostgresDsn, validator, field_validator
+from pydantic import AnyHttpUrl, EmailStr, PostgresDsn, validator, field_validator, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Configurar el logger
@@ -275,6 +275,13 @@ class Settings(BaseSettings):
 
     # Configuración para el Worker
     WORKER_API_KEY: str = os.getenv("WORKER_API_KEY", "")
+
+    # Stripe Configuration
+    STRIPE_PUBLISHABLE_KEY: str
+    STRIPE_SECRET_KEY: str  
+    STRIPE_WEBHOOK_SECRET: str = "whsec_4s_E3leBjuII-VSYIoiBh3YN_jyW_wXMwVtQ_cB_EV8"
+    STRIPE_SUCCESS_URL: str = "http://localhost:8080/membership/success"
+    STRIPE_CANCEL_URL: str = "http://localhost:8080/membership/cancel"
 
 # Usar una función con caché para obtener la configuración
 @lru_cache()

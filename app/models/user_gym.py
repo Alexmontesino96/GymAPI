@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, ForeignKey, DateTime, Enum
+from sqlalchemy import Column, Integer, String, ForeignKey, DateTime, Enum, Boolean
 from sqlalchemy.orm import relationship
 from sqlalchemy.schema import UniqueConstraint
 from datetime import datetime
@@ -19,6 +19,7 @@ class UserGym(Base):
     """
     Relación entre usuarios y gimnasios.
     Un usuario puede pertenecer a múltiples gimnasios con diferentes roles.
+    Ahora incluye información de membresía y pagos.
     """
     __tablename__ = "user_gyms"
     
@@ -27,6 +28,19 @@ class UserGym(Base):
     gym_id = Column(Integer, ForeignKey("gyms.id"), nullable=False)
     role = Column(Enum(GymRoleType), nullable=False, default=GymRoleType.MEMBER)
     created_at = Column(DateTime, default=datetime.utcnow)
+    
+    # --- Campos de Membresía ---
+    is_active = Column(Boolean, default=True, nullable=False, index=True)
+    membership_expires_at = Column(DateTime, nullable=True, index=True)
+    membership_type = Column(String(50), default="free", nullable=False)  # "free", "paid", "trial"
+    
+    # --- Campos de Stripe ---
+    stripe_customer_id = Column(String(255), nullable=True, index=True)
+    stripe_subscription_id = Column(String(255), nullable=True, index=True)
+    
+    # --- Metadatos adicionales ---
+    last_payment_at = Column(DateTime, nullable=True)
+    notes = Column(String(500), nullable=True)  # Notas administrativas
     
     # Relaciones
     user = relationship("User", back_populates="gyms")
