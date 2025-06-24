@@ -32,7 +32,8 @@ class MembershipPlanBase(BaseModel):
 
 class MembershipPlanCreate(MembershipPlanBase):
     """Esquema para crear un plan de membresía"""
-    gym_id: int = Field(..., description="ID del gimnasio")
+    # gym_id se obtiene automáticamente del header via middleware
+    pass
 
 
 class MembershipPlanUpdate(BaseModel):

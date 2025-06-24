@@ -67,10 +67,8 @@ async def create_membership_plan(
         HTTPException: 403 si no es admin, 400 si datos inválidos
     """
     try:
-        # Asegurar que el plan es para el gimnasio actual
-        plan_data.gym_id = current_gym.id
-        
-        plan = await membership_service.create_membership_plan(db, plan_data)
+        # Crear plan usando gym_id del middleware (más limpio)
+        plan = await membership_service.create_membership_plan(db, current_gym.id, plan_data)
         logger.info(f"Plan creado por admin {current_user.id}: {plan.name} en gym {current_gym.id}")
         
         return plan

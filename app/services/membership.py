@@ -26,22 +26,25 @@ class MembershipService:
     async def create_membership_plan(
         self, 
         db: Session, 
+        gym_id: int,
         plan_data: MembershipPlanCreate
     ) -> MembershipPlan:
         """Crear un nuevo plan de membresía"""
         
         # Verificar que el gimnasio existe
-        gym = db.query(Gym).filter(Gym.id == plan_data.gym_id).first()
+        gym = db.query(Gym).filter(Gym.id == gym_id).first()
         if not gym:
-            raise ValueError(f"Gimnasio con ID {plan_data.gym_id} no encontrado")
+            raise ValueError(f"Gimnasio con ID {gym_id} no encontrado")
         
-        # Crear el plan
-        db_plan = MembershipPlan(**plan_data.model_dump())
+        # Crear el plan con gym_id del middleware
+        plan_dict = plan_data.model_dump()
+        plan_dict['gym_id'] = gym_id
+        db_plan = MembershipPlan(**plan_dict)
         db.add(db_plan)
         db.commit()
         db.refresh(db_plan)
         
-        logger.info(f"Plan de membresía creado: {db_plan.name} (ID: {db_plan.id}) para gym {plan_data.gym_id}")
+        logger.info(f"Plan de membresía creado: {db_plan.name} (ID: {db_plan.id}) para gym {gym_id}")
         
         # 🆕 SINCRONIZACIÓN AUTOMÁTICA CON STRIPE
         try:

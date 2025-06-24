@@ -47,7 +47,6 @@ async def test_membership_stripe_sync():
         print("\n📝 PASO 1: Crear plan de membresía (con sincronización automática)")
         
         plan_data = MembershipPlanCreate(
-            gym_id=gym.id,
             name=f"Plan de Prueba Stripe {datetime.now().strftime('%H:%M:%S')}",
             description="Plan de prueba para verificar sincronización automática con Stripe",
             price_cents=2999,  # €29.99
@@ -60,7 +59,7 @@ async def test_membership_stripe_sync():
         )
         
         # Crear plan (debería sincronizar automáticamente con Stripe)
-        plan = await membership_service.create_membership_plan(db, plan_data)
+        plan = await membership_service.create_membership_plan(db, gym.id, plan_data)
         
         print(f"✅ Plan creado localmente: {plan.name} (ID: {plan.id})")
         print(f"   Stripe Product ID: {plan.stripe_product_id}")
