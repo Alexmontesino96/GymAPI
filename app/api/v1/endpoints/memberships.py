@@ -29,6 +29,7 @@ from app.schemas.membership import (
 from app.services.membership import membership_service
 from app.services.stripe_service import StripeService
 from app.services.user import user_service
+from app.db.redis_client import get_redis_client
 import logging
 
 logger = logging.getLogger(__name__)
@@ -446,8 +447,9 @@ async def purchase_membership(
             )
 
         # Obtener usuario local para usar su ID numérico
+        redis_client = get_redis_client()
         local_user = await user_service.get_user_by_auth0_id_cached(
-            db, current_user.id, None
+            db, current_user.id, redis_client
         )
         
         if not local_user:
