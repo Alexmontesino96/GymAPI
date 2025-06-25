@@ -13,14 +13,14 @@ for secure access. Each endpoint is protected with appropriate permission scopes
 """
 
 from typing import List, Dict, Any, Optional
-from fastapi import APIRouter, Depends, HTTPException, Body, Path, Query, status, Security, Request
+from fastapi import APIRouter, Depends, HTTPException, Body, Path, Query, status, Security, Request, Header
 from sqlalchemy.orm import Session
 import logging # Import logging
 
 from app.db.session import get_db
 from app.core.auth0_fastapi import get_current_user, Auth0User, auth
 from app.core.config import get_settings
-from app.core.tenant import verify_gym_admin_access, verify_gym_access, get_current_gym
+from app.core.tenant import verify_gym_admin_access, verify_gym_access, get_current_gym, get_tenant_id
 from app.schemas.gym import GymSchema
 from app.services.chat import chat_service
 from app.schemas.chat import (
@@ -597,4 +597,31 @@ async def get_room_statistics(
     except Exception as e:
         logger.error(f"Error obteniendo estadísticas de sala {room_id}: {str(e)}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
-                          detail="Error obteniendo estadísticas") 
+                          detail="Error obteniendo estadísticas")
+
+@router.get("/debug/headers")
+async def debug_headers(
+    request: Request,
+    x_gym_id_raw: Optional[str] = Header(None, alias="X-Gym-ID"),
+    db: Session = Depends(get_db),
+    current_user: Auth0User = Security(auth.get_user, scopes=["resource:read"])
+):
+    """
+    Endpoint de debug para diagnosticar problemas con headers multi-tenant
+    """
+    # Obtener todos los headers
+    all_headers = dict(request.headers)
+    
+    # Obtener tenant_id usando la función original
+    tenant_id = await get_tenant_id(x_gym_id_raw)
+    
+    # Intentar obtener el gym
+    current_gym = await get_current_gym(db, tenant_id, None)
+    
+    return {
+        "all_headers": all_headers,
+        "x_gym_id_raw": x_gym_id_raw,
+        "tenant_id": tenant_id,
+        "current_gym": current_gym.dict() if current_gym else None,
+        "user_auth0_id": current_user.id
+    } 
