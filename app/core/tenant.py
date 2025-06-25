@@ -110,7 +110,31 @@ async def _verify_user_role_in_gym(
     Permite acceso si el usuario es SUPER_ADMIN global.
     """
     if not current_gym_schema:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Se requiere un ID de gimnasio (X-Gym-ID)")
+        # Obtener el tenant_id del request para dar un mensaje más específico
+        from app.core.tenant import get_tenant_id
+        from fastapi import Header
+        
+        # Intentar obtener el header directamente del request
+        x_gym_id_header = request.headers.get("x-gym-id") or request.headers.get("X-Gym-ID")
+        
+        if not x_gym_id_header:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, 
+                detail="Header 'X-Gym-ID' requerido. Debe especificar el ID del gimnasio al que desea acceder."
+            )
+        else:
+            # El header existe pero el gimnasio no se encontró
+            try:
+                gym_id_value = int(x_gym_id_header)
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND, 
+                    detail=f"El gimnasio con ID {gym_id_value} no existe o no está activo. Verifique que el ID del gimnasio sea correcto."
+                )
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST, 
+                    detail=f"El valor '{x_gym_id_header}' no es un ID de gimnasio válido. Debe ser un número entero."
+                )
     
     gym_id = current_gym_schema.id
     gym_name = current_gym_schema.name
@@ -123,7 +147,7 @@ async def _verify_user_role_in_gym(
     if not local_user:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, 
-            detail="Usuario no encontrado en el sistema local"
+            detail=f"Tu cuenta no está registrada en el sistema. Contacta al administrador para completar tu registro (Auth0 ID: {current_user.id})."
         )
         
     # Si es SUPER_ADMIN, conceder acceso directamente a cualquier gimnasio
@@ -197,13 +221,24 @@ async def _verify_user_role_in_gym(
 
     if user_role_in_gym is None:
         logger.warning(f"Acceso denegado a gym {gym_id} para user {current_user.id}. No pertenece. (Cache: {cache_hit_status})")
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Acceso denegado al gimnasio {gym_name}")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, 
+            detail=f"No tienes acceso al gimnasio '{gym_name}' (ID: {gym_id}). Solo los miembros de este gimnasio pueden acceder a sus recursos."
+        )
 
     required_role_values = {role.value for role in required_roles} if required_roles else None
 
     if required_role_values is not None and user_role_in_gym not in required_role_values:
         logger.warning(f"Acceso denegado a gym {gym_id} para user {current_user.id}. Rol '{user_role_in_gym}' insuficiente (Req: {required_role_values}). (Cache: {cache_hit_status})")
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Permisos insuficientes en el gimnasio {gym_name}")
+        
+        # Crear mensaje más específico según los roles requeridos
+        required_roles_str = ", ".join(sorted(required_role_values))
+        current_role_str = user_role_in_gym.upper() if user_role_in_gym else "NINGUNO"
+        
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, 
+            detail=f"Permisos insuficientes para esta operación en '{gym_name}'. Rol actual: {current_role_str}. Roles requeridos: {required_roles_str}."
+        )
 
     logger.debug(f"Acceso concedido a gym {gym_id} para user {current_user.id}. Rol: '{user_role_in_gym}' (Req: {required_roles or 'Any'}). (Cache: {cache_hit_status})")
     return current_gym_schema

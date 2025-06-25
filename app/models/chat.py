@@ -17,6 +17,7 @@ class ChatRoom(Base):
     stream_channel_id = Column(String, unique=True, index=True)
     stream_channel_type = Column(String, default="messaging")
     name = Column(String, nullable=True)
+    gym_id = Column(Integer, ForeignKey("gyms.id"), nullable=False, index=True)  # Asociación al gimnasio
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     event_id = Column(Integer, ForeignKey("events.id"), nullable=True, index=True)
@@ -24,6 +25,7 @@ class ChatRoom(Base):
     status = Column(Enum(ChatRoomStatus), default=ChatRoomStatus.ACTIVE, index=True)
     
     # Relaciones
+    gym = relationship("Gym", back_populates="chat_rooms")
     event = relationship("Event", back_populates="chat_rooms")
     members = relationship("ChatMember", back_populates="room")
 
@@ -31,6 +33,8 @@ class ChatRoom(Base):
     __table_args__ = (
         # Índice compuesto para búsquedas de eventos
         Index('ix_chat_rooms_event_id_type', 'event_id', 'stream_channel_type'),
+        # Índice compuesto para búsquedas por gimnasio
+        Index('ix_chat_rooms_gym_id_status', 'gym_id', 'status'),
     )
 
 class ChatMember(Base): 

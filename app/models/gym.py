@@ -48,3 +48,6 @@ class Gym(Base):
     
     # Relación con planes de membresía
     membership_planes = relationship("MembershipPlan", back_populates="gym")
+    
+    # Relación con salas de chat
+    chat_rooms = relationship("ChatRoom", back_populates="gym")

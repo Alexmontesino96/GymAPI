@@ -17,15 +17,17 @@ class ChatRepository:
         *,
         stream_channel_id: str,
         stream_channel_type: str,
-        room_data: ChatRoomCreate
+        room_data: ChatRoomCreate,
+        gym_id: int
     ) -> ChatRoom:
         """Crea una referencia local a un canal de Stream Chat"""
-        logger.info(f"Iniciando creación de sala en BD: stream_id={stream_channel_id}, event_id={room_data.event_id}")
+        logger.info(f"Iniciando creación de sala en BD: stream_id={stream_channel_id}, event_id={room_data.event_id}, gym_id={gym_id}")
         try:
             db_room = ChatRoom(
                 stream_channel_id=stream_channel_id,
                 stream_channel_type=stream_channel_type,
                 name=room_data.name,
+                gym_id=gym_id,  # Asociar sala al gimnasio
                 is_direct=room_data.is_direct,
                 event_id=room_data.event_id
             )
@@ -35,7 +37,7 @@ class ChatRepository:
             db.commit()
             logger.debug("Commit realizado con éxito")
             db.refresh(db_room)
-            logger.debug(f"Objeto actualizado después de refresh: id={db_room.id}, event_id={db_room.event_id}")
+            logger.debug(f"Objeto actualizado después de refresh: id={db_room.id}, event_id={db_room.event_id}, gym_id={db_room.gym_id}")
             
             # Añadir miembros usando IDs internos
             member_count = 0
@@ -49,7 +51,7 @@ class ChatRepository:
             
             logger.debug(f"Añadidos {member_count} miembros, realizando commit final...")
             db.commit()
-            logger.info(f"Sala creada exitosamente en BD: id={db_room.id}, event_id={db_room.event_id}, stream_id={stream_channel_id}")
+            logger.info(f"Sala creada exitosamente en BD: id={db_room.id}, event_id={db_room.event_id}, gym_id={db_room.gym_id}, stream_id={stream_channel_id}")
             
             return db_room
         except Exception as e:

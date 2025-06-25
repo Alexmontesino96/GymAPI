@@ -110,7 +110,7 @@ class ChatService:
         # Usamos el ID interno del usuario para generar el ID de Stream
         return get_stream_id_from_internal(user.id)
     
-    def create_room(self, db: Session, creator_id: int, room_data: ChatRoomCreate) -> Dict[str, Any]:
+    def create_room(self, db: Session, creator_id: int, room_data: ChatRoomCreate, gym_id: int) -> Dict[str, Any]:
         """
         Crea un canal de chat en Stream y lo registra localmente.
         
@@ -265,7 +265,8 @@ class ChatService:
                         db, 
                         stream_channel_id=stream_channel_id,
                         stream_channel_type=stream_channel_type,
-                        room_data=room_data  # Contiene member_ids como IDs internos
+                        room_data=room_data,  # Contiene member_ids como IDs internos
+                        gym_id=gym_id  # Asociar sala al gimnasio
                     )
                     
                     # Verificar que se creó correctamente
@@ -415,7 +416,7 @@ class ChatService:
         
         return result
     
-    def get_or_create_direct_chat(self, db: Session, user1_id: int, user2_id: int) -> Dict[str, Any]:
+    def get_or_create_direct_chat(self, db: Session, user1_id: int, user2_id: int, gym_id: int) -> Dict[str, Any]:
         """
         Obtiene o crea un chat directo entre dos usuarios con cache para mejorar rendimiento.
         
@@ -534,9 +535,9 @@ class ChatService:
         )
         
         # Crear el chat y actualizar la caché automáticamente
-        return self.create_room(db, user1_id, room_data)
+        return self.create_room(db, user1_id, room_data, gym_id)
     
-    def get_or_create_event_chat(self, db: Session, event_id: int, creator_id: int) -> Dict[str, Any]:
+    def get_or_create_event_chat(self, db: Session, event_id: int, creator_id: int, gym_id: int) -> Dict[str, Any]:
         """
         Obtiene o crea un chat para un evento.
         
@@ -672,7 +673,7 @@ class ChatService:
             try:
                 # Si el usuario existe en Stream, usar su ID
                 if user_exists_in_stream:
-                    result = self.create_room(db, creator_id, room_data)
+                    result = self.create_room(db, creator_id, room_data, gym_id)
                     logger.info(f"[DEBUG] Nueva sala creada - tiempo total: {time.time() - start_time:.2f}s")
                     return result
                 else:
@@ -704,7 +705,8 @@ class ChatService:
                                 db,
                                 stream_channel_id=channel_id,
                                 stream_channel_type=channel_type,
-                                room_data=room_data
+                                room_data=room_data,
+                                gym_id=gym_id
                             )
                             
                             return {

@@ -20,7 +20,7 @@ import logging # Import logging
 from app.db.session import get_db
 from app.core.auth0_fastapi import get_current_user, Auth0User, auth
 from app.core.config import get_settings
-from app.core.tenant import verify_gym_admin_access, verify_gym_access, get_current_gym, get_tenant_id
+from app.core.tenant import verify_gym_admin_access, verify_gym_access, verify_gym_trainer_access, get_current_gym, get_tenant_id
 from app.schemas.gym import GymSchema
 from app.services.chat import chat_service
 from app.schemas.chat import (
@@ -95,9 +95,11 @@ async def get_stream_token(
 
 @router.post("/rooms", response_model=ChatRoom, status_code=status.HTTP_201_CREATED)
 async def create_chat_room(
+    request: Request,
     *,
     db: Session = Depends(get_db),
     room_data: ChatRoomCreate,
+    current_gym: GymSchema = Depends(verify_gym_trainer_access),
     current_user: Auth0User = Security(auth.get_user, scopes=["resource:write"])
 ):
     """
@@ -142,14 +144,16 @@ async def create_chat_room(
     creator_id = internal_user.id
 
     # Service handles room creation in DB and Stream using internal IDs
-    # No need to convert IDs to strings here anymore
-    return chat_service.create_room(db, creator_id, room_data)
+    # Pass gym_id to ensure room is associated with correct gym
+    return chat_service.create_room(db, creator_id, room_data, current_gym.id)
 
 @router.get("/rooms/direct/{other_user_id}", response_model=ChatRoom)
 async def get_direct_chat(
+    request: Request,
     *,
     db: Session = Depends(get_db),
     other_user_id: int = Path(..., title="Internal user ID for direct chat"),
+    current_gym: GymSchema = Depends(verify_gym_access),
     current_user: Auth0User = Security(auth.get_user, scopes=["resource:read"])
 ):
     """
@@ -192,17 +196,32 @@ async def get_direct_chat(
             detail="Cannot create a direct chat with yourself"
         )
 
+    # Verificar que el otro usuario también pertenece al mismo gimnasio
+    from app.models.user_gym import UserGym
+    other_user_membership = db.query(UserGym).filter(
+        UserGym.user_id == other_user_id,
+        UserGym.gym_id == current_gym.id
+    ).first()
+    
+    if not other_user_membership:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"No puedes crear un chat directo con un usuario que no pertenece a tu gimnasio"
+        )
+
     # Use internal IDs (integers) directly
     user1_id = internal_user.id
     user2_id = other_user_id
 
-    return chat_service.get_or_create_direct_chat(db, user1_id, user2_id)
+    return chat_service.get_or_create_direct_chat(db, user1_id, user2_id, current_gym.id)
 
 @router.get("/rooms/event/{event_id}", response_model=ChatRoom)
 async def get_event_chat(
+    request: Request,
     *,
     db: Session = Depends(get_db),
     event_id: int = Path(..., title="Event ID"),
+    current_gym: GymSchema = Depends(verify_gym_access),
     current_user: Auth0User = Security(auth.get_user, scopes=["resource:read"])
 ):
     """
@@ -246,19 +265,25 @@ async def get_event_chat(
     logger.info(f"Request for event chat {event_id} by internal user {internal_user.id}")
 
     try:
-        # Quick check if event exists (consider moving to service layer)
+        # Check if event exists and belongs to current gym
         from app.models.event import Event
-        event_exists = db.query(Event.id).filter(Event.id == event_id).scalar() is not None # More efficient check
+        event = db.query(Event).filter(Event.id == event_id).first()
 
-        if not event_exists:
+        if not event:
             logger.warning(f"Event {event_id} not found")
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Event {event_id} not found")
+        
+        if event.gym_id != current_gym.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"No tienes acceso a este evento - pertenece a otro gimnasio"
+            )
 
         # Service layer handles permission check (user registered for event) and room logic
         try:
             # Use internal user ID (integer) directly
             user_id = internal_user.id
-            result = chat_service.get_or_create_event_chat(db, event_id, user_id)
+            result = chat_service.get_or_create_event_chat(db, event_id, user_id, current_gym.id)
 
             total_time = time.time() - start_time
             logger.info(f"Event chat {event_id} processed in {total_time:.2f}s")
@@ -291,10 +316,12 @@ async def get_event_chat(
 
 @router.post("/rooms/{room_id}/members/{user_id}", status_code=status.HTTP_200_OK)
 async def add_member_to_room(
+    request: Request,
     *,
     db: Session = Depends(get_db),
     room_id: int = Path(..., title="Local Chat room ID from DB"),
     user_id: int = Path(..., title="Internal user ID to add"),
+    current_gym: GymSchema = Depends(verify_gym_admin_access),
     current_user: Auth0User = Security(auth.get_user, scopes=["resource:admin"])
 ):
     """
@@ -333,10 +360,12 @@ async def add_member_to_room(
 
 @router.delete("/rooms/{room_id}/members/{user_id}", status_code=status.HTTP_200_OK)
 async def remove_member_from_room(
+    request: Request,
     *,
     db: Session = Depends(get_db),
     room_id: int = Path(..., title="Local Chat room ID from DB"),
     user_id: int = Path(..., title="Internal user ID to remove"),
+    current_gym: GymSchema = Depends(verify_gym_admin_access),
     current_user: Auth0User = Security(auth.get_user, scopes=["resource:admin"])
 ):
     """
@@ -562,9 +591,11 @@ async def get_chat_health_metrics(
 
 @router.get("/rooms/{room_id}/stats")
 async def get_room_statistics(
+    request: Request,
     *,
     db: Session = Depends(get_db),
     room_id: int = Path(..., description="ID de la sala de chat"),
+    current_gym: GymSchema = Depends(verify_gym_access),
     current_user: Auth0User = Security(auth.get_user, scopes=["resource:read"])
 ):
     """
@@ -578,8 +609,19 @@ async def get_room_statistics(
         if not internal_user:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario no encontrado")
         
+        # Verificar que la sala pertenece al gimnasio actual
+        from app.models.chat import ChatMember, ChatRoom
+        chat_room = db.query(ChatRoom).filter(ChatRoom.id == room_id).first()
+        
+        if not chat_room:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, 
+                              detail="Sala de chat no encontrada")
+        
+        if chat_room.gym_id != current_gym.id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, 
+                              detail="No tienes acceso a esta sala de chat - pertenece a otro gimnasio")
+        
         # Verificar que el usuario es miembro de la sala
-        from app.models.chat import ChatMember
         is_member = db.query(ChatMember).filter(
             ChatMember.room_id == room_id,
             ChatMember.user_id == internal_user.id
