@@ -13,13 +13,15 @@ for secure access. Each endpoint is protected with appropriate permission scopes
 """
 
 from typing import List, Dict, Any, Optional
-from fastapi import APIRouter, Depends, HTTPException, Body, Path, Query, status, Security
+from fastapi import APIRouter, Depends, HTTPException, Body, Path, Query, status, Security, Request
 from sqlalchemy.orm import Session
 import logging # Import logging
 
 from app.db.session import get_db
 from app.core.auth0_fastapi import get_current_user, Auth0User, auth
 from app.core.config import get_settings
+from app.core.tenant import verify_gym_admin_access, verify_gym_access, get_current_gym
+from app.schemas.gym import GymSchema
 from app.services.chat import chat_service
 from app.schemas.chat import (
     ChatRoom, 
@@ -378,15 +380,16 @@ async def remove_member_from_room(
 
 @router.get("/analytics/gym-summary")
 async def get_gym_chat_summary(
+    request: Request,
     *,
     db: Session = Depends(get_db),
-    gym_id: int = Query(..., description="ID del gimnasio"),
+    current_gym: GymSchema = Depends(verify_gym_admin_access),
     current_user: Auth0User = Security(auth.get_user, scopes=["resource:admin"])
 ):
     """
     Obtiene un resumen completo de la actividad de chat en un gimnasio.
     
-    Requiere permisos de administrador del gimnasio.
+    Requiere permisos de administrador del gimnasio actual (verificado por multi-tenant).
     
     Returns:
         Dict con estadísticas completas del gimnasio:
@@ -400,12 +403,8 @@ async def get_gym_chat_summary(
     try:
         from app.services.chat_analytics import chat_analytics_service
         
-        # Verificar que el usuario tiene acceso al gimnasio
-        internal_user = db.query(User).filter(User.auth0_id == current_user.id).first()
-        if not internal_user:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario no encontrado")
-        
-        # TODO: Agregar verificación de permisos específicos del gimnasio
+        # El gimnasio ya está verificado por la dependencia verify_gym_admin_access
+        gym_id = current_gym.id
         
         summary = chat_analytics_service.get_gym_chat_summary(db, gym_id)
         return summary
@@ -418,16 +417,18 @@ async def get_gym_chat_summary(
 
 @router.get("/analytics/user-activity")
 async def get_user_chat_activity(
+    request: Request,
     *,
     db: Session = Depends(get_db),
     user_id: Optional[int] = Query(None, description="ID del usuario (opcional, por defecto el usuario actual)"),
+    current_gym: GymSchema = Depends(verify_gym_access),
     current_user: Auth0User = Security(auth.get_user, scopes=["resource:read"])
 ):
     """
     Obtiene estadísticas de actividad de chat para un usuario.
     
     Si no se especifica user_id, retorna estadísticas del usuario actual.
-    Los administradores pueden consultar estadísticas de cualquier usuario.
+    Para consultar otro usuario, se requiere acceso al mismo gimnasio.
     """
     try:
         from app.services.chat_analytics import chat_analytics_service
@@ -440,10 +441,19 @@ async def get_user_chat_activity(
         # Determinar qué usuario consultar
         target_user_id = user_id if user_id else internal_user.id
         
-        # Si consulta otro usuario, verificar permisos de admin
+        # Si consulta otro usuario, verificar que también pertenece al mismo gimnasio
         if target_user_id != internal_user.id:
-            # TODO: Verificar permisos de administrador
-            pass
+            from app.models.user_gym import UserGym
+            target_membership = db.query(UserGym).filter(
+                UserGym.user_id == target_user_id,
+                UserGym.gym_id == current_gym.id
+            ).first()
+            
+            if not target_membership:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="No puedes consultar la actividad de un usuario que no pertenece a tu gimnasio"
+                )
         
         activity = chat_analytics_service.get_user_chat_activity(db, target_user_id)
         return activity
@@ -456,24 +466,23 @@ async def get_user_chat_activity(
 
 @router.get("/analytics/popular-times")
 async def get_popular_chat_times(
+    request: Request,
     *,
     db: Session = Depends(get_db),
-    gym_id: int = Query(..., description="ID del gimnasio"),
+    current_gym: GymSchema = Depends(verify_gym_admin_access),
     days: int = Query(30, description="Días hacia atrás para analizar", ge=1, le=90),
     current_user: Auth0User = Security(auth.get_user, scopes=["resource:admin"])
 ):
     """
     Analiza los horarios más populares para chat en un gimnasio.
     
-    Requiere permisos de administrador del gimnasio.
+    Requiere permisos de administrador del gimnasio actual (verificado por multi-tenant).
     """
     try:
         from app.services.chat_analytics import chat_analytics_service
         
-        # Verificar usuario
-        internal_user = db.query(User).filter(User.auth0_id == current_user.id).first()
-        if not internal_user:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario no encontrado")
+        # El gimnasio ya está verificado por la dependencia verify_gym_admin_access
+        gym_id = current_gym.id
         
         analysis = chat_analytics_service.get_popular_chat_times(db, gym_id, days)
         return analysis
@@ -486,25 +495,32 @@ async def get_popular_chat_times(
 
 @router.get("/analytics/event-effectiveness/{event_id}")
 async def get_event_chat_effectiveness(
+    request: Request,
     *,
     db: Session = Depends(get_db),
     event_id: int = Path(..., description="ID del evento"),
+    current_gym: GymSchema = Depends(verify_gym_access),
     current_user: Auth0User = Security(auth.get_user, scopes=["resource:read"])
 ):
     """
     Analiza la efectividad del chat de un evento específico.
     
-    Usuarios con acceso al evento pueden ver estas métricas.
+    El usuario debe pertenecer al mismo gimnasio que el evento para ver estas métricas.
     """
     try:
         from app.services.chat_analytics import chat_analytics_service
         
-        # Verificar usuario
-        internal_user = db.query(User).filter(User.auth0_id == current_user.id).first()
-        if not internal_user:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario no encontrado")
+        # Verificar que el evento pertenece al gimnasio actual
+        from app.models.event import Event
+        event = db.query(Event).filter(Event.id == event_id).first()
+        if not event:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Evento no encontrado")
         
-        # TODO: Verificar que el usuario tiene acceso al evento
+        if event.gym_id != current_gym.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="No tienes acceso a este evento - pertenece a otro gimnasio"
+            )
         
         effectiveness = chat_analytics_service.get_event_chat_effectiveness(db, event_id)
         return effectiveness
@@ -517,24 +533,23 @@ async def get_event_chat_effectiveness(
 
 @router.get("/analytics/health-metrics")
 async def get_chat_health_metrics(
+    request: Request,
     *,
     db: Session = Depends(get_db),
-    gym_id: int = Query(..., description="ID del gimnasio"),
+    current_gym: GymSchema = Depends(verify_gym_admin_access),
     current_user: Auth0User = Security(auth.get_user, scopes=["resource:admin"])
 ):
     """
     Genera métricas de salud general del sistema de chat.
     
     Incluye recomendaciones para mejorar el engagement y limpiar datos.
-    Requiere permisos de administrador del gimnasio.
+    Requiere permisos de administrador del gimnasio actual (verificado por multi-tenant).
     """
     try:
         from app.services.chat_analytics import chat_analytics_service
         
-        # Verificar usuario
-        internal_user = db.query(User).filter(User.auth0_id == current_user.id).first()
-        if not internal_user:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario no encontrado")
+        # El gimnasio ya está verificado por la dependencia verify_gym_admin_access
+        gym_id = current_gym.id
         
         metrics = chat_analytics_service.get_chat_health_metrics(db, gym_id)
         return metrics
