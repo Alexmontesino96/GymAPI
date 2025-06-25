@@ -1017,5 +1017,241 @@ class ChatService:
             logger.error(f"Error getting channel members: {str(e)}", exc_info=True)
             return []
 
+    async def send_chat_notification(
+        self, 
+        db: Session, 
+        sender_id: int, 
+        chat_room: ChatRoom, 
+        message_text: str,
+        notification_service
+    ) -> bool:
+        """
+        Envía notificaciones push a los miembros de un chat cuando llega un nuevo mensaje.
+        
+        Args:
+            db: Sesión de base de datos
+            sender_id: ID interno del remitente
+            chat_room: Sala de chat donde se envió el mensaje
+            message_text: Contenido del mensaje
+            notification_service: Servicio de notificaciones
+            
+        Returns:
+            bool: True si se enviaron notificaciones exitosamente
+        """
+        try:
+            # Obtener el remitente
+            sender = db.query(User).filter(User.id == sender_id).first()
+            if not sender:
+                logger.warning(f"Remitente {sender_id} no encontrado para notificación")
+                return False
+            
+            # Obtener miembros del chat excluyendo al remitente
+            members = db.query(ChatMember).filter(
+                ChatMember.room_id == chat_room.id,
+                ChatMember.user_id != sender_id
+            ).all()
+            
+            if not members:
+                logger.info(f"No hay destinatarios para notificar en chat {chat_room.id}")
+                return True
+            
+            # Preparar lista de user_ids para OneSignal (usar IDs internos como string)
+            recipient_ids = [str(member.user_id) for member in members]
+            
+            # Determinar título y mensaje de la notificación
+            sender_name = getattr(sender, 'email', f"Usuario {sender.id}").split('@')[0]
+            
+            if chat_room.is_direct:
+                title = f"💬 Nuevo mensaje de {sender_name}"
+            else:
+                title = f"💬 {sender_name} en {chat_room.name or 'Grupo'}"
+            
+            # Truncar mensaje si es muy largo
+            display_message = message_text[:100] + "..." if len(message_text) > 100 else message_text
+            
+            # Datos adicionales para la notificación
+            notification_data = {
+                "type": "chat_message",
+                "chat_room_id": str(chat_room.id),
+                "stream_channel_id": chat_room.stream_channel_id,
+                "sender_id": str(sender_id)
+            }
+            
+            # Enviar notificación
+            result = notification_service.send_to_users(
+                user_ids=recipient_ids,
+                title=title,
+                message=display_message,
+                data=notification_data,
+                db=db
+            )
+            
+            if result.get("success"):
+                logger.info(f"Notificación de chat enviada a {len(recipient_ids)} usuarios")
+                return True
+            else:
+                logger.error(f"Error enviando notificación de chat: {result.get('errors')}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error enviando notificación de chat: {str(e)}", exc_info=True)
+            return False
+
+    async def process_message_mentions(
+        self, 
+        db: Session, 
+        message_text: str, 
+        chat_room: ChatRoom,
+        sender_id: int,
+        notification_service
+    ) -> bool:
+        """
+        Procesa menciones (@usuario) en mensajes y envía notificaciones especiales.
+        
+        Args:
+            db: Sesión de base de datos
+            message_text: Contenido del mensaje
+            chat_room: Sala de chat
+            sender_id: ID del remitente
+            notification_service: Servicio de notificaciones
+            
+        Returns:
+            bool: True si se procesaron las menciones exitosamente
+        """
+        try:
+            # Buscar menciones en el formato @usuario
+            mentions = re.findall(r'@(\w+)', message_text)
+            if not mentions:
+                return True
+            
+            # Obtener el remitente
+            sender = db.query(User).filter(User.id == sender_id).first()
+            if not sender:
+                return False
+            
+            sender_name = getattr(sender, 'email', f"Usuario {sender.id}").split('@')[0]
+            
+            # Buscar usuarios mencionados en el chat
+            mentioned_users = []
+            for mention in mentions:
+                # Buscar por email (parte antes del @)
+                user = db.query(User).filter(
+                    User.email.like(f"{mention}%")
+                ).first()
+                
+                if user:
+                    # Verificar que el usuario esté en el chat
+                    is_member = db.query(ChatMember).filter(
+                        ChatMember.room_id == chat_room.id,
+                        ChatMember.user_id == user.id
+                    ).first()
+                    
+                    if is_member and user.id != sender_id:
+                        mentioned_users.append(user)
+            
+            if not mentioned_users:
+                return True
+            
+            # Enviar notificaciones especiales por menciones
+            for user in mentioned_users:
+                notification_data = {
+                    "type": "chat_mention",
+                    "chat_room_id": str(chat_room.id),
+                    "stream_channel_id": chat_room.stream_channel_id,
+                    "sender_id": str(sender_id),
+                    "mentioned_user_id": str(user.id)
+                }
+                
+                result = notification_service.send_to_users(
+                    user_ids=[str(user.id)],
+                    title=f"🔔 {sender_name} te mencionó",
+                    message=f"En {chat_room.name or 'chat'}: {message_text[:80]}...",
+                    data=notification_data,
+                    db=db
+                )
+                
+                if result.get("success"):
+                    logger.info(f"Notificación de mención enviada a usuario {user.id}")
+                else:
+                    logger.warning(f"Error enviando notificación de mención a {user.id}")
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error procesando menciones: {str(e)}", exc_info=True)
+            return False
+
+    async def update_chat_activity(
+        self, 
+        db: Session, 
+        chat_room: ChatRoom, 
+        sender_id: int
+    ) -> bool:
+        """
+        Actualiza la actividad del chat (último mensaje, timestamp, etc.).
+        
+        Args:
+            db: Sesión de base de datos
+            chat_room: Sala de chat
+            sender_id: ID del remitente del mensaje
+            
+        Returns:
+            bool: True si se actualizó exitosamente
+        """
+        try:
+            # Actualizar timestamp de último mensaje en la sala
+            chat_room.updated_at = datetime.utcnow()
+            
+            # Actualizar el último usuario que envió mensaje
+            if hasattr(chat_room, 'last_message_user_id'):
+                chat_room.last_message_user_id = sender_id
+            
+            db.commit()
+            logger.debug(f"Actividad actualizada para chat {chat_room.id}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error actualizando actividad del chat: {str(e)}", exc_info=True)
+            db.rollback()
+            return False
+
+    def get_chat_statistics(self, db: Session, chat_room_id: int) -> Dict[str, Any]:
+        """
+        Obtiene estadísticas básicas de un chat.
+        
+        Args:
+            db: Sesión de base de datos
+            chat_room_id: ID de la sala de chat
+            
+        Returns:
+            Dict con estadísticas del chat
+        """
+        try:
+            chat_room = chat_repository.get_room_by_id(db, chat_room_id)
+            if not chat_room:
+                return {"error": "Chat no encontrado"}
+            
+            # Contar miembros
+            member_count = db.query(ChatMember).filter(
+                ChatMember.room_id == chat_room_id
+            ).count()
+            
+            # Obtener información básica
+            stats = {
+                "room_id": chat_room_id,
+                "name": chat_room.name,
+                "is_direct": chat_room.is_direct,
+                "member_count": member_count,
+                "created_at": chat_room.created_at.isoformat() if chat_room.created_at else None,
+                "updated_at": chat_room.updated_at.isoformat() if chat_room.updated_at else None,
+                "stream_channel_id": chat_room.stream_channel_id
+            }
+            
+            return stats
+            
+        except Exception as e:
+            logger.error(f"Error obteniendo estadísticas del chat {chat_room_id}: {str(e)}")
+            return {"error": f"Error obteniendo estadísticas: {str(e)}"}
+
 
 chat_service = ChatService() 

@@ -18,6 +18,7 @@ class ChatRoom(Base):
     stream_channel_type = Column(String, default="messaging")
     name = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     event_id = Column(Integer, ForeignKey("events.id"), nullable=True, index=True)
     is_direct = Column(Boolean, default=False, index=True)
     status = Column(Enum(ChatRoomStatus), default=ChatRoomStatus.ACTIVE, index=True)

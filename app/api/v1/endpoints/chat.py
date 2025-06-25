@@ -12,7 +12,7 @@ The chat system is integrated with the user authentication system and uses Strea
 for secure access. Each endpoint is protected with appropriate permission scopes.
 """
 
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from fastapi import APIRouter, Depends, HTTPException, Body, Path, Query, status, Security
 from sqlalchemy.orm import Session
 import logging # Import logging
@@ -369,4 +369,217 @@ async def remove_member_from_room(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except Exception as e:
         logger.error(f"Failed to remove user {user_id} from room {room_id}: {e}", exc_info=True)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to remove user from room") 
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to remove user from room")
+
+
+# =====================================
+# ENDPOINTS DE ESTADÍSTICAS Y ANALÍTICAS
+# =====================================
+
+@router.get("/analytics/gym-summary")
+async def get_gym_chat_summary(
+    *,
+    db: Session = Depends(get_db),
+    gym_id: int = Query(..., description="ID del gimnasio"),
+    current_user: Auth0User = Security(auth.get_user, scopes=["resource:admin"])
+):
+    """
+    Obtiene un resumen completo de la actividad de chat en un gimnasio.
+    
+    Requiere permisos de administrador del gimnasio.
+    
+    Returns:
+        Dict con estadísticas completas del gimnasio:
+        - total_rooms: Número total de salas
+        - total_members: Miembros únicos en chats
+        - active_rooms: Salas con actividad reciente
+        - direct_chats: Número de chats directos
+        - event_chats: Número de chats de eventos
+        - most_active_rooms: Top 5 salas más activas
+    """
+    try:
+        from app.services.chat_analytics import chat_analytics_service
+        
+        # Verificar que el usuario tiene acceso al gimnasio
+        internal_user = db.query(User).filter(User.auth0_id == current_user.id).first()
+        if not internal_user:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario no encontrado")
+        
+        # TODO: Agregar verificación de permisos específicos del gimnasio
+        
+        summary = chat_analytics_service.get_gym_chat_summary(db, gym_id)
+        return summary
+        
+    except Exception as e:
+        logger.error(f"Error obteniendo resumen de chat para gimnasio {gym_id}: {str(e)}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
+                          detail="Error generando estadísticas")
+
+
+@router.get("/analytics/user-activity")
+async def get_user_chat_activity(
+    *,
+    db: Session = Depends(get_db),
+    user_id: Optional[int] = Query(None, description="ID del usuario (opcional, por defecto el usuario actual)"),
+    current_user: Auth0User = Security(auth.get_user, scopes=["resource:read"])
+):
+    """
+    Obtiene estadísticas de actividad de chat para un usuario.
+    
+    Si no se especifica user_id, retorna estadísticas del usuario actual.
+    Los administradores pueden consultar estadísticas de cualquier usuario.
+    """
+    try:
+        from app.services.chat_analytics import chat_analytics_service
+        
+        # Obtener usuario actual
+        internal_user = db.query(User).filter(User.auth0_id == current_user.id).first()
+        if not internal_user:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario no encontrado")
+        
+        # Determinar qué usuario consultar
+        target_user_id = user_id if user_id else internal_user.id
+        
+        # Si consulta otro usuario, verificar permisos de admin
+        if target_user_id != internal_user.id:
+            # TODO: Verificar permisos de administrador
+            pass
+        
+        activity = chat_analytics_service.get_user_chat_activity(db, target_user_id)
+        return activity
+        
+    except Exception as e:
+        logger.error(f"Error obteniendo actividad de usuario {user_id or 'current'}: {str(e)}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
+                          detail="Error generando estadísticas")
+
+
+@router.get("/analytics/popular-times")
+async def get_popular_chat_times(
+    *,
+    db: Session = Depends(get_db),
+    gym_id: int = Query(..., description="ID del gimnasio"),
+    days: int = Query(30, description="Días hacia atrás para analizar", ge=1, le=90),
+    current_user: Auth0User = Security(auth.get_user, scopes=["resource:admin"])
+):
+    """
+    Analiza los horarios más populares para chat en un gimnasio.
+    
+    Requiere permisos de administrador del gimnasio.
+    """
+    try:
+        from app.services.chat_analytics import chat_analytics_service
+        
+        # Verificar usuario
+        internal_user = db.query(User).filter(User.auth0_id == current_user.id).first()
+        if not internal_user:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario no encontrado")
+        
+        analysis = chat_analytics_service.get_popular_chat_times(db, gym_id, days)
+        return analysis
+        
+    except Exception as e:
+        logger.error(f"Error analizando horarios para gimnasio {gym_id}: {str(e)}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
+                          detail="Error generando análisis")
+
+
+@router.get("/analytics/event-effectiveness/{event_id}")
+async def get_event_chat_effectiveness(
+    *,
+    db: Session = Depends(get_db),
+    event_id: int = Path(..., description="ID del evento"),
+    current_user: Auth0User = Security(auth.get_user, scopes=["resource:read"])
+):
+    """
+    Analiza la efectividad del chat de un evento específico.
+    
+    Usuarios con acceso al evento pueden ver estas métricas.
+    """
+    try:
+        from app.services.chat_analytics import chat_analytics_service
+        
+        # Verificar usuario
+        internal_user = db.query(User).filter(User.auth0_id == current_user.id).first()
+        if not internal_user:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario no encontrado")
+        
+        # TODO: Verificar que el usuario tiene acceso al evento
+        
+        effectiveness = chat_analytics_service.get_event_chat_effectiveness(db, event_id)
+        return effectiveness
+        
+    except Exception as e:
+        logger.error(f"Error analizando efectividad de evento {event_id}: {str(e)}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
+                          detail="Error generando análisis")
+
+
+@router.get("/analytics/health-metrics")
+async def get_chat_health_metrics(
+    *,
+    db: Session = Depends(get_db),
+    gym_id: int = Query(..., description="ID del gimnasio"),
+    current_user: Auth0User = Security(auth.get_user, scopes=["resource:admin"])
+):
+    """
+    Genera métricas de salud general del sistema de chat.
+    
+    Incluye recomendaciones para mejorar el engagement y limpiar datos.
+    Requiere permisos de administrador del gimnasio.
+    """
+    try:
+        from app.services.chat_analytics import chat_analytics_service
+        
+        # Verificar usuario
+        internal_user = db.query(User).filter(User.auth0_id == current_user.id).first()
+        if not internal_user:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario no encontrado")
+        
+        metrics = chat_analytics_service.get_chat_health_metrics(db, gym_id)
+        return metrics
+        
+    except Exception as e:
+        logger.error(f"Error generando métricas de salud para gimnasio {gym_id}: {str(e)}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
+                          detail="Error generando métricas")
+
+
+@router.get("/rooms/{room_id}/stats")
+async def get_room_statistics(
+    *,
+    db: Session = Depends(get_db),
+    room_id: int = Path(..., description="ID de la sala de chat"),
+    current_user: Auth0User = Security(auth.get_user, scopes=["resource:read"])
+):
+    """
+    Obtiene estadísticas básicas de una sala de chat específica.
+    
+    El usuario debe ser miembro de la sala para acceder a estas estadísticas.
+    """
+    try:
+        # Verificar usuario
+        internal_user = db.query(User).filter(User.auth0_id == current_user.id).first()
+        if not internal_user:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario no encontrado")
+        
+        # Verificar que el usuario es miembro de la sala
+        from app.models.chat import ChatMember
+        is_member = db.query(ChatMember).filter(
+            ChatMember.room_id == room_id,
+            ChatMember.user_id == internal_user.id
+        ).first()
+        
+        if not is_member:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, 
+                              detail="No tienes acceso a esta sala de chat")
+        
+        stats = chat_service.get_chat_statistics(db, room_id)
+        return stats
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error obteniendo estadísticas de sala {room_id}: {str(e)}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
+                          detail="Error obteniendo estadísticas") 

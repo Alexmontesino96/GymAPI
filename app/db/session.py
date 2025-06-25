@@ -61,6 +61,10 @@ def get_db():
         db.rollback() # Hacer rollback en caso de error
         raise # Relanzar la excepción para que FastAPI la maneje
     except Exception as e:
+        # No capturar HTTPException ya que es parte del flujo normal de FastAPI
+        from fastapi import HTTPException
+        if isinstance(e, HTTPException):
+            raise  # Dejar que FastAPI maneje las HTTPException normalmente
         logger.error(f"Error inesperado en get_db: {e}", exc_info=True)
         raise
     finally:
