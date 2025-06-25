@@ -28,14 +28,8 @@ class ChatAnalyticsService:
             Dict con estadísticas del gimnasio
         """
         try:
-            # Obtener todas las salas del gimnasio a través de eventos
-            from app.models.event import Event
-            rooms = db.query(ChatRoom).join(Event).filter(
-                Event.gym_id == gym_id
-            ).all()
-            
-            # También incluir chats directos - para esto necesitaríamos una relación diferente
-            # Por ahora, trabajamos solo con chats de eventos
+            # Obtener todas las salas del gimnasio directamente por gym_id
+            rooms = db.query(ChatRoom).filter(ChatRoom.gym_id == gym_id).all()
             
             if not rooms:
                 return {
@@ -165,10 +159,10 @@ class ChatAnalyticsService:
             
             start_date = datetime.utcnow() - timedelta(days=days)
             
-            from app.models.event import Event
-            rooms = db.query(ChatRoom).join(Event).filter(
+            # Filtrar directamente por gym_id en ChatRoom
+            rooms = db.query(ChatRoom).filter(
                 and_(
-                    Event.gym_id == gym_id,
+                    ChatRoom.gym_id == gym_id,
                     ChatRoom.updated_at >= start_date
                 )
             ).all()
@@ -268,11 +262,8 @@ class ChatAnalyticsService:
             Dict con métricas de salud del sistema
         """
         try:
-            # Obtener todas las salas del gimnasio a través de eventos
-            from app.models.event import Event
-            rooms = db.query(ChatRoom).join(Event).filter(
-                Event.gym_id == gym_id
-            ).all()
+            # Obtener todas las salas del gimnasio directamente por gym_id
+            rooms = db.query(ChatRoom).filter(ChatRoom.gym_id == gym_id).all()
             
             # Métricas de salud
             total_rooms = len(rooms)
