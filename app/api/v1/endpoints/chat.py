@@ -641,6 +641,165 @@ async def get_room_statistics(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
                           detail="Error obteniendo estadísticas")
 
+@router.get("/general-channel/info")
+async def get_general_channel_info(
+    request: Request,
+    *,
+    db: Session = Depends(get_db),
+    current_gym: GymSchema = Depends(verify_gym_access),
+    current_user: Auth0User = Security(auth.get_user, scopes=["resource:read"])
+):
+    """
+    Obtener información del canal general del gimnasio.
+    
+    Devuelve información básica del canal general incluyendo ID, nombre,
+    número de miembros y fechas de creación/actualización.
+    """
+    from app.services.gym_chat import gym_chat_service
+    
+    channel_info = gym_chat_service.get_general_channel_info(db, current_gym.id)
+    
+    if not channel_info:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Canal general no encontrado para este gimnasio"
+        )
+    
+    return channel_info
+
+@router.post("/general-channel/join", status_code=status.HTTP_200_OK)
+async def join_general_channel(
+    request: Request,
+    *,
+    db: Session = Depends(get_db),
+    current_gym: GymSchema = Depends(verify_gym_access),
+    current_user: Auth0User = Security(auth.get_user, scopes=["resource:read"])
+):
+    """
+    Unirse manualmente al canal general del gimnasio.
+    
+    Permite a un usuario unirse al canal general si no está ya incluido.
+    Normalmente esto se hace automáticamente al unirse al gimnasio.
+    """
+    from app.services.gym_chat import gym_chat_service
+    
+    # Obtener usuario interno
+    internal_user = db.query(User).filter(User.auth0_id == current_user.id).first()
+    if not internal_user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Perfil de usuario no encontrado"
+        )
+    
+    success = gym_chat_service.add_user_to_general_channel(db, current_gym.id, internal_user.id)
+    
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error al unirse al canal general"
+        )
+    
+    return {"message": "Te has unido exitosamente al canal general"}
+
+@router.delete("/general-channel/leave", status_code=status.HTTP_200_OK)
+async def leave_general_channel(
+    request: Request,
+    *,
+    db: Session = Depends(get_db),
+    current_gym: GymSchema = Depends(verify_gym_access),
+    current_user: Auth0User = Security(auth.get_user, scopes=["resource:read"])
+):
+    """
+    Salir del canal general del gimnasio.
+    
+    Permite a un usuario salir del canal general si está incluido.
+    Nota: Al salir del gimnasio esto se hace automáticamente.
+    """
+    from app.services.gym_chat import gym_chat_service
+    
+    # Obtener usuario interno
+    internal_user = db.query(User).filter(User.auth0_id == current_user.id).first()
+    if not internal_user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Perfil de usuario no encontrado"
+        )
+    
+    success = gym_chat_service.remove_user_from_general_channel(db, current_gym.id, internal_user.id)
+    
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error al salir del canal general"
+        )
+    
+    return {"message": "Has salido del canal general"}
+
+@router.post("/general-channel/add-member/{user_id}", status_code=status.HTTP_200_OK)
+async def add_member_to_general_channel(
+    request: Request,
+    *,
+    db: Session = Depends(get_db),
+    user_id: int = Path(..., title="ID del usuario a agregar"),
+    current_gym: GymSchema = Depends(verify_gym_admin_access),
+    current_user: Auth0User = Security(auth.get_user, scopes=["resource:admin"])
+):
+    """
+    Agregar un miembro al canal general (solo administradores).
+    
+    Permite a administradores agregar manualmente un usuario al canal general.
+    """
+    from app.services.gym_chat import gym_chat_service
+    from app.models.user_gym import UserGym
+    
+    # Verificar que el usuario pertenece al gimnasio
+    membership = db.query(UserGym).filter(
+        UserGym.user_id == user_id,
+        UserGym.gym_id == current_gym.id
+    ).first()
+    
+    if not membership:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="El usuario no pertenece a este gimnasio"
+        )
+    
+    success = gym_chat_service.add_user_to_general_channel(db, current_gym.id, user_id)
+    
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error al agregar usuario al canal general"
+        )
+    
+    return {"message": f"Usuario {user_id} agregado al canal general"}
+
+@router.delete("/general-channel/remove-member/{user_id}", status_code=status.HTTP_200_OK)
+async def remove_member_from_general_channel(
+    request: Request,
+    *,
+    db: Session = Depends(get_db),
+    user_id: int = Path(..., title="ID del usuario a remover"),
+    current_gym: GymSchema = Depends(verify_gym_admin_access),
+    current_user: Auth0User = Security(auth.get_user, scopes=["resource:admin"])
+):
+    """
+    Remover un miembro del canal general (solo administradores).
+    
+    Permite a administradores remover manualmente un usuario del canal general.
+    """
+    from app.services.gym_chat import gym_chat_service
+    
+    success = gym_chat_service.remove_user_from_general_channel(db, current_gym.id, user_id)
+    
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error al remover usuario del canal general"
+        )
+    
+    return {"message": f"Usuario {user_id} removido del canal general"}
+
 @router.get("/debug/headers")
 async def debug_headers(
     request: Request,

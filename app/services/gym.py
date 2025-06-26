@@ -1,6 +1,7 @@
 from typing import List, Optional, Dict, Any, Union, cast
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func, and_
+import logging
 
 from app.models.gym import Gym
 from app.models.user_gym import UserGym, GymRoleType
@@ -17,6 +18,8 @@ from app.models.user import UserRole
 from redis.asyncio import Redis # Importar Redis
 from app.services.cache_service import cache_service # Importar cache_service
 from app.schemas.user import GymUserSummary # Importar schema de respuesta
+
+logger = logging.getLogger(__name__)
 
 class GymService:
     def create_gym(self, db: Session, *, gym_in: GymCreate) -> Gym:
@@ -176,6 +179,28 @@ class GymService:
         db.commit()
         db.refresh(user_gym)
         
+        # 🆕 HOOK: Agregar usuario al canal general del gimnasio
+        try:
+            from app.services.gym_chat import gym_chat_service
+            
+            # Agregar al canal general
+            success = gym_chat_service.add_user_to_general_channel(db, gym_id, user_id)
+            if success:
+                logger.info(f"Usuario {user_id} agregado al canal general de gym {gym_id}")
+                
+                # Intentar enviar mensaje de bienvenida (opcional)
+                try:
+                    gym_chat_service.send_welcome_message(db, gym_id, user_id)
+                    logger.info(f"Mensaje de bienvenida enviado para usuario {user_id} en gym {gym_id}")
+                except Exception as welcome_error:
+                    logger.warning(f"No se pudo enviar mensaje de bienvenida para usuario {user_id} en gym {gym_id}: {welcome_error}")
+            else:
+                logger.warning(f"No se pudo agregar usuario {user_id} al canal general de gym {gym_id}")
+                
+        except Exception as chat_error:
+            logger.error(f"Error agregando usuario {user_id} al canal general de gym {gym_id}: {chat_error}")
+            # No fallar la operación principal por un error en el chat
+        
         return user_gym
     
     def remove_user_from_gym(self, db: Session, *, gym_id: int, user_id: int) -> None:
@@ -209,6 +234,15 @@ class GymService:
                 detail=f"El usuario {user_id} no pertenece al gimnasio {gym_id}"
             )
             
+        # 🆕 HOOK: Remover usuario del canal general del gimnasio
+        try:
+            from app.services.gym_chat import gym_chat_service
+            gym_chat_service.remove_user_from_general_channel(db, gym_id, user_id)
+            logger.info(f"Usuario {user_id} removido del canal general de gym {gym_id}")
+        except Exception as chat_error:
+            logger.error(f"Error removiendo usuario {user_id} del canal general de gym {gym_id}: {chat_error}")
+            # No fallar la operación principal por un error en el chat
+        
         # Eliminar la asociación (sin commit aquí)
         db.delete(user_gym)
         # El commit se maneja fuera

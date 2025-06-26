@@ -1757,50 +1757,71 @@ class ClassService:
 
 class ClassSessionService:
     async def get_session(self, db: Session, session_id: int, gym_id: int, redis_client: Optional[Redis] = None) -> Any:
-        """Obtener una sesión por ID (con caché), asegurando que pertenece al gimnasio"""
-        # Nota: Añadir gym_id para verificación
-        cache_key = f"schedule:session:detail:{session_id}"
-        
-        # ... (resto del código de get_session necesita actualización similar a get_class)
-        # ... (se requiere ClassSessionSchema)
-        
-        # Por ahora, solo devolver la versión no cacheada con verificación de gym_id
+        """Obtener una sesión por ID con caché"""
+        # Verificar que la sesión pertenece al gimnasio
         session = class_session_repository.get(db, id=session_id)
-        if not session:
+        if not session or session.gym_id != gym_id:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="Sesión no encontrada"
-            )
-        if session.gym_id != gym_id:
-             raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="No tienes acceso a esta sesión"
-            )
-        return session
-    
-    async def get_session_with_details(self, db: Session, session_id: int, gym_id: int, redis_client: Optional[Redis] = None) -> Dict[str, Any]:
-        """Obtener una sesión con detalles de clase y disponibilidad (con caché)"""
-        # Nota: Añadir gym_id para verificación y caché
-        cache_key = f"schedule:session:detail_with_availability:{session_id}"
-        
-        # ... (implementación de caché similar a get_class, requiere esquema combinado o manejo especial)
-        
-        # Por ahora, versión no cacheada con verificación
-        session_data = class_session_repository.get_with_availability(db, session_id=session_id)
-        if not session_data or session_data["session"].gym_id != gym_id:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, # O 403 si existe pero no pertenece
                 detail="Sesión no encontrada en este gimnasio"
             )
-            
-        # Verificar también que la clase pertenece al gimnasio
-        if session_data["class"].gym_id != gym_id:
-             raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="La clase asociada a esta sesión no pertenece a este gimnasio"
+        
+        # Si no hay redis_client, devolver directamente
+        if not redis_client:
+            return session
+        
+        cache_key = f"schedule:session:detail:{session_id}"
+        
+        async def db_fetch():
+            return class_session_repository.get(db, id=session_id)
+        
+        # Usar el servicio de caché genérico
+        from app.services.cache_service import cache_service
+        from app.schemas.schedule import ClassSession
+        
+        cached_session = await cache_service.get_or_set(
+            redis_client=redis_client,
+            cache_key=cache_key,
+            db_fetch_func=db_fetch,
+            model_class=ClassSession,
+            expiry_seconds=1800,  # 30 minutos para sesiones individuales
+            is_list=False
+        )
+        
+        return cached_session
+    
+    async def get_session_with_details(self, db: Session, session_id: int, gym_id: int, redis_client: Optional[Redis] = None) -> Dict[str, Any]:
+        """Obtener una sesión con detalles completos (clase, trainer, participantes) con caché"""
+        # Verificar que la sesión pertenece al gimnasio
+        session = class_session_repository.get(db, id=session_id)
+        if not session or session.gym_id != gym_id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Sesión no encontrada en este gimnasio"
             )
-            
-        return session_data
+        
+        # Si no hay redis_client, usar versión sin caché
+        if not redis_client:
+            return class_session_repository.get_with_availability(db, session_id=session_id)
+        
+        cache_key = f"schedule:session:detail_with_availability:{session_id}"
+        
+        async def db_fetch():
+            return class_session_repository.get_with_availability(db, session_id=session_id)
+        
+        # Usar el servicio de caché genérico
+        from app.services.cache_service import cache_service
+        
+        # Para este caso, no podemos usar un schema específico porque devuelve un dict complejo
+        # Usamos serialización JSON directa
+        session_details = await cache_service.get_or_set_json(
+            redis_client=redis_client,
+            cache_key=cache_key,
+            db_fetch_func=db_fetch,
+            expiry_seconds=900,  # 15 minutos para detalles con disponibilidad
+        )
+        
+        return session_details
     
     async def create_session(
         self, db: Session, session_data: ClassSessionCreate, gym_id: int, created_by_id: Optional[int] = None, redis_client: Optional[Redis] = None
@@ -1853,42 +1874,78 @@ class ClassSessionService:
     
     # Añadir método helper para invalidar caché de sesión
     async def _invalidate_session_caches(self, redis_client: Optional[Redis], gym_id: int, session_id: Optional[int] = None, trainer_id: Optional[int] = None, class_id: Optional[int] = None):
+        """
+        Invalidar cachés de sesiones de manera inteligente usando tracking sets.
+        """
         if not redis_client:
             return
             
-        keys_to_delete = []
-        patterns_to_delete = []
-
-        if session_id:
-            keys_to_delete.append(f"schedule:session:detail:{session_id}")
-            keys_to_delete.append(f"schedule:session:detail_with_availability:{session_id}")
-            
-        # Patrón de participantes de esta sesión específica
-        patterns_to_delete.append(f"schedule:participations:session:{session_id}:gym:{gym_id}:*")
+        from app.services.cache_service import cache_service
         
-        # Invalidar listas generales donde podría aparecer esta sesión (si invalidamos por seguridad)
-        # Podríamos ser más selectivos, pero invalidar estas es más seguro
-        patterns_to_delete.append(f"schedule:sessions:upcoming:gym:{gym_id}:*") 
-        patterns_to_delete.append(f"schedule:sessions:range:gym:{gym_id}:*") 
+        keys_to_delete = []
+        tracking_sets_to_process = []
+
+        # Cachés específicos de sesión
+        if session_id:
+            keys_to_delete.extend([
+                f"schedule:session:detail:{session_id}",
+                f"schedule:session:detail_with_availability:{session_id}",
+                f"schedule:participations:session:{session_id}:gym:{gym_id}:*"
+            ])
+        
+        # Tracking sets a procesar para invalidación masiva
+        tracking_sets_to_process.append(f"cache_keys:sessions:{gym_id}")
+        
         if trainer_id:
-             patterns_to_delete.append(f"schedule:sessions:trainer:{trainer_id}:gym:{gym_id}:*")
-        if class_id:
-             patterns_to_delete.append(f"schedule:sessions:class:{class_id}:gym:{gym_id}:*")
-             
-        try:
-            if keys_to_delete:
-                deleted_keys = await redis_client.delete(*keys_to_delete)
-                logger.debug(f"Invalidated {deleted_keys} session detail keys from participation change: {keys_to_delete}")
+            tracking_sets_to_process.append(f"cache_keys:sessions:trainer:{trainer_id}")
             
-            deleted_pattern_count = 0
-            for pattern in patterns_to_delete:
-                deleted_count = await cache_service.delete_pattern(redis_client, pattern)
-                deleted_pattern_count += deleted_count
-                logger.debug(f"Invalidated {deleted_count} keys with pattern from participation change: {pattern}")
-            logger.debug(f"Total invalidated keys from patterns due to participation change: {deleted_pattern_count}")
+        if class_id:
+            tracking_sets_to_process.append(f"cache_keys:sessions:class:{class_id}")
+        
+        try:
+            # Eliminar claves específicas
+            if keys_to_delete:
+                # Separar claves directas de patrones
+                direct_keys = [k for k in keys_to_delete if '*' not in k]
+                pattern_keys = [k for k in keys_to_delete if '*' in k]
+                
+                if direct_keys:
+                    deleted_keys = await redis_client.delete(*direct_keys)
+                    logger.debug(f"Invalidated {deleted_keys} direct session keys: {direct_keys}")
+                
+                # Procesar patrones
+                for pattern in pattern_keys:
+                    deleted_count = await cache_service.delete_pattern(redis_client, pattern)
+                    logger.debug(f"Invalidated {deleted_count} keys with pattern: {pattern}")
+            
+            # Procesar tracking sets para invalidación inteligente
+            total_invalidated = 0
+            for tracking_set in tracking_sets_to_process:
+                try:
+                    # Obtener todas las claves del tracking set
+                    cached_keys = await redis_client.smembers(tracking_set)
+                    if cached_keys:
+                        # Convertir bytes a strings si es necesario
+                        if isinstance(next(iter(cached_keys)), bytes):
+                            cached_keys = [key.decode('utf-8') for key in cached_keys]
+                        
+                        # Eliminar las claves
+                        deleted_count = await redis_client.delete(*cached_keys)
+                        total_invalidated += deleted_count
+                        
+                        # Limpiar el tracking set
+                        await redis_client.delete(tracking_set)
+                        
+                        logger.debug(f"Invalidated {deleted_count} cached keys from tracking set {tracking_set}")
+                    
+                except Exception as set_error:
+                    logger.warning(f"Error processing tracking set {tracking_set}: {set_error}")
+            
+            if total_invalidated > 0:
+                logger.info(f"Total invalidated session cache keys: {total_invalidated}")
             
         except Exception as e:
-             logger.error(f"Error invalidating session cache {session_id} from participation change: {e}", exc_info=True)
+            logger.error(f"Error invalidating session caches for gym {gym_id}: {e}", exc_info=True)
 
     async def create_recurring_sessions(
         self, db: Session, 
@@ -2063,19 +2120,53 @@ class ClassSessionService:
         """
         Obtener las próximas sesiones programadas, opcionalmente filtradas por gimnasio (con caché).
         """
-        # Nota: Añadir redis_client
+        # Si no hay gym_id, usar versión sin caché
         if gym_id is None:
             logger.warning("Attempted to get upcoming sessions without gym_id. Cache disabled.")
             return class_session_repository.get_upcoming_sessions(db, skip=skip, limit=limit)
+        
+        # Si no hay redis_client, usar versión sin caché
+        if not redis_client:
+            return class_session_repository.get_upcoming_sessions(
+                db, skip=skip, limit=limit, gym_id=gym_id
+            )
             
         cache_key = f"schedule:sessions:upcoming:gym:{gym_id}:skip:{skip}:limit:{limit}"
+        tracking_set_key = f"cache_keys:sessions:{gym_id}"
         
-        # ... (implementar con cache_service.get_or_set, requiere ClassSessionSchema)
+        # Indica si el resultado vino de la BD
+        fetched_from_db = False
         
-        # Por ahora, versión no cacheada
-        return class_session_repository.get_upcoming_sessions(
-            db, skip=skip, limit=limit, gym_id=gym_id
+        async def db_fetch():
+            nonlocal fetched_from_db
+            result = class_session_repository.get_upcoming_sessions(
+                db, skip=skip, limit=limit, gym_id=gym_id
+            )
+            fetched_from_db = True
+            return result
+        
+        # Usar el servicio de caché genérico
+        from app.services.cache_service import cache_service
+        from app.schemas.schedule import ClassSession
+        
+        sessions = await cache_service.get_or_set(
+            redis_client=redis_client,
+            cache_key=cache_key,
+            db_fetch_func=db_fetch,
+            model_class=ClassSession,
+            expiry_seconds=300,  # 5 minutos para sesiones próximas
+            is_list=True
         )
+        
+        # Añadir a tracking set para invalidación
+        if fetched_from_db:
+            try:
+                await redis_client.sadd(tracking_set_key, cache_key)
+                await redis_client.expire(tracking_set_key, 3600)  # 1 hora de tracking
+            except Exception as e:
+                logger.warning(f"No se pudo añadir clave a tracking set: {e}")
+        
+        return sessions
     
     async def get_sessions_by_date_range(
         self, db: Session, start_date: date, end_date: date, 
@@ -2084,27 +2175,64 @@ class ClassSessionService:
         """
         Obtener sesiones en un rango de fechas, opcionalmente filtradas por gimnasio (con caché).
         """
-        # Nota: Añadir redis_client
+        # Si no hay gym_id, usar versión sin caché
         if gym_id is None:
             logger.warning("Attempted to get sessions by date range without gym_id. Cache disabled.")
             start_datetime = datetime.combine(start_date, time.min)
             end_datetime = datetime.combine(end_date, time.max)
             return class_session_repository.get_by_date_range(db, start_date=start_datetime, end_date=end_datetime, skip=skip, limit=limit)
 
+        # Si no hay redis_client, usar versión sin caché
+        if not redis_client:
+            start_datetime = datetime.combine(start_date, time.min)
+            end_datetime = datetime.combine(end_date, time.max)
+            return class_session_repository.get_by_date_range(
+                db, start_date=start_datetime, end_date=end_datetime,
+                skip=skip, limit=limit, gym_id=gym_id
+            )
+
         # Formatear fechas para la clave
         start_str = start_date.isoformat()
         end_str = end_date.isoformat()
         cache_key = f"schedule:sessions:range:gym:{gym_id}:start:{start_str}:end:{end_str}:skip:{skip}:limit:{limit}"
+        tracking_set_key = f"cache_keys:sessions:{gym_id}"
         
-        # ... (implementar con cache_service.get_or_set, requiere ClassSessionSchema)
+        # Indica si el resultado vino de la BD
+        fetched_from_db = False
         
-        # Por ahora, versión no cacheada
-        start_datetime = datetime.combine(start_date, time.min)
-        end_datetime = datetime.combine(end_date, time.max)
-        return class_session_repository.get_by_date_range(
-            db, start_date=start_datetime, end_date=end_datetime,
-            skip=skip, limit=limit, gym_id=gym_id
+        async def db_fetch():
+            nonlocal fetched_from_db
+            start_datetime = datetime.combine(start_date, time.min)
+            end_datetime = datetime.combine(end_date, time.max)
+            result = class_session_repository.get_by_date_range(
+                db, start_date=start_datetime, end_date=end_datetime,
+                skip=skip, limit=limit, gym_id=gym_id
+            )
+            fetched_from_db = True
+            return result
+        
+        # Usar el servicio de caché genérico
+        from app.services.cache_service import cache_service
+        from app.schemas.schedule import ClassSession
+        
+        sessions = await cache_service.get_or_set(
+            redis_client=redis_client,
+            cache_key=cache_key,
+            db_fetch_func=db_fetch,
+            model_class=ClassSession,
+            expiry_seconds=900,  # 15 minutos para rangos de fechas
+            is_list=True
         )
+        
+        # Añadir a tracking set para invalidación
+        if fetched_from_db:
+            try:
+                await redis_client.sadd(tracking_set_key, cache_key)
+                await redis_client.expire(tracking_set_key, 3600)  # 1 hora de tracking
+            except Exception as e:
+                logger.warning(f"No se pudo añadir clave a tracking set: {e}")
+        
+        return sessions
     
     async def get_sessions_by_trainer(
         self, db: Session, trainer_id: int, skip: int = 0, limit: int = 100,
@@ -2113,25 +2241,67 @@ class ClassSessionService:
         """
         Obtener sesiones de un entrenador específico, opcionalmente filtradas por gimnasio (con caché).
         """
-        # Nota: Añadir redis_client
+        # Si no hay gym_id, usar versión sin caché
         if gym_id is None:
             logger.warning("Attempted to get sessions by trainer without gym_id. Cache disabled.")
             if upcoming_only:
                 return class_session_repository.get_trainer_upcoming_sessions(db, trainer_id=trainer_id, skip=skip, limit=limit)
             return class_session_repository.get_by_trainer(db, trainer_id=trainer_id, skip=skip, limit=limit)
-            
-        cache_key = f"schedule:sessions:trainer:{trainer_id}:gym:{gym_id}:upcoming:{upcoming_only}:skip:{skip}:limit:{limit}"
         
-        # ... (implementar con cache_service.get_or_set, requiere ClassSessionSchema)
-        
-        # Por ahora, versión no cacheada
-        if upcoming_only:
-            return class_session_repository.get_trainer_upcoming_sessions(
+        # Si no hay redis_client, usar versión sin caché
+        if not redis_client:
+            if upcoming_only:
+                return class_session_repository.get_trainer_upcoming_sessions(
+                    db, trainer_id=trainer_id, skip=skip, limit=limit, gym_id=gym_id
+                )
+            return class_session_repository.get_by_trainer(
                 db, trainer_id=trainer_id, skip=skip, limit=limit, gym_id=gym_id
             )
-        return class_session_repository.get_by_trainer(
-            db, trainer_id=trainer_id, skip=skip, limit=limit, gym_id=gym_id
+            
+        cache_key = f"schedule:sessions:trainer:{trainer_id}:gym:{gym_id}:upcoming:{upcoming_only}:skip:{skip}:limit:{limit}"
+        tracking_set_key = f"cache_keys:sessions:{gym_id}"
+        trainer_tracking_key = f"cache_keys:sessions:trainer:{trainer_id}"
+        
+        # Indica si el resultado vino de la BD
+        fetched_from_db = False
+        
+        async def db_fetch():
+            nonlocal fetched_from_db
+            if upcoming_only:
+                result = class_session_repository.get_trainer_upcoming_sessions(
+                    db, trainer_id=trainer_id, skip=skip, limit=limit, gym_id=gym_id
+                )
+            else:
+                result = class_session_repository.get_by_trainer(
+                    db, trainer_id=trainer_id, skip=skip, limit=limit, gym_id=gym_id
+                )
+            fetched_from_db = True
+            return result
+        
+        # Usar el servicio de caché genérico
+        from app.services.cache_service import cache_service
+        from app.schemas.schedule import ClassSession
+        
+        sessions = await cache_service.get_or_set(
+            redis_client=redis_client,
+            cache_key=cache_key,
+            db_fetch_func=db_fetch,
+            model_class=ClassSession,
+            expiry_seconds=600,  # 10 minutos para sesiones por trainer
+            is_list=True
         )
+        
+        # Añadir a tracking sets para invalidación
+        if fetched_from_db:
+            try:
+                await redis_client.sadd(tracking_set_key, cache_key)
+                await redis_client.sadd(trainer_tracking_key, cache_key)
+                await redis_client.expire(tracking_set_key, 3600)  # 1 hora de tracking
+                await redis_client.expire(trainer_tracking_key, 3600)  # 1 hora de tracking
+            except Exception as e:
+                logger.warning(f"No se pudo añadir clave a tracking sets: {e}")
+        
+        return sessions
     
     async def get_sessions_by_class(
         self, db: Session, class_id: int, skip: int = 0, limit: int = 100, gym_id: Optional[int] = None, redis_client: Optional[Redis] = None
@@ -2139,19 +2309,56 @@ class ClassSessionService:
         """
         Obtener sesiones de una clase específica, opcionalmente filtradas por gimnasio (con caché).
         """
-        # Nota: Añadir redis_client
+        # Si no hay gym_id, usar versión sin caché
         if gym_id is None:
             logger.warning("Attempted to get sessions by class without gym_id. Cache disabled.")
             return class_session_repository.get_by_class(db, class_id=class_id, skip=skip, limit=limit)
 
+        # Si no hay redis_client, usar versión sin caché
+        if not redis_client:
+            return class_session_repository.get_by_class(
+                db, class_id=class_id, skip=skip, limit=limit, gym_id=gym_id
+            )
+
         cache_key = f"schedule:sessions:class:{class_id}:gym:{gym_id}:skip:{skip}:limit:{limit}"
+        tracking_set_key = f"cache_keys:sessions:{gym_id}"
+        class_tracking_key = f"cache_keys:sessions:class:{class_id}"
         
-        # ... (implementar con cache_service.get_or_set, requiere ClassSessionSchema)
+        # Indica si el resultado vino de la BD
+        fetched_from_db = False
         
-        # Por ahora, versión no cacheada
-        return class_session_repository.get_by_class(
-            db, class_id=class_id, skip=skip, limit=limit, gym_id=gym_id
+        async def db_fetch():
+            nonlocal fetched_from_db
+            result = class_session_repository.get_by_class(
+                db, class_id=class_id, skip=skip, limit=limit, gym_id=gym_id
+            )
+            fetched_from_db = True
+            return result
+        
+        # Usar el servicio de caché genérico
+        from app.services.cache_service import cache_service
+        from app.schemas.schedule import ClassSession
+        
+        sessions = await cache_service.get_or_set(
+            redis_client=redis_client,
+            cache_key=cache_key,
+            db_fetch_func=db_fetch,
+            model_class=ClassSession,
+            expiry_seconds=600,  # 10 minutos para sesiones por clase
+            is_list=True
         )
+        
+        # Añadir a tracking sets para invalidación
+        if fetched_from_db:
+            try:
+                await redis_client.sadd(tracking_set_key, cache_key)
+                await redis_client.sadd(class_tracking_key, cache_key)
+                await redis_client.expire(tracking_set_key, 3600)  # 1 hora de tracking
+                await redis_client.expire(class_tracking_key, 3600)  # 1 hora de tracking
+            except Exception as e:
+                logger.warning(f"No se pudo añadir clave a tracking sets: {e}")
+        
+        return sessions
 
 
 class ClassParticipationService:

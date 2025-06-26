@@ -8,7 +8,7 @@ Este módulo proporciona todas las rutas relacionadas con la gestión de:
 """
 
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query, status, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, status, Request, Path
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
@@ -31,6 +31,7 @@ from app.services.stripe_service import StripeService
 from app.services.user import user_service
 from app.db.redis_client import get_redis_client
 import logging
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -608,7 +609,455 @@ async def stripe_webhook(
         
     except ValueError as e:
         logger.error(f"Error en webhook de Stripe: {str(e)}")
-        raise HTTPException(status_code=400, detail=str(e))
+        # Devolver 200 para que Stripe no reintente
+        return {
+            "received": True,
+            "status": "error",
+            "error": "validation_error",
+            "message": str(e)
+        }
     except Exception as e:
         logger.error(f"Error inesperado en webhook: {str(e)}")
+        # Devolver 200 para que Stripe no reintente indefinidamente
+        return {
+            "received": True,
+            "status": "error", 
+            "error": "processing_error",
+            "message": "Error interno procesando webhook"
+        }
+
+
+# 🆕 ENDPOINTS PARA FUNCIONALIDADES AVANZADAS
+
+@router.post("/purchase/trial", response_model=PurchaseMembershipResponse)
+async def purchase_membership_with_trial(
+    request: Request,
+    purchase_data: PurchaseMembershipRequest,
+    trial_days: int = Query(7, description="Días de prueba gratuita", ge=1, le=30),
+    db: Session = Depends(get_db),
+    current_user: Auth0User = Depends(auth.get_user),
+    current_gym: GymSchema = Depends(verify_gym_access)
+) -> PurchaseMembershipResponse:
+    """
+    Iniciar compra de membresía con período de prueba.
+    
+    Este endpoint crea una sesión de checkout con período de prueba gratuito.
+    Solo aplica a planes de suscripción (mensual/anual).
+    """
+    try:
+        # Obtener usuario local
+        redis_client = get_redis_client()
+        local_user = await user_service.get_user_by_auth0_id_cached(
+            db, current_user.id, redis_client
+        )
+        
+        if not local_user:
+            raise HTTPException(
+                status_code=404,
+                detail="Usuario no encontrado en el sistema local"
+            )
+
+        # Crear sesión de checkout con prueba
+        checkout_data = await stripe_service.create_checkout_session_with_trial(
+            db=db,
+            user_id=str(local_user.id),
+            gym_id=current_gym.id,
+            plan_id=purchase_data.plan_id,
+            trial_days=trial_days,
+            success_url=purchase_data.success_url,
+            cancel_url=purchase_data.cancel_url
+        )
+        
+        return PurchaseMembershipResponse(
+            checkout_url=checkout_data['checkout_url'],
+            session_id=checkout_data['checkout_session_id'],
+            plan_name=checkout_data['plan_name'],
+            price_amount=checkout_data['price'],
+            currency=checkout_data['currency'],
+            message=f"Período de prueba de {trial_days} días incluido"
+        )
+        
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error en compra con prueba: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error interno del servidor")
+
+
+@router.post("/refunds", status_code=status.HTTP_201_CREATED)
+async def create_refund(
+    request: Request,
+    charge_id: str = Query(..., description="ID del charge a reembolsar"),
+    amount: Optional[int] = Query(None, description="Cantidad en centavos (None = reembolso completo)"),
+    reason: str = Query("requested_by_customer", description="Razón del reembolso"),
+    db: Session = Depends(get_db),
+    current_gym: GymSchema = Depends(verify_gym_admin_access),
+    current_user: Auth0User = Depends(auth.get_user)
+):
+    """
+    Crear un reembolso para un pago (solo administradores).
+    
+    Args:
+        charge_id: ID del charge en Stripe
+        amount: Cantidad a reembolsar en centavos (opcional)
+        reason: Razón del reembolso
+        
+    Returns:
+        dict: Información del reembolso creado
+    """
+    try:
+        refund_data = await stripe_service.create_refund(
+            charge_id=charge_id,
+            amount=amount,
+            reason=reason,
+            metadata={
+                'gym_id': str(current_gym.id),
+                'admin_user': current_user.id,
+                'requested_at': datetime.now().isoformat()
+            }
+        )
+        
+        logger.info(f"Reembolso creado por admin {current_user.id} en gym {current_gym.id}")
+        
+        return {
+            "message": "Reembolso creado exitosamente",
+            "refund": refund_data
+        }
+        
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error creando reembolso: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error interno del servidor")
+
+
+@router.get("/customers/{customer_id}/payment-methods")
+async def get_customer_payment_methods(
+    customer_id: str = Path(..., description="ID del cliente en Stripe"),
+    db: Session = Depends(get_db),
+    current_gym: GymSchema = Depends(verify_gym_admin_access),
+    current_user: Auth0User = Depends(auth.get_user)
+):
+    """
+    Obtener métodos de pago de un cliente (solo administradores).
+    
+    Args:
+        customer_id: ID del cliente en Stripe
+        
+    Returns:
+        List: Métodos de pago del cliente
+    """
+    try:
+        # Verificar que el cliente pertenezca al gimnasio actual
+        from app.models.user_gym import UserGym
+        
+        customer_membership = db.query(UserGym).filter(
+            UserGym.stripe_customer_id == customer_id,
+            UserGym.gym_id == current_gym.id
+        ).first()
+        
+        if not customer_membership:
+            raise HTTPException(
+                status_code=403, 
+                detail="Cliente no pertenece a este gimnasio"
+            )
+        
+        payment_methods = await stripe_service.get_customer_payment_methods(customer_id)
+        
+        return {
+            "customer_id": customer_id,
+            "payment_methods": payment_methods,
+            "user_id": customer_membership.user_id
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error obteniendo métodos de pago: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error interno del servidor")
+
+
+@router.get("/subscriptions/{subscription_id}/status")
+async def get_subscription_status(
+    subscription_id: str = Path(..., description="ID de la suscripción en Stripe"),
+    db: Session = Depends(get_db),
+    current_gym: GymSchema = Depends(verify_gym_admin_access),
+    current_user: Auth0User = Depends(auth.get_user)
+):
+    """
+    Obtener estado detallado de una suscripción (solo administradores).
+    
+    Args:
+        subscription_id: ID de la suscripción en Stripe
+        
+    Returns:
+        dict: Estado y detalles de la suscripción
+    """
+    try:
+        # Verificar que la suscripción pertenezca al gimnasio actual
+        from app.models.user_gym import UserGym
+        
+        subscription_membership = db.query(UserGym).filter(
+            UserGym.stripe_subscription_id == subscription_id,
+            UserGym.gym_id == current_gym.id
+        ).first()
+        
+        if not subscription_membership:
+            raise HTTPException(
+                status_code=403, 
+                detail="Suscripción no pertenece a este gimnasio"
+            )
+        
+        import stripe
+        
+        subscription = stripe.Subscription.retrieve(subscription_id)
+        
+        return {
+            "subscription_id": subscription.id,
+            "status": subscription.status,
+            "current_period_start": subscription.current_period_start,
+            "current_period_end": subscription.current_period_end,
+            "trial_start": subscription.trial_start,
+            "trial_end": subscription.trial_end,
+            "cancel_at": subscription.cancel_at,
+            "canceled_at": subscription.canceled_at,
+            "customer": subscription.customer,
+            "latest_invoice": subscription.latest_invoice,
+            "user_id": subscription_membership.user_id
+        }
+        
+    except HTTPException:
+        raise
+    except stripe.error.StripeError as e:
+        logger.error(f"Error obteniendo suscripción: {str(e)}")
+        raise HTTPException(status_code=404, detail="Suscripción no encontrada")
+    except Exception as e:
+        logger.error(f"Error inesperado: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error interno del servidor")
+
+
+@router.post("/subscriptions/{subscription_id}/cancel")
+async def cancel_subscription_endpoint(
+    subscription_id: str = Path(..., description="ID de la suscripción en Stripe"),
+    immediately: bool = Query(False, description="Cancelar inmediatamente o al final del período"),
+    db: Session = Depends(get_db),
+    current_gym: GymSchema = Depends(verify_gym_admin_access),
+    current_user: Auth0User = Depends(auth.get_user)
+):
+    """
+    Cancelar una suscripción (solo administradores).
+    
+    Args:
+        subscription_id: ID de la suscripción en Stripe
+        immediately: Si cancelar inmediatamente o al final del período
+        
+    Returns:
+        dict: Confirmación de cancelación
+    """
+    try:
+        # Verificar que la suscripción pertenezca al gimnasio actual
+        from app.models.user_gym import UserGym
+        
+        subscription_membership = db.query(UserGym).filter(
+            UserGym.stripe_subscription_id == subscription_id,
+            UserGym.gym_id == current_gym.id
+        ).first()
+        
+        if not subscription_membership:
+            raise HTTPException(
+                status_code=403, 
+                detail="Suscripción no pertenece a este gimnasio"
+            )
+        
+        if immediately:
+            success = await stripe_service.cancel_subscription(subscription_id)
+        else:
+            # Cancelar al final del período
+            import stripe
+            subscription = stripe.Subscription.modify(
+                subscription_id,
+                cancel_at_period_end=True
+            )
+            success = True
+        
+        if success:
+            logger.info(f"Suscripción {subscription_id} cancelada por admin {current_user.id}")
+            
+            return {
+                "message": "Suscripción cancelada exitosamente",
+                "subscription_id": subscription_id,
+                "immediately": immediately,
+                "user_id": subscription_membership.user_id
+            }
+        else:
+            raise HTTPException(status_code=400, detail="No se pudo cancelar la suscripción")
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error cancelando suscripción: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error interno del servidor")
+
+
+# 🆕 ENDPOINTS PARA GESTIÓN DE INGRESOS POR GIMNASIO
+
+@router.get("/revenue/gym-summary")
+async def get_gym_revenue_summary(
+    request: Request,
+    start_date: Optional[str] = Query(None, description="Fecha de inicio (YYYY-MM-DD)"),
+    end_date: Optional[str] = Query(None, description="Fecha de fin (YYYY-MM-DD)"),
+    db: Session = Depends(get_db),
+    current_gym: GymSchema = Depends(verify_gym_admin_access),
+    current_user: Auth0User = Depends(auth.get_user)
+):
+    """
+    Obtener resumen de ingresos del gimnasio actual (solo administradores).
+    
+    Args:
+        start_date: Fecha de inicio en formato YYYY-MM-DD (opcional)
+        end_date: Fecha de fin en formato YYYY-MM-DD (opcional)
+        
+    Returns:
+        dict: Resumen detallado de ingresos del gimnasio
+    """
+    try:
+        from app.services.gym_revenue import gym_revenue_service
+        from datetime import datetime
+        
+        # Convertir fechas de string a datetime si se proporcionan
+        parsed_start_date = None
+        parsed_end_date = None
+        
+        if start_date:
+            parsed_start_date = datetime.strptime(start_date, "%Y-%m-%d")
+        if end_date:
+            parsed_end_date = datetime.strptime(end_date, "%Y-%m-%d")
+        
+        # Obtener resumen de ingresos
+        revenue_summary = await gym_revenue_service.get_gym_revenue_summary(
+            db, current_gym.id, parsed_start_date, parsed_end_date
+        )
+        
+        logger.info(f"Resumen de ingresos solicitado por admin {current_user.id} para gym {current_gym.id}")
+        
+        return revenue_summary
+        
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error obteniendo resumen de ingresos: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error interno del servidor")
+
+
+@router.get("/revenue/platform-summary")
+async def get_platform_revenue_summary(
+    request: Request,
+    start_date: Optional[str] = Query(None, description="Fecha de inicio (YYYY-MM-DD)"),
+    end_date: Optional[str] = Query(None, description="Fecha de fin (YYYY-MM-DD)"),
+    db: Session = Depends(get_db),
+    current_user: Auth0User = Depends(auth.get_user)
+):
+    """
+    Obtener resumen de ingresos de toda la plataforma (solo super-administradores).
+    
+    Args:
+        start_date: Fecha de inicio en formato YYYY-MM-DD (opcional)
+        end_date: Fecha de fin en formato YYYY-MM-DD (opcional)
+        
+    Returns:
+        dict: Resumen de ingresos de toda la plataforma
+    """
+    try:
+        # Verificar que sea super-administrador
+        if not current_user.permissions or "platform:admin" not in current_user.permissions:
+            raise HTTPException(
+                status_code=403, 
+                detail="Acceso restringido a super-administradores"
+            )
+        
+        from app.services.gym_revenue import gym_revenue_service
+        from datetime import datetime
+        
+        # Convertir fechas de string a datetime si se proporcionan
+        parsed_start_date = None
+        parsed_end_date = None
+        
+        if start_date:
+            parsed_start_date = datetime.strptime(start_date, "%Y-%m-%d")
+        if end_date:
+            parsed_end_date = datetime.strptime(end_date, "%Y-%m-%d")
+        
+        # Obtener resumen de la plataforma
+        platform_summary = await gym_revenue_service.get_platform_revenue_summary(
+            db, parsed_start_date, parsed_end_date
+        )
+        
+        logger.info(f"Resumen de plataforma solicitado por super-admin {current_user.id}")
+        
+        return platform_summary
+        
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error obteniendo resumen de plataforma: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error interno del servidor")
+
+
+@router.get("/revenue/payout-calculation")
+async def calculate_gym_payout(
+    request: Request,
+    start_date: str = Query(..., description="Fecha de inicio (YYYY-MM-DD)"),
+    end_date: str = Query(..., description="Fecha de fin (YYYY-MM-DD)"),
+    db: Session = Depends(get_db),
+    current_gym: GymSchema = Depends(verify_gym_admin_access),
+    current_user: Auth0User = Depends(auth.get_user)
+):
+    """
+    Calcular el pago que debe recibir el gimnasio (solo administradores).
+    
+    Args:
+        start_date: Fecha de inicio en formato YYYY-MM-DD
+        end_date: Fecha de fin en formato YYYY-MM-DD
+        
+    Returns:
+        dict: Detalles del pago calculado
+    """
+    try:
+        from app.services.gym_revenue import gym_revenue_service
+        from datetime import datetime
+        
+        # Convertir fechas
+        parsed_start_date = datetime.strptime(start_date, "%Y-%m-%d")
+        parsed_end_date = datetime.strptime(end_date, "%Y-%m-%d")
+        
+        # Validar que el rango de fechas sea razonable
+        if (parsed_end_date - parsed_start_date).days > 365:
+            raise HTTPException(
+                status_code=400, 
+                detail="El rango de fechas no puede ser mayor a 365 días"
+            )
+        
+        if parsed_start_date > parsed_end_date:
+            raise HTTPException(
+                status_code=400, 
+                detail="La fecha de inicio debe ser anterior a la fecha de fin"
+            )
+        
+        # Calcular payout
+        payout_details = await gym_revenue_service.calculate_gym_payout(
+            db, current_gym.id, parsed_start_date, parsed_end_date
+        )
+        
+        logger.info(f"Cálculo de payout solicitado por admin {current_user.id} para gym {current_gym.id}")
+        
+        return payout_details
+        
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error calculando payout: {str(e)}")
         raise HTTPException(status_code=500, detail="Error interno del servidor") 
