@@ -6,6 +6,7 @@ from sqlalchemy import func, and_, or_, select, update
 from app.models.event import Event, EventParticipation, EventStatus, EventParticipationStatus
 from app.models.user import User, UserRole
 from app.schemas.event import EventCreate, EventUpdate, EventParticipationCreate, EventParticipationUpdate
+from fastapi.encoders import jsonable_encoder
 
 
 class EventRepository:
@@ -166,7 +167,7 @@ class EventRepository:
             return None
         
         # Optimización 1: Usar actualización directa para datos simples
-        update_data = event_in.dict(exclude_unset=True)
+        update_data = jsonable_encoder(event_in, exclude_unset=True)
         
         # Optimización 2: Actualizar solo si hay cambios
         if not update_data:
@@ -371,7 +372,7 @@ class EventRepository:
             return None
             
         # Extraer sólo los campos con valores para actualizar
-        update_data = event_in.dict(exclude_unset=True)
+        update_data = jsonable_encoder(event_in, exclude_unset=True)
         if not update_data:
             # Si no hay datos para actualizar, obtener solo datos básicos del evento sin participantes
             return db.query(Event).filter(Event.id == event_id).first()
@@ -591,7 +592,7 @@ class EventParticipationRepository:
         # Se recibe db_obj directamente para evitar búsqueda repetida.
         db_participation = db_obj 
         
-        update_data = participation_in.dict(exclude_unset=True)
+        update_data = jsonable_encoder(participation_in, exclude_unset=True)
         
         # Actualizar cada campo si está presente (ahora solo será 'attended')
         updated = False

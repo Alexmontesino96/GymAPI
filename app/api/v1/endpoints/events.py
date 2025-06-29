@@ -472,19 +472,26 @@ async def update_event(
         HTTPException: 404 if event not found, 403 if insufficient permissions
     """
     # Verificación previa rápida para evitar consultas innecesarias
-    update_data = event_in.dict(exclude_unset=True)
+    update_data = jsonable_encoder(event_in, exclude_unset=True)
     if not update_data:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="No update data provided"
         )
     
-    # Verificar que el evento pertenezca al gimnasio actual primero
-    event_gym_id = db.query(Event.gym_id).filter(Event.id == event_id).scalar()
-    if not event_gym_id or event_gym_id != current_gym.id:
+    # Verificar que el evento pertenezca al gimnasio actual y obtener su estado
+    event_data = db.query(Event.gym_id, Event.status).filter(Event.id == event_id).first()
+    if not event_data or event_data.gym_id != current_gym.id:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Event not found in current gym"
+        )
+    
+    # No permitir editar eventos completados
+    if event_data.status == EventStatus.COMPLETED:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot update completed events"
         )
     
     # Obtener permisos de usuario para verificaciones
@@ -515,7 +522,7 @@ async def update_event(
                     gym_id=current_gym.id,
                     event_title=updated_event.title,
                     end_time=updated_event.end_time,
-                    first_message_chat=event_in.first_message_chat if hasattr(event_in, 'first_message_chat') else None
+                    first_message_chat=None  # No se permite editar el primer mensaje del chat
                 )
                 
                 # Verificar si hubo error en la respuesta
@@ -576,7 +583,7 @@ async def update_event(
                 gym_id=current_gym.id,
                 event_title=updated_event.title,
                 end_time=updated_event.end_time,
-                first_message_chat=event_in.first_message_chat if hasattr(event_in, 'first_message_chat') else None
+                first_message_chat=None  # No se permite editar el primer mensaje del chat
             )
             
             # Verificar si hubo error en la respuesta

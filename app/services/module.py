@@ -42,7 +42,8 @@ class ModuleService:
         """Actualizar un módulo existente"""
         db_module = self.get_module_by_id(db, module_id)
         if db_module:
-            for key, value in module.dict(exclude_unset=True).items():
+            from fastapi.encoders import jsonable_encoder
+            for key, value in jsonable_encoder(module, exclude_unset=True).items():
                 setattr(db_module, key, value)
             db.commit()
             db.refresh(db_module)

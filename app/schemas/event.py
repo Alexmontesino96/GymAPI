@@ -57,7 +57,6 @@ class EventUpdate(BaseModel):
     location: Optional[str] = Field(None, max_length=100)
     max_participants: Optional[int] = None
     status: Optional[EventStatus] = None
-    first_message_chat: Optional[str] = Field(None, max_length=500, description="Primer mensaje que se enviará automáticamente al crear la sala de chat del evento")
     
     @field_validator('start_time')
     @classmethod

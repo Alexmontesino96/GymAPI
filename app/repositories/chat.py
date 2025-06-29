@@ -106,7 +106,8 @@ class ChatRepository:
         obj_in: ChatRoomUpdate
     ) -> ChatRoom:
         """Actualiza una sala de chat"""
-        update_data = obj_in.dict(exclude_unset=True)
+        from fastapi.encoders import jsonable_encoder
+        update_data = jsonable_encoder(obj_in, exclude_unset=True)
         
         for field in update_data:
             setattr(db_obj, field, update_data[field])
