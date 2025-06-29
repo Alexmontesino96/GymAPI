@@ -637,7 +637,8 @@ async def delete_event(
     db: Session = Depends(get_db),
     event_id: int = Path(..., title="Event ID"),
     current_gym: GymSchema = Depends(verify_gym_access),  # Usar GymSchema
-    current_user: Auth0User = Security(auth.get_user, scopes=["resource:admin"])
+    current_user: Auth0User = Security(auth.get_user, scopes=["resource:admin"]),
+    redis_client: Redis = Depends(get_redis_client)
 ) -> None:
     """
     Delete an event.
@@ -705,8 +706,8 @@ async def delete_event(
             detail="You don't have permission to delete this event"
         )
     
-    # Delete event
-    event_repository.delete_event(db=db, event_id=event_id)
+    # Delete event usando servicio (invalida caché)
+    await event_service.delete_event(db=db, event_id=event_id, redis_client=redis_client)
     return None
 
 
@@ -717,7 +718,8 @@ async def admin_delete_event(
     db: Session = Depends(get_db),
     event_id: int = Path(..., title="Event ID"),
     current_gym: GymSchema = Depends(verify_gym_access),  # Usar GymSchema
-    current_user: Auth0User = Security(auth.get_user, scopes=["resource:admin"])
+    current_user: Auth0User = Security(auth.get_user, scopes=["resource:admin"]),
+    redis_client: Redis = Depends(get_redis_client)
 ) -> None:
     """
     Administrative endpoint to delete any event regardless of ownership.
@@ -753,7 +755,7 @@ async def admin_delete_event(
     
     # Delete event without ownership verification
     try:
-        event_repository.delete_event(db=db, event_id=event_id)
+        await event_service.delete_event(db=db, event_id=event_id, redis_client=redis_client)
         return None
     except Exception as e:
         raise HTTPException(
