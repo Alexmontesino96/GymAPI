@@ -489,14 +489,8 @@ async def update_gym(
             detail="Gimnasio no encontrado"
         )
     
-    # Si se intenta cambiar el subdominio, verificar que no exista otro con ese subdominio
-    if gym_in.subdomain and gym_in.subdomain != gym.subdomain:
-        existing_gym = gym_service.get_gym_by_subdomain(db, subdomain=gym_in.subdomain)
-        if existing_gym and existing_gym.id != gym_id:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Ya existe un gimnasio con el subdominio '{gym_in.subdomain}'"
-            )
+    # Nota: El subdominio no se puede cambiar una vez creado el gimnasio
+    # ya que es un identificador único y podría romper URLs existentes
     
     # Actualizar el gimnasio
     updated_gym = gym_service.update_gym(db, gym=gym, gym_in=gym_in)
