@@ -22,6 +22,9 @@ class EventCreateBase(EventBase):
     @field_validator('start_time')
     @classmethod
     def start_time_must_be_future(cls, v):
+        # Asegurar zona horaria
+        if v.tzinfo is None or v.tzinfo.utcoffset(v) is None:
+            v = v.replace(tzinfo=pytz.UTC)
         now = datetime.now(tz=pytz.UTC)
         if v <= now:
             raise ValueError("La fecha de inicio debe ser posterior a la hora actual")
@@ -30,6 +33,8 @@ class EventCreateBase(EventBase):
     @field_validator('end_time')
     @classmethod
     def end_time_must_be_future(cls, v, info):
+        if v.tzinfo is None or v.tzinfo.utcoffset(v) is None:
+            v = v.replace(tzinfo=pytz.UTC)
         now = datetime.now(tz=pytz.UTC)
         if v <= now:
             raise ValueError("La fecha de finalización debe ser posterior a la hora actual")
@@ -62,6 +67,8 @@ class EventUpdate(BaseModel):
     @classmethod
     def start_time_must_be_future_if_provided(cls, v):
         if v is not None:
+            if v.tzinfo is None or v.tzinfo.utcoffset(v) is None:
+                v = v.replace(tzinfo=pytz.UTC)
             now = datetime.now(tz=pytz.UTC)
             if v <= now:
                 raise ValueError("La fecha de inicio debe ser posterior a la hora actual")
@@ -71,6 +78,8 @@ class EventUpdate(BaseModel):
     @classmethod
     def end_time_must_be_future_if_provided(cls, v, info):
         if v is not None:
+            if v.tzinfo is None or v.tzinfo.utcoffset(v) is None:
+                v = v.replace(tzinfo=pytz.UTC)
             now = datetime.now(tz=pytz.UTC)
             if v <= now:
                 raise ValueError("La fecha de finalización debe ser posterior a la hora actual")
