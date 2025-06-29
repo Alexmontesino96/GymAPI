@@ -441,7 +441,8 @@ async def update_event(
     event_id: int = Path(..., title="Event ID"),
     event_in: EventUpdate,
     current_gym: GymSchema = Depends(verify_gym_access),  # Usar GymSchema
-    current_user: Auth0User = Security(auth.get_user, scopes=["resource:admin"])
+    current_user: Auth0User = Security(auth.get_user, scopes=["resource:admin"]),
+    redis_client: Redis = Depends(get_redis_client)
 ) -> Any:
     """
     Update an existing event.
@@ -511,6 +512,19 @@ async def update_event(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Event not found"
             )
+        
+        # Invalidar cachés relacionadas después de la actualización
+        if redis_client:
+            try:
+                await event_service.invalidate_event_caches(
+                    redis_client=redis_client,
+                    event_id=event_id,
+                    gym_id=current_gym.id,
+                    creator_id=updated_event.creator_id
+                )
+                logger.info(f"Cache invalidada para evento {event_id} después de actualización por admin")
+            except Exception as e:
+                logger.error(f"Error invalidando cache después de actualización: {e}", exc_info=True)
             
         # Si se actualizó la hora de finalización, enviar mensaje para procesar el evento
         if 'end_time' in update_data and updated_event.status == EventStatus.SCHEDULED:
@@ -572,6 +586,19 @@ async def update_event(
     updated_event = event_repository.update_event_efficient(
         db=db, event_id=event_id, event_in=event_in
     )
+    
+    # Invalidar cachés relacionadas después de la actualización
+    if redis_client and updated_event:
+        try:
+            await event_service.invalidate_event_caches(
+                redis_client=redis_client,
+                event_id=event_id,
+                gym_id=current_gym.id,
+                creator_id=creator_id
+            )
+            logger.info(f"Cache invalidada para evento {event_id} después de actualización por creador")
+        except Exception as e:
+            logger.error(f"Error invalidando cache después de actualización: {e}", exc_info=True)
     
     # Si se actualizó la hora de finalización, enviar mensaje para procesar el evento
     if 'end_time' in update_data and updated_event.status == EventStatus.SCHEDULED:
