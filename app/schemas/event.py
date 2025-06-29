@@ -48,9 +48,23 @@ class EventCreateBase(EventBase):
         return v
 
 
-class EventCreate(EventCreateBase):
-    """Esquema para crear un evento."""
-    first_message_chat: Optional[str] = Field(None, max_length=500, description="Primer mensaje que se enviará automáticamente al crear la sala de chat del evento")
+class EventCreate(BaseModel):
+    """Esquema para crear un evento. El estado siempre será SCHEDULED por defecto."""
+    title: str = Field(..., max_length=100)
+    description: Optional[str] = Field(None)
+    start_time: datetime
+    end_time: datetime
+    location: Optional[str] = Field(None, max_length=100)
+    max_participants: int = Field(0, description="0 significa sin límite de participantes")
+    first_message_chat: Optional[str] = Field(None, max_length=500, description="Primer mensaje enviado al crear la sala de chat del evento")
+
+    # Heredar y reutilizar validadores de fechas de EventCreateBase
+    _validate_start = EventCreateBase.__validators__['start_time_must_be_future']  # type: ignore
+    _validate_end   = EventCreateBase.__validators__['end_time_must_be_future']    # type: ignore
+
+    model_config = {
+        "extra": "forbid"  # Rechazar campos no definidos (incluyendo 'status')
+    }
 
 
 class EventUpdate(BaseModel):
