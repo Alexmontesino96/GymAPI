@@ -671,14 +671,35 @@ async def delete_event(
             detail="Event not found in current gym"
         )
     
-    # Verify permissions
-    # Get Auth0 user ID
-    user_id = current_user.id
+    # === Verificación de permisos ===
+    user_auth0_id = current_user.id
     user_permissions = getattr(current_user, "permissions", []) or []
-    is_admin = "admin:all" in user_permissions or "admin:events" in user_permissions
-    
-    # Only the creator or an admin can delete
-    if not (is_admin or event.creator_id == user_id):
+
+    # 1) Permisos globales (plataforma)
+    is_global_admin = "admin:all" in user_permissions or "admin:events" in user_permissions
+
+    # 2) Permisos de recurso/tenant indicados en el token
+    is_resource_admin = "resource:admin" in user_permissions
+    is_tenant_admin   = "tenant:admin"   in user_permissions
+
+    # 3) Rol dentro del gimnasio (OWNER o ADMIN)
+    from app.models.user import User
+    from app.models.user_gym import UserGym, GymRoleType
+
+    internal_user_id = db.query(User.id).filter(User.auth0_id == user_auth0_id).scalar()
+
+    role_in_gym = db.query(UserGym.role).filter(
+        UserGym.user_id == internal_user_id,
+        UserGym.gym_id == current_gym.id
+    ).scalar()
+
+    is_gym_admin_or_owner = role_in_gym in [GymRoleType.ADMIN, GymRoleType.OWNER]
+
+    # 4) Es el creador del evento
+    is_creator = internal_user_id == event.creator_id
+
+    # Evaluar permiso final
+    if not (is_global_admin or is_resource_admin or is_tenant_admin or is_gym_admin_or_owner or is_creator):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You don't have permission to delete this event"
