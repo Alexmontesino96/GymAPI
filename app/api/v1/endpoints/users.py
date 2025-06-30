@@ -1016,4 +1016,51 @@ async def sync_email_status_from_auth0(
     # No se necesita devolver contenido, un 204 es suficiente.
     return None
 
+# === Nuevo endpoint público para un participante específico por ID === #
+
+@router.get(
+    "/gym-participants/{user_id}",
+    response_model=UserSchema,
+    tags=["Gym Participants"],
+)
+async def read_gym_participant_by_id(
+    request: Request,
+    user_id: int = Path(..., ge=1, title="ID interno del usuario"),
+    db: Session = Depends(get_db),
+    skip: int = 0,
+    limit: int = 1,
+    current_user: Auth0User = Security(auth.get_user, scopes=["user:read"]),
+    redis_client: redis.Redis = Depends(get_redis_client),
+    current_gym: GymSchema = Depends(verify_gym_admin_access),
+) -> Any:
+    """[ADMIN ONLY] Obtiene un **miembro o entrenador** del gimnasio actual por ID.
+
+    Permisos y visibilidad idénticos al listado `/gym-participants`.
+    """
+    logger = logging.getLogger("user_endpoint")
+
+    from app.models.user_gym import UserGym, GymRoleType
+
+    # Verificar que el usuario pertenezca al gimnasio actual y sea MEMBER o TRAINER
+    membership = (
+        db.query(UserGym)
+        .filter(UserGym.user_id == user_id, UserGym.gym_id == current_gym.id)
+        .first()
+    )
+
+    if not membership or membership.role not in [GymRoleType.MEMBER, GymRoleType.TRAINER]:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario no encontrado en este gimnasio")
+
+    # Obtener usuario (podemos utilizar servicio con caché)
+    try:
+        user_data = await user_service.get_user_cached(db, user_id, redis_client)
+    except AttributeError:
+        # Fallback si get_user_cached no existe aún
+        user_data = user_service.get_user(db, user_id=user_id)
+
+    if not user_data:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+
+    return user_data
+
 
