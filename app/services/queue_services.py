@@ -17,6 +17,8 @@ logger = logging.getLogger(__name__)
 
 # Constantes para tipos de mensajes
 CREATE_EVENT_CHAT = "create_event_chat"
+# Acción utilizada para identificar mensajes de creación de chat que deben eliminarse
+CANCEL_EVENT_CHAT = "cancel_event_chat"  # Alias interno, no se envía a SQS (solo filtro interno)
 
 class QueueService:
     
@@ -98,6 +100,31 @@ class QueueService:
             error_msg = f"Error inesperado al procesar evento en cola: {str(e)}"
             logger.error(error_msg, exc_info=True)
             return {"success": False, "error": error_msg}
+
+    @staticmethod
+    def cancel_event_processing(event_id: int) -> Dict[str, Any]:
+        """Elimina mensajes pendientes de SQS relacionados con el evento.
+
+        Actualmente se eliminan los mensajes cuya acción sea ``create_event_chat``
+        y cuyo `event_id` coincida. Devuelve un dict con la cantidad de mensajes
+        eliminados.
+        """
+        try:
+            removed = sqs_service.delete_event_messages(
+                event_id=event_id,
+                actions=[CREATE_EVENT_CHAT]
+            )
+
+            logger.info(
+                f"Se eliminaron {removed} mensajes pendientes de SQS para event_id={event_id}"
+            )
+            return {"success": True, "removed": removed}
+        except Exception as e:
+            logger.error(
+                f"Error al intentar eliminar mensajes de SQS para evento {event_id}: {e}",
+                exc_info=True,
+            )
+            return {"success": False, "error": str(e)}
 
 # Instancia única del servicio
 queue_service = QueueService() 

@@ -415,6 +415,16 @@ class EventService:
         if redis_client and result:
             await self.invalidate_event_caches(redis_client, event_id=event_id, gym_id=gym_id, creator_id=creator_id)
         
+        # Eliminar mensajes pendientes en SQS relacionados con este evento
+        try:
+            from app.services.queue_services import queue_service
+            queue_service.cancel_event_processing(event_id)
+        except Exception as sqs_exc:
+            logger.error(
+                f"Error al limpiar mensajes de SQS para evento {event_id}: {sqs_exc}",
+                exc_info=True,
+            )
+        
         return result
     
     async def invalidate_event_caches(

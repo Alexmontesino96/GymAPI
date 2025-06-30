@@ -159,5 +159,94 @@ class SQSService:
             logger.error(error_msg, exc_info=True)
             return {"error": error_msg}
 
+    def delete_event_messages(
+        self,
+        *,
+        event_id: int,
+        actions: Optional[List[str]] = None,
+        max_iterations: int = 50,
+        messages_per_request: int = 10
+    ) -> int:
+        """Elimina mensajes de la cola relacionados con un evento específico.
+
+        Este método escanea la cola en lotes (long polling deshabilitado) y
+        elimina los mensajes cuyo cuerpo contiene un campo ``action`` dentro
+        del conjunto ``actions`` (si se proporciona) y cuyo ``event_id`` del
+        ``event_data`` coincide con el proporcionado.
+
+        Nota: dado que SQS no permite buscar por contenido, el proceso consiste
+        en recibir mensajes y eliminarlos condicionalmente. Para minimizar el
+        impacto, se limita el número de iteraciones y el tamaño de cada lote.
+
+        Args:
+            event_id: ID del evento a filtrar.
+            actions: Lista de acciones a considerar (por ejemplo
+                     ["create_event_chat"]). Si es ``None`` se evaluarán todas.
+            max_iterations: Máximo de ciclos de lectura de la cola.
+            messages_per_request: Máximo de mensajes por solicitud ``receive_message``.
+
+        Returns:
+            int: Número de mensajes eliminados.
+        """
+        if not self.initialized or not self.client or not self.queue_url:
+            logger.warning("delete_event_messages: Cliente SQS no inicializado correctamente")
+            return 0
+
+        deleted_count = 0
+        iterations = 0
+
+        try:
+            while iterations < max_iterations:
+                iterations += 1
+
+                response = self.client.receive_message(
+                    QueueUrl=self.queue_url,
+                    MaxNumberOfMessages=messages_per_request,
+                    VisibilityTimeout=0,
+                    WaitTimeSeconds=0,
+                    MessageAttributeNames=['All']
+                )
+
+                messages = response.get('Messages', [])
+                if not messages:
+                    break  # No hay más mensajes que procesar
+
+                for msg in messages:
+                    try:
+                        body = msg.get('Body', '{}')
+                        data = json.loads(body)
+
+                        # Validar si el mensaje corresponde al evento
+                        event_data = data.get('event_data', {}) if isinstance(data, dict) else {}
+                        matches_event = event_data.get('event_id') == event_id
+
+                        # Validar acción si se proporcionó filtro
+                        action = data.get('action') if isinstance(data, dict) else None
+                        matches_action = True if actions is None else action in actions
+
+                        if matches_event and matches_action:
+                            # Eliminar el mensaje de la cola
+                            self.client.delete_message(
+                                QueueUrl=self.queue_url,
+                                ReceiptHandle=msg['ReceiptHandle']
+                            )
+                            deleted_count += 1
+                            logger.info(f"Mensaje {msg.get('MessageId')} eliminado (evento {event_id}, acción {action})")
+                        else:
+                            # Devolver la visibilidad inmediatamente (no cambiar visibility)
+                            pass
+                    except Exception as inner_e:
+                        logger.error(f"Error analizando mensaje para eliminación condicional: {inner_e}")
+                        continue
+
+                # Si en este lote no se eliminaron mensajes, podríamos suponer que no hay más
+                # pero seguimos hasta max_iterations o hasta que no haya más mensajes.
+
+        except Exception as e:
+            logger.error(f"Error al eliminar mensajes de evento {event_id}: {e}", exc_info=True)
+
+        logger.info(f"Total de mensajes eliminados para evento {event_id}: {deleted_count}")
+        return deleted_count
+
 # Instancia única del servicio
 sqs_service = SQSService() 
