@@ -375,7 +375,27 @@ class EventService:
         creator_id = event.creator_id
         
         # Actualizar evento
-        updated_event = event_repository.update_event(db, event_id=event_id, event_in=event_in)
+        old_capacity = event.max_participants
+        updated_event = event_repository.update_event_efficient(
+            db=db, event_id=event_id, event_in=event_in
+        )
+
+        # Si aumentó la capacidad, llenar huecos desde la waiting list
+        try:
+            if updated_event and updated_event.max_participants and old_capacity is not None:
+                if updated_event.max_participants > old_capacity > 0:
+                    promoted = event_participation_repository.fill_vacancies_from_waiting_list(
+                        db, event_id=event_id
+                    )
+                    if promoted:
+                        logger.info(
+                            f"Se promovieron {len(promoted)} usuarios de la waiting list para evento {event_id}"
+                        )
+        except Exception as promo_exc:
+            logger.error(
+                f"Error al promover usuarios de la waiting list tras aumentar capacidad de evento {event_id}: {promo_exc}",
+                exc_info=True,
+            )
         
         # Invalidar cachés relacionadas
         if redis_client and updated_event:
@@ -415,6 +435,7 @@ class EventService:
         if redis_client and result:
             await self.invalidate_event_caches(redis_client, event_id=event_id, gym_id=gym_id, creator_id=creator_id)
         
+
         # Eliminar mensajes pendientes en SQS relacionados con este evento
         try:
             from app.services.queue_services import queue_service

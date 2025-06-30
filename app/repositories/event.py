@@ -443,6 +443,78 @@ class EventRepository:
             print(f"Error al marcar evento como completado: {e}")
             return None
 
+    def _promote_from_waiting_list(self, db: Session, event_id: int) -> Optional[EventParticipation]:
+        """Promover al primer miembro en lista de espera a registrado."""
+        # Obtener primer miembro en lista de espera (orden por fecha de registro)
+        waiting = (
+            db.query(EventParticipation)
+            .filter(
+                EventParticipation.event_id == event_id,
+                EventParticipation.status == EventParticipationStatus.WAITING_LIST
+            )
+            .order_by(EventParticipation.registered_at)
+            .first()
+        )
+        
+        if waiting:
+            waiting.status = EventParticipationStatus.REGISTERED
+            db.add(waiting)
+            db.commit()
+            db.refresh(waiting)
+            return waiting
+        
+        return None
+
+    def fill_vacancies_from_waiting_list(self, db: Session, event_id: int) -> List[EventParticipation]:
+        """Promueve tantos usuarios de la WAITING_LIST como plazas libres haya.
+
+        Devuelve la lista de participaciones promovidas.
+        """
+        promoted: List[EventParticipation] = []
+
+        from app.models.event import Event  # import local para evitar ciclos
+
+        event = db.query(Event).filter(Event.id == event_id).first()
+        if not event or event.max_participants == 0:
+            return promoted  # sin límite o evento no encontrado
+
+        # Contar registrados actuales
+        registered_count = (
+            db.query(EventParticipation)
+            .filter(
+                EventParticipation.event_id == event_id,
+                EventParticipation.status == EventParticipationStatus.REGISTERED,
+            )
+            .count()
+        )
+
+        available = max(event.max_participants - registered_count, 0)
+
+        if available == 0:
+            return promoted
+
+        # Obtener los primeros "available" usuarios de la waiting list en orden FIFO
+        waiting_list = (
+            db.query(EventParticipation)
+            .filter(
+                EventParticipation.event_id == event_id,
+                EventParticipation.status == EventParticipationStatus.WAITING_LIST,
+            )
+            .order_by(EventParticipation.registered_at)
+            .limit(available)
+            .all()
+        )
+
+        for p in waiting_list:
+            p.status = EventParticipationStatus.REGISTERED
+            promoted.append(p)
+
+        if promoted:
+            db.bulk_save_objects(promoted)
+            db.commit()
+
+        return promoted
+
 
 class EventParticipationRepository:
     """Repositorio para operaciones con participaciones en eventos."""
