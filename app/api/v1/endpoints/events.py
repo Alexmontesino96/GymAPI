@@ -504,6 +504,7 @@ async def update_event(
     # Para administradores, podemos omitir la verificación del creador
     if is_admin:
         # Los administradores pueden actualizar cualquier evento
+        old_capacity = event_repository.get_event(db, event_id=event_id).max_participants
         updated_event = event_repository.update_event_efficient(
             db=db, event_id=event_id, event_in=event_in
         )
@@ -554,6 +555,18 @@ async def update_event(
                 logger.error(f"Excepción al solicitar procesamiento del evento: {str(e)}", exc_info=True)
                 # No fallar la actualización del evento si el envío del mensaje falla
             
+        # Promover desde waiting list si aumentó la capacidad
+        try:
+            if updated_event and updated_event.max_participants and old_capacity is not None:
+                if updated_event.max_participants > old_capacity > 0:
+                    promoted = event_participation_repository.fill_vacancies_from_waiting_list(
+                        db, event_id=event_id
+                    )
+                    if promoted:
+                        logger.info(f"{len(promoted)} usuarios promovidos de waiting list en evento {event_id}")
+        except Exception as e:
+            logger.error(f"Error promoviendo waiting list tras aumento de cupo: {e}", exc_info=True)
+            
         return updated_event
     
     # Para usuarios normales, verificar si son el creador en una sola consulta
@@ -584,6 +597,7 @@ async def update_event(
         )
     
     # Actualizar el evento con el método eficiente
+    old_capacity = event_repository.get_event(db, event_id=event_id).max_participants
     updated_event = event_repository.update_event_efficient(
         db=db, event_id=event_id, event_in=event_in
     )
@@ -627,6 +641,16 @@ async def update_event(
         except Exception as e:
             logger.error(f"Excepción al solicitar procesamiento del evento: {str(e)}", exc_info=True)
             # No fallar la actualización del evento si el envío del mensaje falla
+    
+    # Promover desde waiting list cuando aumenta cupo
+    try:
+        if updated_event and updated_event.max_participants and old_capacity is not None:
+            if updated_event.max_participants > old_capacity > 0:
+                promoted = event_participation_repository.fill_vacancies_from_waiting_list(db, event_id=event_id)
+                if promoted:
+                    logger.info(f"{len(promoted)} usuarios promovidos de waiting list en evento {event_id}")
+    except Exception as e:
+        logger.error(f"Error promoviendo waiting list tras aumento de cupo: {e}", exc_info=True)
     
     return updated_event
 
