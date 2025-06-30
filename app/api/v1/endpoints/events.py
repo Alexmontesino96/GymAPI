@@ -1251,3 +1251,80 @@ async def update_attendance(
         )
         
     return updated 
+
+
+# =========================================================
+# BULK PARTICIPATION ENDPOINT
+# =========================================================
+
+
+@router.post(
+    "/participation/bulk",
+    response_model=List[EventParticipationSchema],
+    status_code=status.HTTP_201_CREATED,
+    summary="Registrar varios usuarios en un evento (ADMIN/OWNER)"
+)
+async def bulk_register_for_event(
+    *,
+    request: Request,
+    db: Session = Depends(get_db),
+    payload: EventBulkParticipationCreate = Body(...),
+    current_gym: GymSchema = Depends(verify_gym_access),
+    current_user: Auth0User = Security(auth.get_user, scopes=["resource:admin"]),
+    redis_client: Redis = Depends(get_redis_client)
+) -> List[EventParticipationSchema]:
+    """Registrar varios usuarios (por ID interno) en un evento.
+
+    Sólo accesible para OWNER o ADMIN del gimnasio.
+    """
+
+    from app.models.user_gym import UserGym, GymRoleType
+
+    # Verificar rol OWNER/ADMIN en el gimnasio actual
+    internal_user_id = db.query(User.id).filter(User.auth0_id == current_user.id).scalar()
+    role_in_gym = db.query(UserGym.role).filter(
+        UserGym.user_id == internal_user_id,
+        UserGym.gym_id == current_gym.id
+    ).scalar()
+
+    if role_in_gym not in [GymRoleType.ADMIN, GymRoleType.OWNER]:
+        raise HTTPException(status_code=403, detail="Solo ADMIN u OWNER del gimnasio pueden usar este endpoint")
+
+    # Verificar evento existe y pertenece al gym
+    event = event_repository.get_event(db, event_id=payload.event_id)
+    if not event or event.gym_id != current_gym.id:
+        raise HTTPException(status_code=404, detail="Evento no encontrado en este gimnasio")
+
+    # --- Validar que los IDs pertenecen al gimnasio ---
+    from sqlalchemy import select
+    gym_user_ids = db.query(UserGym.user_id).filter(
+        UserGym.gym_id == current_gym.id,
+        UserGym.user_id.in_(payload.user_ids)
+    ).all()
+    gym_user_ids = {uid for (uid,) in gym_user_ids}
+
+    invalid_ids = set(payload.user_ids) - gym_user_ids
+    if invalid_ids:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Los siguientes IDs no pertenecen al gimnasio {current_gym.id}: {sorted(invalid_ids)}"
+        )
+
+    created_participations: List[EventParticipation] = []
+    for uid in payload.user_ids:
+        try:
+            part = event_participation_repository.create_participation(
+                db=db,
+                participation_in=EventParticipationCreate(event_id=payload.event_id),
+                member_id=uid
+            )
+            if part:
+                created_participations.append(part)
+        except Exception as e:
+            logger.warning(f"No se pudo registrar usuario {uid} en evento {payload.event_id}: {e}")
+
+    # Invalidar caché relacionada
+    if redis_client and created_participations:
+        await event_service.invalidate_event_caches(redis_client, event_id=payload.event_id)
+
+    return created_participations 
