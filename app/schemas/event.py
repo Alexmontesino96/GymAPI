@@ -48,23 +48,15 @@ class EventCreateBase(EventBase):
         return v
 
 
-class EventCreate(BaseModel):
-    """Esquema para crear un evento. El estado siempre será SCHEDULED por defecto."""
-    title: str = Field(..., max_length=100)
-    description: Optional[str] = Field(None)
-    start_time: datetime
-    end_time: datetime
-    location: Optional[str] = Field(None, max_length=100)
-    max_participants: int = Field(0, description="0 significa sin límite de participantes")
-    first_message_chat: Optional[str] = Field(None, max_length=500, description="Primer mensaje enviado al crear la sala de chat del evento")
+class EventCreate(EventCreateBase):
+    """Esquema para crear un evento (status fijado a SCHEDULED)."""
+    first_message_chat: Optional[str] = Field(
+        None,
+        max_length=500,
+        description="Primer mensaje enviado al crear la sala de chat del evento"
+    )
 
-    # Heredar y reutilizar validadores de fechas de EventCreateBase
-    _validate_start = EventCreateBase.__validators__['start_time_must_be_future']  # type: ignore
-    _validate_end   = EventCreateBase.__validators__['end_time_must_be_future']    # type: ignore
-
-    model_config = {
-        "extra": "forbid"  # Rechazar campos no definidos (incluyendo 'status')
-    }
+    model_config = {"extra": "forbid"}
 
 
 class EventUpdate(BaseModel):
@@ -116,6 +108,15 @@ class EventParticipationBase(BaseModel):
 class EventParticipationCreate(BaseModel):
     """Esquema para crear una participación en un evento."""
     event_id: int
+
+
+# --- NUEVO: Bulk participation ---
+class EventBulkParticipationCreate(BaseModel):
+    """Registrar varios miembros (IDs internos) a un evento."""
+    event_id: int = Field(..., description="ID del evento")
+    user_ids: List[int] = Field(..., min_items=1, description="Lista de IDs internos de usuarios a registrar")
+
+    model_config = {"extra": "forbid"}
 
 
 class EventParticipationUpdate(BaseModel):
