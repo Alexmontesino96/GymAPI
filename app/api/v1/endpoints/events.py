@@ -35,7 +35,8 @@ from app.schemas.event import (
     EventParticipationCreate, 
     EventParticipationUpdate,
     EventWithParticipantCount,
-    EventParticipationWithEvent
+    EventParticipationWithEvent,
+    EventBulkParticipationCreate
 )
 from app.models.event import EventStatus, EventParticipationStatus, Event, EventParticipation
 from app.models.user import UserRole, User
