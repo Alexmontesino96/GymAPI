@@ -526,6 +526,66 @@ async def read_public_gym_participants(
             detail="Error interno al obtener participantes del gimnasio."
         )
 
+@router.get("/p/gym-participants/{user_id}", response_model=UserPublicProfile, tags=["Gym Participants (Public)"])
+async def read_public_gym_participant_by_id(
+    request: Request,
+    user_id: int = Path(..., title="ID interno del usuario", ge=1),
+    db: Session = Depends(get_db),
+    current_user: Auth0User = Security(auth.get_user, scopes=["resource:read"]),
+    current_gym: GymSchema = Depends(verify_gym_access),
+    redis_client: redis.Redis = Depends(get_redis_client)
+) -> Any:
+    """Obtiene el perfil público de un miembro/entrenador del gimnasio actual por **ID interno**.
+
+    • Visibilidad idéntica al listado público: cualquier miembro del gimnasio puede consultar
+      a otro miembro del mismo gym.
+    • Devuelve los mismos campos que el listado (`UserPublicProfile`).
+    """
+    logger = logging.getLogger("user_endpoint")
+    gym_id = current_gym.id
+
+    # Verificar pertenencia del usuario objetivo al gimnasio actual (con caché)
+    membership_cache_key = f"user_gym_membership:{user_id}:{gym_id}"
+    try:
+        belongs = None
+        if redis_client:
+            cached = await redis_client.get(membership_cache_key)
+            if cached is not None:
+                belongs = cached != "__NONE__"
+        if belongs is None:
+            # Cache miss o redis no disponible ⇒ consultar BD
+            from app.models.user_gym import UserGym
+            membership = db.query(UserGym).filter(UserGym.user_id == user_id, UserGym.gym_id == gym_id).first()
+            belongs = membership is not None
+            # Guardar en caché si es posible
+            if redis_client:
+                ttl = get_settings().CACHE_TTL_USER_MEMBERSHIP if belongs else get_settings().CACHE_TTL_NEGATIVE
+                await redis_client.set(membership_cache_key, membership.role.value if belongs else "__NONE__", ex=ttl)
+
+        if not belongs:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario no encontrado en este gimnasio")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error verificando membresía en gym ({membership_cache_key}): {e}", exc_info=True)
+        # Fallback BD sin caché
+        from app.models.user_gym import UserGym
+        membership = db.query(UserGym).filter(UserGym.user_id == user_id, UserGym.gym_id == gym_id).first()
+        if not membership:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario no encontrado en este gimnasio (BD Fallback)")
+
+    # Obtener perfil público (con caché)
+    try:
+        public_profile = await user_service.get_public_profile_cached(user_id, db, redis_client)
+        if not public_profile:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario no encontrado")
+        return public_profile
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error obteniendo perfil público para user {user_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error interno al obtener perfil")
+
 @router.get("/p/public-profile/{user_id}", response_model=UserPublicProfile, tags=["Gym Participants (Public)"])
 async def read_public_user_profile(
     request: Request,
@@ -535,83 +595,19 @@ async def read_public_user_profile(
     current_gym: GymSchema = Depends(verify_gym_access),
     redis_client: redis.Redis = Depends(get_redis_client)
 ) -> Any:
-    """
-    Obtiene el perfil público de un usuario específico del gimnasio actual.
-    
-    Este endpoint permite a cualquier miembro del gimnasio ver el perfil público
-    de otro miembro del mismo gimnasio.
-    
-    Permissions:
-        - Requiere scope "resource:read"
-        - Requiere pertenecer al gimnasio actual
-        
-    Args:
-        request: Objeto de solicitud
-        user_id: ID del usuario cuyo perfil se quiere ver
-        db: Sesión de base de datos
-        current_user: Usuario autenticado
-        current_gym: Gimnasio actual verificado
-        redis_client: Cliente de Redis
-        
-    Returns:
-        UserPublicProfile: Perfil público del usuario solicitado
-        
-    Raises:
-        HTTPException 404: Si el usuario no existe o no pertenece al gimnasio actual
-    """
-    logger = logging.getLogger("user_endpoint")
-    gym_id = current_gym.id # ID del gimnasio actual
+    """Mantiene compatibilidad con la ruta histórica `/p/public-profile/{user_id}`.
 
-    # --- Parte A: Verificar si el USUARIO OBJETIVO pertenece al gimnasio (usando caché) ---
-    if not redis_client:
-        logger.warning(f"Redis no disponible, verificando pertenencia de user {user_id} a gym {gym_id} en BD")
-        user_gym_db = db.query(UserGym).filter(UserGym.user_id == user_id, UserGym.gym_id == gym_id).first()
-        if not user_gym_db:
-             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario no encontrado en este gimnasio (BD Check)")
-    else:
-        membership_cache_key = f"user_gym_membership:{user_id}:{gym_id}"
-        try:
-            cached_role_str = await redis_client.get(membership_cache_key)
-            if cached_role_str is not None:
-                # Cache Hit
-                if cached_role_str == "__NONE__":
-                    logger.debug(f"Cache HIT Negativo: Usuario {user_id} NO pertenece a gym {gym_id} (verificación perfil público)")
-                    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario no encontrado en este gimnasio (Cache Check)")
-                # Si existe y no es NONE, pertenece. No necesitamos el rol aquí, solo saber que existe.
-                logger.debug(f"Cache HIT Positivo: Usuario {user_id} pertenece a gym {gym_id} (verificación perfil público)")
-            else:
-                # Cache Miss
-                logger.debug(f"Cache MISS para {membership_cache_key} (verificación perfil público), consultando BD...")
-                user_gym_db = db.query(UserGym).filter(UserGym.user_id == user_id, UserGym.gym_id == gym_id).first()
-                if user_gym_db:
-                    role_str = user_gym_db.role.value
-                    await redis_client.set(membership_cache_key, role_str, ex=get_settings().CACHE_TTL_USER_MEMBERSHIP)
-                    logger.debug(f"Cache de membresía {membership_cache_key} establecida a {role_str}")
-                else:
-                    await redis_client.set(membership_cache_key, "__NONE__", ex=get_settings().CACHE_TTL_NEGATIVE)
-                    logger.debug(f"Cache de membresía negativa establecida para {membership_cache_key}")
-                    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario no encontrado en este gimnasio (BD Check + Cache Write)")
-        except Exception as e:
-            logger.error(f"Error consultando caché de membresía ({membership_cache_key}) para perfil público: {e}", exc_info=True)
-            # Fallback a BD en caso de error de Redis
-            user_gym_db = db.query(UserGym).filter(UserGym.user_id == user_id, UserGym.gym_id == gym_id).first()
-            if not user_gym_db:
-                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario no encontrado en este gimnasio (BD Fallback)")
-    # --- Fin Parte A ---
-
-    # --- Parte B: Obtener perfil público (usando caché) --- 
-    try:
-        public_profile = await user_service.get_public_profile_cached(user_id, db, redis_client)
-    except Exception as e:
-        # Error inesperado al obtener el perfil (probablemente del servicio de caché)
-        logger.error(f"Error inesperado obteniendo perfil público cacheado para user {user_id}: {e}", exc_info=True)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error interno al obtener perfil")
-    
-    if not public_profile:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario no encontrado")
-        
-    # Devuelve directamente el UserPublicProfile obtenido
-    return public_profile
+    Internamente reutiliza la lógica del nuevo endpoint basado en la ruta
+    `/p/gym-participants/{user_id}`.
+    """
+    return await read_public_gym_participant_by_id(
+        request=request,
+        user_id=user_id,
+        db=db,
+        current_user=current_user,
+        current_gym=current_gym,
+        redis_client=redis_client,
+    )
 
 
 # === Endpoints de Gestión de Gimnasio (Admins de Gym / SuperAdmins) === #
