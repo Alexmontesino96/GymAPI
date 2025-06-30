@@ -112,7 +112,7 @@ async def create_event_chat(
             
         # Call the chat service to create the room
         logger.info(f"[DEBUG] Creating chat room for event {request.event_id}, creator_id={request.creator_id}")
-        room = chat_service.get_or_create_event_chat(db, request.event_id, request.creator_id)
+        room = chat_service.get_or_create_event_chat(db, request.event_id, request.creator_id, request.gym_id)
         
         # Verify the result
         logger.info(f"[DEBUG] Creation result: {room}")
