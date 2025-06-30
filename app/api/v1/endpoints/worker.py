@@ -288,8 +288,8 @@ async def get_events_due_for_completion(
         now_utc = datetime.now(timezone.utc)
         
         events = db.query(Event).filter(
-            Event.status == EventStatus.SCHEDULED, 
-            Event.end_time < now_utc + timedelta(days=1),
+            Event.status == EventStatus.SCHEDULED,
+            Event.end_time <= now_utc,  # Solo eventos cuyo end_time ya pasó
             Event.completion_attempts <= 10  # Exclude events with more than 10 attempts
         ).order_by(
             Event.end_time.asc()
