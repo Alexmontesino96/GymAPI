@@ -434,4 +434,11 @@ class DailyScheduleResponse(BaseModel):
     is_closed: bool
     is_special: bool = Field(..., description="Indica si el horario proviene de GymSpecialHours (True) o de la plantilla GymHours (False)")
     description: Optional[str] = Field(None, description="Descripción si es un día especial")
-    source_id: Optional[int] = Field(None, description="ID del registro GymSpecialHours o GymHours de donde se obtuvo el horario") 
+    source_id: Optional[int] = Field(None, description="ID del registro GymSpecialHours o GymHours de donde se obtuvo el horario")
+
+# --- NUEVO esquema para listar sesiones con su clase ---
+class SessionWithClass(BaseModel):
+    session: ClassSession
+    class_info: Class
+
+    model_config = {"from_attributes": True} 

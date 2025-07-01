@@ -7,7 +7,7 @@ from app.services.gym import gym_service
 
 router = APIRouter()
 
-@router.get("/sessions", response_model=List[ClassSession])
+@router.get("/sessions", response_model=List[SessionWithClass])
 async def get_upcoming_sessions(
     skip: int = 0,
     limit: int = 100,
@@ -33,20 +33,40 @@ async def get_upcoming_sessions(
         - Requires 'read:schedules' scope.
 
     Returns:
-        List[ClassSessionSchema]: A list of upcoming class session objects.
+        List[SessionWithClass]: A list of upcoming class session objects.
 
     Raises:
         HTTPException 401: Invalid or missing token.
         HTTPException 403: Token lacks required scope or user doesn't belong to the gym.
         HTTPException 404: Gym not found.
     """
-    return await class_session_service.get_upcoming_sessions(
+    # Obtener las sesiones próximas
+    upcoming = await class_session_service.get_upcoming_sessions(
         db,
         skip=skip,
         limit=limit,
         gym_id=current_gym.id,
         redis_client=redis_client
     )
+
+    # Para cada sesión, obtener la definición de la clase y empaquetar
+    results: List[SessionWithClass] = []
+    for sess in upcoming:
+        try:
+            class_obj = await class_service.get_class(
+                db,
+                class_id=sess.class_id,
+                gym_id=current_gym.id,
+                redis_client=redis_client
+            )
+        except Exception:
+            class_obj = None
+
+        session_schema = ClassSession.model_validate(sess)
+        class_schema = Class.model_validate(class_obj) if class_obj else None
+        results.append(SessionWithClass(session=session_schema, class_info=class_schema))
+
+    return results
 
 
 @router.get("/sessions/{session_id}", response_model=Dict[str, Any])

@@ -38,7 +38,8 @@ from app.schemas.schedule import (
     GymSpecialHours, GymSpecialHoursCreate, GymSpecialHoursUpdate,
     ClassBaseInput, ClassBase, Class, ClassCreate, ClassUpdate, ClassWithSessions,
     ClassSession, ClassSessionCreate, ClassSessionUpdate, ClassSessionWithParticipations,
-    ClassParticipation, ClassParticipationCreate, ClassParticipationUpdate
+    ClassParticipation, ClassParticipationCreate, ClassParticipationUpdate,
+    SessionWithClass
 )
 from app.repositories.schedule import (
     class_repository,
