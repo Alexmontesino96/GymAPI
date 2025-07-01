@@ -346,7 +346,7 @@ async def cancel_session(
     return await class_session_service.cancel_session(db, session_id=session_id, gym_id=current_gym.id, redis_client=redis_client)
 
 
-@router.get("/date-range", response_model=List[ClassSession])
+@router.get("/date-range", response_model=List[SessionWithClass])
 async def get_sessions_by_date_range(
     start_date: date = Query(..., description="Start date (YYYY-MM-DD)"),
     end_date: date = Query(..., description="End date (YYYY-MM-DD)"),
@@ -358,9 +358,14 @@ async def get_sessions_by_date_range(
     redis_client: Redis = Depends(get_redis_client)
 ) -> Any:
     """
-    Get Sessions by Date Range
+    Get Sessions by Date Range (with Class)
 
-    Retrieves class sessions scheduled within a specific date range for the current gym.
+    Devuelve las sesiones programadas dentro de un rango de fechas **incluyendo**
+    la definición completa de la clase asociada. Cada elemento de la lista
+    combina:
+
+    • ``session`` – objeto ``ClassSession`` (instancia concreta)
+    • ``class_info`` – objeto ``Class`` (plantilla de la clase)
 
     Args:
         start_date (date): The start date of the range (YYYY-MM-DD).
@@ -376,7 +381,7 @@ async def get_sessions_by_date_range(
         - Requires 'read:schedules' scope.
 
     Returns:
-        List[ClassSessionSchema]: A list of session objects within the date range.
+        List[SessionWithClass]: Lista de objetos compuestos ``SessionWithClass``.
 
     Raises:
         HTTPException 400: Invalid date range (e.g., end_date before start_date).
@@ -385,8 +390,7 @@ async def get_sessions_by_date_range(
         HTTPException 404: Gym not found.
         HTTPException 422: Invalid date format in query parameters.
     """
-    # The service method handles the conversion from date to datetime for the query
-    return await class_session_service.get_sessions_by_date_range(
+    sessions = await class_session_service.get_sessions_by_date_range(
         db,
         start_date=start_date,
         end_date=end_date,
@@ -395,6 +399,25 @@ async def get_sessions_by_date_range(
         gym_id=current_gym.id,
         redis_client=redis_client
     )
+
+    results: List[SessionWithClass] = []
+    for sess in sessions:
+        # obtener clase asociada (puede venir de caché)
+        try:
+            class_obj = await class_service.get_class(
+                db,
+                class_id=sess.class_id,
+                gym_id=current_gym.id,
+                redis_client=redis_client
+            )
+        except Exception:
+            class_obj = None
+
+        session_schema = ClassSession.model_validate(sess)
+        class_schema = Class.model_validate(class_obj) if class_obj else None
+        results.append(SessionWithClass(session=session_schema, class_info=class_schema))
+
+    return results
 
 
 @router.get("/trainer/{trainer_id}", response_model=List[ClassSession])
