@@ -305,14 +305,10 @@ class ClassSessionBase(BaseModel):
     override_capacity: Optional[int] = Field(None, gt=0, description="Capacidad específica para esta sesión, si es diferente a la de la clase")
     notes: Optional[str] = None
 
-    @validator('end_time', always=True)
-    def set_end_time(cls, end_time, values):
-        if end_time:
-            return end_time
-        
-        # Si no se proporciona end_time, calcularlo a partir de start_time y la duración
-        # Nota: se necesitaría información adicional desde el modelo Class
-        return values.get('start_time')  # Este valor se actualizará en el servicio
+    @validator('end_time', pre=True)
+    def default_end_time(cls, end_time):
+        """Mantiene end_time opcional; el servicio lo calculará si falta."""
+        return end_time
 
 
 class ClassSessionCreate(ClassSessionBase):
