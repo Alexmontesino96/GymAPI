@@ -441,4 +441,31 @@ class SessionWithClass(BaseModel):
     session: ClassSession
     class_info: Class
 
-    model_config = {"from_attributes": True} 
+    model_config = {
+        "from_attributes": True,
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "session": {
+                        "id": 813,
+                        "class_id": 143,
+                        "trainer_id": 8,
+                        "start_time": "2025-07-04T14:00:00Z",
+                        "end_time": "2025-07-04T15:00:00Z",
+                        "status": "scheduled",
+                        "gym_id": 4,
+                        "current_participants": 0
+                    },
+                    "class_info": {
+                        "id": 143,
+                        "name": "Striking",
+                        "description": "Striking Precision",
+                        "duration": 60,
+                        "max_capacity": 20,
+                        "difficulty_level": "intermediate",
+                        "gym_id": 4
+                    }
+                }
+            ]
+        }
+    } 
