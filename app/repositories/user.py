@@ -129,8 +129,13 @@ class UserRepository(BaseRepository[User, UserCreate, UserUpdate]):
         role_values = [r.value if hasattr(r, "value") else str(r) for r in roles]
 
         query = db.query(
-            User.id, User.first_name, User.last_name, User.picture,
-            User.role, User.bio, User.is_active
+            User.id,
+            User.first_name,
+            User.last_name,
+            User.picture,
+            UserGym.role.label("role"),
+            User.bio,
+            User.is_active,
         )
         query = query.join(UserGym, User.id == UserGym.user_id)
         query = query.filter(UserGym.gym_id == gym_id)
