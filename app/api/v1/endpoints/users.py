@@ -1061,6 +1061,15 @@ async def read_gym_participant_by_id(
     if not user_data:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
 
+    # --- NUEVO: establecer el rol dentro del gimnasio en la respuesta ---
+    try:
+        # Mutar el modelo Pydantic con el rol específico del gym
+        user_data.gym_role = membership.role  # type: ignore[attr-defined]
+        # Sobrescribir campo role con el rol en el gimnasio
+        user_data.role = UserRole(membership.role.value)  # type: ignore[attr-defined]
+    except Exception as e:
+        logger.warning(f"No se pudo asignar gym_role/role en la respuesta de usuario {user_id}: {e}")
+
     return user_data
 
 
