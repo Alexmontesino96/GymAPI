@@ -122,14 +122,20 @@ class UserRepository(BaseRepository[User, UserCreate, UserUpdate]):
         """
         Obtiene perfiles públicos de participantes de un gym, filtrados y paginados.
         Selecciona solo los campos necesarios para UserPublicProfile.
+        A partir de ahora filtra por el rol del usuario dentro del gimnasio (UserGym.role),
+        no por su rol global.
         """
+        # Asegurarse de convertir la lista de roles (UserRole) a los valores string que usa GymRoleType
+        role_values = [r.value if hasattr(r, "value") else str(r) for r in roles]
+
         query = db.query(
             User.id, User.first_name, User.last_name, User.picture,
             User.role, User.bio, User.is_active
         )
         query = query.join(UserGym, User.id == UserGym.user_id)
         query = query.filter(UserGym.gym_id == gym_id)
-        query = query.filter(User.role.in_(roles)) # Filtrar por lista de roles
+        # <<<< Filtrado por rol dentro del gym >>>>
+        query = query.filter(UserGym.role.in_(role_values))
 
         if name:
             # Filtrar por nombre o apellido (insensible a mayúsculas/minúsculas)
@@ -141,7 +147,6 @@ class UserRepository(BaseRepository[User, UserCreate, UserUpdate]):
             )
 
         # Aplicar ordenamiento consistente para paginación
-        # Ordenar por nombre, apellido e ID para desempate
         query = query.order_by(User.first_name, User.last_name, User.id)
 
         # Aplicar paginación directamente en la consulta SQL
@@ -171,26 +176,25 @@ class UserRepository(BaseRepository[User, UserCreate, UserUpdate]):
         limit: int = 100
     ) -> List[User]:
         """
-        Obtiene usuarios completos (modelo User) de un gym, filtrados por rol y paginados.
+        Obtiene usuarios completos (modelo User) de un gym, filtrados por rol
+        *dentro* del gimnasio y paginados.
         """
+        role_values = [r.value if hasattr(r, "value") else str(r) for r in roles]
+
         query = db.query(User, UserGym.role.label('gym_role'))
         query = query.join(UserGym, User.id == UserGym.user_id)
         query = query.filter(UserGym.gym_id == gym_id)
-        query = query.filter(User.role.in_(roles)) # Filtrar por lista de roles
+        # <<<< Filtrar por rol en el gimnasio (UserGym.role) >>>>
+        query = query.filter(UserGym.role.in_(role_values))
 
-        # Aplicar ordenamiento consistente para paginación (importante)
-        # Ordenar por nombre, apellido e ID para desempate
+        # Ordenar por nombre para paginación estable
         query = query.order_by(User.first_name, User.last_name, User.id)
 
-        # Aplicar paginación directamente en la consulta SQL
         results = query.offset(skip).limit(limit).all()
-        
-        # Procesar los resultados para incluir el rol del gimnasio
         users_with_roles = []
         for user, gym_role in results:
             user.gym_role = gym_role  # Añadir el rol del gimnasio al objeto usuario
             users_with_roles.append(user)
-            
         return users_with_roles
 
     def create(self, db: Session, *, obj_in: UserCreate) -> User:
