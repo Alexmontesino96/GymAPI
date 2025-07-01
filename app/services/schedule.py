@@ -1807,7 +1807,21 @@ class ClassSessionService:
         cache_key = f"schedule:session:detail_with_availability:{session_id}"
         
         async def db_fetch():
-            return class_session_repository.get_with_availability(db, session_id=session_id)
+            raw = class_session_repository.get_with_availability(db, session_id=session_id)
+
+            if not raw:
+                return None
+
+            # Convertir los modelos ORM a esquemas serializables
+            from app.schemas.schedule import ClassSession, Class
+
+            try:
+                raw["session"] = ClassSession.model_validate(raw["session"]).model_dump()
+                raw["class"] = Class.model_validate(raw["class"]).model_dump()
+            except Exception as e:
+                logger.error(f"Error al convertir modelos a dict para caché: {e}")
+
+            return raw
         
         # Usar el servicio de caché genérico
         from app.services.cache_service import cache_service
