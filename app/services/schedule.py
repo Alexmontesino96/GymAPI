@@ -763,6 +763,37 @@ class GymHoursService:
                 
             return result
 
+        # Para rangos pequeños, usar caché por fecha individual
+        schedule_list = []
+        current_date = start_date
+        
+        while current_date <= end_date:
+            # Obtener horario efectivo para cada fecha usando el método cacheado
+            daily_schedule = await self.get_hours_for_date_cached(
+                db=db, 
+                date_value=current_date, 
+                gym_id=gym_id, 
+                redis_client=redis_client
+            )
+            
+            # Convertir el formato de respuesta de get_hours_for_date_cached a DailyScheduleResponse
+            effective_hours = daily_schedule.get("effective_hours", {})
+            schedule_entry = {
+                "date": current_date,
+                "day_of_week": current_date.weekday(),
+                "open_time": effective_hours.get("open_time"),
+                "close_time": effective_hours.get("close_time"),
+                "is_closed": effective_hours.get("is_closed", False),
+                "is_special": daily_schedule.get("is_special", False),
+                "description": daily_schedule.get("special_hours", {}).get("description") if daily_schedule.get("special_hours") else None,
+                "source_id": effective_hours.get("source_id")
+            }
+            
+            schedule_list.append(schedule_entry)
+            current_date += timedelta(days=1)
+            
+        return schedule_list
+
 
 class GymSpecialHoursService:
     # --- Añadir método helper para invalidación de caché ---
