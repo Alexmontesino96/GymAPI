@@ -685,200 +685,83 @@ class GymHoursService:
         """
         # Si no hay Redis, o el rango es muy grande, procesar sin caché
         if not redis_client or (end_date - start_date).days > 31:  # Si es más de un mes, no cachear
-            return await self.get_schedule_for_date_range(db, start_date, end_date, gym_id)
-            
-        # Verificar que el rango de fechas sea válido
-        if end_date < start_date:
-            raise ValueError("La fecha de fin no puede ser anterior a la fecha de inicio")
-            
-        # Obtener los horarios especiales para este rango
-        special_hours = gym_special_hours_repository.get_by_date_range(
-            db, start_date=start_date, end_date=end_date, gym_id=gym_id
-        )
-        
-        # Crear un diccionario de horarios especiales por fecha para acceso rápido
-        special_hours_dict = {str(hour.date): hour for hour in special_hours}
-        
-        # Obtener los horarios semanales predeterminados (usando la versión cacheada)
-        weekly_hours = await self.get_all_gym_hours_cached(db, gym_id=gym_id, redis_client=redis_client)
-        if not weekly_hours:
-            # Si no hay horarios semanales, crearlos con valores predeterminados
-            weekly_hours = self._create_default_hours(db, gym_id=gym_id)
-            
-        # Crear un diccionario de horarios por día de la semana para acceso rápido
-        weekly_hours_dict = {hour.day_of_week: hour for hour in weekly_hours}
-        
-        # Preparar la respuesta
-        result = []
-        current_date = start_date
-        
-        while current_date <= end_date:
-            # Obtener el día de la semana (0=Lunes, 6=Domingo)
-            day_of_week = current_date.weekday()
-            date_str = str(current_date)
-            
-            # Verificar si hay un horario especial para esta fecha
-            if date_str in special_hours_dict:
-                special_hour = special_hours_dict[date_str]
-                schedule_entry = {
-                    "date": current_date,
-                    "day_of_week": day_of_week,
-                    "open_time": special_hour.open_time,
-                    "close_time": special_hour.close_time,
-                    "is_closed": special_hour.is_closed,
-                    "is_special": True,
-                    "description": special_hour.description,
-                    "source_id": special_hour.id
-                }
-            else:
-                # Usar el horario semanal para este día
-                weekly_hour = weekly_hours_dict.get(day_of_week)
-                if not weekly_hour:
-                    # Si no hay horario para este día, usar valores predeterminados
-                    is_closed = day_of_week == 6  # Cerrado en domingo
-                    open_time = time(9, 0) if not is_closed else None
-                    close_time = time(21, 0) if not is_closed else None
-                    source_id = None
-                else:
-                    # Usar el horario semanal para este día
-                    is_closed = weekly_hour.is_closed
-                    open_time = weekly_hour.open_time
-                    close_time = weekly_hour.close_time
-                    source_id = weekly_hour.id
-                    
-                schedule_entry = {
-                    "date": current_date,
-                    "day_of_week": day_of_week,
-                    "open_time": open_time,
-                    "close_time": close_time,
-                    "is_closed": is_closed,
-                    "is_special": False,
-                    "description": None,
-                    "source_id": source_id
-                }
+            # Implementación directa sin caché para evitar recursión
+            # Verificar que el rango de fechas sea válido
+            if end_date < start_date:
+                raise ValueError("La fecha de fin no puede ser anterior a la fecha de inicio")
                 
-            result.append(schedule_entry)
-            
-            # Avanzar al siguiente día
-            current_date += timedelta(days=1)
-            
-            return result
-        else:
-            # Para rangos pequeños, usamos caché
-            cache_key = f"gym_hours:range:{start_date.isoformat()}:{end_date.isoformat()}:gym:{gym_id}"
-            tracking_set_key = f"cache_keys:gym_hours:{gym_id}"
-            
-            # Indica si el resultado vino de la BD
-            fetched_from_db = False
-            
-            async def db_fetch():
-                nonlocal fetched_from_db
-                # Verificar que el rango de fechas sea válido
-                if end_date < start_date:
-                    raise ValueError("La fecha de fin no puede ser anterior a la fecha de inicio")
-                    
-                # Obtener los horarios especiales para este rango
-                special_hours = gym_special_hours_repository.get_by_date_range(
-                    db, start_date=start_date, end_date=end_date, gym_id=gym_id
-                )
-                
-                # Crear un diccionario de horarios especiales por fecha para acceso rápido
-                special_hours_dict = {str(hour.date): hour for hour in special_hours}
-                
-                # Obtener los horarios semanales predeterminados (usando la versión cacheada)
-                weekly_hours = await self.get_all_gym_hours_cached(db, gym_id=gym_id, redis_client=redis_client)
-                if not weekly_hours:
-                    # Si no hay horarios semanales, crearlos con valores predeterminados
-                    weekly_hours = self._create_default_hours(db, gym_id=gym_id)
-                    
-                # Crear un diccionario de horarios por día de la semana para acceso rápido
-                weekly_hours_dict = {hour.day_of_week: hour for hour in weekly_hours}
-                
-                # Preparar la respuesta
-                result = []
-                current_date = start_date
-                
-                while current_date <= end_date:
-                    # Obtener el día de la semana (0=Lunes, 6=Domingo)
-                    day_of_week = current_date.weekday()
-                    date_str = str(current_date)
-                    
-                    # Verificar si hay un horario especial para esta fecha
-                    if date_str in special_hours_dict:
-                        special_hour = special_hours_dict[date_str]
-                        schedule_entry = {
-                            "date": current_date.isoformat(),  # Convertir a string para JSON
-                            "day_of_week": day_of_week,
-                            "open_time": special_hour.open_time.isoformat() if special_hour.open_time else None,
-                            "close_time": special_hour.close_time.isoformat() if special_hour.close_time else None,
-                            "is_closed": special_hour.is_closed,
-                            "is_special": True,
-                            "description": special_hour.description,
-                            "source_id": special_hour.id
-                        }
-                    else:
-                        # Usar el horario semanal para este día
-                        weekly_hour = weekly_hours_dict.get(day_of_week)
-                        if not weekly_hour:
-                            # Si no hay horario para este día, usar valores predeterminados
-                            is_closed = day_of_week == 6  # Cerrado en domingo
-                            open_time = time(9, 0) if not is_closed else None
-                            close_time = time(21, 0) if not is_closed else None
-                            source_id = None
-                        else:
-                            # Usar el horario semanal para este día
-                            is_closed = weekly_hour.is_closed
-                            open_time = weekly_hour.open_time
-                            close_time = weekly_hour.close_time
-                            source_id = weekly_hour.id
-                            
-                        schedule_entry = {
-                            "date": current_date.isoformat(),  # Convertir a string para JSON
-                            "day_of_week": day_of_week,
-                            "open_time": open_time.isoformat() if open_time else None,
-                            "close_time": close_time.isoformat() if close_time else None,
-                            "is_closed": is_closed,
-                            "is_special": False,
-                            "description": None,
-                            "source_id": source_id
-                        }
-                        
-                    result.append(schedule_entry)
-                    
-                    # Avanzar al siguiente día
-                    current_date += timedelta(days=1)
-                    
-                fetched_from_db = True
-                return result
-                
-            # Esta función devuelve un diccionario de resultados, no un modelo Pydantic
-            schedule_data = await cache_service.get_or_set_json(
-                redis_client=redis_client,
-                cache_key=cache_key,
-                db_fetch_func=db_fetch,
-                expiry_seconds=3600 * 6,  # 6 horas
+            # Obtener los horarios especiales para este rango
+            special_hours = gym_special_hours_repository.get_by_date_range(
+                db, start_date=start_date, end_date=end_date, gym_id=gym_id
             )
             
-            # Si se obtuvo de la BD, añadir la clave al set de seguimiento
-            if fetched_from_db and redis_client and schedule_data is not None:
-                try:
-                    await redis_client.sadd(tracking_set_key, cache_key)
-                    await redis_client.expire(tracking_set_key, 3600 * 24 * 7)  # 7 días
-                    logger.debug(f"Added cache key {cache_key} to tracking set {tracking_set_key}")
-                except Exception as e:
-                    logger.error(f"Error adding cache key {cache_key} to set {tracking_set_key}: {e}", exc_info=True)
-                    
-            # Convertir fechas de ISO a objetos date/time
-            if schedule_data:
-                for entry in schedule_data:
-                    if "date" in entry and isinstance(entry["date"], str):
-                        entry["date"] = date.fromisoformat(entry["date"])
-                    if "open_time" in entry and entry["open_time"] and isinstance(entry["open_time"], str):
-                        entry["open_time"] = time.fromisoformat(entry["open_time"])
-                    if "close_time" in entry and entry["close_time"] and isinstance(entry["close_time"], str):
-                        entry["close_time"] = time.fromisoformat(entry["close_time"])
+            # Crear un diccionario de horarios especiales por fecha para acceso rápido
+            special_hours_dict = {str(hour.date): hour for hour in special_hours}
             
-            return schedule_data
+            # Obtener los horarios semanales predeterminados (usando la versión cacheada)
+            weekly_hours = await self.get_all_gym_hours_cached(db, gym_id=gym_id, redis_client=None)
+            if not weekly_hours:
+                # Si no hay horarios semanales, crearlos con valores predeterminados
+                weekly_hours = self._create_default_hours(db, gym_id=gym_id)
+                
+            # Crear un diccionario de horarios por día de la semana para acceso rápido
+            weekly_hours_dict = {hour.day_of_week: hour for hour in weekly_hours}
+            
+            # Preparar la respuesta
+            result = []
+            current_date = start_date
+            
+            while current_date <= end_date:
+                # Obtener el día de la semana (0=Lunes, 6=Domingo)
+                day_of_week = current_date.weekday()
+                date_str = str(current_date)
+                
+                # Verificar si hay un horario especial para esta fecha
+                if date_str in special_hours_dict:
+                    special_hour = special_hours_dict[date_str]
+                    schedule_entry = {
+                        "date": current_date,
+                        "day_of_week": day_of_week,
+                        "open_time": special_hour.open_time,
+                        "close_time": special_hour.close_time,
+                        "is_closed": special_hour.is_closed,
+                        "is_special": True,
+                        "description": special_hour.description,
+                        "source_id": special_hour.id
+                    }
+                else:
+                    # Usar el horario semanal para este día
+                    weekly_hour = weekly_hours_dict.get(day_of_week)
+                    if not weekly_hour:
+                        # Si no hay horario para este día, usar valores predeterminados
+                        is_closed = day_of_week == 6  # Cerrado en domingo
+                        open_time = time(9, 0) if not is_closed else None
+                        close_time = time(21, 0) if not is_closed else None
+                        source_id = None
+                    else:
+                        # Usar el horario semanal para este día
+                        is_closed = weekly_hour.is_closed
+                        open_time = weekly_hour.open_time
+                        close_time = weekly_hour.close_time
+                        source_id = weekly_hour.id
+                        
+                    schedule_entry = {
+                        "date": current_date,
+                        "day_of_week": day_of_week,
+                        "open_time": open_time,
+                        "close_time": close_time,
+                        "is_closed": is_closed,
+                        "is_special": False,
+                        "description": None,
+                        "source_id": source_id
+                    }
+                    
+                result.append(schedule_entry)
+                
+                # Avanzar al siguiente día
+                current_date += timedelta(days=1)
+                
+            return result
 
 
 class GymSpecialHoursService:
