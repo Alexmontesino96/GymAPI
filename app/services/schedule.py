@@ -578,18 +578,19 @@ class GymHoursService:
         overwrite_existing: bool = False, redis_client: Optional[Redis] = None
     ) -> List[GymSpecialHours]:
         """
-        Aplica el horario semanal predeterminado a un rango de fechas específicas (con invalidación de caché).
+        Asegura que existan los horarios semanales base para el gimnasio.
+        Ya NO crea registros especiales - solo valida/crea la plantilla semanal.
         
         Args:
             db: Sesión de base de datos
-            start_date: Fecha de inicio del rango
-            end_date: Fecha de fin del rango
+            start_date: Fecha de inicio del rango (solo para validación)
+            end_date: Fecha de fin del rango (solo para validación)
             gym_id: ID del gimnasio
-            overwrite_existing: Si es True, sobrescribe las excepciones manuales existentes
+            overwrite_existing: Ignorado en esta nueva implementación
             redis_client: Cliente Redis opcional
             
         Returns:
-            Lista de objetos GymSpecialHours creados o actualizados
+            Lista vacía (ya no crea GymSpecialHours)
         """
         # Verificar que el rango de fechas sea válido
         if end_date < start_date:
@@ -601,59 +602,13 @@ class GymHoursService:
             # Si no hay horarios semanales, crearlos con valores predeterminados
             weekly_hours = self._create_default_hours(db, gym_id=gym_id)
             
-        # Crear un diccionario de horarios por día de la semana para acceso rápido
-        weekly_hours_dict = {hour.day_of_week: hour for hour in weekly_hours}
+            # Invalidar caché de horarios semanales si se crearon nuevos
+            if redis_client:
+                await self._invalidate_gym_hours_cache(redis_client, gym_id)
         
-        # Preparar los datos para crear o actualizar horarios especiales
-        schedule_data = {}
-        current_date = start_date
-        
-        while current_date <= end_date:
-            # Obtener el día de la semana (0=Lunes, 6=Domingo)
-            day_of_week = current_date.weekday()
-            
-            # Obtener el horario semanal para este día
-            weekly_hour = weekly_hours_dict.get(day_of_week)
-            if not weekly_hour:
-                # Si no hay horario para este día, usar valores predeterminados
-                is_closed = day_of_week == 6  # Cerrado en domingo
-                open_time = time(9, 0) if not is_closed else None
-                close_time = time(21, 0) if not is_closed else None
-            else:
-                # Usar el horario semanal para este día
-                is_closed = weekly_hour.is_closed
-                open_time = weekly_hour.open_time
-                close_time = weekly_hour.close_time
-                
-            # Verificar si ya existe un horario especial para esta fecha
-            special_hour = gym_special_hours_repository.get_by_date(db, date_value=current_date, gym_id=gym_id)
-            
-            # Si no existe o se debe sobrescribir, agregar a los datos a procesar
-            if not special_hour or overwrite_existing:
-                schedule_data[current_date] = {
-                    "open_time": open_time,
-                    "close_time": close_time,
-                    "is_closed": is_closed,
-                    "description": f"Aplicado desde plantilla ({day_of_week})"
-                }
-                
-            # Avanzar al siguiente día
-            current_date += timedelta(days=1)
-            
-        # Crear o actualizar los horarios especiales en bloque
-        result = gym_special_hours_repository.bulk_create_or_update(
-            db, gym_id=gym_id, schedule_data=schedule_data
-        )
-        
-        # Invalidar la caché para el rango de fechas
-        if result and redis_client:
-            # Invalidar todas las fechas afectadas del rango
-            current_date = start_date
-            while current_date <= end_date:
-                await self._invalidate_gym_hours_cache(redis_client, gym_id, date_value=current_date)
-                current_date += timedelta(days=1)
-        
-        return result
+        # Ya no creamos registros especiales
+        # Simplemente devolvemos una lista vacía para mantener compatibilidad con la API
+        return []
         
     def get_schedule_for_date_range(
         self, db: Session, start_date: date, end_date: date, gym_id: int

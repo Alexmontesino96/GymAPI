@@ -211,13 +211,14 @@ async def apply_defaults_to_range(
     redis_client: Redis = Depends(get_redis_client)
 ) -> Any:
     """
-    Apply Regular Hours Template to a Date Range
+    Ensure Weekly Hours Template Exists
 
-    Applies the gym's standard weekly operating hours template as special hours entries
-    for a specified range of dates. Useful for initializing schedules or resetting a period.
+    Ensures that the gym has a complete weekly operating hours template (Monday-Sunday).
+    If the template doesn't exist, it creates default hours. This endpoint NO LONGER
+    creates special hours entries for specific dates.
 
     Args:
-        apply_request (ApplyDefaultsRequest): Contains start_date, end_date, and overwrite_existing flag.
+        apply_request (ApplyDefaultsRequest): Contains start_date, end_date (used for validation only).
         db (Session, optional): Database session dependency. Defaults to Depends(get_db).
         current_user (Auth0User, optional): Authenticated user dependency. Defaults to Depends(get_current_user).
         current_gym (Gym, optional): Current gym context dependency. Defaults to Depends(verify_gym_access).
@@ -230,11 +231,11 @@ async def apply_defaults_to_range(
         {
           "start_date": "YYYY-MM-DD",
           "end_date": "YYYY-MM-DD",
-          "overwrite_existing": boolean (optional, default: false)
+          "overwrite_existing": boolean (ignored in current implementation)
         }
 
     Returns:
-        List[GymSpecialHoursSchema]: A list of the created or updated special hours entries within the range.
+        List[GymSpecialHoursSchema]: Empty list (for API compatibility).
 
     Raises:
         HTTPException 400: Invalid date range (e.g., end_date before start_date).
