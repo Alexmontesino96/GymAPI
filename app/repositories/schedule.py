@@ -175,15 +175,18 @@ class GymSpecialHoursRepository(BaseRepository[GymSpecialHours, GymSpecialHoursC
         create_data['date'] = date_value
         create_data['gym_id'] = gym_id
         
-        # Validar datos con el esquema Pydantic antes de crear
         try:
             validated_data = GymSpecialHoursCreate(**create_data)
         except Exception as e:
-            # Podríamos querer manejar errores de validación de forma más específica
             print(f"Error validating data for GymSpecialHours creation: {e}")
             raise
-            
-        return self.create(db=db, obj_in=validated_data)
+
+        # Crear objeto SQLAlchemy incluyendo gym_id explícitamente
+        db_obj = self.model(**validated_data.model_dump(), gym_id=gym_id)
+        db.add(db_obj)
+        db.commit()
+        db.refresh(db_obj)
+        return db_obj
 
     def bulk_create_or_update(self, db: Session, *, gym_id: int, schedule_data: Dict[date, Dict]) -> List[GymSpecialHours]:
         """
@@ -254,7 +257,8 @@ class GymSpecialHoursRepository(BaseRepository[GymSpecialHours, GymSpecialHoursC
                 try:
                     # Validar con esquema de creación
                     validated_data = GymSpecialHoursCreate(**create_data)
-                    db_obj = self.model(**validated_data.model_dump())
+                    # validated_data no incluye gym_id (extra ignorado). Añadirlo al crear el modelo.
+                    db_obj = self.model(**validated_data.model_dump(), gym_id=gym_id)
                     objects_to_add.append(db_obj)
                 except Exception as e:
                      print(f"Validation error during create for date {date_value}: {e}")

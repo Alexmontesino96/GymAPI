@@ -20,13 +20,20 @@ class GymHoursBase(BaseModel):
 
     @model_validator(mode='after')
     def check_times_when_not_closed(self):
-        if not self.is_closed:
+        # Cuando el gimnasio está cerrado, no deberían enviarse horarios
+        if self.is_closed:
+            if self.open_time is not None or self.close_time is not None:
+                raise ValueError(
+                    'Cuando is_closed es True no se debe especificar open_time ni close_time'
+                )
+        else:
+            # El gimnasio está abierto, validar que existan horarios coherentes
             if self.open_time is None:
-                raise ValueError('open_time is required when is_closed is False')
+                raise ValueError('open_time es obligatorio cuando is_closed es False')
             if self.close_time is None:
-                raise ValueError('close_time is required when is_closed is False')
+                raise ValueError('close_time es obligatorio cuando is_closed es False')
             if self.close_time <= self.open_time:
-                raise ValueError('close_time must be after open_time when not closed')
+                raise ValueError('close_time debe ser posterior a open_time cuando no está cerrado')
         return self
 
 
@@ -63,13 +70,19 @@ class GymSpecialHoursBase(BaseModel):
 
     @model_validator(mode='after')
     def check_special_times_when_not_closed(self):
-        if not self.is_closed:
+        # Validación para días especiales
+        if self.is_closed:
+            # Si está marcado como cerrado, no debe haber horarios
+            if self.open_time is not None or self.close_time is not None:
+                raise ValueError('Cuando is_closed es True no se debe especificar open_time ni close_time')
+        else:
+            # Si el día no está cerrado, los horarios son obligatorios y deben ser coherentes
             if self.open_time is None:
-                raise ValueError('open_time is required when is_closed is False')
+                raise ValueError('open_time es obligatorio cuando is_closed es False')
             if self.close_time is None:
-                raise ValueError('close_time is required when is_closed is False')
+                raise ValueError('close_time es obligatorio cuando is_closed es False')
             if self.close_time <= self.open_time:
-                raise ValueError('close_time must be after open_time when not closed')
+                raise ValueError('close_time debe ser posterior a open_time cuando no está cerrado')
         return self
 
     @validator('open_time', 'close_time', pre=True)

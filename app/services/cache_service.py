@@ -1,7 +1,7 @@
 import json
 import logging
 from typing import Any, Optional, TypeVar, Generic, Type, List, Dict, Callable
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
 
 from pydantic import BaseModel
 from redis.asyncio import Redis
@@ -21,6 +21,8 @@ def json_serializer(obj):
         return obj.isoformat()
     if isinstance(obj, Url):
         return str(obj)
+    if isinstance(obj, time):
+        return obj.isoformat()
     raise TypeError(f"Tipo no serializable: {type(obj)}")
 
 class CacheService:
