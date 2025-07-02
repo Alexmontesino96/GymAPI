@@ -636,7 +636,8 @@ class ChatService:
                         "stream_channel_id": db_room.stream_channel_id,
                         "stream_channel_type": db_room.stream_channel_type,
                         "event_id": event_id,
-                        "members": members
+                        "members": members,
+                        "created_at": db_room.created_at
                     }
                     
                     total_time = time.time() - start_time
