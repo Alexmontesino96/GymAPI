@@ -15,6 +15,7 @@ for secure access. Each endpoint is protected with appropriate permission scopes
 from typing import List, Dict, Any, Optional
 from fastapi import APIRouter, Depends, HTTPException, Body, Path, Query, status, Security, Request, Header
 from sqlalchemy.orm import Session
+from sqlalchemy import and_
 import logging # Import logging
 
 from app.db.session import get_db
@@ -23,6 +24,7 @@ from app.core.config import get_settings
 from app.core.tenant import verify_gym_admin_access, verify_gym_access, verify_gym_trainer_access, get_current_gym, get_tenant_id
 from app.schemas.gym import GymSchema
 from app.services.chat import chat_service
+from app.repositories.chat import chat_repository
 from app.schemas.chat import (
     ChatRoom, 
     ChatRoomCreate, 
@@ -825,4 +827,124 @@ async def debug_headers(
         "tenant_id": tenant_id,
         "current_gym": current_gym.dict() if current_gym else None,
         "user_auth0_id": current_user.id
-    } 
+    }
+
+
+# =====================================
+# ENDPOINTS PARA LISTAR SALAS DE CHAT
+# =====================================
+
+@router.get("/rooms", response_model=List[ChatRoom])
+async def get_user_chat_rooms(
+    request: Request,
+    *,
+    db: Session = Depends(get_db),
+    current_gym: GymSchema = Depends(verify_gym_access),
+    current_user: Auth0User = Security(auth.get_user, scopes=["resource:read"])
+):
+    """
+    Obtiene todas las salas de chat del usuario actual en el gimnasio.
+    
+    Devuelve una lista de salas donde el usuario es miembro dentro del gimnasio actual.
+    Incluye chats directos, chats de eventos y salas grupales.
+    
+    Args:
+        db (Session): Sesión de base de datos
+        current_gym (GymSchema): Gimnasio actual del usuario
+        current_user (Auth0User): Usuario autenticado
+        
+    Returns:
+        List[ChatRoom]: Lista de salas de chat del usuario en el gimnasio
+        
+    Raises:
+        HTTPException 401: Token inválido o faltante
+        HTTPException 403: Usuario no pertenece al gimnasio
+        HTTPException 404: Usuario no encontrado
+        HTTPException 500: Error interno del servidor
+    """
+    try:
+        # Obtener usuario interno
+        internal_user = db.query(User).filter(User.auth0_id == current_user.id).first()
+        if not internal_user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Usuario no encontrado"
+            )
+        
+        # Obtener salas del usuario en el gimnasio actual
+        from app.models.chat import ChatRoom, ChatMember
+        user_rooms = db.query(ChatRoom).join(ChatMember).filter(
+            and_(
+                ChatMember.user_id == internal_user.id,
+                ChatRoom.gym_id == current_gym.id,
+                ChatRoom.status == "ACTIVE"  # Solo salas activas
+            )
+        ).all()
+        
+        logger.info(f"Usuario {internal_user.id} tiene {len(user_rooms)} salas en gimnasio {current_gym.id}")
+        
+        return user_rooms
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error obteniendo salas de chat del usuario: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error obteniendo salas de chat"
+        )
+
+
+@router.get("/user-rooms", response_model=List[ChatRoom])
+async def get_all_user_chat_rooms(
+    request: Request,
+    *,
+    db: Session = Depends(get_db),
+    current_user: Auth0User = Security(auth.get_user, scopes=["resource:read"])
+):
+    """
+    Obtiene todas las salas de chat activas del usuario en todos los gimnasios.
+    
+    Devuelve una lista completa de salas donde el usuario es miembro,
+    sin filtrar por gimnasio específico. Útil para mostrar un dashboard
+    global de chats del usuario.
+    
+    Args:
+        db (Session): Sesión de base de datos
+        current_user (Auth0User): Usuario autenticado
+        
+    Returns:
+        List[ChatRoom]: Lista de todas las salas de chat activas del usuario
+        
+    Raises:
+        HTTPException 401: Token inválido o faltante
+        HTTPException 404: Usuario no encontrado
+        HTTPException 500: Error interno del servidor
+    """
+    try:
+        # Obtener usuario interno
+        internal_user = db.query(User).filter(User.auth0_id == current_user.id).first()
+        if not internal_user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Usuario no encontrado"
+            )
+        
+        # Obtener todas las salas del usuario usando el repositorio
+        user_rooms = chat_repository.get_user_rooms(db, user_id=internal_user.id)
+        
+        # Filtrar solo salas activas
+        active_rooms = [room for room in user_rooms if room.status == "ACTIVE"]
+        
+        logger.info(f"Usuario {internal_user.id} tiene {len(active_rooms)} salas activas en total")
+        
+        return active_rooms
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error obteniendo todas las salas de chat del usuario: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error obteniendo salas de chat"
+        ) 
