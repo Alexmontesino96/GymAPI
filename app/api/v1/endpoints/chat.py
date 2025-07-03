@@ -834,7 +834,7 @@ async def debug_headers(
 # ENDPOINTS PARA LISTAR SALAS DE CHAT
 # =====================================
 
-@router.get("/rooms", response_model=List[ChatRoom])
+@router.get("/my-rooms", response_model=List[ChatRoom])
 async def get_user_chat_rooms(
     request: Request,
     *,
