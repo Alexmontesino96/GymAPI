@@ -5,8 +5,9 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.core.auth0_fastapi import get_current_user, Auth0User, auth
 from app.services.module import module_service
+from app.services.billing_module import billing_module_service
 from app.schemas.module import Module, ModuleCreate, ModuleUpdate, ModuleStatus, GymModuleList
-from app.core.tenant import get_tenant_id
+from app.core.tenant import get_tenant_id, verify_gym_admin_access
 from app.schemas.gym import GymSchema
 from app.db.redis_client import get_redis_client, Redis
 from app.core.tenant_cache import verify_gym_access_cached
@@ -107,3 +108,92 @@ async def deactivate_module(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Error al desactivar el módulo"
         )
+
+
+# === Endpoints Específicos para Módulo Billing ===
+
+@router.post("/billing/activate", status_code=status.HTTP_200_OK)
+async def activate_billing_module(
+    *,
+    db: Session = Depends(get_db),
+    gym_id: int = Depends(get_tenant_id),
+    current_user: Auth0User = Security(auth.get_user, scopes=["admin:modules"]),
+    current_gym: GymSchema = Depends(verify_gym_admin_access)
+):
+    """
+    Activar el módulo de billing para el gimnasio actual.
+    
+    Este endpoint realiza una activación completa que incluye:
+    - Activación del módulo en la base de datos
+    - Validación de la configuración de Stripe
+    - Sincronización automática de planes existentes
+    
+    Solo los administradores pueden activar el módulo billing.
+    """
+    result = await billing_module_service.activate_billing_for_gym(
+        db, gym_id, validate_stripe_config=True
+    )
+    
+    if not result["success"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=result["error"]
+        )
+    
+    return result
+
+
+@router.post("/billing/deactivate", status_code=status.HTTP_200_OK)
+async def deactivate_billing_module(
+    *,
+    db: Session = Depends(get_db),
+    gym_id: int = Depends(get_tenant_id),
+    preserve_data: bool = True,
+    current_user: Auth0User = Security(auth.get_user, scopes=["admin:modules"]),
+    current_gym: GymSchema = Depends(verify_gym_admin_access)
+):
+    """
+    Desactivar el módulo de billing para el gimnasio actual.
+    
+    Args:
+        preserve_data: Si preservar los datos de Stripe (recomendado)
+        
+    Solo los administradores pueden desactivar el módulo billing.
+    """
+    result = await billing_module_service.deactivate_billing_for_gym(
+        db, gym_id, preserve_stripe_data=preserve_data
+    )
+    
+    if not result["success"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=result["error"]
+        )
+    
+    return result
+
+
+@router.get("/billing/status", status_code=status.HTTP_200_OK)
+async def get_billing_module_status(
+    *,
+    db: Session = Depends(get_db),
+    gym_id: int = Depends(get_tenant_id),
+    current_user: Auth0User = Security(auth.get_user, scopes=["resource:read"]),
+    current_gym: GymSchema = Depends(verify_gym_access_cached)
+):
+    """
+    Obtener el estado detallado del módulo billing para el gimnasio actual.
+    
+    Devuelve información sobre:
+    - Estado de activación del módulo
+    - Validación de configuración de Stripe
+    - Estadísticas de planes y suscripciones
+    - Capacidades disponibles
+    """
+    status_info = await billing_module_service.get_billing_status(db, gym_id)
+    
+    return {
+        "gym_id": gym_id,
+        "gym_name": current_gym.name,
+        **status_info
+    }

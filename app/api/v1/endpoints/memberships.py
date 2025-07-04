@@ -4,7 +4,7 @@ Endpoints para gestión de membresías y planes de membresía.
 Este módulo proporciona todas las rutas relacionadas con la gestión de:
 - Planes de membresía (creación, actualización, consulta)
 - Estado de membresías de usuarios
-- Compra de membresías (se integrará con Stripe en Fase 2)
+- Compra de membresías (requiere módulo billing activo)
 """
 
 from typing import List, Optional
@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.core.auth0_fastapi import Auth0User, auth
 from app.core.tenant import verify_gym_access, verify_gym_admin_access, get_current_gym
+from app.core.billing_dependencies import billing_module_required, billing_module_optional, get_billing_capabilities
 from app.schemas.gym import GymSchema
 from app.schemas.membership import (
     MembershipPlan,
@@ -38,6 +39,55 @@ router = APIRouter()
 
 # Instanciar servicio de Stripe
 stripe_service = StripeService(membership_service)
+
+
+# === Endpoint de Capacidades de Billing ===
+
+@router.get("/billing/capabilities")
+async def get_billing_capabilities_endpoint(
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: Auth0User = Depends(auth.get_user),
+    current_gym: GymSchema = Depends(verify_gym_access),
+    capabilities: dict = Depends(get_billing_capabilities)
+) -> dict:
+    """
+    Obtener las capacidades de billing disponibles para el gimnasio actual.
+    
+    Este endpoint permite al frontend saber qué funcionalidades de billing
+    están disponibles basándose en si el módulo está activo o no.
+    
+    Args:
+        request: Request HTTP
+        db: Sesión de base de datos
+        current_user: Usuario autenticado
+        current_gym: Gimnasio verificado
+        capabilities: Capacidades de billing (inyectadas por dependencia)
+        
+    Returns:
+        dict: Capacidades disponibles y configuración del módulo
+    """
+    return {
+        "gym_id": current_gym.id,
+        "gym_name": current_gym.name,
+        "billing_module": capabilities,
+        "message": (
+            "Módulo de facturación activo. Todas las funcionalidades de Stripe están disponibles."
+            if capabilities["billing_enabled"]
+            else "Módulo de facturación inactivo. Solo membresías manuales disponibles."
+        ),
+        "available_features": {
+            "manual_memberships": True,  # Siempre disponible
+            "stripe_checkout": capabilities["stripe_integration"],
+            "subscription_management": capabilities["subscription_management"],
+            "automated_billing": capabilities["automated_billing"],
+            "payment_webhooks": capabilities["webhook_handling"],
+            "revenue_analytics": capabilities["revenue_analytics"],
+            "refund_processing": capabilities["refund_management"],
+            "trial_periods": capabilities["trial_periods"],
+            "promotional_codes": capabilities["promo_codes"]
+        }
+    }
 
 
 # === Endpoints de Planes de Membresía (Admin) ===
@@ -239,7 +289,8 @@ async def sync_plan_with_stripe(
     plan_id: int,
     db: Session = Depends(get_db),
     current_user: Auth0User = Depends(auth.get_user),
-    current_gym: GymSchema = Depends(verify_gym_admin_access)
+    current_gym: GymSchema = Depends(verify_gym_admin_access),
+    _: None = Depends(billing_module_required)
 ) -> dict:
     """
     [ADMIN ONLY] Sincronizar manualmente un plan específico con Stripe.
@@ -287,7 +338,8 @@ async def sync_all_plans_with_stripe(
     request: Request,
     db: Session = Depends(get_db),
     current_user: Auth0User = Depends(auth.get_user),
-    current_gym: GymSchema = Depends(verify_gym_admin_access)
+    current_gym: GymSchema = Depends(verify_gym_admin_access),
+    _: None = Depends(billing_module_required)
 ) -> dict:
     """
     [ADMIN ONLY] Sincronizar todos los planes del gimnasio con Stripe.
@@ -412,7 +464,8 @@ async def purchase_membership(
     purchase_data: PurchaseMembershipRequest,
     db: Session = Depends(get_db),
     current_user: Auth0User = Depends(auth.get_user),
-    current_gym: GymSchema = Depends(verify_gym_access)
+    current_gym: GymSchema = Depends(verify_gym_access),
+    _: None = Depends(billing_module_required)
 ) -> PurchaseMembershipResponse:
     """
     Iniciar compra de membresía con Stripe.
