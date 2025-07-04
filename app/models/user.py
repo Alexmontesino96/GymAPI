@@ -47,4 +47,10 @@ class User(Base):
     
     # Relaciones para eventos
     created_events = relationship("Event", back_populates="creator")
-    event_participations = relationship("EventParticipation", back_populates="member") 
+    event_participations = relationship("EventParticipation", back_populates="member")
+    
+    # Relaciones para nutrición
+    created_nutrition_plans = relationship("NutritionPlan", back_populates="creator")
+    followed_nutrition_plans = relationship("NutritionPlanFollower", back_populates="user")
+    nutrition_progress = relationship("UserDailyProgress", back_populates="user")
+    meal_completions = relationship("UserMealCompletion", back_populates="user") 

@@ -4,6 +4,7 @@ from fastapi import APIRouter
 from app.api.v1.endpoints import users, gyms, trainer_member, chat, events, worker, attendance, memberships, payment_pages
 from app.api.v1.endpoints.notification import router as notification_router
 from app.api.v1.endpoints.webhooks.stream_webhooks import router as stream_webhooks_router
+from app.api.v1.endpoints.nutrition import router as nutrition_router
 
 # Import modular packages directly
 from app.api.v1.endpoints.auth import router as auth_router
@@ -53,3 +54,6 @@ api_router.include_router(memberships.router, prefix="/memberships", tags=["memb
 
 # Payment pages (success/cancel)
 api_router.include_router(payment_pages.router, tags=["payment-pages"])
+
+# Nutrition module
+api_router.include_router(nutrition_router, prefix="/nutrition", tags=["nutrition"])

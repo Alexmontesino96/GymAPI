@@ -51,3 +51,6 @@ class Gym(Base):
     
     # Relación con salas de chat
     chat_rooms = relationship("ChatRoom", back_populates="gym")
+    
+    # Relación con planes nutricionales
+    nutrition_plans = relationship("NutritionPlan", back_populates="gym")
