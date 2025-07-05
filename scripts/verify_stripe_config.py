@@ -12,25 +12,53 @@ def main():
     
     settings = get_settings()
     
-    # Verificar claves (ocultar parte sensible)
-    publishable_key = settings.STRIPE_PUBLISHABLE_KEY
-    secret_key = settings.STRIPE_SECRET_KEY
-    webhook_secret = settings.STRIPE_WEBHOOK_SECRET
+    # Verificar claves (SIN exponer partes sensibles)
+    publishable_key = settings.STRIPE_PUBLISHABLE_KEY or ""
+    secret_key = settings.STRIPE_SECRET_KEY or ""
+    webhook_secret = settings.STRIPE_WEBHOOK_SECRET or ""
     
-    print(f"✅ STRIPE_PUBLISHABLE_KEY: {publishable_key[:20]}...{publishable_key[-10:] if len(publishable_key) > 30 else publishable_key}")
-    print(f"✅ STRIPE_SECRET_KEY: {secret_key[:20]}...{secret_key[-10:] if len(secret_key) > 30 else secret_key}")
-    print(f"✅ STRIPE_WEBHOOK_SECRET: {webhook_secret[:20]}...{webhook_secret[-10:] if len(webhook_secret) > 30 else webhook_secret}")
+    # Verificar configuración sin exponer claves
+    print(f"📋 STRIPE_PUBLISHABLE_KEY: {'✅ Configurada' if publishable_key else '❌ No configurada'}")
+    print(f"📋 STRIPE_SECRET_KEY: {'✅ Configurada' if secret_key else '❌ No configurada'}")
+    print(f"📋 STRIPE_WEBHOOK_SECRET: {'✅ Configurada' if webhook_secret else '❌ No configurada'}")
+    
+    errors = []
     
     # Verificar que no sean placeholders
-    if "your_sec" in secret_key.lower() or "placeholder" in secret_key.lower():
-        print("❌ ERROR: STRIPE_SECRET_KEY parece ser un placeholder")
-        return False
+    if not secret_key:
+        errors.append("STRIPE_SECRET_KEY no está configurada")
+    elif "your_sec" in secret_key.lower() or "placeholder" in secret_key.lower():
+        errors.append("STRIPE_SECRET_KEY parece ser un placeholder")
     
-    if "your_pub" in publishable_key.lower() or "placeholder" in publishable_key.lower():
-        print("❌ ERROR: STRIPE_PUBLISHABLE_KEY parece ser un placeholder")
+    if not publishable_key:
+        errors.append("STRIPE_PUBLISHABLE_KEY no está configurada")
+    elif "your_pub" in publishable_key.lower() or "placeholder" in publishable_key.lower():
+        errors.append("STRIPE_PUBLISHABLE_KEY parece ser un placeholder")
+    
+    if not webhook_secret:
+        errors.append("STRIPE_WEBHOOK_SECRET no está configurada - CRÍTICO para seguridad")
+    elif "your_webhook" in webhook_secret.lower() or "placeholder" in webhook_secret.lower():
+        errors.append("STRIPE_WEBHOOK_SECRET parece ser un placeholder")
+    elif not webhook_secret.startswith("whsec_"):
+        errors.append("STRIPE_WEBHOOK_SECRET no tiene el formato esperado (debe empezar con 'whsec_')")
+    
+    # Verificar formato de claves
+    if publishable_key and not publishable_key.startswith(("pk_test_", "pk_live_")):
+        errors.append("STRIPE_PUBLISHABLE_KEY no tiene el formato esperado")
+    
+    if secret_key and not secret_key.startswith(("sk_test_", "sk_live_")):
+        errors.append("STRIPE_SECRET_KEY no tiene el formato esperado")
+    
+    # Mostrar errores
+    if errors:
+        print("\n❌ ERRORES ENCONTRADOS:")
+        for error in errors:
+            print(f"   • {error}")
+        print("\n📖 Consulta docs/environment_variables.md para más información")
         return False
     
     print("\n🎉 CONFIGURACIÓN DE STRIPE CORRECTA")
+    print("🔒 Todas las claves están configuradas y tienen el formato correcto")
     return True
 
 if __name__ == "__main__":

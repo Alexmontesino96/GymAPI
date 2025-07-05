@@ -15,13 +15,11 @@ settings = get_settings()
 # Configurar Stripe
 stripe.api_key = settings.STRIPE_SECRET_KEY
 
-# 🔍 DEBUG: Logging temporal para diagnosticar problema
-logger.info(f"🔍 STRIPE_SECRET_KEY cargada: {settings.STRIPE_SECRET_KEY[:20] if settings.STRIPE_SECRET_KEY else 'None'}...{settings.STRIPE_SECRET_KEY[-10:] if settings.STRIPE_SECRET_KEY and len(settings.STRIPE_SECRET_KEY) > 30 else settings.STRIPE_SECRET_KEY}")
-
+# Validación de configuración de Stripe (sin exponer claves)
 if not settings.STRIPE_SECRET_KEY:
-    logger.error("❌ STRIPE_SECRET_KEY está vacía o None!")
-elif "your_sec" in str(settings.STRIPE_SECRET_KEY).lower():
-    logger.error("❌ STRIPE_SECRET_KEY parece ser un placeholder!")
+    logger.error("❌ STRIPE_SECRET_KEY no está configurada")
+elif "your_sec" in str(settings.STRIPE_SECRET_KEY).lower() or "placeholder" in str(settings.STRIPE_SECRET_KEY).lower():
+    logger.error("❌ STRIPE_SECRET_KEY parece ser un placeholder - verificar configuración")
 else:
     logger.info("✅ STRIPE_SECRET_KEY configurada correctamente")
 
@@ -161,8 +159,8 @@ class StripeService:
     async def handle_webhook(self, payload: bytes, signature: str) -> Dict[str, Any]:
         """Manejar webhooks de Stripe"""
         if not settings.STRIPE_WEBHOOK_SECRET:
-            logger.warning("STRIPE_WEBHOOK_SECRET no configurado, saltando verificación")
-            return {"status": "webhook_secret_not_configured"}
+            logger.error("STRIPE_WEBHOOK_SECRET no configurado - webhook rechazado por seguridad")
+            raise ValueError("Configuración de webhook secret faltante - contacte al administrador")
 
         try:
             # Verificar la firma del webhook

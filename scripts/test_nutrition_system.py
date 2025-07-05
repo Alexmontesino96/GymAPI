@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 BASE_URL = "https://gymapi-eh6m.onrender.com/api/v1"
 HEADERS = {
     "Content-Type": "application/json",
-    "X-Gym-ID": "1"  # Cambiar por el ID de tu gimnasio
+    "X-Gym-ID": "4"  # Cambiar por el ID de tu gimnasio
 }
 
 def test_nutrition_system():
