@@ -12,6 +12,7 @@ from app.services.user import user_service
 from app.services.cache_service import cache_service
 from app.core.security import verify_auth0_webhook_secret
 from app.core.auth0_fastapi import Auth0User
+from app.middleware.rate_limit import limiter
 
 # Definir logger para este módulo
 logger = logging.getLogger("auth_admin_endpoint")
@@ -19,6 +20,7 @@ logger = logging.getLogger("auth_admin_endpoint")
 router = APIRouter()
 
 @router.post("/webhook/user-created", status_code=201)
+@limiter.limit("50 per minute")
 async def webhook_user_created(
     request: Request,
     db: Session = Depends(get_db)
@@ -167,6 +169,7 @@ async def webhook_user_created(
 
 
 @router.post("/webhook/user-updated", status_code=201)
+@limiter.limit("50 per minute")
 async def webhook_user_updated(
     request: Request,
     db: Session = Depends(get_db)

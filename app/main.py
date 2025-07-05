@@ -19,8 +19,11 @@ setup_logging()
 from app.api.v1.api import api_router
 from app.core.config import get_settings
 from app.middleware.timing import TimingMiddleware
+from app.middleware.rate_limit import limiter, RateLimitMiddleware, custom_rate_limit_exceeded_handler
 from app.core.scheduler import init_scheduler
 from app.db.redis_client import initialize_redis_pool, close_redis_client
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 
 logger = logging.getLogger(__name__) # Mantener o ajustar según necesidad
 
@@ -89,6 +92,10 @@ app = FastAPI(
     }
 )
 
+# Configurar rate limiting
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
 # <<< AÑADIR MIDDLEWARE DE LOGGING AQUÍ >>>
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
@@ -109,6 +116,9 @@ async def log_requests(request: Request, call_next):
 # Añadir middleware para medir el tiempo de respuesta
 # Asegurarse que este middleware esté DESPUÉS del de logging si quieres loguear antes de medir
 app.add_middleware(TimingMiddleware)
+
+# Añadir middleware de rate limiting
+app.add_middleware(RateLimitMiddleware)
 
 # Añadir el nuevo middleware de autenticación y tenant
 from app.middleware.tenant_auth import setup_tenant_auth_middleware

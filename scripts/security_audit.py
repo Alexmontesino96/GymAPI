@@ -98,6 +98,42 @@ def check_external_services(settings) -> tuple[bool, list]:
     
     return len(errors) == 0, errors
 
+def check_rate_limiting_config() -> tuple[bool, list]:
+    """Verificar que el rate limiting esté configurado"""
+    errors = []
+    
+    try:
+        # Verificar que slowapi esté disponible
+        import slowapi
+        print("   ✅ slowapi disponible para rate limiting")
+    except ImportError:
+        errors.append("🔴 CRÍTICO: slowapi no está instalado - rate limiting no disponible")
+        return False, errors
+    
+    try:
+        # Verificar que el middleware esté configurado
+        from app.middleware.rate_limit import limiter, RATE_LIMITS
+        print("   ✅ Middleware de rate limiting configurado")
+        
+        # Verificar que hay límites definidos para endpoints críticos
+        critical_endpoints = ["login", "billing_create", "billing_webhook", "auth"]
+        missing_limits = []
+        
+        for endpoint in critical_endpoints:
+            if endpoint not in RATE_LIMITS:
+                missing_limits.append(endpoint)
+        
+        if missing_limits:
+            errors.append(f"🟡 ADVERTENCIA: Límites faltantes para: {', '.join(missing_limits)}")
+        
+        print(f"   ✅ Límites configurados para {len(RATE_LIMITS)} tipos de endpoints")
+        
+    except ImportError as e:
+        errors.append(f"🔴 CRÍTICO: Error importando middleware de rate limiting: {e}")
+        return False, errors
+    
+    return len(errors) == 0, errors
+
 def main():
     print("🔒 AUDITORÍA DE SEGURIDAD - GYMAPI")
     print("=" * 60)
@@ -153,6 +189,16 @@ def main():
         print("   ✅ Configuración de servicios externos correcta")
     else:
         total_errors.extend(ext_errors)
+    
+    # Verificar rate limiting
+    print("\n🚦 Verificando rate limiting...")
+    rate_limit_ok, rate_limit_errors = check_rate_limiting_config()
+    if rate_limit_ok:
+        print("   ✅ Rate limiting configurado correctamente")
+        all_passed = all_passed and True
+    else:
+        all_passed = False
+        total_errors.extend(rate_limit_errors)
     
     # Resumen
     print("\n" + "=" * 60)

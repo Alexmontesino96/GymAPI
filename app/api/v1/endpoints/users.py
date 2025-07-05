@@ -39,6 +39,7 @@ from app.db.redis_client import get_redis_client, redis
 from app.services.cache_service import cache_service
 from app.services.gym import gym_service
 from app.core.security import verify_auth0_webhook_secret
+from app.middleware.rate_limit import limiter
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -314,6 +315,7 @@ async def get_user_profile_by_id(
         )
 
 @router.post("/check-email-availability", response_model=dict, tags=["Email Management"])
+@limiter.limit("10 per minute")
 async def check_email_availability(
     *,
     db: Session = Depends(get_db),
@@ -343,6 +345,7 @@ async def check_email_availability(
          raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error interno")
 
 @router.post("/initiate-email-change", response_model=dict, tags=["Email Management"])
+@limiter.limit("3 per minute")
 async def initiate_auth0_email_change(
     *,
     db: Session = Depends(get_db),

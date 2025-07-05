@@ -31,6 +31,7 @@ from app.services.membership import membership_service
 from app.services.stripe_service import StripeService
 from app.services.user import user_service
 from app.db.redis_client import get_redis_client
+from app.middleware.rate_limit import limiter
 import logging
 from datetime import datetime
 
@@ -459,6 +460,7 @@ async def get_membership_summary(
 # === Endpoints de Compra de Membresías (Stripe) ===
 
 @router.post("/purchase", response_model=PurchaseMembershipResponse)
+@limiter.limit("5 per minute")
 async def purchase_membership(
     request: Request,
     purchase_data: PurchaseMembershipRequest,
@@ -624,6 +626,7 @@ async def handle_purchase_success(
 
 
 @router.post("/webhooks/stripe")
+@limiter.limit("100 per minute")
 async def stripe_webhook(
     request: Request,
     db: Session = Depends(get_db)
@@ -683,6 +686,7 @@ async def stripe_webhook(
 # 🆕 ENDPOINTS PARA FUNCIONALIDADES AVANZADAS
 
 @router.post("/purchase/trial", response_model=PurchaseMembershipResponse)
+@limiter.limit("3 per minute")
 async def purchase_membership_with_trial(
     request: Request,
     purchase_data: PurchaseMembershipRequest,
