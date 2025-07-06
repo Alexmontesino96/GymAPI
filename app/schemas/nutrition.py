@@ -12,8 +12,19 @@ from app.models.nutrition import (
     DifficultyLevel,
     BudgetLevel,
     DietaryRestriction,
+    PlanType,
     MealType
 )
+
+
+# ===== ENUMS FOR STATUS =====
+
+class PlanStatus(str, Enum):
+    """Estados posibles de un plan"""
+    NOT_STARTED = "not_started"    # Plan live que aún no ha empezado
+    RUNNING = "running"            # Plan actualmente corriendo
+    FINISHED = "finished"          # Plan terminado
+    ARCHIVED = "archived"          # Plan archivado (de live a template)
 
 
 # ===== NUTRITION PLAN SCHEMAS =====
@@ -33,7 +44,11 @@ class NutritionPlanBase(BaseModel):
     target_fat_g: Optional[float] = Field(None, ge=0)
     is_public: bool = True
     tags: Optional[List[str]] = None
-
+    
+    # === NUEVO: Campos del sistema híbrido ===
+    plan_type: PlanType = PlanType.TEMPLATE
+    live_start_date: Optional[datetime] = None
+    
     @validator('tags', pre=True)
     def validate_tags(cls, v):
         if isinstance(v, str):
@@ -45,6 +60,14 @@ class NutritionPlanBase(BaseModel):
                 # Si no es JSON válido, dividir por comas
                 return [tag.strip() for tag in v.split(',') if tag.strip()]
         return v or []
+    
+    @validator('live_start_date')
+    def validate_live_start_date(cls, v, values):
+        if values.get('plan_type') == PlanType.LIVE and not v:
+            raise ValueError('live_start_date es requerido para planes tipo LIVE')
+        if values.get('plan_type') != PlanType.LIVE and v:
+            raise ValueError('live_start_date solo debe especificarse para planes tipo LIVE')
+        return v
 
 
 class NutritionPlanCreate(NutritionPlanBase):
@@ -67,6 +90,9 @@ class NutritionPlanUpdate(BaseModel):
     is_active: Optional[bool] = None
     is_public: Optional[bool] = None
     tags: Optional[List[str]] = None
+    
+    # Campos híbridos (solo ciertos campos son editables después de crear)
+    live_start_date: Optional[datetime] = None
 
 
 class NutritionPlan(NutritionPlanBase):
@@ -76,6 +102,21 @@ class NutritionPlan(NutritionPlanBase):
     is_active: bool
     created_at: datetime
     updated_at: Optional[datetime] = None
+    
+    # === NUEVO: Campos del sistema híbrido ===
+    plan_type: PlanType
+    live_start_date: Optional[datetime] = None
+    live_end_date: Optional[datetime] = None
+    is_live_active: bool = False
+    live_participants_count: int = 0
+    original_live_plan_id: Optional[int] = None
+    archived_at: Optional[datetime] = None
+    original_participants_count: Optional[int] = None
+    
+    # Campos calculados dinámicamente
+    current_day: Optional[int] = None
+    status: Optional[PlanStatus] = None
+    days_until_start: Optional[int] = None
     
     # Estadísticas opcionales
     total_followers: Optional[int] = None
@@ -89,6 +130,9 @@ class NutritionPlanWithDetails(NutritionPlan):
     daily_plans: List["DailyNutritionPlan"] = []
     creator_name: Optional[str] = None
     is_followed_by_user: Optional[bool] = None
+    
+    # Información adicional para planes archivados
+    original_live_plan: Optional["NutritionPlan"] = None
 
 
 # ===== DAILY NUTRITION PLAN SCHEMAS =====
@@ -389,6 +433,11 @@ class NutritionPlanFilters(BaseModel):
     is_public: Optional[bool] = None
     tags: Optional[List[str]] = None
     search_query: Optional[str] = None  # Búsqueda por título/descripción
+    
+    # === NUEVO: Filtros para sistema híbrido ===
+    plan_type: Optional[PlanType] = None
+    status: Optional[PlanStatus] = None
+    is_live_active: Optional[bool] = None
 
 
 # ===== SCHEMAS ESPECÍFICOS PARA RESPUESTAS =====
@@ -400,6 +449,12 @@ class TodayMealPlan(BaseModel):
     meals: List[MealWithIngredients] = []
     progress: Optional[UserDailyProgress] = None
     completion_percentage: float = 0.0
+    
+    # === NUEVO: Información del plan híbrido ===
+    plan: Optional[NutritionPlan] = None
+    current_day: int = 0
+    status: PlanStatus = PlanStatus.NOT_STARTED
+    days_until_start: Optional[int] = None
 
 
 class WeeklyNutritionSummary(BaseModel):
@@ -412,6 +467,51 @@ class WeeklyNutritionSummary(BaseModel):
     avg_satisfaction: float
     total_calories_consumed: int
     daily_summaries: List[UserDailyProgress]
+
+
+class NutritionDashboardHybrid(BaseModel):
+    """Dashboard nutricional híbrido con diferentes tipos de planes"""
+    # Planes template (comportamiento actual)
+    template_plans: List[NutritionPlan] = []
+    
+    # Planes live activos
+    live_plans: List[NutritionPlan] = []
+    
+    # Planes disponibles para seguir
+    available_plans: List[NutritionPlan] = []
+    
+    # Plan de hoy
+    today_plan: Optional[TodayMealPlan] = None
+    
+    # Estadísticas generales
+    completion_streak: int = 0
+    weekly_progress: List[UserDailyProgress] = []
+
+
+class NutritionPlanListResponseHybrid(BaseModel):
+    """Respuesta categorizada por tipo de plan"""
+    live_plans: List[NutritionPlan] = []
+    template_plans: List[NutritionPlan] = []
+    archived_plans: List[NutritionPlan] = []
+    total: int
+    page: int
+    per_page: int
+    has_next: bool
+    has_prev: bool
+
+
+# ===== LIVE PLAN SPECIFIC SCHEMAS =====
+
+class LivePlanStatusUpdate(BaseModel):
+    """Para actualizar el estado de planes live"""
+    is_live_active: bool
+    live_participants_count: Optional[int] = None
+
+
+class ArchivePlanRequest(BaseModel):
+    """Request para archivar un plan live terminado"""
+    create_template_version: bool = True
+    template_title: Optional[str] = None
 
 
 # Update forward references

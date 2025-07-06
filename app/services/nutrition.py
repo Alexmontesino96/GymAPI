@@ -12,7 +12,7 @@ import logging
 from app.models.nutrition import (
     NutritionPlan, DailyNutritionPlan, Meal, MealIngredient,
     NutritionPlanFollower, UserDailyProgress, UserMealCompletion,
-    NutritionGoal, DifficultyLevel, BudgetLevel, DietaryRestriction, MealType
+    NutritionGoal, DifficultyLevel, BudgetLevel, DietaryRestriction, MealType, PlanType
 )
 from app.models.user import User
 from app.models.gym import Gym
@@ -21,7 +21,8 @@ from app.schemas.nutrition import (
     DailyNutritionPlanCreate, DailyNutritionPlanUpdate,
     MealCreate, MealUpdate, MealIngredientCreate,
     NutritionPlanFollowerCreate, UserDailyProgressCreate, UserMealCompletionCreate,
-    TodayMealPlan, WeeklyNutritionSummary, UserNutritionDashboard, NutritionAnalytics
+    TodayMealPlan, WeeklyNutritionSummary, UserNutritionDashboard, NutritionAnalytics,
+    PlanStatus, ArchivePlanRequest, NutritionDashboardHybrid
 )
 
 logger = logging.getLogger(__name__)
@@ -163,6 +164,46 @@ class NutritionService:
             if filters.is_public is not None:
                 query = query.filter(NutritionPlan.is_public == filters.is_public)
             
+            # === NUEVO: Filtros del sistema híbrido ===
+            if filters.plan_type:
+                query = query.filter(NutritionPlan.plan_type == filters.plan_type)
+            
+            if filters.is_live_active is not None:
+                query = query.filter(NutritionPlan.is_live_active == filters.is_live_active)
+            
+            if filters.status:
+                # Filtrar por estado requiere lógica más compleja
+                today = datetime.now()
+                
+                if filters.status == PlanStatus.NOT_STARTED:
+                    # Planes live que no han empezado
+                    query = query.filter(
+                        and_(
+                            NutritionPlan.plan_type == PlanType.LIVE,
+                            NutritionPlan.live_start_date > today
+                        )
+                    )
+                elif filters.status == PlanStatus.RUNNING:
+                    # Planes activos (live activos o cualquier template/archived)
+                    query = query.filter(
+                        or_(
+                            and_(
+                                NutritionPlan.plan_type == PlanType.LIVE,
+                                NutritionPlan.is_live_active == True
+                            ),
+                            NutritionPlan.plan_type.in_([PlanType.TEMPLATE, PlanType.ARCHIVED])
+                        )
+                    )
+                elif filters.status == PlanStatus.FINISHED:
+                    # Planes live terminados
+                    query = query.filter(
+                        and_(
+                            NutritionPlan.plan_type == PlanType.LIVE,
+                            NutritionPlan.is_live_active == False,
+                            NutritionPlan.live_end_date.isnot(None)
+                        )
+                    )
+            
             if filters.search_query:
                 search = f"%{filters.search_query}%"
                 query = query.filter(
@@ -195,6 +236,18 @@ class NutritionService:
         plans = query.order_by(desc(NutritionPlan.created_at)).offset(
             (page - 1) * per_page
         ).limit(per_page).all()
+        
+        # === NUEVO: Agregar información calculada a cada plan ===
+        for plan in plans:
+            if plan.plan_type == PlanType.LIVE:
+                # Actualizar estado para planes live
+                self.update_live_plan_status(plan.id, gym_id)
+                
+            # Calcular información adicional
+            current_day, status = self.get_current_plan_day(plan)
+            plan.current_day = current_day
+            plan.status = status
+            plan.days_until_start = self.get_days_until_start(plan)
         
         return plans, total
     
@@ -533,6 +586,438 @@ class NutritionService:
             meals=daily_plan.meals,
             completion_percentage=completion_percentage
         )
+
+    # ===== NUEVO: SISTEMA HÍBRIDO =====
+    
+    def get_current_plan_day(self, plan: NutritionPlan, follower: Optional[NutritionPlanFollower] = None) -> Tuple[int, PlanStatus]:
+        """Calcular qué día del plan está corriendo HOY según el tipo de plan"""
+        today = datetime.now().date()
+        
+        if plan.plan_type == PlanType.TEMPLATE:
+            # Lógica individual (comportamiento actual)
+            if not follower:
+                return 0, PlanStatus.NOT_STARTED
+            
+            days_since_subscription = (today - follower.start_date.date()).days
+            
+            if plan.is_recurring:
+                current_day = (days_since_subscription % plan.duration_days) + 1
+                return current_day, PlanStatus.RUNNING
+            else:
+                if days_since_subscription >= plan.duration_days:
+                    return 0, PlanStatus.FINISHED
+                return days_since_subscription + 1, PlanStatus.RUNNING
+        
+        elif plan.plan_type == PlanType.LIVE:
+            # Lógica global (nueva)
+            if not plan.live_start_date:
+                return 0, PlanStatus.NOT_STARTED
+            
+            plan_start_date = plan.live_start_date.date()
+            
+            if today < plan_start_date:
+                return 0, PlanStatus.NOT_STARTED
+            
+            days_since_live_start = (today - plan_start_date).days
+            
+            if plan.is_recurring:
+                current_day = (days_since_live_start % plan.duration_days) + 1
+                return current_day, PlanStatus.RUNNING
+            else:
+                if days_since_live_start >= plan.duration_days:
+                    return 0, PlanStatus.FINISHED
+                return days_since_live_start + 1, PlanStatus.RUNNING
+        
+        elif plan.plan_type == PlanType.ARCHIVED:
+            # Lógica individual (como template)
+            if not follower:
+                return 0, PlanStatus.NOT_STARTED
+            
+            days_since_subscription = (today - follower.start_date.date()).days
+            
+            if plan.is_recurring:
+                current_day = (days_since_subscription % plan.duration_days) + 1
+                return current_day, PlanStatus.RUNNING
+            else:
+                if days_since_subscription >= plan.duration_days:
+                    return 0, PlanStatus.FINISHED
+                return days_since_subscription + 1, PlanStatus.RUNNING
+        
+        return 0, PlanStatus.NOT_STARTED
+    
+    def get_days_until_start(self, plan: NutritionPlan) -> Optional[int]:
+        """Calcular días hasta que empiece un plan live"""
+        if plan.plan_type != PlanType.LIVE or not plan.live_start_date:
+            return None
+        
+        today = datetime.now().date()
+        plan_start_date = plan.live_start_date.date()
+        
+        if today >= plan_start_date:
+            return 0  # Ya empezó
+        
+        return (plan_start_date - today).days
+    
+    def update_live_plan_status(self, plan_id: int, gym_id: int) -> NutritionPlan:
+        """Actualizar el estado de un plan live basado en fechas"""
+        plan = self.get_nutrition_plan(plan_id, gym_id)
+        
+        if plan.plan_type != PlanType.LIVE:
+            return plan
+        
+        today = datetime.now()
+        
+        # Calcular si debe estar activo
+        should_be_active = False
+        should_be_finished = False
+        
+        if plan.live_start_date:
+            if today >= plan.live_start_date:
+                if plan.is_recurring:
+                    should_be_active = True
+                else:
+                    # Calcular fecha de fin
+                    end_date = plan.live_start_date + timedelta(days=plan.duration_days)
+                    if today >= end_date:
+                        should_be_finished = True
+                    else:
+                        should_be_active = True
+        
+        # Actualizar estado si es necesario
+        if should_be_finished and plan.is_live_active:
+            plan.is_live_active = False
+            plan.live_end_date = plan.live_start_date + timedelta(days=plan.duration_days)
+            plan.updated_at = datetime.utcnow()
+            self.db.commit()
+            
+            # Trigger archivado automático si es necesario
+            self._auto_archive_finished_live_plan(plan)
+            
+        elif should_be_active and not plan.is_live_active:
+            plan.is_live_active = True
+            plan.updated_at = datetime.utcnow()
+            self.db.commit()
+        
+        return plan
+    
+    def create_live_nutrition_plan(
+        self, 
+        plan_data: NutritionPlanCreate, 
+        creator_id: int, 
+        gym_id: int
+    ) -> NutritionPlan:
+        """Crear un plan nutricional tipo LIVE con validaciones especiales"""
+        
+        if plan_data.plan_type == PlanType.LIVE:
+            if not plan_data.live_start_date:
+                raise ValidationError("live_start_date es requerido para planes tipo LIVE")
+            
+            # Validar que la fecha de inicio es futura (opcional, según reglas de negocio)
+            # if plan_data.live_start_date <= datetime.now():
+            #     raise ValidationError("live_start_date debe ser en el futuro")
+        
+        # Crear el plan usando el método base
+        return self.create_nutrition_plan(plan_data, creator_id, gym_id)
+    
+    def archive_live_plan(
+        self, 
+        plan_id: int, 
+        user_id: int, 
+        gym_id: int,
+        archive_request: ArchivePlanRequest
+    ) -> NutritionPlan:
+        """Archivar manualmente un plan live terminado"""
+        plan = self.get_nutrition_plan(plan_id, gym_id)
+        
+        # Verificar permisos
+        if plan.creator_id != user_id:
+            raise PermissionError("Solo el creador puede archivar este plan")
+        
+        if plan.plan_type != PlanType.LIVE:
+            raise ValidationError("Solo se pueden archivar planes tipo LIVE")
+        
+        if plan.is_live_active:
+            raise ValidationError("No se puede archivar un plan live que está activo")
+        
+        if archive_request.create_template_version:
+            return self._create_archived_version(plan, archive_request.template_title)
+        
+        return plan
+    
+    def get_hybrid_today_meal_plan(self, user_id: int, gym_id: int) -> TodayMealPlan:
+        """Obtener el plan de comidas para hoy usando lógica híbrida"""
+        today = datetime.now().date()
+        
+        # Buscar planes que el usuario está siguiendo
+        followed_plans_query = self.db.query(NutritionPlanFollower).options(
+            joinedload(NutritionPlanFollower.plan)
+        ).filter(
+            NutritionPlanFollower.user_id == user_id,
+            NutritionPlanFollower.is_active == True
+        )
+        
+        followed_plans = followed_plans_query.all()
+        
+        if not followed_plans:
+            return TodayMealPlan(
+                date=datetime.combine(today, datetime.min.time()),
+                meals=[],
+                completion_percentage=0.0,
+                current_day=0,
+                status=PlanStatus.NOT_STARTED
+            )
+        
+        # Encontrar el plan que tiene contenido para hoy
+        for plan_follower in followed_plans:
+            plan = plan_follower.plan
+            
+            # Actualizar estado de planes live
+            if plan.plan_type == PlanType.LIVE:
+                plan = self.update_live_plan_status(plan.id, gym_id)
+            
+            # Calcular día actual y estado
+            current_day, status = self.get_current_plan_day(plan, plan_follower)
+            
+            if current_day > 0:  # Plan tiene contenido para hoy
+                # Buscar el plan diario correspondiente
+                daily_plan = self.db.query(DailyNutritionPlan).options(
+                    selectinload(DailyNutritionPlan.meals).selectinload(Meal.ingredients)
+                ).filter(
+                    DailyNutritionPlan.nutrition_plan_id == plan.id,
+                    DailyNutritionPlan.day_number == current_day
+                ).first()
+                
+                if daily_plan:
+                    # Obtener completaciones del usuario para hoy
+                    completions = self.db.query(UserMealCompletion).filter(
+                        UserMealCompletion.user_id == user_id,
+                        func.date(UserMealCompletion.completed_at) == today
+                    ).all()
+                    
+                    completion_ids = {c.meal_id for c in completions}
+                    
+                    # Calcular porcentaje de completación
+                    total_meals = len(daily_plan.meals)
+                    completed_meals = len([m for m in daily_plan.meals if m.id in completion_ids])
+                    completion_percentage = (completed_meals / total_meals * 100) if total_meals > 0 else 0
+                    
+                    return TodayMealPlan(
+                        date=datetime.combine(today, datetime.min.time()),
+                        daily_plan=daily_plan,
+                        meals=daily_plan.meals,
+                        completion_percentage=completion_percentage,
+                        plan=plan,
+                        current_day=current_day,
+                        status=status
+                    )
+        
+        # Si llegamos aquí, ningún plan tiene contenido para hoy
+        # Buscar el próximo plan que va a empezar
+        for plan_follower in followed_plans:
+            plan = plan_follower.plan
+            current_day, status = self.get_current_plan_day(plan, plan_follower)
+            
+            if status == PlanStatus.NOT_STARTED:
+                days_until_start = self.get_days_until_start(plan)
+                
+                return TodayMealPlan(
+                    date=datetime.combine(today, datetime.min.time()),
+                    meals=[],
+                    completion_percentage=0.0,
+                    plan=plan,
+                    current_day=0,
+                    status=status,
+                    days_until_start=days_until_start
+                )
+        
+        # Default: sin planes activos
+        return TodayMealPlan(
+            date=datetime.combine(today, datetime.min.time()),
+            meals=[],
+            completion_percentage=0.0,
+            current_day=0,
+            status=PlanStatus.NOT_STARTED
+        )
+    
+    def get_hybrid_dashboard(self, user_id: int, gym_id: int) -> NutritionDashboardHybrid:
+        """Obtener dashboard nutricional híbrido categorizado por tipos de plan"""
+        
+        # Obtener planes que sigue el usuario
+        followed_plans_query = self.db.query(NutritionPlanFollower).options(
+            joinedload(NutritionPlanFollower.plan)
+        ).filter(
+            NutritionPlanFollower.user_id == user_id,
+            NutritionPlanFollower.is_active == True
+        )
+        
+        followed_plans = followed_plans_query.all()
+        
+        template_plans = []
+        live_plans = []
+        
+        for follower in followed_plans:
+            plan = follower.plan
+            
+            # Actualizar estado si es live
+            if plan.plan_type == PlanType.LIVE:
+                plan = self.update_live_plan_status(plan.id, gym_id)
+            
+            # Calcular día actual y estado
+            current_day, status = self.get_current_plan_day(plan, follower)
+            
+            # Agregar campos calculados
+            plan.current_day = current_day
+            plan.status = status
+            plan.days_until_start = self.get_days_until_start(plan)
+            
+            # Categorizar por tipo
+            if plan.plan_type == PlanType.LIVE:
+                live_plans.append(plan)
+            else:  # TEMPLATE o ARCHIVED
+                template_plans.append(plan)
+        
+        # Obtener planes disponibles (públicos del gimnasio que no sigue)
+        followed_plan_ids = [f.plan_id for f in followed_plans]
+        
+        available_plans_query = self.db.query(NutritionPlan).filter(
+            NutritionPlan.gym_id == gym_id,
+            NutritionPlan.is_active == True,
+            NutritionPlan.is_public == True,
+            ~NutritionPlan.id.in_(followed_plan_ids) if followed_plan_ids else True
+        ).limit(10)  # Limitar para performance
+        
+        available_plans = available_plans_query.all()
+        
+        # Calcular estado para planes disponibles
+        for plan in available_plans:
+            if plan.plan_type == PlanType.LIVE:
+                plan = self.update_live_plan_status(plan.id, gym_id)
+                current_day, status = self.get_current_plan_day(plan)
+                plan.current_day = current_day
+                plan.status = status
+                plan.days_until_start = self.get_days_until_start(plan)
+        
+        # Obtener plan de hoy
+        today_plan = self.get_hybrid_today_meal_plan(user_id, gym_id)
+        
+        # TODO: Calcular estadísticas de progreso semanal
+        weekly_progress = []  # Implementar después
+        
+        return NutritionDashboardHybrid(
+            template_plans=template_plans,
+            live_plans=live_plans,
+            available_plans=available_plans,
+            today_plan=today_plan,
+            completion_streak=0,  # TODO: implementar
+            weekly_progress=weekly_progress
+        )
+    
+    def _auto_archive_finished_live_plan(self, plan: NutritionPlan):
+        """Crear automáticamente una versión archivada de un plan live terminado"""
+        try:
+            archived_title = f"{plan.title} (Template)"
+            self._create_archived_version(plan, archived_title)
+            logger.info(f"Plan live {plan.id} archivado automáticamente")
+        except Exception as e:
+            logger.error(f"Error archivando automáticamente plan {plan.id}: {str(e)}")
+    
+    def _create_archived_version(self, live_plan: NutritionPlan, template_title: Optional[str] = None) -> NutritionPlan:
+        """Crear una versión archivada (template) de un plan live"""
+        
+        if not template_title:
+            template_title = f"{live_plan.title} (Template)"
+        
+        # Crear plan archivado
+        archived_plan = NutritionPlan(
+            title=template_title,
+            description=live_plan.description,
+            goal=live_plan.goal,
+            difficulty_level=live_plan.difficulty_level,
+            budget_level=live_plan.budget_level,
+            dietary_restrictions=live_plan.dietary_restrictions,
+            duration_days=live_plan.duration_days,
+            is_recurring=live_plan.is_recurring,
+            target_calories=live_plan.target_calories,
+            target_protein_g=live_plan.target_protein_g,
+            target_carbs_g=live_plan.target_carbs_g,
+            target_fat_g=live_plan.target_fat_g,
+            is_public=True,  # Los archivados son públicos por defecto
+            tags=live_plan.tags,
+            
+            # Campos específicos del archivado
+            plan_type=PlanType.ARCHIVED,
+            original_live_plan_id=live_plan.id,
+            archived_at=datetime.utcnow(),
+            original_participants_count=live_plan.live_participants_count,
+            
+            # Relaciones
+            creator_id=live_plan.creator_id,
+            gym_id=live_plan.gym_id
+        )
+        
+        self.db.add(archived_plan)
+        self.db.flush()  # Para obtener el ID
+        
+        # Copiar todos los días y comidas
+        for daily_plan in live_plan.daily_plans:
+            archived_daily = DailyNutritionPlan(
+                nutrition_plan_id=archived_plan.id,
+                day_number=daily_plan.day_number,
+                total_calories=daily_plan.total_calories,
+                total_protein_g=daily_plan.total_protein_g,
+                total_carbs_g=daily_plan.total_carbs_g,
+                total_fat_g=daily_plan.total_fat_g,
+                notes=daily_plan.notes,
+                is_published=True  # Los archivados están todos publicados
+            )
+            
+            self.db.add(archived_daily)
+            self.db.flush()
+            
+            # Copiar comidas
+            for meal in daily_plan.meals:
+                archived_meal = Meal(
+                    daily_plan_id=archived_daily.id,
+                    meal_type=meal.meal_type,
+                    name=meal.name,
+                    description=meal.description,
+                    preparation_time_minutes=meal.preparation_time_minutes,
+                    cooking_instructions=meal.cooking_instructions,
+                    calories=meal.calories,
+                    protein_g=meal.protein_g,
+                    carbs_g=meal.carbs_g,
+                    fat_g=meal.fat_g,
+                    fiber_g=meal.fiber_g,
+                    image_url=meal.image_url,
+                    video_url=meal.video_url,
+                    order_in_day=meal.order_in_day
+                )
+                
+                self.db.add(archived_meal)
+                self.db.flush()
+                
+                # Copiar ingredientes
+                for ingredient in meal.ingredients:
+                    archived_ingredient = MealIngredient(
+                        meal_id=archived_meal.id,
+                        name=ingredient.name,
+                        quantity=ingredient.quantity,
+                        unit=ingredient.unit,
+                        alternatives=ingredient.alternatives,
+                        is_optional=ingredient.is_optional,
+                        calories_per_serving=ingredient.calories_per_serving,
+                        protein_per_serving=ingredient.protein_per_serving,
+                        carbs_per_serving=ingredient.carbs_per_serving,
+                        fat_per_serving=ingredient.fat_per_serving
+                    )
+                    
+                    self.db.add(archived_ingredient)
+        
+        self.db.commit()
+        self.db.refresh(archived_plan)
+        
+        logger.info(f"Creada versión archivada {archived_plan.id} del plan live {live_plan.id}")
+        return archived_plan
 
     # ===== ANALYTICS =====
     

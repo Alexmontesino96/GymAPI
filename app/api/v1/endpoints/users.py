@@ -1069,8 +1069,21 @@ async def read_gym_participant_by_id(
     try:
         # Mutar el modelo Pydantic con el rol específico del gym
         user_data.gym_role = membership.role  # type: ignore[attr-defined]
-        # Sobrescribir campo role con el rol en el gimnasio
-        user_data.role = UserRole(membership.role.value)  # type: ignore[attr-defined]
+        
+        # Mapeo seguro entre GymRoleType y UserRole
+        gym_to_user_role_mapping = {
+            GymRoleType.MEMBER: UserRole.MEMBER,
+            GymRoleType.TRAINER: UserRole.TRAINER,
+            GymRoleType.ADMIN: UserRole.ADMIN,
+            GymRoleType.OWNER: UserRole.ADMIN  # OWNER se mapea a ADMIN en el contexto de UserRole
+        }
+        
+        # Solo sobrescribir si existe mapeo directo
+        if membership.role in gym_to_user_role_mapping:
+            user_data.role = gym_to_user_role_mapping[membership.role]  # type: ignore[attr-defined]
+        else:
+            logger.debug(f"No se encontró mapeo para rol de gimnasio {membership.role}, manteniendo rol original del usuario")
+            
     except Exception as e:
         logger.warning(f"No se pudo asignar gym_role/role en la respuesta de usuario {user_id}: {e}")
 

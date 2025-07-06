@@ -52,6 +52,13 @@ class DietaryRestriction(str, enum.Enum):
     MEDITERRANEAN = "mediterranean"
 
 
+class PlanType(str, enum.Enum):
+    """Tipos de planes nutricionales."""
+    TEMPLATE = "template"    # Usuario empieza cuando quiere (comportamiento actual)
+    LIVE = "live"           # Fecha fija, todos los usuarios sincronizados
+    ARCHIVED = "archived"   # Plan live terminado, convertido a template reutilizable
+
+
 class MealType(str, enum.Enum):
     """Tipos de comidas del día."""
     BREAKFAST = "breakfast"         # Desayuno
@@ -66,6 +73,7 @@ class MealType(str, enum.Enum):
 class NutritionPlan(Base):
     """
     Plan nutricional creado por un entrenador.
+    Soporta tres tipos: template (flexible), live (sincronizado) y archived (reutilizable).
     """
     __tablename__ = "nutrition_plans"
     
@@ -82,6 +90,20 @@ class NutritionPlan(Base):
     # Duración y programación
     duration_days = Column(Integer, nullable=False, default=1)  # Duración del plan
     is_recurring = Column(Boolean, default=False)  # Si se repite automáticamente
+    
+    # === NUEVO: Sistema híbrido de tipos de plan ===
+    plan_type = Column(Enum(PlanType), default=PlanType.TEMPLATE, nullable=False, index=True)
+    
+    # Campos para planes LIVE
+    live_start_date = Column(DateTime, nullable=True, index=True)  # Cuándo empieza el plan live
+    live_end_date = Column(DateTime, nullable=True, index=True)    # Cuándo termina el plan live
+    is_live_active = Column(Boolean, default=False, index=True)    # Si el plan live está actualmente corriendo
+    live_participants_count = Column(Integer, default=0)          # Número de participantes en tiempo real
+    
+    # Campos para planes ARCHIVED
+    original_live_plan_id = Column(Integer, ForeignKey("nutrition_plans.id"), nullable=True, index=True)
+    archived_at = Column(DateTime, nullable=True)                 # Cuándo se archivó
+    original_participants_count = Column(Integer, nullable=True)  # Participantes del plan live original
     
     # Información nutricional objetivo
     target_calories = Column(Integer, nullable=True)  # Calorías objetivo por día
@@ -108,8 +130,11 @@ class NutritionPlan(Base):
     daily_plans = relationship("DailyNutritionPlan", back_populates="nutrition_plan", cascade="all, delete-orphan")
     followers = relationship("NutritionPlanFollower", back_populates="plan", cascade="all, delete-orphan")
     
+    # Relación self-referencial para planes archivados
+    original_live_plan = relationship("NutritionPlan", remote_side=[id], backref="archived_versions")
+    
     def __repr__(self):
-        return f"<NutritionPlan(id={self.id}, title='{self.title}', goal='{self.goal}')>"
+        return f"<NutritionPlan(id={self.id}, title='{self.title}', type='{self.plan_type}', goal='{self.goal}')>"
 
 
 class DailyNutritionPlan(Base):
