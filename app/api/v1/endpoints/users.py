@@ -1036,22 +1036,23 @@ async def read_gym_participant_by_id(
     redis_client: redis.Redis = Depends(get_redis_client),
     current_gym: GymSchema = Depends(verify_gym_admin_access),
 ) -> Any:
-    """[ADMIN ONLY] Obtiene un **miembro o entrenador** del gimnasio actual por ID.
+    """[ADMIN ONLY] Obtiene un usuario del gimnasio actual por ID.
 
-    Permisos y visibilidad idénticos al listado `/gym-participants`.
+    Permite ver cualquier usuario que pertenezca al gimnasio actual, 
+    independientemente de su rol (MEMBER, TRAINER, ADMIN, OWNER).
     """
     logger = logging.getLogger("user_endpoint")
 
     from app.models.user_gym import UserGym, GymRoleType
 
-    # Verificar que el usuario pertenezca al gimnasio actual y sea MEMBER o TRAINER
+    # Verificar que el usuario pertenezca al gimnasio actual
     membership = (
         db.query(UserGym)
         .filter(UserGym.user_id == user_id, UserGym.gym_id == current_gym.id)
         .first()
     )
 
-    if not membership or membership.role not in [GymRoleType.MEMBER, GymRoleType.TRAINER]:
+    if not membership:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario no encontrado en este gimnasio")
 
     # Obtener usuario (podemos utilizar servicio con caché)
