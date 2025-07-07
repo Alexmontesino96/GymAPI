@@ -126,8 +126,8 @@ class NutritionPlan(NutritionPlanBase):
 
 
 class NutritionPlanWithDetails(NutritionPlan):
-    """Plan nutricional con información detallada"""
-    daily_plans: List["DailyNutritionPlan"] = []
+    """Plan nutricional con información detallada incluyendo meals"""
+    daily_plans: List["DailyNutritionPlanWithMeals"] = []
     creator_name: Optional[str] = None
     is_followed_by_user: Optional[bool] = None
     

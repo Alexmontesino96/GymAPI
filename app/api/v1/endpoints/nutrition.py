@@ -133,12 +133,17 @@ def get_nutrition_plan(
     current_user: Auth0User = Depends(get_current_user)
 ):
     """
-    Obtener un plan nutricional con todos sus detalles.
+    Obtener un plan nutricional con todos sus detalles incluyendo meals.
     """
     service = NutritionService(db)
     
+    # Obtener usuario local
+    db_user = user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
+    if not db_user:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    
     try:
-        plan = service.get_nutrition_plan(plan_id, current_gym.id)
+        plan = service.get_nutrition_plan_with_details(plan_id, current_gym.id, db_user.id)
         return plan
     except NotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
