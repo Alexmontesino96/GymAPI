@@ -127,7 +127,7 @@ class NutritionPlan(NutritionPlanBase):
 
 class NutritionPlanWithDetails(NutritionPlan):
     """Plan nutricional con información detallada incluyendo meals"""
-    daily_plans: List["DailyNutritionPlanWithMeals"] = []
+    daily_plans: List["DailyNutritionPlanForDetails"] = []
     creator_name: Optional[str] = None
     is_followed_by_user: Optional[bool] = None
     
@@ -177,6 +177,11 @@ class DailyNutritionPlanWithMeals(DailyNutritionPlan):
     """Plan diario con comidas incluidas"""
     meals: List["Meal"] = []
     user_progress: Optional["UserDailyProgress"] = None
+
+
+class DailyNutritionPlanForDetails(DailyNutritionPlan):
+    """Plan diario con comidas incluidas para detalles del plan (sin progreso de usuario)"""
+    meals: List["MealWithIngredients"] = []
 
 
 # ===== MEAL SCHEMAS =====
@@ -517,4 +522,5 @@ class ArchivePlanRequest(BaseModel):
 # Update forward references
 NutritionPlanWithDetails.model_rebuild()
 DailyNutritionPlanWithMeals.model_rebuild()
+DailyNutritionPlanForDetails.model_rebuild()
 MealWithIngredients.model_rebuild() 
