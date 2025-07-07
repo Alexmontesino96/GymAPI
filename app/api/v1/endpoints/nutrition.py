@@ -989,12 +989,121 @@ def create_daily_plan(
 @router.post("/days/{daily_plan_id}/meals", response_model=Meal)
 def create_meal(
     meal_data: MealCreate,
-    daily_plan_id: int = Path(...),
+    daily_plan_id: int = Path(..., description="ID del día al que agregar la comida"),
     db: Session = Depends(get_db),
     current_user: Auth0User = Depends(get_current_user)
 ):
     """
-    Crear una comida dentro de un plan diario.
+    🍽️ **Crear Comida en Plan Diario (Para Creadores)**
+    
+    **Descripción:**
+    Permite a creadores agregar una comida específica a un día de su plan nutricional.
+    Cada comida representa una instancia alimentaria (desayuno, almuerzo, cena, etc.).
+    
+    **Proceso de Creación:**
+    1. **Validación de Permisos:** Solo el creador del plan puede agregar comidas
+    2. **Verificación del Día:** Valida que el día existe y pertenece al plan
+    3. **Estructura Base:** Crea contenedor para los ingredientes de la comida
+    4. **Información Nutricional:** Establece valores nutricionales base
+    
+    **Campos Requeridos:**
+    - `meal_type`: Tipo de comida (breakfast, lunch, dinner, snack_morning, snack_afternoon, snack_evening)
+    - `name`: Nombre descriptivo de la comida
+    - `daily_plan_id`: Debe coincidir con el {daily_plan_id} del path
+    
+    **Campos Opcionales:**
+    - `description`: Descripción detallada de la comida
+    - `preparation_time_minutes`: Tiempo de preparación estimado
+    - `cooking_instructions`: Instrucciones paso a paso
+    - `calories`, `protein_g`, `carbs_g`, `fat_g`: Valores nutricionales
+    - `fiber_g`: Contenido de fibra
+    - `image_url`: URL de imagen de la comida
+    - `video_url`: URL de video de preparación
+    
+    **Tipos de Comidas Disponibles:**
+    - `breakfast`: Desayuno
+    - `lunch`: Almuerzo  
+    - `dinner`: Cena
+    - `snack_morning`: Snack de media mañana
+    - `snack_afternoon`: Snack de media tarde
+    - `snack_evening`: Snack nocturno
+    
+    **Validaciones Automáticas:**
+    - ✅ Usuario es el creador del plan que contiene este día
+    - ✅ Día existe y pertenece a un plan del gimnasio
+    - ✅ Tipo de comida válido según enum
+    - ✅ Valores nutricionales no negativos
+    - ✅ URLs válidas para imagen y video
+    
+    **Estado Inicial:**
+    - Lista para agregar ingredientes con `POST /meals/{meal_id}/ingredients`
+    - Valores nutricionales se actualizan automáticamente al agregar ingredientes
+    - Visible para usuarios una vez que el día se publique
+    
+    **Ejemplo de Request:**
+    ```json
+    {
+      "daily_plan_id": 456,
+      "meal_type": "breakfast",
+      "name": "Batido Verde Energético",
+      "description": "Batido nutritivo con espinaca, plátano y proteína",
+      "preparation_time_minutes": 5,
+      "cooking_instructions": "1. Agregar espinaca al blender\\n2. Añadir plátano y proteína\\n3. Licuar hasta obtener consistencia cremosa",
+      "calories": 280,
+      "protein_g": 25,
+      "carbs_g": 35,
+      "fat_g": 8,
+      "fiber_g": 6,
+      "image_url": "https://example.com/batido-verde.jpg"
+    }
+    ```
+    
+    **Ejemplo de Respuesta:**
+    ```json
+    {
+      "id": 789,
+      "daily_plan_id": 456,
+      "meal_type": "breakfast",
+      "name": "Batido Verde Energético",
+      "description": "Batido nutritivo con espinaca, plátano y proteína",
+      "preparation_time_minutes": 5,
+      "cooking_instructions": "1. Agregar espinaca al blender\\n2. Añadir plátano y proteína\\n3. Licuar hasta obtener consistencia cremosa",
+      "calories": 280,
+      "protein_g": 25.0,
+      "carbs_g": 35.0,
+      "fat_g": 8.0,
+      "fiber_g": 6.0,
+      "image_url": "https://example.com/batido-verde.jpg",
+      "video_url": null,
+      "created_at": "2024-01-15T11:00:00Z",
+      "updated_at": "2024-01-15T11:00:00Z"
+    }
+    ```
+    
+    **Flujo de Trabajo del Creador:**
+    1. **Crear Plan** ➡️ `POST /plans`
+    2. **Agregar Días** ➡️ `POST /plans/{id}/days`
+    3. **Agregar Comidas** ➡️ `POST /days/{id}/meals` (este endpoint)
+    4. **Agregar Ingredientes** ➡️ `POST /meals/{id}/ingredients`
+    5. **Revisar Totales** ➡️ Los valores nutricionales se actualizan automáticamente
+    
+    **Mejores Prácticas:**
+    - 📸 Incluir imágenes atractivas para motivar a los usuarios
+    - 🎥 Videos cortos para técnicas de preparación complejas
+    - ⏱️ Tiempo de preparación realista para planificación
+    - 📝 Instrucciones claras y paso a paso
+    - 🧮 Valores nutricionales aproximados (se refinan con ingredientes)
+    
+    **Casos de Uso:**
+    - 📝 Creación de contenido gastronómico
+    - 🎨 Diseño de experiencias culinarias
+    - 📊 Estructuración de planes nutricionales
+    - 🍳 Documentación de recetas personalizadas
+    
+    **Códigos de Error:**
+    - `400`: El daily_plan_id del body no coincide con el path
+    - `403`: Solo el creador puede agregar comidas al plan
+    - `404`: Día no encontrado o no pertenece al gimnasio
     """
     service = NutritionService(db)
     
@@ -1024,12 +1133,124 @@ def create_meal(
 @router.post("/meals/{meal_id}/ingredients", response_model=MealIngredient)
 def add_ingredient_to_meal(
     ingredient_data: MealIngredientCreate,
-    meal_id: int = Path(...),
+    meal_id: int = Path(..., description="ID de la comida a la que agregar el ingrediente"),
     db: Session = Depends(get_db),
     current_user: Auth0User = Depends(get_current_user)
 ):
     """
-    Añadir un ingrediente a una comida.
+    🥕 **Agregar Ingrediente a Comida (Para Creadores)**
+    
+    **Descripción:**
+    Permite a creadores agregar ingredientes específicos a una comida de su plan.
+    Los ingredientes forman la base detallada de cada receta con información nutricional precisa.
+    
+    **Proceso de Agregado:**
+    1. **Validación de Permisos:** Solo el creador del plan puede agregar ingredientes
+    2. **Verificación de Comida:** Valida que la comida existe y pertenece al plan
+    3. **Cálculo Nutricional:** Procesa valores nutricionales por cantidad
+    4. **Actualización Automática:** Recalcula totales de la comida y día
+    
+    **Campos Requeridos:**
+    - `meal_id`: Debe coincidir con el {meal_id} del path
+    - `name`: Nombre del ingrediente (ej: "Pollo pechuga", "Arroz integral")
+    - `quantity`: Cantidad numérica (ej: 200, 1.5, 0.5)
+    - `unit`: Unidad de medida (gr, ml, units, cups, tbsp, etc.)
+    
+    **Campos Opcionales:**
+    - `calories_per_unit`: Calorías por unidad especificada
+    - `protein_g_per_unit`: Proteína por unidad
+    - `carbs_g_per_unit`: Carbohidratos por unidad
+    - `fat_g_per_unit`: Grasas por unidad
+    - `fiber_g_per_unit`: Fibra por unidad
+    - `notes`: Notas especiales (ej: "orgánico", "bajo en sodio")
+    
+    **Unidades de Medida Comunes:**
+    - `gr`: Gramos (sólidos)
+    - `ml`: Mililitros (líquidos)
+    - `units`: Unidades (1 manzana, 2 huevos)
+    - `cups`: Tazas
+    - `tbsp`: Cucharadas
+    - `tsp`: Cucharaditas
+    - `oz`: Onzas
+    
+    **Cálculo Automático:**
+    - **Total Ingredient:** `quantity * valor_per_unit`
+    - **Update Meal:** Suma todos los ingredientes
+    - **Update Day:** Suma todas las comidas del día
+    - **Consistency Check:** Verifica coherencia nutricional
+    
+    **Ejemplo de Request:**
+    ```json
+    {
+      "meal_id": 789,
+      "name": "Pollo pechuga sin piel",
+      "quantity": 150,
+      "unit": "gr",
+      "calories_per_unit": 1.65,
+      "protein_g_per_unit": 0.31,
+      "carbs_g_per_unit": 0,
+      "fat_g_per_unit": 0.036,
+      "fiber_g_per_unit": 0,
+      "notes": "Pollo de granja libre"
+    }
+    ```
+    
+    **Ejemplo de Respuesta:**
+    ```json
+    {
+      "id": 1234,
+      "meal_id": 789,
+      "name": "Pollo pechuga sin piel",
+      "quantity": 150.0,
+      "unit": "gr",
+      "calories_per_unit": 1.65,
+      "protein_g_per_unit": 0.31,
+      "carbs_g_per_unit": 0.0,
+      "fat_g_per_unit": 0.036,
+      "fiber_g_per_unit": 0.0,
+      "notes": "Pollo de granja libre",
+      "total_calories": 247.5,
+      "total_protein_g": 46.5,
+      "total_carbs_g": 0.0,
+      "total_fat_g": 5.4,
+      "total_fiber_g": 0.0,
+      "created_at": "2024-01-15T11:30:00Z",
+      "updated_at": "2024-01-15T11:30:00Z"
+    }
+    ```
+    
+    **Validaciones Automáticas:**
+    - ✅ Usuario es el creador del plan que contiene esta comida
+    - ✅ Comida existe y pertenece a un plan del gimnasio
+    - ✅ Cantidad es un valor positivo
+    - ✅ Unidad es válida según enum
+    - ✅ Valores nutricionales no negativos
+    
+    **Flujo de Trabajo del Creador:**
+    1. **Crear Plan** ➡️ `POST /plans`
+    2. **Agregar Días** ➡️ `POST /plans/{id}/days`
+    3. **Agregar Comidas** ➡️ `POST /days/{id}/meals`
+    4. **Agregar Ingredientes** ➡️ `POST /meals/{id}/ingredients` (este endpoint)
+    5. **Verificar Totales** ➡️ Los valores se actualizan automáticamente
+    
+    **Mejores Prácticas:**
+    - 🎯 **Precisión Nutricional:** Usar valores confiables (USDA, tablas oficiales)
+    - 📏 **Unidades Consistentes:** Mantener unidades lógicas por tipo de alimento
+    - 📝 **Nombres Descriptivos:** Especificar tipo y preparación
+    - 🔍 **Notas Útiles:** Incluir información relevante para usuarios
+    - ⚖️ **Porciones Realistas:** Cantidades apropiadas para el objetivo
+    
+    **Casos de Uso:**
+    - 📊 Precisión nutricional en recetas
+    - 🛒 Generación de listas de compras
+    - 🔄 Sustitución de ingredientes
+    - 📈 Análisis de macronutrientes
+    - 🍽️ Información detallada para usuarios
+    
+    **Códigos de Error:**
+    - `400`: El meal_id del body no coincide con el path
+    - `403`: Solo el creador puede agregar ingredientes
+    - `404`: Comida no encontrada o no pertenece al gimnasio
     """
     service = NutritionService(db)
     
@@ -1060,14 +1281,127 @@ def add_ingredient_to_meal(
 
 @router.get("/plans/{plan_id}/analytics", response_model=NutritionAnalytics)
 def get_plan_analytics(
-    plan_id: int = Path(...),
+    plan_id: int = Path(..., description="ID del plan nutricional para analytics"),
     db: Session = Depends(get_db),
     current_gym: Gym = Depends(verify_gym_access),
     current_user: Auth0User = Depends(get_current_user)
 ):
     """
-    Obtener analytics de un plan nutricional.
-    Solo el creador puede ver los analytics.
+    📊 **Analytics del Plan Nutricional (Solo Creadores)**
+    
+    **Descripción:**
+    Proporciona métricas detalladas sobre el rendimiento y engagement de un plan nutricional.
+    Exclusivo para creadores/entrenadores que desean analizar el éxito de sus planes.
+    
+    **Métricas Principales:**
+    
+    **📈 Engagement:**
+    - `total_followers`: Número total de usuarios que han seguido el plan
+    - `active_followers`: Usuarios actualmente siguiendo el plan
+    - `completion_rate`: Porcentaje promedio de completación de comidas
+    - `average_days_followed`: Promedio de días que los usuarios siguen el plan
+    - `dropout_rate`: Porcentaje de usuarios que abandona el plan
+    
+    **⭐ Satisfacción:**
+    - `average_satisfaction`: Rating promedio de satisfacción (1-5)
+    - `satisfaction_distribution`: Distribución de ratings
+    - `most_popular_meals`: Comidas con mejores ratings
+    - `least_popular_meals`: Comidas con peores ratings
+    
+    **🍽️ Comportamiento de Comidas:**
+    - `meal_completion_by_type`: Completación por tipo (desayuno, almuerzo, etc.)
+    - `meal_completion_by_day`: Completación por día del plan
+    - `peak_completion_hours`: Horas cuando más se completan comidas
+    - `photos_shared`: Número de fotos compartidas por usuarios
+    
+    **📅 Análisis Temporal:**
+    - `daily_engagement`: Engagement día por día
+    - `weekly_trends`: Tendencias semanales de actividad
+    - `seasonal_patterns`: Patrones estacionales si aplicable
+    - `retention_curve`: Curva de retención de usuarios
+    
+    **🎯 Datos Específicos por Tipo:**
+    
+    **Template Plans:**
+    - Análisis de adopción individual
+    - Patrones de inicio personalizados
+    - Métricas de éxito a largo plazo
+    
+    **Live Plans:**
+    - Análisis de participación grupal
+    - Sincronización de actividad
+    - Métricas de challenge grupal
+    - Comparación con otros live plans
+    
+    **Archived Plans:**
+    - Datos históricos preservados
+    - Comparación con performance original
+    - Métricas de reutilización como template
+    
+    **Ejemplo de Respuesta:**
+    ```json
+    {
+      "plan_id": 123,
+      "plan_title": "Challenge Detox 21 días",
+      "plan_type": "live",
+      "total_followers": 87,
+      "active_followers": 23,
+      "completion_rate": 78.5,
+      "average_satisfaction": 4.2,
+      "dropout_rate": 15.3,
+      "meal_completion_by_type": {
+        "breakfast": 85.2,
+        "lunch": 78.9,
+        "dinner": 71.4
+      },
+      "most_popular_meals": [
+        {
+          "meal_name": "Batido Verde",
+          "satisfaction": 4.8,
+          "completion_rate": 92.1
+        }
+      ],
+      "daily_engagement": [
+        {"day": 1, "completion_rate": 95.2},
+        {"day": 2, "completion_rate": 89.1}
+      ],
+      "retention_curve": [
+        {"day": 1, "active_users": 87},
+        {"day": 7, "active_users": 78},
+        {"day": 14, "active_users": 65}
+      ]
+    }
+    ```
+    
+    **Permisos Estrictos:**
+    - ✅ Solo el creador/entrenador del plan puede ver analytics
+    - ❌ Usuarios regulares no tienen acceso a estos datos
+    - ❌ Otros entrenadores no pueden ver analytics de planes ajenos
+    
+    **Casos de Uso:**
+    - 📊 Evaluar éxito de planes creados
+    - 🎯 Identificar áreas de mejora
+    - 📈 Optimizar contenido futuro
+    - 💡 Inspiración para nuevos planes
+    - 🏆 Demostrar valor a clientes
+    - 📝 Reportes de rendimiento
+    
+    **Insights Accionables:**
+    - **Alta Dropout:** Revisar dificultad o contenido
+    - **Baja Satisfacción:** Mejorar recetas específicas
+    - **Patrones Temporales:** Optimizar timing de notificaciones
+    - **Comidas Populares:** Replicar en futuros planes
+    - **Días Problemáticos:** Reforzar contenido específico
+    
+    **Privacidad y Ética:**
+    - Datos agregados y anonimizados
+    - Sin información personal identificable
+    - Cumple con regulaciones de privacidad
+    - Enfoque en mejora de contenido
+    
+    **Códigos de Error:**
+    - `403`: Solo el creador puede ver analytics del plan
+    - `404`: Plan no encontrado o no pertenece al gimnasio
     """
     service = NutritionService(db)
     
@@ -1093,49 +1427,198 @@ def get_plan_analytics(
 
 @router.get("/enums/goals")
 def get_nutrition_goals():
-    """Obtener lista de objetivos nutricionales disponibles."""
+    """
+    🎯 **Objetivos Nutricionales Disponibles**
+    
+    Obtiene lista de objetivos nutricionales para filtrado y creación de planes.
+    Usado en formularios de creación y filtros de búsqueda.
+    
+    **Objetivos Disponibles:**
+    - `loss`: Pérdida de peso
+    - `gain`: Ganancia de peso
+    - `bulk`: Volumen/masa muscular
+    - `cut`: Definición muscular
+    - `maintain`: Mantenimiento de peso
+    
+    **Formato de Respuesta:**
+    ```json
+    [
+      {"value": "loss", "label": "Loss"},
+      {"value": "gain", "label": "Gain"},
+      {"value": "bulk", "label": "Bulk"},
+      {"value": "cut", "label": "Cut"},
+      {"value": "maintain", "label": "Maintain"}
+    ]
+    ```
+    """
     return [{"value": goal.value, "label": goal.value.replace("_", " ").title()} 
             for goal in NutritionGoal]
 
 
 @router.get("/enums/difficulty-levels")
 def get_difficulty_levels():
-    """Obtener lista de niveles de dificultad disponibles."""
+    """
+    ⚡ **Niveles de Dificultad Disponibles**
+    
+    Obtiene lista de niveles de dificultad para clasificación de planes.
+    Ayuda a usuarios a encontrar planes apropiados para su experiencia.
+    
+    **Niveles Disponibles:**
+    - `beginner`: Principiante (recetas simples, ingredientes básicos)
+    - `intermediate`: Intermedio (técnicas moderadas, ingredientes diversos)
+    - `advanced`: Avanzado (técnicas complejas, ingredientes especializados)
+    
+    **Formato de Respuesta:**
+    ```json
+    [
+      {"value": "beginner", "label": "Beginner"},
+      {"value": "intermediate", "label": "Intermediate"},
+      {"value": "advanced", "label": "Advanced"}
+    ]
+    ```
+    """
     return [{"value": level.value, "label": level.value.title()} 
             for level in DifficultyLevel]
 
 
 @router.get("/enums/budget-levels")
 def get_budget_levels():
-    """Obtener lista de niveles de presupuesto disponibles."""
+    """
+    💰 **Niveles de Presupuesto Disponibles**
+    
+    Obtiene lista de niveles de presupuesto para filtrado económico.
+    Permite a usuarios encontrar planes dentro de su rango de gasto.
+    
+    **Niveles Disponibles:**
+    - `low`: Bajo presupuesto (ingredientes económicos y accesibles)
+    - `medium`: Presupuesto medio (balance entre calidad y precio)
+    - `high`: Presupuesto alto (ingredientes premium y especializados)
+    
+    **Formato de Respuesta:**
+    ```json
+    [
+      {"value": "low", "label": "Low"},
+      {"value": "medium", "label": "Medium"},
+      {"value": "high", "label": "High"}
+    ]
+    ```
+    """
     return [{"value": level.value, "label": level.value.title()} 
             for level in BudgetLevel]
 
 
 @router.get("/enums/dietary-restrictions")
 def get_dietary_restrictions():
-    """Obtener lista de restricciones dietéticas disponibles."""
+    """
+    🚫 **Restricciones Dietéticas Disponibles**
+    
+    Obtiene lista de restricciones dietéticas para filtrado y personalización.
+    Esencial para usuarios con necesidades alimentarias específicas.
+    
+    **Restricciones Disponibles:**
+    - `vegetarian`: Vegetariano (sin carne)
+    - `vegan`: Vegano (sin productos animales)
+    - `gluten_free`: Sin gluten
+    - `dairy_free`: Sin lácteos
+    - `keto`: Dieta cetogénica
+    - `paleo`: Dieta paleolítica
+    - `low_carb`: Bajo en carbohidratos
+    - `none`: Sin restricciones
+    
+    **Formato de Respuesta:**
+    ```json
+    [
+      {"value": "vegetarian", "label": "Vegetarian"},
+      {"value": "vegan", "label": "Vegan"},
+      {"value": "gluten_free", "label": "Gluten Free"},
+      {"value": "dairy_free", "label": "Dairy Free"}
+    ]
+    ```
+    """
     return [{"value": restriction.value, "label": restriction.value.replace("_", " ").title()} 
             for restriction in DietaryRestriction]
 
 
 @router.get("/enums/meal-types")
 def get_meal_types():
-    """Obtener lista de tipos de comidas disponibles."""
+    """
+    🍽️ **Tipos de Comidas Disponibles**
+    
+    Obtiene lista de tipos de comidas para creación de contenido.
+    Usado por creadores para estructurar días de planes nutricionales.
+    
+    **Tipos Disponibles:**
+    - `breakfast`: Desayuno
+    - `lunch`: Almuerzo
+    - `dinner`: Cena
+    - `snack_morning`: Snack de media mañana
+    - `snack_afternoon`: Snack de media tarde
+    - `snack_evening`: Snack nocturno
+    
+    **Formato de Respuesta:**
+    ```json
+    [
+      {"value": "breakfast", "label": "Breakfast"},
+      {"value": "lunch", "label": "Lunch"},
+      {"value": "dinner", "label": "Dinner"},
+      {"value": "snack_morning", "label": "Snack Morning"}
+    ]
+    ```
+    """
     return [{"value": meal_type.value, "label": meal_type.value.replace("_", " ").title()} 
             for meal_type in MealType]
 
 
 @router.get("/enums/plan-types")
 def get_plan_types():
-    """Obtener lista de tipos de planes disponibles."""
+    """
+    📋 **Tipos de Planes Disponibles (Sistema Híbrido)**
+    
+    Obtiene lista de tipos de planes del sistema híbrido.
+    Fundamental para entender las opciones disponibles.
+    
+    **Tipos Disponibles:**
+    - `template`: Plan individual, cada usuario inicia cuando quiere
+    - `live`: Plan grupal sincronizado, fecha fija para todos
+    - `archived`: Plan histórico, creado desde lives terminados
+    
+    **Formato de Respuesta:**
+    ```json
+    [
+      {"value": "template", "label": "Template"},
+      {"value": "live", "label": "Live"},
+      {"value": "archived", "label": "Archived"}
+    ]
+    ```
+    """
     return [{"value": plan_type.value, "label": plan_type.value.title()} 
             for plan_type in PlanType]
 
 
 @router.get("/enums/plan-statuses")
 def get_plan_statuses():
-    """Obtener lista de estados de planes disponibles."""
+    """
+    📊 **Estados de Planes Disponibles**
+    
+    Obtiene lista de estados posibles para planes nutricionales.
+    Usado para filtrado y visualización de estado actual.
+    
+    **Estados Disponibles:**
+    - `not_started`: No iniciado (plan live futuro o usuario no ha empezado)
+    - `running`: En ejecución (plan activo y usuario participando)
+    - `finished`: Terminado (plan completado exitosamente)
+    - `archived`: Archivado (plan live convertido a template)
+    
+    **Formato de Respuesta:**
+    ```json
+    [
+      {"value": "not_started", "label": "Not Started"},
+      {"value": "running", "label": "Running"},
+      {"value": "finished", "label": "Finished"},
+      {"value": "archived", "label": "Archived"}
+    ]
+    ```
+    """
     return [{"value": status.value, "label": status.value.replace("_", " ").title()} 
             for status in PlanStatus]
 
@@ -1147,11 +1630,121 @@ def list_plans_by_type(
     db: Session = Depends(get_db),
     current_gym: Gym = Depends(verify_gym_access),
     current_user: Auth0User = Depends(get_current_user),
-    page: int = Query(1, ge=1),
-    per_page: int = Query(20, ge=1, le=100),
+    page: int = Query(1, ge=1, description="Página para paginación general"),
+    per_page: int = Query(20, ge=1, le=100, description="Elementos por página"),
 ):
     """
-    Listar planes categorizados por tipo (live, template, archived).
+    🔀 **Lista de Planes Categorizados (Vista Híbrida)**
+    
+    **Descripción:**
+    Obtiene planes organizados por categorías del sistema híbrido.
+    Ideal para interfaces que necesitan mostrar planes separados por tipo.
+    
+    **Organización por Categorías:**
+    
+    **🔴 Live Plans (Challenges Grupales):**
+    - Planes sincronizados con fecha fija
+    - Todos los usuarios empiezan al mismo tiempo
+    - Estado compartido entre participantes
+    - Contador de participantes en tiempo real
+    - Información de días hasta inicio
+    
+    **📋 Template Plans (Planes Individuales):**
+    - Planes que cada usuario inicia cuando quiere
+    - Progreso personal e independiente
+    - Disponibles permanentemente
+    - Estadísticas de popularidad
+    
+    **📚 Archived Plans (Históricos):**
+    - Planes live exitosos convertidos a templates
+    - Datos originales preservados
+    - Información de performance histórica
+    - Reutilizables como planes individuales
+    
+    **Información Específica por Tipo:**
+    
+    **Para Live Plans:**
+    - `live_participants_count`: Participantes actuales
+    - `is_live_active`: Si está actualmente activo
+    - `days_until_start`: Días restantes hasta inicio
+    - `status`: not_started, running, finished
+    
+    **Para Template Plans:**
+    - `total_followers`: Total de usuarios que lo han seguido
+    - `avg_satisfaction`: Rating promedio de satisfacción
+    - `is_followed_by_user`: Si el usuario actual lo sigue
+    
+    **Para Archived Plans:**
+    - `original_participants_count`: Participantes del live original
+    - `archived_at`: Fecha de archivado
+    - `original_live_plan_id`: ID del plan live original
+    
+    **Ejemplo de Respuesta:**
+    ```json
+    {
+      "live_plans": [
+        {
+          "id": 123,
+          "title": "Challenge Detox Enero",
+          "plan_type": "live",
+          "live_participants_count": 87,
+          "is_live_active": true,
+          "days_until_start": 0,
+          "status": "running",
+          "current_day": 5
+        }
+      ],
+      "template_plans": [
+        {
+          "id": 456,
+          "title": "Plan Pérdida Peso 30 días",
+          "plan_type": "template",
+          "total_followers": 234,
+          "avg_satisfaction": 4.2,
+          "is_followed_by_user": false
+        }
+      ],
+      "archived_plans": [
+        {
+          "id": 789,
+          "title": "Challenge Verano Exitoso",
+          "plan_type": "archived",
+          "original_participants_count": 156,
+          "archived_at": "2023-09-15T00:00:00Z",
+          "total_followers": 45
+        }
+      ],
+      "total": 3,
+      "page": 1,
+      "per_page": 20,
+      "has_next": false,
+      "has_prev": false
+    }
+    ```
+    
+    **Casos de Uso:**
+    - 🏠 Pantalla principal con secciones separadas
+    - 🎯 Navegación por tipo de experiencia deseada
+    - 📊 Dashboard administrativo categorizado
+    - 🔍 Exploración organizada de contenido
+    - 📱 Tabs o secciones en apps móviles
+    
+    **Ventajas de esta Vista:**
+    - **Claridad:** Separación clara de tipos de planes
+    - **Contexto:** Información relevante por categoría
+    - **UX:** Facilita decisión del usuario
+    - **Performance:** Cargas optimizadas por tipo
+    - **Filtrado:** Pre-filtrado automático
+    
+    **Limitaciones de Paginación:**
+    - Cada categoría está limitada a 50 elementos máximo
+    - Paginación general afecta el total combinado
+    - Para listas extensas, usar endpoints específicos por tipo
+    
+    **Comparación con GET /plans:**
+    - **GET /plans:** Lista unificada con filtros flexibles
+    - **GET /plans/hybrid:** Vista categorizada pre-organizada
+    - **Uso recomendado:** Hybrid para dashboards, /plans para búsquedas
     """
     service = NutritionService(db)
     
@@ -1269,13 +1862,135 @@ def archive_live_plan(
 
 @router.get("/plans/{plan_id}/status")
 def get_plan_status(
-    plan_id: int = Path(...),
+    plan_id: int = Path(..., description="ID del plan para obtener estado actual"),
     db: Session = Depends(get_db),
     current_gym: Gym = Depends(verify_gym_access),
     current_user: Auth0User = Depends(get_current_user)
 ):
     """
-    Obtener el estado actual de un plan (day, status, etc.).
+    📊 **Estado Actual del Plan (Información en Tiempo Real)**
+    
+    **Descripción:**
+    Obtiene el estado actual detallado de un plan específico para el usuario.
+    Información dinámica que se actualiza en tiempo real según el tipo de plan.
+    
+    **Información de Estado Incluida:**
+    
+    **📅 Estado Temporal:**
+    - `current_day`: Día actual del plan (calculado según tipo)
+    - `status`: Estado actual (not_started, running, finished)
+    - `days_until_start`: Días restantes hasta inicio (solo para live futuros)
+    
+    **🔄 Estado del Plan:**
+    - `plan_type`: Tipo de plan (template, live, archived)
+    - `is_live_active`: Si un plan live está actualmente activo
+    - `live_participants_count`: Número actual de participantes (live plans)
+    
+    **👤 Estado del Usuario:**
+    - `is_following`: Si el usuario actual está siguiendo el plan
+    - `user_start_date`: Cuándo empezó el usuario (si está siguiendo)
+    - `user_progress`: Progreso personal del usuario
+    
+    **Cálculo de `current_day` por Tipo:**
+    
+    **Template/Archived Plans:**
+    ```
+    current_day = días_desde_que_usuario_empezó + 1
+    Ejemplo: Usuario empezó hace 14 días → current_day = 15
+    ```
+    
+    **Live Plans:**
+    ```
+    current_day = días_desde_fecha_global_del_plan + 1
+    Ejemplo: Plan empezó hace 4 días → current_day = 5 (para todos)
+    ```
+    
+    **Estados Posibles:**
+    - **not_started**: Usuario no ha empezado o plan live futuro
+    - **running**: Plan activo y usuario participando
+    - **finished**: Plan completado (duración alcanzada)
+    
+    **Ejemplo de Respuesta - Plan Live Activo:**
+    ```json
+    {
+      "plan_id": 123,
+      "plan_type": "live",
+      "current_day": 5,
+      "status": "running",
+      "days_until_start": 0,
+      "is_live_active": true,
+      "live_participants_count": 87,
+      "is_following": true,
+      "user_start_date": "2024-01-10T00:00:00Z",
+      "user_progress": {
+        "meals_completed_today": 2,
+        "total_meals_today": 3,
+        "completion_percentage": 66.7
+      }
+    }
+    ```
+    
+    **Ejemplo de Respuesta - Plan Live Futuro:**
+    ```json
+    {
+      "plan_id": 456,
+      "plan_type": "live",
+      "current_day": 0,
+      "status": "not_started",
+      "days_until_start": 7,
+      "is_live_active": false,
+      "live_participants_count": 23,
+      "is_following": true,
+      "user_start_date": null
+    }
+    ```
+    
+    **Ejemplo de Respuesta - Template Plan:**
+    ```json
+    {
+      "plan_id": 789,
+      "plan_type": "template",
+      "current_day": 12,
+      "status": "running",
+      "days_until_start": null,
+      "is_live_active": null,
+      "live_participants_count": null,
+      "is_following": true,
+      "user_start_date": "2024-01-03T00:00:00Z",
+      "user_progress": {
+        "total_days_completed": 11,
+        "overall_completion_rate": 78.5
+      }
+    }
+    ```
+    
+    **Actualizaciones Automáticas:**
+    - Estados de planes live se actualizan automáticamente
+    - Contadores de participantes en tiempo real
+    - Verificación de fechas de finalización
+    - Cálculo dinámico de días transcurridos
+    
+    **Casos de Uso:**
+    - 📱 Widgets de estado en tiempo real
+    - 🔔 Triggers para notificaciones
+    - 📊 Dashboards de progreso
+    - 🎯 Lógica condicional en frontend
+    - ⏰ Cálculo de elementos dependientes del tiempo
+    
+    **Optimización:**
+    - Endpoint ligero optimizado para llamadas frecuentes
+    - Cálculos eficientes en tiempo real
+    - Datos mínimos necesarios para estado
+    - Cache-friendly para polling
+    
+    **Permisos:**
+    - ✅ Cualquier usuario puede ver estado de planes públicos
+    - 🔒 Planes privados solo creador y seguidores
+    - 📊 Información de progreso solo para seguidores
+    
+    **Códigos de Error:**
+    - `403`: Sin acceso a plan privado
+    - `404`: Plan no encontrado o no pertenece al gimnasio
     """
     service = NutritionService(db)
     
