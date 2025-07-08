@@ -24,8 +24,9 @@ from app.schemas.nutrition import (
 )
 from app.services.nutrition import NutritionService, NotFoundError, ValidationError, PermissionError
 from app.services.user import user_service
+from app.core.dependencies import module_enabled
 
-router = APIRouter()
+router = APIRouter(dependencies=[module_enabled("nutrition")])
 
 
 @router.get("/plans", response_model=NutritionPlanListResponse)
