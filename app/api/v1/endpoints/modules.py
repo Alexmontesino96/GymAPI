@@ -55,7 +55,7 @@ async def activate_module(
     db: Session = Depends(get_db),
     gym_id: int = Depends(get_tenant_id),
     module_code: str = Path(..., title="Código del módulo a activar"),
-    current_user: Auth0User = Security(auth.get_user, scopes=["admin:modules"])
+    current_user: Auth0User = Security(auth.get_user)
 ):
     """
     Activar un módulo para el gimnasio actual.
