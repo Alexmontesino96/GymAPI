@@ -25,7 +25,9 @@ from app.schemas.membership import (
     MembershipSummary,
     UserMembership,
     PurchaseMembershipRequest,
-    PurchaseMembershipResponse
+    PurchaseMembershipResponse,
+    AdminPaymentLinkResponse,
+    AdminCreatePaymentLinkRequest
 )
 from app.services.membership import membership_service
 from app.services.stripe_service import StripeService
@@ -892,6 +894,145 @@ async def purchase_membership(
         raise
     except Exception as e:
         logger.error(f"❌ Error inesperado en compra: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500, 
+            detail="Error interno del servidor. Si el problema persiste, contacta al soporte técnico."
+        )
+
+
+@router.post("/admin/create-payment-link", response_model=AdminPaymentLinkResponse)
+@limiter.limit("10 per minute")
+async def admin_create_payment_link(
+    request: Request,
+    payment_data: AdminCreatePaymentLinkRequest,
+    db: Session = Depends(get_db),
+    current_user: Auth0User = Depends(auth.get_user),
+    current_gym: GymSchema = Depends(verify_gym_admin_access),
+    _: None = Depends(billing_module_required)
+) -> AdminPaymentLinkResponse:
+    """
+    Crear link de pago administrativo para un usuario específico.
+    
+    Este endpoint permite a los administradores crear links de pago
+    personalizados para usuarios específicos. Útil para ventas directas,
+    pagos manuales o cuando un usuario necesita ayuda con el proceso.
+    
+    Args:
+        payment_data: Datos del link de pago (user_id, plan_id, URLs opcionales, notas)
+        db: Sesión de base de datos
+        current_user: Administrador autenticado
+        current_gym: Gimnasio verificado
+        
+    Returns:
+        AdminPaymentLinkResponse: URL de checkout y detalles completos
+        
+    Raises:
+        HTTPException: 404 si el usuario/plan no existe, 400 si hay error de Stripe
+    """
+    try:
+        # Log del request recibido
+        logger.info(f"📥 Solicitud ADMIN de link de pago - Plan ID: {payment_data.plan_id}, Usuario: {payment_data.user_id}, Admin: {current_user.id}")
+        
+        # Verificar que el plan existe y pertenece al gimnasio actual
+        logger.info(f"🔍 Validando plan {payment_data.plan_id} para gym {current_gym.id}")
+        plan = membership_service.get_membership_plan(db, payment_data.plan_id)
+        
+        if not plan:
+            logger.error(f"❌ Plan {payment_data.plan_id} no encontrado en la base de datos")
+            raise HTTPException(
+                status_code=404,
+                detail=f"El plan de membresía con ID {payment_data.plan_id} no existe."
+            )
+            
+        if plan.gym_id != current_gym.id:
+            logger.error(f"❌ Plan {payment_data.plan_id} pertenece a gym {plan.gym_id}, no a {current_gym.id}")
+            raise HTTPException(
+                status_code=403,
+                detail=f"El plan '{plan.name}' no está disponible en este gimnasio."
+            )
+        
+        if not plan.is_active:
+            logger.error(f"❌ Plan {payment_data.plan_id} está inactivo")
+            raise HTTPException(
+                status_code=400,
+                detail=f"El plan '{plan.name}' está temporalmente desactivado."
+            )
+            
+        # Verificar que el plan tenga configuración de Stripe
+        if not plan.stripe_price_id:
+            logger.error(f"❌ Plan {payment_data.plan_id} no tiene configuración de Stripe")
+            raise HTTPException(
+                status_code=503,
+                detail=f"El plan '{plan.name}' no está configurado para pagos. Contacta al administrador del gimnasio."
+            )
+
+        # Verificar que el usuario existe en el sistema
+        logger.info(f"🔍 Validando usuario {payment_data.user_id}")
+        from app.models.user import User
+        target_user = db.query(User).filter(User.id == payment_data.user_id).first()
+        
+        if not target_user:
+            logger.error(f"❌ Usuario {payment_data.user_id} no encontrado")
+            raise HTTPException(
+                status_code=404,
+                detail=f"El usuario con ID {payment_data.user_id} no existe."
+            )
+
+        # Verificar que el usuario tiene acceso al gimnasio (opcional - puede ser para invitar nuevos usuarios)
+        from app.models.user_gym import UserGym
+        user_gym_relation = db.query(UserGym).filter(
+            UserGym.user_id == payment_data.user_id,
+            UserGym.gym_id == current_gym.id
+        ).first()
+        
+        if not user_gym_relation:
+            logger.info(f"ℹ️ Usuario {payment_data.user_id} no está registrado en gym {current_gym.id} - creando link para nuevo miembro")
+        
+        logger.info(f"✅ Usuario encontrado: {target_user.email}")
+        
+        # Crear sesión de checkout administrativa con Stripe
+        logger.info(f"🔍 Creando checkout session ADMIN - User: {payment_data.user_id}, Gym: {current_gym.id}, Plan: {payment_data.plan_id}")
+        checkout_data = await stripe_service.create_admin_checkout_session(
+            db=db,
+            user_id=str(payment_data.user_id),
+            gym_id=current_gym.id,
+            plan_id=payment_data.plan_id,
+            admin_email=current_user.email,
+            notes=payment_data.notes,
+            expires_in_hours=payment_data.expires_in_hours or 24,
+            success_url=payment_data.success_url,
+            cancel_url=payment_data.cancel_url
+        )
+        
+        logger.info(f"✅ Link de pago administrativo creado por {current_user.email} para usuario {target_user.email}")
+        
+        return AdminPaymentLinkResponse(
+            checkout_url=checkout_data['checkout_url'],
+            session_id=checkout_data['checkout_session_id'],
+            plan_name=checkout_data['plan_name'],
+            price_amount=checkout_data['price'],
+            currency=checkout_data['currency'],
+            user_email=checkout_data['user_email'],
+            user_name=checkout_data['user_name'],
+            expires_at=checkout_data['expires_at'],
+            notes=checkout_data['notes'],
+            created_by_admin=checkout_data['created_by_admin']
+        )
+        
+    except ValueError as e:
+        logger.error(f"❌ ValueError en creación admin: {str(e)}")
+        if "stripe" in str(e).lower():
+            raise HTTPException(
+                status_code=503, 
+                detail=f"Error de configuración de pagos: {str(e)}"
+            )
+        else:
+            raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        # Re-raise HTTPExceptions para mantener el status code original
+        raise
+    except Exception as e:
+        logger.error(f"❌ Error inesperado en creación admin: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=500, 
             detail="Error interno del servidor. Si el problema persiste, contacta al soporte técnico."

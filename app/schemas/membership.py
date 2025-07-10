@@ -209,6 +209,16 @@ class PurchaseMembershipRequest(BaseModel):
     cancel_url: Optional[str] = Field(None, description="URL de cancelación personalizada")
 
 
+class AdminCreatePaymentLinkRequest(BaseModel):
+    """Solicitud administrativa para crear link de pago para un usuario específico"""
+    user_id: int = Field(..., gt=0, description="ID del usuario que debe pagar")
+    plan_id: int = Field(..., gt=0, description="ID del plan a comprar")
+    success_url: Optional[str] = Field(None, description="URL de éxito personalizada")
+    cancel_url: Optional[str] = Field(None, description="URL de cancelación personalizada")
+    notes: Optional[str] = Field(None, max_length=500, description="Notas adicionales sobre el pago")
+    expires_in_hours: Optional[int] = Field(24, ge=1, le=168, description="Link expira en X horas (1-168, default: 24)")
+
+
 class PurchaseMembershipResponse(BaseModel):
     """Respuesta al iniciar compra de membresía"""
     checkout_url: str = Field(..., description="URL de checkout de Stripe")
@@ -216,6 +226,20 @@ class PurchaseMembershipResponse(BaseModel):
     plan_name: str
     price_amount: float
     currency: str
+
+
+class AdminPaymentLinkResponse(BaseModel):
+    """Respuesta administrativa al crear link de pago"""
+    checkout_url: str = Field(..., description="URL de checkout de Stripe")
+    session_id: str = Field(..., description="ID de sesión de Stripe")
+    plan_name: str
+    price_amount: float
+    currency: str
+    user_email: str = Field(..., description="Email del usuario destinatario")
+    user_name: str = Field(..., description="Nombre del usuario destinatario")
+    expires_at: datetime = Field(..., description="Fecha de expiración del link")
+    notes: Optional[str] = Field(None, description="Notas adicionales")
+    created_by_admin: str = Field(..., description="Email del administrador que creó el link")
 
 
 # === Esquemas para listados ===
