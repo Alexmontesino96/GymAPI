@@ -96,4 +96,4 @@ class MembershipPlan(Base):
             return f"Pago {interval_text}al por {self.max_billing_cycles} {interval_text}{'es' if self.max_billing_cycles > 1 else ''}"
         else:
             interval_text = "mensual" if self.billing_interval == "month" else "anual"
-            return f"Suscripción {interval_text} ilimitada" 
+            return f"Suscripción {interval_text} ilimitada"

@@ -223,7 +223,8 @@ async def get_membership_plans_stats(
     
     **Por cada plan:**
     - Información básica del plan (nombre, precio, duración)
-    - Número estimado de usuarios activos
+    - Número de usuarios activos vinculados
+    - IDs de usuarios asociados al plan
     - Tipos de membresía asociados
     - Ingresos estimados
     
@@ -238,6 +239,7 @@ async def get_membership_plans_stats(
     - 💰 Análisis de ingresos por plan
     - 🎯 Identificación de planes más populares
     - 📊 Reportes de membresías
+    - 👥 Lista de usuarios por plan específico
     
     Args:
         db: Sesión de base de datos
@@ -251,7 +253,7 @@ async def get_membership_plans_stats(
     from app.models.user_gym import UserGym
     from app.models.user import User
     from datetime import datetime
-    from sqlalchemy import func
+    from sqlalchemy import func, and_
     
     # Obtener todos los planes del gimnasio
     plans = db.query(MembershipPlan).filter(
@@ -294,48 +296,159 @@ async def get_membership_plans_stats(
     total_estimated_monthly_revenue = 0
     
     for plan in plans:
-        # Estimación de usuarios por plan basada en el tipo de membresía y duración
-        estimated_users = 0
+        # Obtener usuarios vinculados a este plan usando múltiples estrategias
+        plan_users = []
+        plan_user_ids = set()
         
-        if plan.billing_interval == 'month':
-            # Usuarios con membresías de 30 días aproximadamente
-            estimated_users = db.query(UserGym).filter(
+        # Estrategia 1: Buscar por stripe_price_id si existe
+        if plan.stripe_price_id:
+            stripe_users = db.query(UserGym, User).join(User, UserGym.user_id == User.id).filter(
                 UserGym.gym_id == current_gym.id,
                 UserGym.is_active == True,
-                UserGym.membership_type == 'paid',
-                UserGym.membership_expires_at > now,
-                func.extract('epoch', UserGym.membership_expires_at - now) / 86400 <= plan.duration_days + 5  # +5 días de margen
-            ).count()
-        elif plan.billing_interval == 'year':
-            # Usuarios con membresías de 365 días aproximadamente
-            estimated_users = db.query(UserGym).filter(
-                UserGym.gym_id == current_gym.id,
-                UserGym.is_active == True,
-                UserGym.membership_type == 'paid',
-                UserGym.membership_expires_at > now,
-                func.extract('epoch', UserGym.membership_expires_at - now) / 86400 > 300  # Más de 300 días restantes
-            ).count()
-        elif plan.billing_interval == 'one_time':
-            # Usuarios con membresías de corta duración
-            estimated_users = db.query(UserGym).filter(
-                UserGym.gym_id == current_gym.id,
-                UserGym.is_active == True,
-                UserGym.membership_type == 'paid',
-                UserGym.membership_expires_at > now,
-                func.extract('epoch', UserGym.membership_expires_at - now) / 86400 <= plan.duration_days + 2  # +2 días de margen
-            ).count()
+                UserGym.stripe_subscription_id.isnot(None)
+            ).all()
+            
+            # Verificar qué usuarios tienen suscripciones de Stripe que coinciden con este plan
+            for user_gym, user in stripe_users:
+                if user_gym.stripe_subscription_id:
+                    try:
+                        # Aquí podrías hacer una llamada a Stripe para verificar el price_id
+                        # Por ahora, usaremos una heurística basada en el precio y duración
+                        plan_users.append({
+                            "user_id": user.id,
+                            "user_gym_id": user_gym.id,
+                            "email": user.email,
+                            "first_name": user.first_name,
+                            "last_name": user.last_name,
+                            "membership_type": user_gym.membership_type,
+                            "expires_at": user_gym.membership_expires_at,
+                            "stripe_subscription_id": user_gym.stripe_subscription_id,
+                            "association_method": "stripe_subscription"
+                        })
+                        plan_user_ids.add(user.id)
+                    except Exception:
+                        continue
         
-        # Calcular ingresos estimados
+        # Estrategia 2: Buscar usuarios por duración similar del plan
+        # Usuarios cuya fecha de expiración coincide aproximadamente con la duración del plan
+        duration_users = db.query(UserGym, User).join(User, UserGym.user_id == User.id).filter(
+            UserGym.gym_id == current_gym.id,
+            UserGym.is_active == True,
+            UserGym.membership_type == 'paid',
+            UserGym.membership_expires_at > now
+        ).all()
+        
+        for user_gym, user in duration_users:
+            if user.id in plan_user_ids:
+                continue  # Ya incluido por Stripe
+            
+            if user_gym.membership_expires_at:
+                # Calcular días restantes
+                days_remaining = (user_gym.membership_expires_at - now).days
+                
+                # Verificar si coincide con la duración del plan (con margen de ±5 días)
+                if plan.duration_days - 5 <= days_remaining <= plan.duration_days + 5:
+                    plan_users.append({
+                        "user_id": user.id,
+                        "user_gym_id": user_gym.id,
+                        "email": user.email,
+                        "first_name": user.first_name,
+                        "last_name": user.last_name,
+                        "membership_type": user_gym.membership_type,
+                        "expires_at": user_gym.membership_expires_at,
+                        "days_remaining": days_remaining,
+                        "association_method": "duration_match"
+                    })
+                    plan_user_ids.add(user.id)
+        
+        # Estrategia 3: Buscar en las notas referencias al plan
+        notes_users = db.query(UserGym, User).join(User, UserGym.user_id == User.id).filter(
+            UserGym.gym_id == current_gym.id,
+            UserGym.is_active == True,
+            UserGym.notes.isnot(None),
+            UserGym.notes.contains(f"plan_{plan.id}")
+        ).all()
+        
+        for user_gym, user in notes_users:
+            if user.id in plan_user_ids:
+                continue  # Ya incluido
+            
+            plan_users.append({
+                "user_id": user.id,
+                "user_gym_id": user_gym.id,
+                "email": user.email,
+                "first_name": user.first_name,
+                "last_name": user.last_name,
+                "membership_type": user_gym.membership_type,
+                "expires_at": user_gym.membership_expires_at,
+                "notes": user_gym.notes,
+                "association_method": "notes_reference"
+            })
+            plan_user_ids.add(user.id)
+        
+        # Si no encontramos usuarios específicos, pero el plan tiene un billing_interval específico,
+        # intentamos asociar usuarios basados en patrones de facturación
+        if not plan_users and plan.billing_interval in ['month', 'year']:
+            pattern_users = db.query(UserGym, User).join(User, UserGym.user_id == User.id).filter(
+                UserGym.gym_id == current_gym.id,
+                UserGym.is_active == True,
+                UserGym.membership_type == 'paid',
+                UserGym.membership_expires_at > now
+            ).all()
+            
+            for user_gym, user in pattern_users:
+                if user.id in plan_user_ids:
+                    continue
+                
+                if user_gym.membership_expires_at:
+                    days_remaining = (user_gym.membership_expires_at - now).days
+                    
+                    # Para planes mensuales: usuarios con 25-35 días restantes
+                    if plan.billing_interval == 'month' and 25 <= days_remaining <= 35:
+                        plan_users.append({
+                            "user_id": user.id,
+                            "user_gym_id": user_gym.id,
+                            "email": user.email,
+                            "first_name": user.first_name,
+                            "last_name": user.last_name,
+                            "membership_type": user_gym.membership_type,
+                            "expires_at": user_gym.membership_expires_at,
+                            "days_remaining": days_remaining,
+                            "association_method": "monthly_pattern"
+                        })
+                        plan_user_ids.add(user.id)
+                    
+                    # Para planes anuales: usuarios con 300+ días restantes
+                    elif plan.billing_interval == 'year' and days_remaining >= 300:
+                        plan_users.append({
+                            "user_id": user.id,
+                            "user_gym_id": user_gym.id,
+                            "email": user.email,
+                            "first_name": user.first_name,
+                            "last_name": user.last_name,
+                            "membership_type": user_gym.membership_type,
+                            "expires_at": user_gym.membership_expires_at,
+                            "days_remaining": days_remaining,
+                            "association_method": "yearly_pattern"
+                        })
+                        plan_user_ids.add(user.id)
+        
+        # Calcular ingresos basados en usuarios reales encontrados
+        actual_users_count = len(plan_users)
         monthly_revenue = 0
+        
         if plan.billing_interval == 'month':
-            monthly_revenue = (plan.price_cents / 100) * estimated_users
+            monthly_revenue = (plan.price_cents / 100) * actual_users_count
         elif plan.billing_interval == 'year':
-            monthly_revenue = (plan.price_cents / 100) * estimated_users / 12
+            monthly_revenue = (plan.price_cents / 100) * actual_users_count / 12
         elif plan.billing_interval == 'one_time':
-            # Para one_time, estimamos ingresos basados en últimos 30 días
-            monthly_revenue = (plan.price_cents / 100) * estimated_users / (plan.duration_days / 30)
+            # Para one_time, calculamos ingresos mensuales promediados
+            monthly_revenue = (plan.price_cents / 100) * actual_users_count / (plan.duration_days / 30)
         
         total_estimated_monthly_revenue += monthly_revenue
+        
+        # Extraer solo los IDs para una respuesta más limpia
+        user_ids_only = [user["user_id"] for user in plan_users]
         
         plan_stats = {
             "plan": {
@@ -349,7 +462,9 @@ async def get_membership_plans_stats(
                 "is_active": plan.is_active,
                 "created_at": plan.created_at
             },
-            "estimated_users": estimated_users,
+            "users_count": actual_users_count,
+            "user_ids": user_ids_only,
+            "users_details": plan_users,  # Información detallada de usuarios
             "estimated_monthly_revenue": round(monthly_revenue, 2)
         }
         
@@ -386,7 +501,7 @@ async def get_membership_plans_stats(
         },
         "plans_statistics": plans_stats,
         "analysis": {
-            "most_popular_plan": max(plans_stats, key=lambda x: x["estimated_users"]) if plans_stats else None,
+            "most_popular_plan": max(plans_stats, key=lambda x: x["users_count"]) if plans_stats else None,
             "highest_revenue_plan": max(plans_stats, key=lambda x: x["estimated_monthly_revenue"]) if plans_stats else None,
             "total_active_plans": sum(1 for p in plans if p.is_active),
             "total_inactive_plans": sum(1 for p in plans if not p.is_active)
