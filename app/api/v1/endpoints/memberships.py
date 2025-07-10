@@ -33,7 +33,7 @@ from app.services.user import user_service
 from app.db.redis_client import get_redis_client
 from app.middleware.rate_limit import limiter
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -123,7 +123,6 @@ async def create_membership_plan(
         # Crear plan usando gym_id del middleware (más limpio)
         plan = await membership_service.create_membership_plan(db, current_gym.id, plan_data)
         logger.info(f"Plan creado por admin {current_user.id}: {plan.name} en gym {current_gym.id}")
-        
         return plan
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -204,6 +203,196 @@ async def get_membership_plan(
         )
     
     return plan
+
+
+# 🆕 NUEVO ENDPOINT: Estadísticas de Usuarios por Plan de Membresía
+@router.get("/plans-stats")
+async def get_membership_plans_stats(
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: Auth0User = Depends(auth.get_user),
+    current_gym: GymSchema = Depends(verify_gym_admin_access)
+):
+    """
+    📊 **Estadísticas de usuarios por plan de membresía**
+    
+    Este endpoint proporciona estadísticas detalladas sobre la cantidad de usuarios
+    asociados a cada plan de membresía y tipos de membresía en el gimnasio.
+    
+    **Información Proporcionada:**
+    
+    **Por cada plan:**
+    - Información básica del plan (nombre, precio, duración)
+    - Número estimado de usuarios activos
+    - Tipos de membresía asociados
+    - Ingresos estimados
+    
+    **Estadísticas generales:**
+    - Total de usuarios activos por tipo de membresía
+    - Usuarios con membresías expiradas
+    - Usuarios con membresías de prueba
+    - Distribución por tipo de pago
+    
+    **Casos de Uso:**
+    - 📈 Dashboard administrativo
+    - 💰 Análisis de ingresos por plan
+    - 🎯 Identificación de planes más populares
+    - 📊 Reportes de membresías
+    
+    Args:
+        db: Sesión de base de datos
+        current_user: Usuario administrador autenticado
+        current_gym: Gimnasio verificado
+        
+    Returns:
+        dict: Estadísticas completas de planes y usuarios
+    """
+    from app.models.membership import MembershipPlan
+    from app.models.user_gym import UserGym
+    from app.models.user import User
+    from datetime import datetime
+    from sqlalchemy import func
+    
+    # Obtener todos los planes del gimnasio
+    plans = db.query(MembershipPlan).filter(
+        MembershipPlan.gym_id == current_gym.id
+    ).all()
+    
+    # Estadísticas generales de usuarios en el gimnasio
+    now = datetime.utcnow()
+    
+    # Usuarios activos por tipo de membresía
+    total_users = db.query(UserGym).filter(
+        UserGym.gym_id == current_gym.id
+    ).count()
+    
+    active_users = db.query(UserGym).filter(
+        UserGym.gym_id == current_gym.id,
+        UserGym.is_active == True,
+        (UserGym.membership_expires_at.is_(None)) | (UserGym.membership_expires_at > now)
+    ).count()
+    
+    expired_users = db.query(UserGym).filter(
+        UserGym.gym_id == current_gym.id,
+        UserGym.membership_expires_at < now
+    ).count()
+    
+    # Usuarios por tipo de membresía
+    membership_types = db.query(
+        UserGym.membership_type,
+        func.count(UserGym.id).label('count')
+    ).filter(
+        UserGym.gym_id == current_gym.id,
+        UserGym.is_active == True
+    ).group_by(UserGym.membership_type).all()
+    
+    # Convertir a diccionario para fácil acceso
+    membership_type_counts = {mt[0]: mt[1] for mt in membership_types}
+    
+    # Estadísticas por plan
+    plans_stats = []
+    total_estimated_monthly_revenue = 0
+    
+    for plan in plans:
+        # Estimación de usuarios por plan basada en el tipo de membresía y duración
+        estimated_users = 0
+        
+        if plan.billing_interval == 'month':
+            # Usuarios con membresías de 30 días aproximadamente
+            estimated_users = db.query(UserGym).filter(
+                UserGym.gym_id == current_gym.id,
+                UserGym.is_active == True,
+                UserGym.membership_type == 'paid',
+                UserGym.membership_expires_at > now,
+                func.extract('epoch', UserGym.membership_expires_at - now) / 86400 <= plan.duration_days + 5  # +5 días de margen
+            ).count()
+        elif plan.billing_interval == 'year':
+            # Usuarios con membresías de 365 días aproximadamente
+            estimated_users = db.query(UserGym).filter(
+                UserGym.gym_id == current_gym.id,
+                UserGym.is_active == True,
+                UserGym.membership_type == 'paid',
+                UserGym.membership_expires_at > now,
+                func.extract('epoch', UserGym.membership_expires_at - now) / 86400 > 300  # Más de 300 días restantes
+            ).count()
+        elif plan.billing_interval == 'one_time':
+            # Usuarios con membresías de corta duración
+            estimated_users = db.query(UserGym).filter(
+                UserGym.gym_id == current_gym.id,
+                UserGym.is_active == True,
+                UserGym.membership_type == 'paid',
+                UserGym.membership_expires_at > now,
+                func.extract('epoch', UserGym.membership_expires_at - now) / 86400 <= plan.duration_days + 2  # +2 días de margen
+            ).count()
+        
+        # Calcular ingresos estimados
+        monthly_revenue = 0
+        if plan.billing_interval == 'month':
+            monthly_revenue = (plan.price_cents / 100) * estimated_users
+        elif plan.billing_interval == 'year':
+            monthly_revenue = (plan.price_cents / 100) * estimated_users / 12
+        elif plan.billing_interval == 'one_time':
+            # Para one_time, estimamos ingresos basados en últimos 30 días
+            monthly_revenue = (plan.price_cents / 100) * estimated_users / (plan.duration_days / 30)
+        
+        total_estimated_monthly_revenue += monthly_revenue
+        
+        plan_stats = {
+            "plan": {
+                "id": plan.id,
+                "name": plan.name,
+                "description": plan.description,
+                "price_amount": plan.price_cents / 100,
+                "currency": plan.currency,
+                "billing_interval": plan.billing_interval,
+                "duration_days": plan.duration_days,
+                "is_active": plan.is_active,
+                "created_at": plan.created_at
+            },
+            "estimated_users": estimated_users,
+            "estimated_monthly_revenue": round(monthly_revenue, 2)
+        }
+        
+        plans_stats.append(plan_stats)
+    
+    # Usuarios recientes (últimos 30 días)
+    recent_users = db.query(UserGym).filter(
+        UserGym.gym_id == current_gym.id,
+        UserGym.created_at >= now - timedelta(days=30)
+    ).count()
+    
+    # Usuarios con membresías próximas a expirar (próximos 7 días)
+    expiring_soon = db.query(UserGym).filter(
+        UserGym.gym_id == current_gym.id,
+        UserGym.is_active == True,
+        UserGym.membership_expires_at > now,
+        UserGym.membership_expires_at <= now + timedelta(days=7)
+    ).count()
+    
+    return {
+        "summary": {
+            "total_users": total_users,
+            "active_users": active_users,
+            "expired_users": expired_users,
+            "recent_users_30_days": recent_users,
+            "expiring_soon_7_days": expiring_soon,
+            "estimated_monthly_revenue": round(total_estimated_monthly_revenue, 2),
+            "currency": plans[0].currency if plans else "EUR"
+        },
+        "membership_types": {
+            "free": membership_type_counts.get('free', 0),
+            "paid": membership_type_counts.get('paid', 0),
+            "trial": membership_type_counts.get('trial', 0)
+        },
+        "plans_statistics": plans_stats,
+        "analysis": {
+            "most_popular_plan": max(plans_stats, key=lambda x: x["estimated_users"]) if plans_stats else None,
+            "highest_revenue_plan": max(plans_stats, key=lambda x: x["estimated_monthly_revenue"]) if plans_stats else None,
+            "total_active_plans": sum(1 for p in plans if p.is_active),
+            "total_inactive_plans": sum(1 for p in plans if not p.is_active)
+        },
+        "generated_at": datetime.utcnow()
+    }
 
 
 @router.put("/plans/{plan_id}", response_model=MembershipPlan)
@@ -427,7 +616,7 @@ async def get_user_membership_status(
     status_info = membership_service.get_membership_status(
         db, user_id, current_gym.id
     )
-    
+
     return status_info
 
 
@@ -551,7 +740,7 @@ async def purchase_membership(
             )
             
         logger.info(f"✅ Usuario local encontrado: ID {local_user.id}")
-
+        
         # Crear sesión de checkout con Stripe
         logger.info(f"🔍 Creando checkout session - User: {local_user.id}, Gym: {current_gym.id}, Plan: {purchase_data.plan_id}")
         checkout_data = await stripe_service.create_checkout_session(

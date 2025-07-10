@@ -40,6 +40,7 @@ class StripeService:
         try:
             # Obtener el plan de membresía con información del gimnasio
             from app.models.gym import Gym
+            from datetime import datetime, timedelta
             
             plan = db.query(MembershipPlan).filter(
                 MembershipPlan.id == plan_id,
@@ -63,17 +64,20 @@ class StripeService:
             success_url = success_url or settings.STRIPE_SUCCESS_URL
             cancel_url = cancel_url or settings.STRIPE_CANCEL_URL
 
-            # Crear la sesión de checkout
-            checkout_session = stripe.checkout.Session.create(
-                payment_method_types=['card'],
-                line_items=[{
+            # Configurar modo de pago
+            mode = 'subscription' if plan.billing_interval != 'one_time' else 'payment'
+            
+            # Preparar datos base para el checkout
+            checkout_data = {
+                'payment_method_types': ['card'],
+                'line_items': [{
                     'price': plan.stripe_price_id,
                     'quantity': 1,
                 }],
-                mode='subscription' if plan.billing_interval != 'one_time' else 'payment',
-                success_url=f"{success_url}?session_id={{CHECKOUT_SESSION_ID}}",
-                cancel_url=cancel_url,
-                metadata={
+                'mode': mode,
+                'success_url': f"{success_url}?session_id={{CHECKOUT_SESSION_ID}}",
+                'cancel_url': cancel_url,
+                'metadata': {
                     'user_id': user_id,
                     'gym_id': str(gym_id),
                     'gym_name': gym.name,
@@ -84,18 +88,72 @@ class StripeService:
                     'billing_interval': plan.billing_interval,
                     'platform': 'gymapi'
                 },
-                allow_promotion_codes=True,
-            )
+                'allow_promotion_codes': True,
+            }
+
+            # 🆕 SOPORTE PARA SUSCRIPCIONES CON CICLOS LIMITADOS
+            if mode == 'subscription' and plan.is_limited_duration:
+                # Calcular fecha de cancelación automática
+                now = datetime.now()
+                
+                if plan.billing_interval == 'month':
+                    # Para mensual: cancelar después de N meses
+                    cancel_date = now + timedelta(days=plan.max_billing_cycles * 30)
+                elif plan.billing_interval == 'year':
+                    # Para anual: cancelar después de N años  
+                    cancel_date = now + timedelta(days=plan.max_billing_cycles * 365)
+                else:
+                    cancel_date = now + timedelta(days=plan.duration_days)
+                
+                # Convertir a timestamp Unix
+                cancel_timestamp = int(cancel_date.timestamp())
+                
+                # Agregar configuración de suscripción con cancelación automática
+                checkout_data['subscription_data'] = {
+                    'cancel_at': cancel_timestamp,
+                    'metadata': {
+                        'gym_id': str(gym_id),
+                        'plan_id': str(plan_id),
+                        'max_billing_cycles': str(plan.max_billing_cycles),
+                        'limited_duration': 'true',
+                        'auto_cancel_date': cancel_date.isoformat()
+                    }
+                }
+                
+                # Actualizar metadatos del checkout
+                checkout_data['metadata'].update({
+                    'max_billing_cycles': str(plan.max_billing_cycles),
+                    'limited_duration': 'true',
+                    'subscription_type': 'limited_cycles'
+                })
+                
+                logger.info(f"Suscripción con ciclos limitados: {plan.max_billing_cycles} ciclos, cancelación automática: {cancel_date}")
+
+            # Crear la sesión de checkout
+            checkout_session = stripe.checkout.Session.create(**checkout_data)
 
             logger.info(f"Sesión de checkout creada: {checkout_session.id} para usuario {user_id}")
             
-            return {
+            # Preparar respuesta con información adicional
+            response = {
                 'checkout_session_id': checkout_session.id,
                 'checkout_url': checkout_session.url,
                 'plan_name': plan.name,
                 'price': plan.price_cents / 100,  # Convertir a euros/dólares
-                'currency': plan.currency
+                'currency': plan.currency,
+                'is_limited_duration': plan.is_limited_duration,
+                'subscription_description': plan.subscription_description
             }
+            
+            # Agregar información de duración limitada si aplica
+            if plan.is_limited_duration:
+                response.update({
+                    'max_billing_cycles': plan.max_billing_cycles,
+                    'total_duration_days': plan.total_duration_days,
+                    'auto_cancel_date': cancel_date.isoformat() if mode == 'subscription' else None
+                })
+            
+            return response
 
         except stripe.error.StripeError as e:
             logger.error(f"Error de Stripe al crear checkout: {str(e)}")

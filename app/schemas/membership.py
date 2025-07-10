@@ -14,6 +14,7 @@ class MembershipPlanBase(BaseModel):
     currency: str = Field("EUR", min_length=3, max_length=3, description="Código de moneda")
     billing_interval: str = Field(..., description="Intervalo de facturación: month, year, one_time")
     duration_days: int = Field(..., ge=1, description="Duración en días")
+    max_billing_cycles: Optional[int] = Field(None, ge=1, description="Máximo número de ciclos de facturación (None = ilimitado)")
     is_active: bool = Field(True, description="Si el plan está activo")
     features: Optional[str] = Field(None, description="Características del plan (JSON)")
     max_bookings_per_month: Optional[int] = Field(None, ge=0, description="Límite de reservas mensuales")
@@ -28,6 +29,17 @@ class MembershipPlanBase(BaseModel):
     @validator('currency')
     def validate_currency(cls, v):
         return v.upper()
+    
+    @validator('max_billing_cycles')
+    def validate_max_billing_cycles(cls, v, values):
+        """Validar que max_billing_cycles sea coherente con billing_interval"""
+        if v is not None:
+            billing_interval = values.get('billing_interval')
+            if billing_interval == 'one_time' and v != 1:
+                raise ValueError('max_billing_cycles must be 1 for one_time billing_interval')
+            elif billing_interval in ['month', 'year'] and v < 1:
+                raise ValueError('max_billing_cycles must be >= 1 for recurring billing_interval')
+        return v
 
 
 class MembershipPlanCreate(MembershipPlanBase):
@@ -44,6 +56,7 @@ class MembershipPlanUpdate(BaseModel):
     currency: Optional[str] = Field(None, min_length=3, max_length=3)
     billing_interval: Optional[str] = None
     duration_days: Optional[int] = Field(None, ge=1)
+    max_billing_cycles: Optional[int] = Field(None, ge=1)
     is_active: Optional[bool] = None
     features: Optional[str] = None
     max_bookings_per_month: Optional[int] = Field(None, ge=0)
@@ -69,6 +82,9 @@ class MembershipPlan(MembershipPlanBase):
     # Campos calculados
     price_amount: Optional[float] = None
     is_recurring: Optional[bool] = None
+    is_limited_duration: Optional[bool] = None
+    total_duration_days: Optional[int] = None
+    subscription_description: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -85,6 +101,40 @@ class MembershipPlan(MembershipPlanBase):
         if 'billing_interval' in values:
             return values['billing_interval'] in ['month', 'year']
         return v
+    
+    @validator('is_limited_duration', always=True)
+    def calculate_is_limited_duration(cls, v, values):
+        max_cycles = values.get('max_billing_cycles')
+        return max_cycles is not None and max_cycles > 0
+    
+    @validator('total_duration_days', always=True)
+    def calculate_total_duration_days(cls, v, values):
+        max_cycles = values.get('max_billing_cycles')
+        duration_days = values.get('duration_days')
+        billing_interval = values.get('billing_interval')
+        
+        if max_cycles is not None and max_cycles > 0:
+            if billing_interval == "month":
+                return max_cycles * 30
+            elif billing_interval == "year":
+                return max_cycles * 365
+        
+        return duration_days
+    
+    @validator('subscription_description', always=True)
+    def calculate_subscription_description(cls, v, values):
+        billing_interval = values.get('billing_interval')
+        max_cycles = values.get('max_billing_cycles')
+        duration_days = values.get('duration_days')
+        
+        if billing_interval == "one_time":
+            return f"Pago único - {duration_days} días"
+        elif max_cycles is not None and max_cycles > 0:
+            interval_text = "mes" if billing_interval == "month" else "año"
+            return f"Pago {interval_text}al por {max_cycles} {interval_text}{'es' if max_cycles > 1 else ''}"
+        else:
+            interval_text = "mensual" if billing_interval == "month" else "anual"
+            return f"Suscripción {interval_text} ilimitada"
 
 
 # === Esquemas para UserGym con membresía ===
