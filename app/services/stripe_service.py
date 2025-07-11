@@ -1254,7 +1254,7 @@ class StripeService:
         plan: MembershipPlan
     ) -> Dict[str, str]:
         """
-        Crear producto y precio en Stripe para un plan local.
+        Crear producto y precio en Stripe Connect para un plan local.
         
         Args:
             db: Sesión de base de datos
@@ -1267,7 +1267,17 @@ class StripeService:
             ValueError: Si hay error en Stripe
         """
         try:
-            # Crear producto en Stripe
+            # 🆕 OBTENER CUENTA DE STRIPE CONNECT DEL GYM
+            from app.services.stripe_connect_service import stripe_connect_service
+            
+            gym_account = stripe_connect_service.get_gym_stripe_account(db, plan.gym_id)
+            if not gym_account:
+                raise ValueError(f"Gimnasio {plan.gym_id} no tiene cuenta de Stripe configurada")
+            
+            if not gym_account.onboarding_completed:
+                raise ValueError(f"Gimnasio {plan.gym_id} debe completar el onboarding de Stripe")
+            
+            # 🆕 CREAR PRODUCTO EN LA CUENTA DEL GYM
             product = stripe.Product.create(
                 name=plan.name,
                 description=plan.description or f"Plan de membresía {plan.name}",
@@ -1275,12 +1285,13 @@ class StripeService:
                     'gym_id': str(plan.gym_id),
                     'local_plan_id': str(plan.id),
                     'created_by': 'gym_api'
-                }
+                },
+                stripe_account=gym_account.stripe_account_id  # 🆕 Crear en cuenta del gym
             )
             
-            logger.info(f"Producto Stripe creado: {product.id} para plan {plan.id}")
+            logger.info(f"Producto Stripe creado en cuenta {gym_account.stripe_account_id}: {product.id} para plan {plan.id}")
             
-            # Crear precio en Stripe
+            # 🆕 CREAR PRECIO EN LA CUENTA DEL GYM
             price_data = {
                 'unit_amount': plan.price_cents,
                 'currency': plan.currency.lower(),
@@ -1296,9 +1307,12 @@ class StripeService:
             if plan.billing_interval in ['month', 'year']:
                 price_data['recurring'] = {'interval': plan.billing_interval}
             
-            price = stripe.Price.create(**price_data)
+            price = stripe.Price.create(
+                **price_data,
+                stripe_account=gym_account.stripe_account_id  # 🆕 Crear en cuenta del gym
+            )
             
-            logger.info(f"Precio Stripe creado: {price.id} para plan {plan.id}")
+            logger.info(f"Precio Stripe creado en cuenta {gym_account.stripe_account_id}: {price.id} para plan {plan.id}")
             
             # Actualizar plan local con IDs de Stripe
             plan.stripe_product_id = product.id
@@ -1324,7 +1338,7 @@ class StripeService:
         plan: MembershipPlan
     ) -> bool:
         """
-        Actualizar producto existente en Stripe cuando se modifica un plan local.
+        Actualizar producto existente en Stripe Connect cuando se modifica un plan local.
         
         Args:
             db: Sesión de base de datos
@@ -1339,7 +1353,14 @@ class StripeService:
                 await self.create_stripe_product_for_plan(db, plan)
                 return True
             
-            # Actualizar producto en Stripe
+            # 🆕 OBTENER CUENTA DE STRIPE CONNECT DEL GYM
+            from app.services.stripe_connect_service import stripe_connect_service
+            
+            gym_account = stripe_connect_service.get_gym_stripe_account(db, plan.gym_id)
+            if not gym_account:
+                raise ValueError(f"Gimnasio {plan.gym_id} no tiene cuenta de Stripe configurada")
+            
+            # 🆕 ACTUALIZAR PRODUCTO EN LA CUENTA DEL GYM
             stripe.Product.modify(
                 plan.stripe_product_id,
                 name=plan.name,
@@ -1349,7 +1370,8 @@ class StripeService:
                     'gym_id': str(plan.gym_id),
                     'local_plan_id': str(plan.id),
                     'updated_by': 'gym_api'
-                }
+                },
+                stripe_account=gym_account.stripe_account_id  # 🆕 Actualizar en cuenta del gym
             )
             
             logger.info(f"Producto Stripe {plan.stripe_product_id} actualizado para plan {plan.id}")
@@ -1357,7 +1379,10 @@ class StripeService:
             # Si cambió el precio, crear nuevo Price (Stripe no permite modificar precios)
             if plan.stripe_price_id:
                 try:
-                    existing_price = stripe.Price.retrieve(plan.stripe_price_id)
+                    existing_price = stripe.Price.retrieve(
+                        plan.stripe_price_id,
+                        stripe_account=gym_account.stripe_account_id  # 🆕 Obtener desde cuenta del gym
+                    )
                     
                     # Verificar si cambió el precio
                     if (existing_price.unit_amount != plan.price_cents or 
@@ -1366,7 +1391,11 @@ class StripeService:
                         logger.info(f"Precio cambió para plan {plan.id}, creando nuevo precio en Stripe")
                         
                         # Desactivar precio anterior
-                        stripe.Price.modify(plan.stripe_price_id, active=False)
+                        stripe.Price.modify(
+                            plan.stripe_price_id, 
+                            active=False,
+                            stripe_account=gym_account.stripe_account_id  # 🆕 Desactivar en cuenta del gym
+                        )
                         
                         # Crear nuevo precio
                         price_data = {
@@ -1383,13 +1412,16 @@ class StripeService:
                         if plan.billing_interval in ['month', 'year']:
                             price_data['recurring'] = {'interval': plan.billing_interval}
                         
-                        new_price = stripe.Price.create(**price_data)
+                        new_price = stripe.Price.create(
+                            **price_data,
+                            stripe_account=gym_account.stripe_account_id  # 🆕 Crear en cuenta del gym
+                        )
                         
                         # Actualizar plan local con nuevo price_id
                         plan.stripe_price_id = new_price.id
                         db.commit()
                         
-                        logger.info(f"Nuevo precio Stripe creado: {new_price.id} para plan {plan.id}")
+                        logger.info(f"Nuevo precio Stripe creado en cuenta {gym_account.stripe_account_id}: {new_price.id} para plan {plan.id}")
                         
                 except stripe.error.StripeError as price_error:
                     logger.error(f"Error al actualizar precio Stripe: {str(price_error)}")
@@ -1406,12 +1438,14 @@ class StripeService:
 
     async def deactivate_stripe_product_for_plan(
         self, 
+        db: Session,
         plan: MembershipPlan
     ) -> bool:
         """
-        Desactivar producto en Stripe cuando se desactiva un plan local.
+        Desactivar producto en Stripe Connect cuando se desactiva un plan local.
         
         Args:
+            db: Sesión de base de datos
             plan: Plan desactivado
             
         Returns:
@@ -1422,21 +1456,34 @@ class StripeService:
                 logger.warning(f"Plan {plan.id} no tiene producto en Stripe")
                 return True
             
-            # Desactivar producto en Stripe
+            # 🆕 OBTENER CUENTA DE STRIPE CONNECT DEL GYM
+            from app.services.stripe_connect_service import stripe_connect_service
+            
+            gym_account = stripe_connect_service.get_gym_stripe_account(db, plan.gym_id)
+            if not gym_account:
+                logger.warning(f"Gimnasio {plan.gym_id} no tiene cuenta de Stripe configurada")
+                return True
+            
+            # 🆕 DESACTIVAR PRODUCTO EN LA CUENTA DEL GYM
             stripe.Product.modify(
                 plan.stripe_product_id,
                 active=False,
                 metadata={
                     'deactivated_by': 'gym_api',
                     'deactivated_at': datetime.now().isoformat()
-                }
+                },
+                stripe_account=gym_account.stripe_account_id  # 🆕 Desactivar en cuenta del gym
             )
             
-            # Desactivar precio si existe
+            # 🆕 DESACTIVAR PRECIO SI EXISTE EN LA CUENTA DEL GYM
             if plan.stripe_price_id:
-                stripe.Price.modify(plan.stripe_price_id, active=False)
+                stripe.Price.modify(
+                    plan.stripe_price_id, 
+                    active=False,
+                    stripe_account=gym_account.stripe_account_id  # 🆕 Desactivar en cuenta del gym
+                )
             
-            logger.info(f"Producto Stripe {plan.stripe_product_id} desactivado para plan {plan.id}")
+            logger.info(f"Producto Stripe {plan.stripe_product_id} desactivado en cuenta {gym_account.stripe_account_id} para plan {plan.id}")
             return True
             
         except stripe.error.StripeError as e:
@@ -1477,7 +1524,7 @@ class StripeService:
                     return bool(result)
             else:
                 # Desactivar producto
-                return await self.deactivate_stripe_product_for_plan(plan)
+                return await self.deactivate_stripe_product_for_plan(db, plan)
                 
         except Exception as e:
             logger.error(f"Error al sincronizar plan {plan_id} con Stripe: {str(e)}")
