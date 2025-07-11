@@ -302,23 +302,35 @@ async def get_membership_plans_stats(
         plan_users = []
         plan_user_ids = set()
         
-        # 🎯 ESTRATEGIA PRINCIPAL: Asociación por Stripe Subscription ID
-        # Solo usuarios que tienen el stripe_subscription_id vinculado al plan específico
+        # 🎯 ESTRATEGIA PRINCIPAL: Asociación por Stripe Connect Profile
+        # Buscar usuarios con suscripciones activas usando la nueva arquitectura
         if plan.stripe_price_id:
-            # Buscar usuarios con suscripciones activas
-            stripe_users = db.query(UserGym, User).join(User, UserGym.user_id == User.id).filter(
-                UserGym.gym_id == current_gym.id,
-                UserGym.is_active == True,
-                UserGym.stripe_subscription_id.isnot(None)
+            # 🆕 USAR STRIPE CONNECT PROFILES PARA ENCONTRAR USUARIOS
+            from app.models.stripe_profile import UserGymStripeProfile
+            
+            # Buscar usuarios con suscripciones activas en Stripe Connect
+            stripe_profiles = db.query(UserGymStripeProfile, UserGym, User).join(
+                UserGym, and_(
+                    UserGymStripeProfile.user_id == UserGym.user_id,
+                    UserGymStripeProfile.gym_id == UserGym.gym_id
+                )
+            ).join(User, UserGym.user_id == User.id).filter(
+                UserGymStripeProfile.gym_id == current_gym.id,
+                UserGymStripeProfile.is_active == True,
+                UserGymStripeProfile.stripe_subscription_id.isnot(None),
+                UserGym.is_active == True
             ).all()
             
             # Verificar qué usuarios tienen suscripciones que coinciden con este plan
-            for user_gym, user in stripe_users:
-                if user_gym.stripe_subscription_id:
+            for stripe_profile, user_gym, user in stripe_profiles:
+                if stripe_profile.stripe_subscription_id:
                     try:
-                        # Obtener la suscripción de Stripe para verificar el price_id
+                        # 🆕 OBTENER SUSCRIPCIÓN DESDE LA CUENTA DEL GYM
                         import stripe
-                        subscription = stripe.Subscription.retrieve(user_gym.stripe_subscription_id)
+                        subscription = stripe.Subscription.retrieve(
+                            stripe_profile.stripe_subscription_id,
+                            stripe_account=stripe_profile.stripe_account_id  # 🆕 Usar cuenta del gym
+                        )
                         
                         # Verificar si la suscripción usa el price_id de este plan
                         subscription_price_ids = [item.price.id for item in subscription.items.data]
@@ -332,16 +344,17 @@ async def get_membership_plans_stats(
                                 "last_name": user.last_name,
                                 "membership_type": user_gym.membership_type,
                                 "expires_at": user_gym.membership_expires_at,
-                                "stripe_subscription_id": user_gym.stripe_subscription_id,
-                                "association_method": "stripe_subscription"
+                                "stripe_subscription_id": stripe_profile.stripe_subscription_id,
+                                "stripe_customer_id": stripe_profile.stripe_customer_id,
+                                "association_method": "stripe_connect_subscription"
                             })
                             plan_user_ids.add(user.id)
                             
                     except stripe.error.StripeError as e:
-                        logger.warning(f"Error verificando suscripción {user_gym.stripe_subscription_id}: {str(e)}")
+                        logger.warning(f"Error verificando suscripción {stripe_profile.stripe_subscription_id}: {str(e)}")
                         continue
                     except Exception as e:
-                        logger.warning(f"Error inesperado verificando suscripción {user_gym.stripe_subscription_id}: {str(e)}")
+                        logger.warning(f"Error inesperado verificando suscripción {stripe_profile.stripe_subscription_id}: {str(e)}")
                         continue
         
         # 🔍 ESTRATEGIA SECUNDARIA: Asociación por metadatos en notas
