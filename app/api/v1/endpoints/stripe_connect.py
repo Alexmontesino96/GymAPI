@@ -55,27 +55,34 @@ async def create_stripe_account(
     try:
         # Verificar si ya existe cuenta
         existing_account = stripe_connect_service.get_gym_stripe_account(db, current_gym.id)
-        if existing_account:
-            raise HTTPException(
-                status_code=400,
-                detail=f"El gimnasio ya tiene una cuenta de Stripe: {existing_account.stripe_account_id}"
-            )
+        if existing_account and not existing_account.stripe_account_id.startswith("placeholder_"):
+            return {
+                "message": "El gimnasio ya tiene una cuenta de Stripe configurada",
+                "account_id": existing_account.stripe_account_id,
+                "account_type": existing_account.account_type,
+                "country": existing_account.country,
+                "onboarding_completed": existing_account.onboarding_completed,
+                "charges_enabled": existing_account.charges_enabled,
+                "payouts_enabled": existing_account.payouts_enabled,
+                "status": "already_exists"
+            }
         
-        # Crear cuenta de Stripe Connect
+        # Crear o actualizar cuenta de Stripe Connect
         gym_account = await stripe_connect_service.create_gym_stripe_account(
             db, current_gym.id, country, account_type
         )
         
-        logger.info(f"Cuenta de Stripe creada para gym {current_gym.id} por admin {current_user.id}")
+        logger.info(f"Cuenta de Stripe {'actualizada' if existing_account else 'creada'} para gym {current_gym.id} por admin {current_user.id}")
         
         return {
-            "message": "Cuenta de Stripe creada exitosamente",
+            "message": f"Cuenta de Stripe {'actualizada' if existing_account else 'creada'} exitosamente",
             "account_id": gym_account.stripe_account_id,
             "account_type": gym_account.account_type,
             "country": gym_account.country,
             "onboarding_completed": gym_account.onboarding_completed,
             "charges_enabled": gym_account.charges_enabled,
-            "payouts_enabled": gym_account.payouts_enabled
+            "payouts_enabled": gym_account.payouts_enabled,
+            "status": "updated" if existing_account else "created"
         }
         
     except ValueError as e:

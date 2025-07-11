@@ -50,16 +50,20 @@ class StripeConnectService:
             account_type: Tipo de cuenta (express, standard, custom)
             
         Returns:
-            GymStripeAccount: Cuenta creada
+            GymStripeAccount: Cuenta creada o actualizada
         """
         try:
-            # Verificar si ya existe
+            # Verificar si ya existe cuenta
             existing_account = db.query(GymStripeAccount).filter(
                 GymStripeAccount.gym_id == gym_id,
                 GymStripeAccount.is_active == True
             ).first()
             
-            if existing_account:
+            # 🆕 VERIFICAR SI ES CUENTA PLACEHOLDER
+            if existing_account and existing_account.stripe_account_id.startswith("placeholder_"):
+                logger.info(f"Actualizando cuenta placeholder para gym {gym_id}")
+                # Continuar para crear cuenta real y actualizar el registro
+            elif existing_account:
                 logger.info(f"Gym {gym_id} ya tiene cuenta de Stripe: {existing_account.stripe_account_id}")
                 return existing_account
             
@@ -72,7 +76,7 @@ class StripeConnectService:
             account = stripe.Account.create(
                 type=account_type,
                 country=country,
-                email=gym.email,
+                email=gym.email or "user@example.com",  # Usar email del gym o placeholder
                 business_profile={
                     "name": gym.name,
                     "url": gym.website if hasattr(gym, 'website') else None,
@@ -85,19 +89,40 @@ class StripeConnectService:
                 }
             )
             
-            # Guardar en BD local
-            gym_stripe_account = GymStripeAccount(
-                gym_id=gym_id,
-                stripe_account_id=account.id,
-                account_type=account_type,
-                country=country,
-                default_currency="USD"  # Configurable según el país
-            )
-            db.add(gym_stripe_account)
-            db.commit()
-            db.refresh(gym_stripe_account)
+            # 🆕 ACTUALIZAR CUENTA EXISTENTE O CREAR NUEVA
+            if existing_account:
+                # Actualizar cuenta placeholder
+                existing_account.stripe_account_id = account.id
+                existing_account.account_type = account_type
+                existing_account.country = country
+                existing_account.default_currency = account.default_currency.upper()
+                existing_account.onboarding_completed = False
+                existing_account.charges_enabled = False
+                existing_account.payouts_enabled = False
+                existing_account.details_submitted = False
+                existing_account.is_active = True
+                existing_account.updated_at = datetime.utcnow()
+                
+                db.commit()
+                db.refresh(existing_account)
+                gym_stripe_account = existing_account
+                
+                logger.info(f"Cuenta placeholder actualizada para gym {gym_id}: {account.id}")
+            else:
+                # Crear nueva cuenta
+                gym_stripe_account = GymStripeAccount(
+                    gym_id=gym_id,
+                    stripe_account_id=account.id,
+                    account_type=account_type,
+                    country=country,
+                    default_currency=account.default_currency.upper()
+                )
+                db.add(gym_stripe_account)
+                db.commit()
+                db.refresh(gym_stripe_account)
+                
+                logger.info(f"Nueva cuenta de Stripe creada para gym {gym_id}: {account.id}")
             
-            logger.info(f"Cuenta de Stripe creada para gym {gym_id}: {account.id}")
             return gym_stripe_account
             
         except stripe.error.StripeError as e:
