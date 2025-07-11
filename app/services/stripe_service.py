@@ -282,7 +282,7 @@ class StripeService:
                     'stripe_account_id': gym_account.stripe_account_id  # 🆕 Para tracking
                 },
                 'allow_promotion_codes': True,
-                'customer_email': user.email,  # Pre-rellenar email del usuario
+                # Nota: No usar customer_email cuando ya tenemos customer ID
             }
 
             # 🆕 SOPORTE PARA SUSCRIPCIONES CON CICLOS LIMITADOS
