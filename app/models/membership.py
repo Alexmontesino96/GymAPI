@@ -53,6 +53,7 @@ class MembershipPlan(Base):
     
     # Relaciones
     gym = relationship("Gym", back_populates="membership_planes")
+    subscriptions = relationship("UserGymSubscription", back_populates="plan", cascade="all, delete-orphan")
     
     def __repr__(self):
         return f"<MembershipPlan(id={self.id}, name='{self.name}', gym_id={self.gym_id})>"

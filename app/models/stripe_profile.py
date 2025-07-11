@@ -52,6 +52,7 @@ class UserGymStripeProfile(Base):
     # Relaciones
     user = relationship("User", back_populates="stripe_profiles")
     gym = relationship("Gym", back_populates="stripe_profiles")
+    subscriptions = relationship("UserGymSubscription", back_populates="stripe_profile", cascade="all, delete-orphan")
     
     def __repr__(self):
         return f"<UserGymStripeProfile(user_id={self.user_id}, gym_id={self.gym_id}, customer_id={self.stripe_customer_id})>"
