@@ -1204,26 +1204,56 @@ async def get_customer_payment_methods(
         List: Métodos de pago del cliente
     """
     try:
-        # Verificar que el cliente pertenezca al gimnasio actual
+        # 🆕 Verificar que el cliente pertenezca al gimnasio actual usando nueva arquitectura
+        from app.models.stripe_profile import UserGymStripeProfile
         from app.models.user_gym import UserGym
         
-        customer_membership = db.query(UserGym).filter(
-            UserGym.stripe_customer_id == customer_id,
-            UserGym.gym_id == current_gym.id
+        customer_record = db.query(UserGymStripeProfile, UserGym).join(
+            UserGym, and_(
+                UserGymStripeProfile.user_id == UserGym.user_id,
+                UserGymStripeProfile.gym_id == UserGym.gym_id
+            )
+        ).filter(
+            UserGymStripeProfile.stripe_customer_id == customer_id,
+            UserGymStripeProfile.gym_id == current_gym.id
         ).first()
         
-        if not customer_membership:
+        if not customer_record:
             raise HTTPException(
                 status_code=403, 
                 detail="Cliente no pertenece a este gimnasio"
             )
         
-        payment_methods = await stripe_service.get_customer_payment_methods(customer_id)
+        stripe_profile, user_gym = customer_record
+        
+        # 🆕 Obtener métodos de pago usando la cuenta del gym
+        import stripe
+        payment_methods = stripe.PaymentMethod.list(
+            customer=customer_id,
+            type='card',
+            stripe_account=stripe_profile.stripe_account_id
+        )
+        
+        formatted_methods = [
+            {
+                'id': pm.id,
+                'type': pm.type,
+                'card': {
+                    'brand': pm.card.brand,
+                    'last4': pm.card.last4,
+                    'exp_month': pm.card.exp_month,
+                    'exp_year': pm.card.exp_year
+                } if pm.card else None,
+                'created': pm.created
+            }
+            for pm in payment_methods.data
+        ]
         
         return {
             "customer_id": customer_id,
-            "payment_methods": payment_methods,
-            "user_id": customer_membership.user_id
+            "payment_methods": formatted_methods,
+            "user_id": user_gym.user_id,
+            "stripe_account_id": stripe_profile.stripe_account_id
         }
         
     except HTTPException:
@@ -1250,23 +1280,38 @@ async def get_subscription_status(
         dict: Estado y detalles de la suscripción
     """
     try:
-        # Verificar que la suscripción pertenezca al gimnasio actual
+        # 🆕 Verificar que la suscripción pertenezca al gimnasio actual usando nueva arquitectura
+        from app.models.user_gym_subscription import UserGymSubscription
+        from app.models.stripe_profile import UserGymStripeProfile
         from app.models.user_gym import UserGym
         
-        subscription_membership = db.query(UserGym).filter(
-            UserGym.stripe_subscription_id == subscription_id,
-            UserGym.gym_id == current_gym.id
+        subscription_record = db.query(UserGymSubscription, UserGymStripeProfile, UserGym).join(
+            UserGymStripeProfile, UserGymSubscription.user_gym_stripe_profile_id == UserGymStripeProfile.id
+        ).join(
+            UserGym, and_(
+                UserGymStripeProfile.user_id == UserGym.user_id,
+                UserGymStripeProfile.gym_id == UserGym.gym_id
+            )
+        ).filter(
+            UserGymSubscription.stripe_subscription_id == subscription_id,
+            UserGymStripeProfile.gym_id == current_gym.id
         ).first()
         
-        if not subscription_membership:
+        if not subscription_record:
             raise HTTPException(
                 status_code=403, 
                 detail="Suscripción no pertenece a este gimnasio"
             )
         
+        subscription_data, stripe_profile, user_gym = subscription_record
+        
         import stripe
         
-        subscription = stripe.Subscription.retrieve(subscription_id)
+        # 🆕 Obtener suscripción desde la cuenta del gym
+        subscription = stripe.Subscription.retrieve(
+            subscription_id,
+            stripe_account=stripe_profile.stripe_account_id
+        )
         
         return {
             "subscription_id": subscription.id,
@@ -1279,7 +1324,9 @@ async def get_subscription_status(
             "canceled_at": subscription.canceled_at,
             "customer": subscription.customer,
             "latest_invoice": subscription.latest_invoice,
-            "user_id": subscription_membership.user_id
+            "user_id": user_gym.user_id,
+            "plan_id": subscription_data.plan_id,
+            "local_status": subscription_data.status
         }
         
     except HTTPException:
@@ -1311,39 +1358,63 @@ async def cancel_subscription_endpoint(
         dict: Confirmación de cancelación
     """
     try:
-        # Verificar que la suscripción pertenezca al gimnasio actual
+        # 🆕 Verificar que la suscripción pertenezca al gimnasio actual usando nueva arquitectura
+        from app.models.user_gym_subscription import UserGymSubscription
+        from app.models.stripe_profile import UserGymStripeProfile
         from app.models.user_gym import UserGym
         
-        subscription_membership = db.query(UserGym).filter(
-            UserGym.stripe_subscription_id == subscription_id,
-            UserGym.gym_id == current_gym.id
+        subscription_record = db.query(UserGymSubscription, UserGymStripeProfile, UserGym).join(
+            UserGymStripeProfile, UserGymSubscription.user_gym_stripe_profile_id == UserGymStripeProfile.id
+        ).join(
+            UserGym, and_(
+                UserGymStripeProfile.user_id == UserGym.user_id,
+                UserGymStripeProfile.gym_id == UserGym.gym_id
+            )
+        ).filter(
+            UserGymSubscription.stripe_subscription_id == subscription_id,
+            UserGymStripeProfile.gym_id == current_gym.id
         ).first()
         
-        if not subscription_membership:
+        if not subscription_record:
             raise HTTPException(
                 status_code=403, 
                 detail="Suscripción no pertenece a este gimnasio"
             )
         
+        subscription_data, stripe_profile, user_gym = subscription_record
+        
         if immediately:
-            success = await stripe_service.cancel_subscription(subscription_id)
+            # 🆕 Cancelar inmediatamente usando cuenta del gym
+            import stripe
+            stripe.Subscription.delete(
+                subscription_id,
+                stripe_account=stripe_profile.stripe_account_id
+            )
+            success = True
         else:
-            # Cancelar al final del período
+            # 🆕 Cancelar al final del período usando cuenta del gym
             import stripe
             subscription = stripe.Subscription.modify(
                 subscription_id,
-                cancel_at_period_end=True
+                cancel_at_period_end=True,
+                stripe_account=stripe_profile.stripe_account_id
             )
             success = True
         
         if success:
+            # 🆕 Actualizar estado local
+            subscription_data.status = "canceled" if immediately else "pending_cancel"
+            subscription_data.canceled_at = datetime.now() if immediately else None
+            db.commit()
+            
             logger.info(f"Suscripción {subscription_id} cancelada por admin {current_user.id}")
             
             return {
                 "message": "Suscripción cancelada exitosamente",
                 "subscription_id": subscription_id,
                 "immediately": immediately,
-                "user_id": subscription_membership.user_id
+                "user_id": user_gym.user_id,
+                "local_status": subscription_data.status
             }
         else:
             raise HTTPException(status_code=400, detail="No se pudo cancelar la suscripción")
