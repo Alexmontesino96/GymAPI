@@ -15,4 +15,5 @@ from app.models.schedule import (
     ClassParticipation
 )  # noqa
 from app.models.notification import DeviceToken  # noqa
+from app.models.stripe_profile import UserGymStripeProfile, GymStripeAccount  # noqa
 # Importar aquí otros modelos que se vayan creando 

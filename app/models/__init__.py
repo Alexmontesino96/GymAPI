@@ -9,6 +9,7 @@ from app.models.gym_module import GymModule
 from app.models.module import Module
 from app.models.user_gym import UserGym, GymRoleType 
 from app.models.membership import MembershipPlan, BillingInterval
+from app.models.stripe_profile import UserGymStripeProfile, GymStripeAccount
 from app.models.nutrition import (
     NutritionPlan, DailyNutritionPlan, Meal, MealIngredient,
     NutritionPlanFollower, UserDailyProgress, UserMealCompletion,

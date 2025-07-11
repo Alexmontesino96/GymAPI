@@ -63,23 +63,56 @@ def main():
     
     # 5. Verificar eventos críticos
     print("\n4️⃣ Eventos críticos para el sistema:")
+    
+    # Eventos críticos (OBLIGATORIOS)
     critical_events = [
         'checkout.session.completed',
-        'invoice.payment_succeeded',
+        'invoice.payment_succeeded', 
         'invoice.payment_failed',
         'customer.subscription.deleted',
         'customer.subscription.updated'
+    ]
+    
+    # Eventos recomendados
+    recommended_events = [
+        'customer.subscription.trial_will_end',
+        'invoice.payment_action_required',
+        'invoice.upcoming',
+        'charge.dispute.created',
+        'payment_intent.payment_failed'
     ]
     
     webhook_events = []
     for webhook in webhooks.data:
         webhook_events.extend(webhook.enabled_events)
     
+    print("\n   🔴 EVENTOS CRÍTICOS (OBLIGATORIOS):")
+    critical_missing = 0
     for event in critical_events:
         if event in webhook_events:
             print(f"   ✅ {event}")
         else:
             print(f"   ❌ {event} - NO CONFIGURADO")
+            critical_missing += 1
+    
+    print("\n   🟡 EVENTOS RECOMENDADOS:")
+    recommended_missing = 0
+    for event in recommended_events:
+        if event in webhook_events:
+            print(f"   ✅ {event}")
+        else:
+            print(f"   ⚠️  {event} - NO CONFIGURADO")
+            recommended_missing += 1
+    
+    # Resumen de configuración
+    print(f"\n   📊 RESUMEN:")
+    print(f"   • Eventos críticos configurados: {len(critical_events) - critical_missing}/{len(critical_events)}")
+    print(f"   • Eventos recomendados configurados: {len(recommended_events) - recommended_missing}/{len(recommended_events)}")
+    
+    if critical_missing == 0:
+        print("   ✅ Todos los eventos críticos están configurados")
+    else:
+        print(f"   ❌ Faltan {critical_missing} eventos críticos - SISTEMA NO FUNCIONARÁ CORRECTAMENTE")
     
     # 6. Verificar endpoint del webhook
     print("\n5️⃣ Verificando endpoint del webhook:")
@@ -118,10 +151,36 @@ def main():
         print("   1. Ve a https://dashboard.stripe.com/webhooks")
         print("   2. Crea un nuevo webhook endpoint")
         print(f"   3. URL: {webhook_url}")
-        print("   4. Selecciona estos eventos:")
+        print("   4. Selecciona estos eventos CRÍTICOS:")
         for event in critical_events:
             print(f"      - {event}")
-        print("   5. Copia el webhook secret a tu archivo .env")
+        print("   5. Eventos RECOMENDADOS (opcionales):")
+        for event in recommended_events:
+            print(f"      - {event}")
+        print("   6. Copia el webhook secret a tu archivo .env")
+        print()
+    elif critical_missing > 0:
+        print("🚨 CONFIGURACIÓN INCOMPLETA:")
+        print(f"   Faltan {critical_missing} eventos críticos")
+        print("   Tu sistema NO funcionará correctamente sin estos eventos")
+        print()
+        print("   Eventos faltantes críticos:")
+        for event in critical_events:
+            if event not in webhook_events:
+                print(f"      ❌ {event}")
+        print()
+        print("   📝 ACCIÓN REQUERIDA:")
+        print("   1. Ve a tu webhook en https://dashboard.stripe.com/webhooks")
+        print("   2. Edita el webhook")
+        print("   3. Agrega los eventos faltantes")
+        print("   4. Guarda los cambios")
+    else:
+        print("✅ CONFIGURACIÓN CORRECTA:")
+        print("   Todos los eventos críticos están configurados")
+        if recommended_missing > 0:
+            print(f"   Opcional: Puedes agregar {recommended_missing} eventos recomendados")
+        else:
+            print("   ¡Configuración completa con todos los eventos!")
         print()
     
     # 9. Verificar pagos recientes

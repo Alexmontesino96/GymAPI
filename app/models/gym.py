@@ -49,6 +49,10 @@ class Gym(Base):
     # Relación con planes de membresía
     membership_planes = relationship("MembershipPlan", back_populates="gym")
     
+    # Relaciones con Stripe
+    stripe_account = relationship("GymStripeAccount", back_populates="gym", uselist=False)
+    stripe_profiles = relationship("UserGymStripeProfile", back_populates="gym")
+    
     # Relación con salas de chat
     chat_rooms = relationship("ChatRoom", back_populates="gym")
     

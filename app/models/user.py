@@ -45,6 +45,9 @@ class User(Base):
     # Relaciones para multi-tenant
     gyms = relationship("UserGym", back_populates="user")
     
+    # Relaciones para Stripe
+    stripe_profiles = relationship("UserGymStripeProfile", back_populates="user")
+    
     # Relaciones para eventos
     created_events = relationship("Event", back_populates="creator")
     event_participations = relationship("EventParticipation", back_populates="member")

@@ -36,7 +36,7 @@ class StripeService:
         success_url: Optional[str] = None,
         cancel_url: Optional[str] = None
     ) -> Dict[str, Any]:
-        """Crear una sesión de checkout de Stripe"""
+        """Crear una sesión de checkout de Stripe usando arquitectura Stripe Connect"""
         try:
             # Obtener el plan de membresía con información del gimnasio
             from app.models.gym import Gym
@@ -60,6 +60,22 @@ class StripeService:
             if not gym:
                 raise ValueError("Gimnasio no encontrado")
 
+            # 🆕 USAR STRIPE CONNECT SERVICE PARA EVITAR DUPLICACIÓN
+            from app.services.stripe_connect_service import stripe_connect_service
+            
+            # Obtener o crear customer sin duplicados
+            stripe_customer_id = await stripe_connect_service.get_or_create_customer_for_user_gym(
+                db, int(user_id), gym_id
+            )
+            
+            # Obtener cuenta de Stripe del gym
+            gym_account = stripe_connect_service.get_gym_stripe_account(db, gym_id)
+            if not gym_account:
+                raise ValueError(f"Gimnasio {gym_id} no tiene cuenta de Stripe configurada. Contacte al administrador.")
+            
+            if not gym_account.onboarding_completed:
+                raise ValueError(f"El gimnasio debe completar la configuración de Stripe antes de procesar pagos.")
+
             # URLs de éxito y cancelación
             success_url = success_url or settings.STRIPE_SUCCESS_URL
             cancel_url = cancel_url or settings.STRIPE_CANCEL_URL
@@ -77,6 +93,7 @@ class StripeService:
                 'mode': mode,
                 'success_url': f"{success_url}?session_id={{CHECKOUT_SESSION_ID}}",
                 'cancel_url': cancel_url,
+                'customer': stripe_customer_id,  # 🆕 Usar customer existente
                 'metadata': {
                     'user_id': user_id,
                     'gym_id': str(gym_id),
@@ -86,7 +103,8 @@ class StripeService:
                     'plan_price': str(plan.price_cents),
                     'currency': plan.currency,
                     'billing_interval': plan.billing_interval,
-                    'platform': 'gymapi'
+                    'platform': 'gymapi',
+                    'stripe_account_id': gym_account.stripe_account_id  # 🆕 Para tracking
                 },
                 'allow_promotion_codes': True,
             }
@@ -129,10 +147,13 @@ class StripeService:
                 
                 logger.info(f"Suscripción con ciclos limitados: {plan.max_billing_cycles} ciclos, cancelación automática: {cancel_date}")
 
-            # Crear la sesión de checkout
-            checkout_session = stripe.checkout.Session.create(**checkout_data)
+            # 🆕 CREAR SESIÓN EN LA CUENTA DEL GYM
+            checkout_session = stripe.checkout.Session.create(
+                **checkout_data,
+                stripe_account=gym_account.stripe_account_id  # 🆕 Usar cuenta del gym
+            )
 
-            logger.info(f"Sesión de checkout creada: {checkout_session.id} para usuario {user_id}")
+            logger.info(f"Sesión de checkout creada: {checkout_session.id} para usuario {user_id} en gym {gym_id}")
             
             # Preparar respuesta con información adicional
             response = {
@@ -174,7 +195,7 @@ class StripeService:
         success_url: Optional[str] = None,
         cancel_url: Optional[str] = None
     ) -> Dict[str, Any]:
-        """Crear una sesión de checkout de Stripe desde panel administrativo"""
+        """Crear una sesión de checkout de Stripe desde panel administrativo usando Stripe Connect"""
         try:
             from app.models.gym import Gym
             from app.models.user import User
@@ -204,6 +225,22 @@ class StripeService:
             if not user:
                 raise ValueError("Usuario no encontrado")
 
+            # 🆕 USAR STRIPE CONNECT SERVICE PARA EVITAR DUPLICACIÓN
+            from app.services.stripe_connect_service import stripe_connect_service
+            
+            # Obtener o crear customer sin duplicados
+            stripe_customer_id = await stripe_connect_service.get_or_create_customer_for_user_gym(
+                db, int(user_id), gym_id
+            )
+            
+            # Obtener cuenta de Stripe del gym
+            gym_account = stripe_connect_service.get_gym_stripe_account(db, gym_id)
+            if not gym_account:
+                raise ValueError(f"Gimnasio {gym_id} no tiene cuenta de Stripe configurada. Contacte al administrador.")
+            
+            if not gym_account.onboarding_completed:
+                raise ValueError(f"El gimnasio debe completar la configuración de Stripe antes de procesar pagos.")
+
             # URLs de éxito y cancelación
             success_url = success_url or settings.STRIPE_SUCCESS_URL
             cancel_url = cancel_url or settings.STRIPE_CANCEL_URL
@@ -225,6 +262,7 @@ class StripeService:
                 'success_url': f"{success_url}?session_id={{CHECKOUT_SESSION_ID}}",
                 'cancel_url': cancel_url,
                 'expires_at': int(expires_at.timestamp()),  # Expiración del link
+                'customer': stripe_customer_id,  # 🆕 Usar customer existente
                 'metadata': {
                     'user_id': user_id,
                     'user_email': user.email,
@@ -240,7 +278,8 @@ class StripeService:
                     'created_by_admin': admin_email,
                     'is_admin_generated': 'true',
                     'admin_notes': notes or '',
-                    'expires_at': expires_at.isoformat()
+                    'expires_at': expires_at.isoformat(),
+                    'stripe_account_id': gym_account.stripe_account_id  # 🆕 Para tracking
                 },
                 'allow_promotion_codes': True,
                 'customer_email': user.email,  # Pre-rellenar email del usuario
@@ -283,8 +322,11 @@ class StripeService:
                 
                 logger.info(f"Suscripción admin con ciclos limitados: {plan.max_billing_cycles} ciclos")
 
-            # Crear la sesión de checkout
-            checkout_session = stripe.checkout.Session.create(**checkout_data)
+            # 🆕 CREAR SESIÓN EN LA CUENTA DEL GYM
+            checkout_session = stripe.checkout.Session.create(
+                **checkout_data,
+                stripe_account=gym_account.stripe_account_id  # 🆕 Usar cuenta del gym
+            )
 
             logger.info(f"Sesión de checkout ADMIN creada: {checkout_session.id} para usuario {user_id} por admin {admin_email}")
             
@@ -326,7 +368,7 @@ class StripeService:
         db: Session,
         session_id: str
     ) -> PurchaseMembershipResponse:
-        """Manejar un pago exitoso desde Stripe"""
+        """Manejar un pago exitoso desde Stripe usando nueva arquitectura"""
         try:
             # Obtener la sesión de checkout
             session = stripe.checkout.Session.retrieve(session_id)
@@ -339,23 +381,45 @@ class StripeService:
             user_id = metadata.get('user_id')
             gym_id = int(metadata.get('gym_id'))
             plan_id = int(metadata.get('plan_id'))
+            stripe_account_id = metadata.get('stripe_account_id')
 
             if not all([user_id, gym_id, plan_id]):
                 raise ValueError("Metadatos incompletos en la sesión de Stripe")
 
+            # 🆕 OBTENER INFORMACIÓN DESDE STRIPE CONNECT
+            from app.services.stripe_connect_service import stripe_connect_service
+            
+            # Verificar que el customer existe en nuestra tabla de vinculación
+            stripe_profile = stripe_connect_service.get_user_stripe_profile(db, int(user_id), gym_id)
+            if not stripe_profile:
+                logger.warning(f"No se encontró perfil de Stripe para user {user_id} en gym {gym_id}")
+                # Crear el perfil si no existe (caso edge)
+                stripe_customer_id = await stripe_connect_service.get_or_create_customer_for_user_gym(
+                    db, int(user_id), gym_id
+                )
+                stripe_profile = stripe_connect_service.get_user_stripe_profile(db, int(user_id), gym_id)
+
             # Obtener información adicional si es suscripción
-            stripe_customer_id = session.customer
             stripe_subscription_id = session.subscription if session.mode == 'subscription' else None
 
-            # Activar la membresía usando el servicio existente
+            # 🆕 ACTIVAR MEMBRESÍA SIN DUPLICAR DATOS DE STRIPE
             membership = await self.membership_service.activate_membership(
                 db=db,
-                user_id=user_id,
+                user_id=int(user_id),
                 gym_id=gym_id,
                 plan_id=plan_id,
-                stripe_customer_id=stripe_customer_id,
-                stripe_subscription_id=stripe_subscription_id
+                # 🆕 NO pasar stripe_customer_id ni stripe_subscription_id
+                # Ya están en UserGymStripeProfile
             )
+
+            # 🆕 ACTUALIZAR SUBSCRIPTION_ID EN STRIPE PROFILE SI ES NECESARIO
+            if stripe_subscription_id and stripe_profile:
+                # Actualizar subscription_id en el perfil
+                from app.services.stripe_connect_service import stripe_connect_service
+                await stripe_connect_service.update_subscription_for_user_gym(
+                    db, int(user_id), gym_id, stripe_subscription_id
+                )
+                logger.info(f"Suscripción {stripe_subscription_id} guardada para user {user_id} en gym {gym_id}")
 
             logger.info(f"Membresía activada exitosamente para usuario {user_id} en gym {gym_id}")
 
@@ -468,7 +532,7 @@ class StripeService:
     # 🆕 MÉTODOS PARA MANEJAR EVENTOS ESPECÍFICOS
     
     async def _handle_checkout_completed(self, session: Dict[str, Any]) -> None:
-        """Manejar checkout completado - activar membresía inicial"""
+        """Manejar checkout completado - activar membresía inicial usando nueva arquitectura"""
         try:
             session_id = session['id']
             metadata = session.get('metadata', {})
@@ -477,29 +541,48 @@ class StripeService:
             user_id = metadata.get('user_id')
             gym_id = metadata.get('gym_id')
             plan_id = metadata.get('plan_id')
+            stripe_account_id = metadata.get('stripe_account_id')
             
             if not all([user_id, gym_id, plan_id]):
                 logger.error(f"Metadatos incompletos en checkout {session_id}: user_id={user_id}, gym_id={gym_id}, plan_id={plan_id}")
                 return
             
-            # Obtener información adicional de Stripe
-            stripe_customer_id = session.get('customer')
-            stripe_subscription_id = session.get('subscription')
-            
-            logger.info(f"Activando membresía desde checkout: user={user_id}, gym={gym_id}, plan={plan_id}")
-            
-            # Activar la membresía usando el servicio
+            # 🆕 VERIFICAR PERFIL DE STRIPE CONNECT
+            from app.services.stripe_connect_service import stripe_connect_service
             from app.db.session import SessionLocal
+            
             db = SessionLocal()
             try:
+                # Verificar que el customer existe en nuestra tabla de vinculación
+                stripe_profile = stripe_connect_service.get_user_stripe_profile(db, int(user_id), int(gym_id))
+                if not stripe_profile:
+                    logger.warning(f"No se encontró perfil de Stripe para user {user_id} en gym {gym_id}")
+                    # Crear el perfil si no existe (caso edge)
+                    await stripe_connect_service.get_or_create_customer_for_user_gym(
+                        db, int(user_id), int(gym_id)
+                    )
+
+                # Obtener información adicional de Stripe
+                stripe_subscription_id = session.get('subscription')
+                
+                logger.info(f"Activando membresía desde checkout: user={user_id}, gym={gym_id}, plan={plan_id}")
+                
+                # 🆕 ACTIVAR MEMBRESÍA SIN DUPLICAR DATOS DE STRIPE
                 membership = await self.membership_service.activate_membership(
                     db=db,
                     user_id=int(user_id),
                     gym_id=int(gym_id),
                     plan_id=int(plan_id),
-                    stripe_customer_id=stripe_customer_id,
-                    stripe_subscription_id=stripe_subscription_id
+                    # 🆕 NO pasar stripe_customer_id ni stripe_subscription_id
+                    # Ya están en UserGymStripeProfile
                 )
+                
+                # 🆕 GUARDAR SUBSCRIPTION_ID SI ES SUSCRIPCIÓN
+                if stripe_subscription_id:
+                    await stripe_connect_service.update_subscription_for_user_gym(
+                        db, int(user_id), int(gym_id), stripe_subscription_id
+                    )
+                    logger.info(f"Suscripción {stripe_subscription_id} guardada para user {user_id} en gym {gym_id}")
                 
                 logger.info(f"✅ Membresía activada exitosamente: user {user_id} en gym {gym_id}, expira: {membership.membership_expires_at}")
                 
@@ -514,7 +597,7 @@ class StripeService:
             await self._alert_webhook_failure('checkout_completed', session_id, str(e))
     
     async def _handle_invoice_payment_succeeded(self, invoice: Dict[str, Any]) -> None:
-        """Manejar pago de factura exitoso - extender membresía para renovaciones"""
+        """Manejar pago de factura exitoso - extender membresía para renovaciones usando nueva arquitectura"""
         try:
             invoice_id = invoice['id']
             subscription_id = invoice.get('subscription')
@@ -524,24 +607,47 @@ class StripeService:
                 logger.warning(f"Factura {invoice_id} no tiene suscripción asociada - podría ser pago único")
                 return
             
-            # Buscar membresía local por subscription_id
+            # 🆕 BUSCAR MEMBRESÍA USANDO STRIPE CONNECT PROFILE
+            from app.models.stripe_profile import UserGymStripeProfile
             from app.models.user_gym import UserGym
             from app.db.session import SessionLocal
             from datetime import datetime, timedelta
+            from app.services.stripe_connect_service import stripe_connect_service
             
             db = SessionLocal()
             try:
+                # 🆕 BUSCAR PERFIL POR SUBSCRIPTION_ID PRIMERO
+                stripe_profile = await stripe_connect_service.find_profile_by_subscription_id(
+                    db, subscription_id
+                )
+                
+                # Si no se encuentra por subscription, buscar por customer_id
+                if not stripe_profile:
+                    stripe_profile = db.query(UserGymStripeProfile).filter(
+                        UserGymStripeProfile.stripe_customer_id == customer_id,
+                        UserGymStripeProfile.is_active == True
+                    ).first()
+                
+                if not stripe_profile:
+                    logger.warning(f"Perfil de Stripe no encontrado para customer {customer_id} o subscription {subscription_id}")
+                    return
+                
+                # Buscar la membresía local usando el perfil
                 user_gym = db.query(UserGym).filter(
-                    UserGym.stripe_subscription_id == subscription_id
+                    UserGym.user_id == stripe_profile.user_id,
+                    UserGym.gym_id == stripe_profile.gym_id
                 ).first()
                 
                 if not user_gym:
-                    logger.warning(f"Membresía local no encontrada para suscripción {subscription_id}")
+                    logger.warning(f"Membresía local no encontrada para user {stripe_profile.user_id} en gym {stripe_profile.gym_id}")
                     return
                 
                 # Obtener información de la suscripción desde Stripe
                 import stripe
-                subscription = stripe.Subscription.retrieve(subscription_id)
+                subscription = stripe.Subscription.retrieve(
+                    subscription_id,
+                    stripe_account=stripe_profile.stripe_account_id  # 🆕 Usar cuenta del gym
+                )
                 
                 # Calcular nueva fecha de expiración basada en el período actual
                 current_period_end = subscription.current_period_end
@@ -553,6 +659,12 @@ class StripeService:
                 user_gym.last_payment_at = datetime.now()
                 user_gym.is_active = True  # Asegurar que esté activa
                 user_gym.notes = f"Renovación exitosa - Invoice {invoice_id} - {datetime.now().isoformat()}"
+                
+                # 🆕 ASEGURAR QUE EL SUBSCRIPTION_ID ESTÉ GUARDADO
+                if not stripe_profile.stripe_subscription_id:
+                    await stripe_connect_service.update_subscription_for_user_gym(
+                        db, stripe_profile.user_id, stripe_profile.gym_id, subscription_id
+                    )
                 
                 db.commit()
                 
@@ -571,7 +683,7 @@ class StripeService:
             await self._alert_webhook_failure('invoice_payment_succeeded', invoice_id, str(e))
     
     async def _handle_subscription_updated(self, subscription: Dict[str, Any]) -> None:
-        """Manejar actualización de suscripción"""
+        """Manejar actualización de suscripción usando nueva arquitectura"""
         try:
             subscription_id = subscription['id']
             status = subscription['status']
@@ -581,20 +693,46 @@ class StripeService:
             if not subscription_id or not status:
                 raise ValueError("Datos incompletos en webhook de suscripción")
             
-            # Buscar membresía local
+            # 🆕 BUSCAR MEMBRESÍA USANDO STRIPE CONNECT PROFILE
+            from app.models.stripe_profile import UserGymStripeProfile
             from app.models.user_gym import UserGym
             from app.db.session import SessionLocal
             from datetime import datetime
+            from app.services.stripe_connect_service import stripe_connect_service
             
             db = SessionLocal()
             try:
+                # 🆕 BUSCAR PERFIL POR SUBSCRIPTION_ID PRIMERO
+                stripe_profile = await stripe_connect_service.find_profile_by_subscription_id(
+                    db, subscription_id
+                )
+                
+                # Si no se encuentra por subscription, buscar por customer_id
+                if not stripe_profile:
+                    stripe_profile = db.query(UserGymStripeProfile).filter(
+                        UserGymStripeProfile.stripe_customer_id == customer_id,
+                        UserGymStripeProfile.is_active == True
+                    ).first()
+                
+                if not stripe_profile:
+                    logger.warning(f"Perfil de Stripe no encontrado para customer {customer_id} o subscription {subscription_id}")
+                    return
+                
+                # Buscar la membresía local usando el perfil
                 user_gym = db.query(UserGym).filter(
-                    UserGym.stripe_subscription_id == subscription_id
+                    UserGym.user_id == stripe_profile.user_id,
+                    UserGym.gym_id == stripe_profile.gym_id
                 ).first()
                 
                 if not user_gym:
-                    logger.warning(f"Membresía local no encontrada para suscripción {subscription_id}")
+                    logger.warning(f"Membresía local no encontrada para user {stripe_profile.user_id} en gym {stripe_profile.gym_id}")
                     return
+                
+                # 🆕 ASEGURAR QUE EL SUBSCRIPTION_ID ESTÉ GUARDADO
+                if not stripe_profile.stripe_subscription_id:
+                    await stripe_connect_service.update_subscription_for_user_gym(
+                        db, stripe_profile.user_id, stripe_profile.gym_id, subscription_id
+                    )
                 
                 # Actualizar estado según el status de Stripe
                 status_mapping = {
@@ -928,6 +1066,8 @@ class StripeService:
         metadata: Optional[Dict[str, str]] = None
     ) -> str:
         """
+        ⚠️ MÉTODO OBSOLETO - Usar StripeConnectService.get_or_create_customer_for_user_gym()
+        
         Crear o actualizar un cliente en Stripe.
         
         Args:
@@ -939,12 +1079,17 @@ class StripeService:
         Returns:
             str: ID del cliente en Stripe
         """
+        logger.warning(f"⚠️ Método obsoleto create_or_update_customer llamado para user {user_id}")
+        logger.warning("⚠️ Use StripeConnectService.get_or_create_customer_for_user_gym() en su lugar")
+        
         try:
             customer_data = {
                 'email': email,
                 'name': name,
                 'metadata': {
                     'internal_user_id': str(user_id),
+                    'deprecated_method': 'true',
+                    'migration_needed': 'true',
                     **(metadata or {})
                 }
             }
@@ -958,11 +1103,11 @@ class StripeService:
                     existing_customers.data[0].id,
                     **customer_data
                 )
-                logger.info(f"Cliente actualizado: {customer.id}")
+                logger.info(f"Cliente actualizado (método obsoleto): {customer.id}")
             else:
                 # Crear nuevo cliente
                 customer = stripe.Customer.create(**customer_data)
-                logger.info(f"Cliente creado: {customer.id}")
+                logger.info(f"Cliente creado (método obsoleto): {customer.id}")
             
             return customer.id
             
@@ -1010,7 +1155,7 @@ class StripeService:
         cancel_url: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        Crear sesión de checkout con período de prueba.
+        Crear sesión de checkout con período de prueba usando Stripe Connect.
         
         Args:
             trial_days: Días de prueba gratuita
@@ -1033,10 +1178,26 @@ class StripeService:
             if plan.billing_interval == 'one_time':
                 raise ValueError("Los períodos de prueba solo aplican a suscripciones")
 
+            # 🆕 USAR STRIPE CONNECT SERVICE PARA EVITAR DUPLICACIÓN
+            from app.services.stripe_connect_service import stripe_connect_service
+            
+            # Obtener o crear customer sin duplicados
+            stripe_customer_id = await stripe_connect_service.get_or_create_customer_for_user_gym(
+                db, int(user_id), gym_id
+            )
+            
+            # Obtener cuenta de Stripe del gym
+            gym_account = stripe_connect_service.get_gym_stripe_account(db, gym_id)
+            if not gym_account:
+                raise ValueError(f"Gimnasio {gym_id} no tiene cuenta de Stripe configurada. Contacte al administrador.")
+            
+            if not gym_account.onboarding_completed:
+                raise ValueError(f"El gimnasio debe completar la configuración de Stripe antes de procesar pagos.")
+
             success_url = success_url or settings.STRIPE_SUCCESS_URL
             cancel_url = cancel_url or settings.STRIPE_CANCEL_URL
 
-            # Crear sesión con período de prueba
+            # 🆕 CREAR SESIÓN CON PERÍODO DE PRUEBA EN LA CUENTA DEL GYM
             checkout_session = stripe.checkout.Session.create(
                 payment_method_types=['card'],
                 line_items=[{
@@ -1046,6 +1207,7 @@ class StripeService:
                 mode='subscription',
                 success_url=f"{success_url}?session_id={{CHECKOUT_SESSION_ID}}",
                 cancel_url=cancel_url,
+                customer=stripe_customer_id,  # 🆕 Usar customer existente
                 subscription_data={
                     'trial_period_days': trial_days,
                     'metadata': {
@@ -1059,9 +1221,11 @@ class StripeService:
                     'gym_id': str(gym_id),
                     'plan_id': str(plan_id),
                     'plan_name': plan.name,
-                    'trial_days': str(trial_days)
+                    'trial_days': str(trial_days),
+                    'stripe_account_id': gym_account.stripe_account_id  # 🆕 Para tracking
                 },
                 allow_promotion_codes=True,
+                stripe_account=gym_account.stripe_account_id  # 🆕 Usar cuenta del gym
             )
 
             logger.info(f"Checkout con prueba creado: {checkout_session.id} ({trial_days} días)")

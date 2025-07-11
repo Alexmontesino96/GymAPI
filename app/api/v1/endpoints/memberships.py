@@ -298,58 +298,64 @@ async def get_membership_plans_stats(
     total_estimated_monthly_revenue = 0
     
     for plan in plans:
-        # Obtener usuarios vinculados a este plan usando múltiples estrategias
+        # Obtener usuarios vinculados a este plan usando asociación precisa
         plan_users = []
         plan_user_ids = set()
         
-        # Estrategia 1: Buscar por stripe_price_id si existe
+        # 🎯 ESTRATEGIA PRINCIPAL: Asociación por Stripe Subscription ID
+        # Solo usuarios que tienen el stripe_subscription_id vinculado al plan específico
         if plan.stripe_price_id:
+            # Buscar usuarios con suscripciones activas
             stripe_users = db.query(UserGym, User).join(User, UserGym.user_id == User.id).filter(
                 UserGym.gym_id == current_gym.id,
                 UserGym.is_active == True,
                 UserGym.stripe_subscription_id.isnot(None)
             ).all()
             
-            # Verificar qué usuarios tienen suscripciones de Stripe que coinciden con este plan
+            # Verificar qué usuarios tienen suscripciones que coinciden con este plan
             for user_gym, user in stripe_users:
                 if user_gym.stripe_subscription_id:
                     try:
-                        # Aquí podrías hacer una llamada a Stripe para verificar el price_id
-                        # Por ahora, usaremos una heurística basada en el precio y duración
-                        plan_users.append({
-                            "user_id": user.id,
-                            "user_gym_id": user_gym.id,
-                            "email": user.email,
-                            "first_name": user.first_name,
-                            "last_name": user.last_name,
-                            "membership_type": user_gym.membership_type,
-                            "expires_at": user_gym.membership_expires_at,
-                            "stripe_subscription_id": user_gym.stripe_subscription_id,
-                            "association_method": "stripe_subscription"
-                        })
-                        plan_user_ids.add(user.id)
-                    except Exception:
+                        # Obtener la suscripción de Stripe para verificar el price_id
+                        import stripe
+                        subscription = stripe.Subscription.retrieve(user_gym.stripe_subscription_id)
+                        
+                        # Verificar si la suscripción usa el price_id de este plan
+                        subscription_price_ids = [item.price.id for item in subscription.items.data]
+                        
+                        if plan.stripe_price_id in subscription_price_ids:
+                            plan_users.append({
+                                "user_id": user.id,
+                                "user_gym_id": user_gym.id,
+                                "email": user.email,
+                                "first_name": user.first_name,
+                                "last_name": user.last_name,
+                                "membership_type": user_gym.membership_type,
+                                "expires_at": user_gym.membership_expires_at,
+                                "stripe_subscription_id": user_gym.stripe_subscription_id,
+                                "association_method": "stripe_subscription"
+                            })
+                            plan_user_ids.add(user.id)
+                            
+                    except stripe.error.StripeError as e:
+                        logger.warning(f"Error verificando suscripción {user_gym.stripe_subscription_id}: {str(e)}")
+                        continue
+                    except Exception as e:
+                        logger.warning(f"Error inesperado verificando suscripción {user_gym.stripe_subscription_id}: {str(e)}")
                         continue
         
-        # Estrategia 2: Buscar usuarios por duración similar del plan
-        # Usuarios cuya fecha de expiración coincide aproximadamente con la duración del plan
-        duration_users = db.query(UserGym, User).join(User, UserGym.user_id == User.id).filter(
-            UserGym.gym_id == current_gym.id,
-            UserGym.is_active == True,
-            UserGym.membership_type == 'paid',
-            UserGym.membership_expires_at > now
-        ).all()
-        
-        for user_gym, user in duration_users:
-            if user.id in plan_user_ids:
-                continue  # Ya incluido por Stripe
+        # 🔍 ESTRATEGIA SECUNDARIA: Asociación por metadatos en notas
+        # Solo si hay referencia explícita al plan en las notas
+        if not plan_users:  # Solo si no encontramos usuarios por Stripe
+            notes_users = db.query(UserGym, User).join(User, UserGym.user_id == User.id).filter(
+                UserGym.gym_id == current_gym.id,
+                UserGym.is_active == True,
+                UserGym.notes.isnot(None),
+                UserGym.notes.contains(f"plan_id:{plan.id}")  # Referencia específica al plan
+            ).all()
             
-            if user_gym.membership_expires_at:
-                # Calcular días restantes
-                days_remaining = (user_gym.membership_expires_at - now).days
-                
-                # Verificar si coincide con la duración del plan (con margen de ±5 días)
-                if plan.duration_days - 5 <= days_remaining <= plan.duration_days + 5:
+            for user_gym, user in notes_users:
+                if user.id not in plan_user_ids:
                     plan_users.append({
                         "user_id": user.id,
                         "user_gym_id": user_gym.id,
@@ -358,82 +364,10 @@ async def get_membership_plans_stats(
                         "last_name": user.last_name,
                         "membership_type": user_gym.membership_type,
                         "expires_at": user_gym.membership_expires_at,
-                        "days_remaining": days_remaining,
-                        "association_method": "duration_match"
+                        "notes": user_gym.notes,
+                        "association_method": "notes_reference"
                     })
                     plan_user_ids.add(user.id)
-        
-        # Estrategia 3: Buscar en las notas referencias al plan
-        notes_users = db.query(UserGym, User).join(User, UserGym.user_id == User.id).filter(
-            UserGym.gym_id == current_gym.id,
-            UserGym.is_active == True,
-            UserGym.notes.isnot(None),
-            UserGym.notes.contains(f"plan_{plan.id}")
-        ).all()
-        
-        for user_gym, user in notes_users:
-            if user.id in plan_user_ids:
-                continue  # Ya incluido
-            
-            plan_users.append({
-                "user_id": user.id,
-                "user_gym_id": user_gym.id,
-                "email": user.email,
-                "first_name": user.first_name,
-                "last_name": user.last_name,
-                "membership_type": user_gym.membership_type,
-                "expires_at": user_gym.membership_expires_at,
-                "notes": user_gym.notes,
-                "association_method": "notes_reference"
-            })
-            plan_user_ids.add(user.id)
-        
-        # Si no encontramos usuarios específicos, pero el plan tiene un billing_interval específico,
-        # intentamos asociar usuarios basados en patrones de facturación
-        if not plan_users and plan.billing_interval in ['month', 'year']:
-            pattern_users = db.query(UserGym, User).join(User, UserGym.user_id == User.id).filter(
-                UserGym.gym_id == current_gym.id,
-                UserGym.is_active == True,
-                UserGym.membership_type == 'paid',
-                UserGym.membership_expires_at > now
-            ).all()
-            
-            for user_gym, user in pattern_users:
-                if user.id in plan_user_ids:
-                    continue
-                
-                if user_gym.membership_expires_at:
-                    days_remaining = (user_gym.membership_expires_at - now).days
-                    
-                    # Para planes mensuales: usuarios con 25-35 días restantes
-                    if plan.billing_interval == 'month' and 25 <= days_remaining <= 35:
-                        plan_users.append({
-                            "user_id": user.id,
-                            "user_gym_id": user_gym.id,
-                            "email": user.email,
-                            "first_name": user.first_name,
-                            "last_name": user.last_name,
-                            "membership_type": user_gym.membership_type,
-                            "expires_at": user_gym.membership_expires_at,
-                            "days_remaining": days_remaining,
-                            "association_method": "monthly_pattern"
-                        })
-                        plan_user_ids.add(user.id)
-                    
-                    # Para planes anuales: usuarios con 300+ días restantes
-                    elif plan.billing_interval == 'year' and days_remaining >= 300:
-                        plan_users.append({
-                            "user_id": user.id,
-                            "user_gym_id": user_gym.id,
-                            "email": user.email,
-                            "first_name": user.first_name,
-                            "last_name": user.last_name,
-                            "membership_type": user_gym.membership_type,
-                            "expires_at": user_gym.membership_expires_at,
-                            "days_remaining": days_remaining,
-                            "association_method": "yearly_pattern"
-                        })
-                        plan_user_ids.add(user.id)
         
         # Calcular ingresos basados en usuarios reales encontrados
         actual_users_count = len(plan_users)

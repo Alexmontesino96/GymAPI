@@ -248,10 +248,22 @@ class MembershipService:
         plan_id: Optional[int] = None,
         membership_type: str = "paid",
         duration_days: Optional[int] = None,
+        # 🆕 PARÁMETROS OBSOLETOS - Ya no se usan
         stripe_customer_id: Optional[str] = None,
         stripe_subscription_id: Optional[str] = None
     ) -> UserGym:
-        """Activar o crear una membresía de usuario"""
+        """
+        Activar o crear una membresía de usuario.
+        
+        ⚠️ NOTA: stripe_customer_id y stripe_subscription_id ya no se guardan en UserGym.
+        Esta información se maneja a través de UserGymStripeProfile en la nueva arquitectura.
+        """
+        
+        # 🆕 ADVERTENCIA SI SE USAN PARÁMETROS OBSOLETOS
+        if stripe_customer_id or stripe_subscription_id:
+            logger.warning(f"⚠️ Parámetros obsoletos en activate_membership para user {user_id}")
+            logger.warning("⚠️ stripe_customer_id y stripe_subscription_id ya no se guardan en UserGym")
+            logger.warning("⚠️ Esta información se maneja automáticamente en UserGymStripeProfile")
         
         # Obtener duración desde el plan si no se especifica
         if plan_id and not duration_days:
@@ -276,9 +288,11 @@ class MembershipService:
                 is_active=True,
                 membership_type=membership_type,
                 membership_expires_at=datetime.now() + timedelta(days=duration_days),
-                stripe_customer_id=stripe_customer_id,
-                stripe_subscription_id=stripe_subscription_id,
-                last_payment_at=datetime.now()
+                # 🆕 NO GUARDAR DATOS DE STRIPE EN USERGYM
+                # stripe_customer_id=stripe_customer_id,
+                # stripe_subscription_id=stripe_subscription_id,
+                last_payment_at=datetime.now(),
+                notes=f"Membresía activada - {datetime.now().isoformat()}"
             )
             db.add(user_gym)
         else:
@@ -286,14 +300,30 @@ class MembershipService:
             user_gym.is_active = True
             user_gym.membership_type = membership_type
             user_gym.membership_expires_at = datetime.now() + timedelta(days=duration_days)
-            user_gym.stripe_customer_id = stripe_customer_id or user_gym.stripe_customer_id
-            user_gym.stripe_subscription_id = stripe_subscription_id or user_gym.stripe_subscription_id
+            # 🆕 NO ACTUALIZAR DATOS DE STRIPE EN USERGYM
+            # user_gym.stripe_customer_id = stripe_customer_id or user_gym.stripe_customer_id
+            # user_gym.stripe_subscription_id = stripe_subscription_id or user_gym.stripe_subscription_id
             user_gym.last_payment_at = datetime.now()
+            user_gym.notes = f"Membresía renovada - {datetime.now().isoformat()}"
         
         db.commit()
         db.refresh(user_gym)
         
         logger.info(f"Membresía activada para user {user_id} en gym {gym_id} por {duration_days} días")
+        
+        # 🆕 VERIFICAR QUE EXISTE PERFIL DE STRIPE SI ES PAGO
+        if membership_type == "paid":
+            try:
+                from app.services.stripe_connect_service import stripe_connect_service
+                stripe_profile = stripe_connect_service.get_user_stripe_profile(db, user_id, gym_id)
+                if stripe_profile:
+                    logger.info(f"✅ Perfil de Stripe encontrado para user {user_id} en gym {gym_id}")
+                else:
+                    logger.warning(f"⚠️ No se encontró perfil de Stripe para user {user_id} en gym {gym_id}")
+                    logger.warning("⚠️ Esto podría indicar un problema en el flujo de pago")
+            except Exception as e:
+                logger.error(f"Error verificando perfil de Stripe: {str(e)}")
+        
         return user_gym
 
     def deactivate_membership(
