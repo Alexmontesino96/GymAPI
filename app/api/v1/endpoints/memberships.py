@@ -333,7 +333,13 @@ async def get_membership_plans_stats(
                         )
                         
                         # Verificar si la suscripción usa el price_id de este plan
-                        subscription_price_ids = [item.price.id for item in subscription.items.data]
+                        # 🆕 COMPATIBILIDAD CON STRIPE SDK v8
+                        subscription_price_ids = []
+                        if hasattr(subscription, 'items') and hasattr(subscription.items, 'data'):
+                            subscription_price_ids = [item.price.id for item in subscription.items.data]
+                        elif hasattr(subscription, 'plan') and hasattr(subscription.plan, 'id'):
+                            # Fallback para suscripciones con plan único
+                            subscription_price_ids = [subscription.plan.id]
                         
                         if plan.stripe_price_id in subscription_price_ids:
                             plan_users.append({
