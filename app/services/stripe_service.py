@@ -1704,3 +1704,34 @@ class StripeService:
                 
         except Exception as e:
             logger.error(f"Error programando reintento inteligente: {str(e)}") 
+
+
+# === INSTANCIA DEL SERVICIO ===
+
+# Variable global para la instancia
+_stripe_service_instance = None
+
+def get_stripe_service():
+    """
+    Obtener la instancia del servicio Stripe.
+    La instancia se crea de forma lazy para evitar problemas de importación circular.
+    """
+    global _stripe_service_instance
+    if _stripe_service_instance is None:
+        # Importación lazy para evitar circular imports
+        from app.services.membership import membership_service
+        _stripe_service_instance = StripeService(membership_service)
+    return _stripe_service_instance
+
+# Función para obtener la instancia de forma lazy
+def _get_stripe_service_lazy():
+    """Función interna para lazy loading"""
+    return get_stripe_service()
+
+# Crear un objeto proxy que se inicializa solo cuando se accede
+class StripeServiceProxy:
+    def __getattr__(self, name):
+        return getattr(get_stripe_service(), name)
+
+# Exportar la instancia proxy para compatibilidad con importaciones existentes
+stripe_service = StripeServiceProxy() 

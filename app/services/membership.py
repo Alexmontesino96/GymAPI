@@ -48,8 +48,9 @@ class MembershipService:
         
         # 🆕 SINCRONIZACIÓN AUTOMÁTICA CON STRIPE
         try:
-            from app.services.stripe_service import StripeService
-            stripe_service = StripeService(self)
+            # Importación lazy para evitar circular imports
+            from app.services.stripe_service import get_stripe_service
+            stripe_service = get_stripe_service()
             
             # Crear producto y precio en Stripe automáticamente
             stripe_result = await stripe_service.create_stripe_product_for_plan(db, db_plan)
@@ -107,8 +108,9 @@ class MembershipService:
         
         # 🆕 SINCRONIZACIÓN AUTOMÁTICA CON STRIPE
         try:
-            from app.services.stripe_service import StripeService
-            stripe_service = StripeService(self)
+            # Importación lazy para evitar circular imports
+            from app.services.stripe_service import get_stripe_service
+            stripe_service = get_stripe_service()
             
             # Actualizar producto en Stripe
             success = await stripe_service.update_stripe_product_for_plan(db, db_plan)
@@ -139,8 +141,9 @@ class MembershipService:
         
         # 🆕 SINCRONIZACIÓN AUTOMÁTICA CON STRIPE
         try:
-            from app.services.stripe_service import StripeService
-            stripe_service = StripeService(self)
+            # Importación lazy para evitar circular imports
+            from app.services.stripe_service import get_stripe_service
+            stripe_service = get_stripe_service()
             
             # Desactivar producto en Stripe
             success = await stripe_service.deactivate_stripe_product_for_plan(db_plan)
@@ -323,8 +326,9 @@ class MembershipService:
     ) -> bool:
         """Sincronizar manualmente un plan específico con Stripe"""
         try:
-            from app.services.stripe_service import StripeService
-            stripe_service = StripeService(self)
+            # Importación lazy para evitar circular imports
+            from app.services.stripe_service import get_stripe_service
+            stripe_service = get_stripe_service()
             
             return await stripe_service.sync_plan_with_stripe(db, plan_id)
             
@@ -339,8 +343,9 @@ class MembershipService:
     ) -> Dict[str, Any]:
         """Sincronizar todos los planes de un gimnasio con Stripe"""
         try:
-            from app.services.stripe_service import StripeService
-            stripe_service = StripeService(self)
+            # Importación lazy para evitar circular imports
+            from app.services.stripe_service import get_stripe_service
+            stripe_service = get_stripe_service()
             
             plans = self.get_membership_plans(db, gym_id, active_only=False)
             results = {
