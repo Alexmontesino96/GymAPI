@@ -396,15 +396,20 @@ class StripeService:
         logger.info(f"Procesando webhook de Stripe: {event_type}")
 
         if event_type == 'checkout.session.completed':
-            # Pago completado
+            # Pago completado - ACTIVAR MEMBRESÍA
             session = event['data']['object']
             logger.info(f"Checkout completado: {session['id']}")
             
+            # Procesar activación de membresía
+            await self._handle_checkout_completed(session)
+            
         elif event_type == 'invoice.payment_succeeded':
-            # Pago de suscripción exitoso
+            # Pago de suscripción exitoso - EXTENDER MEMBRESÍA
             invoice = event['data']['object']
             logger.info(f"Pago de suscripción exitoso: {invoice['id']}")
-            # TODO: Extender fecha de membresía
+            
+            # Procesar extensión de membresía para renovaciones
+            await self._handle_invoice_payment_succeeded(invoice)
             
         elif event_type == 'invoice.payment_failed':
             # Pago de suscripción fallido
@@ -461,6 +466,109 @@ class StripeService:
         return {"status": "success", "event_type": event_type}
 
     # 🆕 MÉTODOS PARA MANEJAR EVENTOS ESPECÍFICOS
+    
+    async def _handle_checkout_completed(self, session: Dict[str, Any]) -> None:
+        """Manejar checkout completado - activar membresía inicial"""
+        try:
+            session_id = session['id']
+            metadata = session.get('metadata', {})
+            
+            # Extraer datos del metadata
+            user_id = metadata.get('user_id')
+            gym_id = metadata.get('gym_id')
+            plan_id = metadata.get('plan_id')
+            
+            if not all([user_id, gym_id, plan_id]):
+                logger.error(f"Metadatos incompletos en checkout {session_id}: user_id={user_id}, gym_id={gym_id}, plan_id={plan_id}")
+                return
+            
+            # Obtener información adicional de Stripe
+            stripe_customer_id = session.get('customer')
+            stripe_subscription_id = session.get('subscription')
+            
+            logger.info(f"Activando membresía desde checkout: user={user_id}, gym={gym_id}, plan={plan_id}")
+            
+            # Activar la membresía usando el servicio
+            from app.db.session import SessionLocal
+            db = SessionLocal()
+            try:
+                membership = await self.membership_service.activate_membership(
+                    db=db,
+                    user_id=int(user_id),
+                    gym_id=int(gym_id),
+                    plan_id=int(plan_id),
+                    stripe_customer_id=stripe_customer_id,
+                    stripe_subscription_id=stripe_subscription_id
+                )
+                
+                logger.info(f"✅ Membresía activada exitosamente: user {user_id} en gym {gym_id}, expira: {membership.membership_expires_at}")
+                
+                # Enviar notificación de bienvenida
+                await self._notify_membership_activated(membership)
+                
+            finally:
+                db.close()
+                
+        except Exception as e:
+            logger.error(f"Error activando membresía desde checkout {session_id}: {str(e)}")
+            await self._alert_webhook_failure('checkout_completed', session_id, str(e))
+    
+    async def _handle_invoice_payment_succeeded(self, invoice: Dict[str, Any]) -> None:
+        """Manejar pago de factura exitoso - extender membresía para renovaciones"""
+        try:
+            invoice_id = invoice['id']
+            subscription_id = invoice.get('subscription')
+            customer_id = invoice.get('customer')
+            
+            if not subscription_id:
+                logger.warning(f"Factura {invoice_id} no tiene suscripción asociada - podría ser pago único")
+                return
+            
+            # Buscar membresía local por subscription_id
+            from app.models.user_gym import UserGym
+            from app.db.session import SessionLocal
+            from datetime import datetime, timedelta
+            
+            db = SessionLocal()
+            try:
+                user_gym = db.query(UserGym).filter(
+                    UserGym.stripe_subscription_id == subscription_id
+                ).first()
+                
+                if not user_gym:
+                    logger.warning(f"Membresía local no encontrada para suscripción {subscription_id}")
+                    return
+                
+                # Obtener información de la suscripción desde Stripe
+                import stripe
+                subscription = stripe.Subscription.retrieve(subscription_id)
+                
+                # Calcular nueva fecha de expiración basada en el período actual
+                current_period_end = subscription.current_period_end
+                new_expiry_date = datetime.fromtimestamp(current_period_end)
+                
+                # Actualizar la membresía
+                old_expiry = user_gym.membership_expires_at
+                user_gym.membership_expires_at = new_expiry_date
+                user_gym.last_payment_at = datetime.now()
+                user_gym.is_active = True  # Asegurar que esté activa
+                user_gym.notes = f"Renovación exitosa - Invoice {invoice_id} - {datetime.now().isoformat()}"
+                
+                db.commit()
+                
+                logger.info(f"✅ Membresía renovada: user {user_gym.user_id} en gym {user_gym.gym_id}")
+                logger.info(f"   Expiración anterior: {old_expiry}")
+                logger.info(f"   Nueva expiración: {new_expiry_date}")
+                
+                # Enviar notificación de renovación exitosa
+                await self._notify_membership_renewed(user_gym, invoice_id)
+                
+            finally:
+                db.close()
+                
+        except Exception as e:
+            logger.error(f"Error procesando renovación de membresía para invoice {invoice_id}: {str(e)}")
+            await self._alert_webhook_failure('invoice_payment_succeeded', invoice_id, str(e))
     
     async def _handle_subscription_updated(self, subscription: Dict[str, Any]) -> None:
         """Manejar actualización de suscripción"""
@@ -1216,7 +1324,7 @@ class StripeService:
     async def _notify_payment_overdue(self, user_gym) -> None:
         """Notificar al usuario sobre pago vencido"""
         try:
-            from app.services.notification import notification_service
+            from app.services.notification_service import notification_service
             from app.models.user import User
             from app.db.session import SessionLocal
             
@@ -1243,7 +1351,7 @@ class StripeService:
     async def _notify_subscription_canceled(self, user_gym) -> None:
         """Notificar al usuario sobre cancelación de suscripción"""
         try:
-            from app.services.notification import notification_service
+            from app.services.notification_service import notification_service
             from app.models.user import User
             from app.db.session import SessionLocal
             
@@ -1269,7 +1377,7 @@ class StripeService:
     async def _notify_subscription_reactivated(self, user_gym) -> None:
         """Notificar al usuario sobre reactivación de suscripción"""
         try:
-            from app.services.notification import notification_service
+            from app.services.notification_service import notification_service
             from app.models.user import User
             from app.db.session import SessionLocal
             
@@ -1292,10 +1400,65 @@ class StripeService:
         except Exception as e:
             logger.error(f"Error enviando notificación de reactivación: {str(e)}")
     
+    async def _notify_membership_activated(self, user_gym) -> None:
+        """Notificar al usuario sobre activación inicial de membresía"""
+        try:
+            from app.services.notification_service import notification_service
+            from app.models.user import User
+            from app.db.session import SessionLocal
+            
+            db = SessionLocal()
+            try:
+                user = db.query(User).filter(User.id == user_gym.user_id).first()
+                if user and user.onesignal_player_id:
+                    await notification_service.send_notification(
+                        player_id=user.onesignal_player_id,
+                        title="¡Membresía Activada!",
+                        message=f"Tu membresía ha sido activada exitosamente. ¡Disfruta del gimnasio hasta el {user_gym.membership_expires_at.strftime('%d/%m/%Y')}!",
+                        data={
+                            "type": "membership_activated",
+                            "gym_id": str(user_gym.gym_id),
+                            "expires_at": user_gym.membership_expires_at.isoformat()
+                        }
+                    )
+            finally:
+                db.close()
+                
+        except Exception as e:
+            logger.error(f"Error enviando notificación de activación: {str(e)}")
+    
+    async def _notify_membership_renewed(self, user_gym, invoice_id: str) -> None:
+        """Notificar al usuario sobre renovación de membresía"""
+        try:
+            from app.services.notification_service import notification_service
+            from app.models.user import User
+            from app.db.session import SessionLocal
+            
+            db = SessionLocal()
+            try:
+                user = db.query(User).filter(User.id == user_gym.user_id).first()
+                if user and user.onesignal_player_id:
+                    await notification_service.send_notification(
+                        player_id=user.onesignal_player_id,
+                        title="Membresía Renovada",
+                        message=f"Tu membresía se ha renovado exitosamente hasta el {user_gym.membership_expires_at.strftime('%d/%m/%Y')}",
+                        data={
+                            "type": "membership_renewed",
+                            "gym_id": str(user_gym.gym_id),
+                            "invoice_id": invoice_id,
+                            "expires_at": user_gym.membership_expires_at.isoformat()
+                        }
+                    )
+            finally:
+                db.close()
+                
+        except Exception as e:
+            logger.error(f"Error enviando notificación de renovación: {str(e)}")
+    
     async def _notify_trial_ending(self, user_gym, trial_end_date) -> None:
         """Notificar al usuario sobre fin próximo de período de prueba"""
         try:
-            from app.services.notification import notification_service
+            from app.services.notification_service import notification_service
             from app.models.user import User
             from app.db.session import SessionLocal
             
@@ -1322,7 +1485,7 @@ class StripeService:
     async def _alert_webhook_failure(self, event_type: str, resource_id: str, error_message: str) -> None:
         """Alertar a administradores sobre fallos en webhooks"""
         try:
-            from app.services.notification import notification_service
+            from app.services.notification_service import notification_service
             from app.models.user import User
             from app.models.user_gym import UserGym, GymRoleType
             from app.db.session import SessionLocal
@@ -1359,7 +1522,7 @@ class StripeService:
     async def _notify_payment_action_required(self, user_gym, invoice_id: str, payment_intent_id: str) -> None:
         """Notificar al usuario que debe completar la autenticación del pago"""
         try:
-            from app.services.notification import notification_service
+            from app.services.notification_service import notification_service
             from app.models.user import User
             from app.db.session import SessionLocal
             
@@ -1391,7 +1554,7 @@ class StripeService:
             # que redirija al usuario a la página de confirmación de pago
             completion_url = f"{get_settings().FRONTEND_URL}/payment/complete?pi={payment_intent_id}"
             
-            from app.services.notification import notification_service
+            from app.services.notification_service import notification_service
             from app.models.user import User
             from app.db.session import SessionLocal
             
@@ -1420,7 +1583,7 @@ class StripeService:
         """Enviar recordatorio de próximo pago"""
         try:
             from datetime import datetime
-            from app.services.notification import notification_service
+            from app.services.notification_service import notification_service
             from app.models.user import User
             from app.db.session import SessionLocal
             
@@ -1466,7 +1629,7 @@ class StripeService:
             
             if not valid_methods:
                 # No hay métodos de pago válidos
-                from app.services.notification import notification_service
+                from app.services.notification_service import notification_service
                 from app.models.user import User
                 from app.db.session import SessionLocal
                 
@@ -1493,7 +1656,7 @@ class StripeService:
     async def _notify_dispute_to_admins(self, dispute_id: str, amount: int, reason: str, gym_id: Optional[str]) -> None:
         """Notificar a administradores sobre nueva disputa"""
         try:
-            from app.services.notification import notification_service
+            from app.services.notification_service import notification_service
             from app.models.user import User
             from app.models.user_gym import UserGym, GymRoleType
             from app.db.session import SessionLocal
@@ -1579,7 +1742,7 @@ class StripeService:
                     db.commit()
                     
                     # Notificar al usuario
-                    from app.services.notification import notification_service
+                    from app.services.notification_service import notification_service
                     from app.models.user import User
                     
                     user = db.query(User).filter(User.id == user_gym.user_id).first()
@@ -1630,7 +1793,7 @@ class StripeService:
     async def _notify_payment_failed(self, user_gym, failure_reason: str, decline_code: Optional[str]) -> None:
         """Notificar al usuario sobre fallo de pago con sugerencias"""
         try:
-            from app.services.notification import notification_service
+            from app.services.notification_service import notification_service
             from app.models.user import User
             from app.db.session import SessionLocal
             
@@ -1680,7 +1843,7 @@ class StripeService:
             logger.info(f"Reintento programado para payment_intent {payment_intent_id} en {retry_hours} horas")
             
             # Notificar al usuario sobre el reintento programado
-            from app.services.notification import notification_service
+            from app.services.notification_service import notification_service
             from app.models.user import User
             from app.db.session import SessionLocal
             
