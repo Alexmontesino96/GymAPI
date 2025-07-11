@@ -53,19 +53,21 @@ class StripeConnectService:
             GymStripeAccount: Cuenta creada o actualizada
         """
         try:
-            # Verificar si ya existe cuenta
+            # Verificar si ya existe cuenta (activa o inactiva)
             existing_account = db.query(GymStripeAccount).filter(
-                GymStripeAccount.gym_id == gym_id,
-                GymStripeAccount.is_active == True
+                GymStripeAccount.gym_id == gym_id
             ).first()
             
             # 🆕 VERIFICAR SI ES CUENTA PLACEHOLDER
             if existing_account and existing_account.stripe_account_id.startswith("placeholder_"):
-                logger.info(f"Actualizando cuenta placeholder para gym {gym_id}")
+                logger.info(f"Actualizando cuenta placeholder para gym {gym_id}: {existing_account.stripe_account_id}")
                 # Continuar para crear cuenta real y actualizar el registro
-            elif existing_account:
-                logger.info(f"Gym {gym_id} ya tiene cuenta de Stripe: {existing_account.stripe_account_id}")
+            elif existing_account and existing_account.is_active:
+                logger.info(f"Gym {gym_id} ya tiene cuenta de Stripe activa: {existing_account.stripe_account_id}")
                 return existing_account
+            elif existing_account:
+                logger.info(f"Gym {gym_id} tiene cuenta inactiva: {existing_account.stripe_account_id}, is_active={existing_account.is_active}")
+                # Continuar para reactivar la cuenta
             
             # Obtener información del gym
             gym = db.query(Gym).filter(Gym.id == gym_id).first()
@@ -91,7 +93,8 @@ class StripeConnectService:
             
             # 🆕 ACTUALIZAR CUENTA EXISTENTE O CREAR NUEVA
             if existing_account:
-                # Actualizar cuenta placeholder
+                # Actualizar cuenta existente (placeholder o inactiva)
+                old_account_id = existing_account.stripe_account_id
                 existing_account.stripe_account_id = account.id
                 existing_account.account_type = account_type
                 existing_account.country = country
@@ -101,13 +104,13 @@ class StripeConnectService:
                 existing_account.payouts_enabled = False
                 existing_account.details_submitted = False
                 existing_account.is_active = True
-                existing_account.updated_at = datetime.utcnow()
+                existing_account.updated_at = datetime.now()
                 
                 db.commit()
                 db.refresh(existing_account)
                 gym_stripe_account = existing_account
                 
-                logger.info(f"Cuenta placeholder actualizada para gym {gym_id}: {account.id}")
+                logger.info(f"Cuenta actualizada para gym {gym_id}: {old_account_id} -> {account.id}")
             else:
                 # Crear nueva cuenta
                 gym_stripe_account = GymStripeAccount(
