@@ -11,7 +11,12 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 logger = logging.getLogger(__name__)
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", case_sensitive=True)
+    model_config = SettingsConfigDict(
+        env_file=".env", 
+        env_file_encoding="utf-8", 
+        case_sensitive=True,
+        extra="ignore"  # Permitir campos extra en .env
+    )
     
     # Configuración básica
     API_V1_STR: str = "/api/v1"
@@ -143,6 +148,18 @@ class Settings(BaseSettings):
     # Configuración de OneSignal para notificaciones push
     ONESIGNAL_APP_ID: Optional[str] = None
     ONESIGNAL_REST_API_KEY: Optional[str] = None
+
+    # Configuración de OpenAI para IA nutricional
+    OPENAI_API_KEY: str = os.getenv("CHAT_GPT_MODEL", "")
+    OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+    OPENAI_MAX_TOKENS: int = int(os.getenv("OPENAI_MAX_TOKENS", "1500"))
+    OPENAI_TEMPERATURE: float = float(os.getenv("OPENAI_TEMPERATURE", "0.1"))
+
+    @field_validator("OPENAI_API_KEY")
+    def validate_openai_key(cls, v: str) -> str:
+        if v and not v.startswith('sk-'):
+            raise ValueError('OPENAI_API_KEY debe empezar con sk-')
+        return v
 
     # Lista de URLs de redirección permitidas
     AUTH0_ALLOWED_REDIRECT_URIS: List[str]

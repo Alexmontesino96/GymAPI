@@ -22,9 +22,17 @@ from app.schemas.nutrition import (
     NutritionGoal, DifficultyLevel, BudgetLevel, DietaryRestriction, MealType, PlanType, PlanStatus,
     ArchivePlanRequest, LivePlanStatusUpdate
 )
+from app.schemas.nutrition_ai import (
+    AIIngredientRequest, AIRecipeResponse, ApplyGeneratedIngredientsRequest, ApplyIngredientsResponse
+)
 from app.services.nutrition import NutritionService, NotFoundError, ValidationError, PermissionError
 from app.services.user import user_service
 from app.core.dependencies import module_enabled
+from app.models.nutrition import Meal, DailyNutritionPlan, MealIngredient
+from sqlalchemy.orm import joinedload
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(dependencies=[module_enabled("nutrition")])
 
@@ -1276,6 +1284,375 @@ def add_ingredient_to_meal(
         raise HTTPException(status_code=404, detail=str(e))
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
+
+
+# ===== ENDPOINTS DE IA NUTRICIONAL =====
+
+@router.post("/meals/{meal_id}/ingredients/ai-generate", response_model=AIRecipeResponse)
+async def generate_ingredients_with_ai(
+    request: AIIngredientRequest,
+    meal_id: int = Path(..., description="ID de la comida para generar ingredientes"),
+    db: Session = Depends(get_db),
+    current_gym: Gym = Depends(verify_gym_access),
+    current_user: Auth0User = Depends(get_current_user)
+):
+    """
+    🤖 **Generar Ingredientes Automáticamente con IA**
+    
+    **Descripción:**
+    Utiliza ChatGPT para generar automáticamente una lista completa de ingredientes
+    con valores nutricionales precisos basándose en el nombre de una receta.
+    
+    **Casos de Uso:**
+    - Acelerar la creación de contenido nutricional
+    - Generar recetas completas desde nombres simples
+    - Obtener valores nutricionales precisos automáticamente
+    - Crear variaciones de recetas existentes
+    
+    **Proceso de Generación:**
+    1. **Validación:** Verifica permisos y existencia de la comida
+    2. **Prompt Construction:** Construye prompts optimizados para ChatGPT
+    3. **IA Generation:** Llama a OpenAI GPT-4o-mini para generar ingredientes
+    4. **Validation:** Valida valores nutricionales realistas
+    5. **Response:** Devuelve ingredientes listos para usar
+    
+    **Campos de Request:**
+    - `recipe_name`: Nombre de la receta (ej: "Paella de mariscos")
+    - `servings`: Número de porciones (1-20)
+    - `dietary_restrictions`: Restricciones dietéticas opcionales
+    - `cuisine_type`: Tipo de cocina (española, italiana, etc.)
+    - `target_calories`: Calorías objetivo por porción
+    - `notes`: Notas adicionales o preferencias
+    
+    **Restricciones Dietéticas Soportadas:**
+    - Vegetariana, Vegana, Sin gluten, Sin lactosa
+    - Keto, Paleo, Mediterránea
+    
+    **Validaciones Automáticas:**
+    - ✅ Solo el creador del plan puede generar ingredientes
+    - ✅ Valores nutricionales dentro de rangos realistas
+    - ✅ Coherencia entre macronutrientes y calorías
+    - ✅ Ingredientes específicos y cantidades prácticas
+    
+    **Ejemplo de Request:**
+    ```json
+    {
+      "recipe_name": "Paella de mariscos",
+      "servings": 4,
+      "dietary_restrictions": ["gluten_free"],
+      "cuisine_type": "española",
+      "target_calories": 450,
+      "notes": "Versión tradicional valenciana"
+    }
+    ```
+    
+    **Ejemplo de Response:**
+    ```json
+    {
+      "success": true,
+      "ingredients": [
+        {
+          "name": "Arroz bomba",
+          "quantity": 320,
+          "unit": "gr",
+          "calories_per_unit": 3.5,
+          "protein_g_per_unit": 0.07,
+          "carbs_g_per_unit": 0.77,
+          "fat_g_per_unit": 0.006,
+          "notes": "Arroz tradicional para paella"
+        }
+      ],
+      "recipe_instructions": "1. Sofreír el sofrito...",
+      "estimated_prep_time": 45,
+      "difficulty_level": "intermediate",
+      "total_estimated_calories": 1800,
+      "model_used": "gpt-4o-mini",
+      "generation_time_ms": 2500
+    }
+    ```
+    
+    **Características de la IA:**
+    - **Modelo:** GPT-4o-mini (optimizado para costo-efectividad)
+    - **Precisión:** Valores nutricionales basados en USDA/BEDCA
+    - **Velocidad:** Generación típica en 2-5 segundos
+    - **Costo:** ~$0.0008 por receta generada
+    
+    **Códigos de Error:**
+    - `400`: Datos de request inválidos
+    - `403`: Sin permisos para generar ingredientes
+    - `404`: Comida no encontrada
+    - `429`: Límite de rate de OpenAI alcanzado
+    - `500`: Error interno de IA o timeout
+    
+    **Mejores Prácticas:**
+    - Usa nombres específicos de recetas para mejores resultados
+    - Especifica restricciones dietéticas para mayor precisión
+    - Revisa y ajusta ingredientes generados según necesidades
+    - Considera el tipo de cocina para ingredientes auténticos
+    """
+    # Obtener usuario local
+    db_user = user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
+    if not db_user:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    
+    # Validar que la comida existe y pertenece al gimnasio
+    meal = db.query(Meal).options(
+        joinedload(Meal.daily_plan).joinedload(DailyNutritionPlan.nutrition_plan)
+    ).filter(Meal.id == meal_id).first()
+    
+    if not meal:
+        raise HTTPException(status_code=404, detail="Comida no encontrada")
+    
+    # Validar que el plan pertenece al gimnasio actual
+    if meal.daily_plan.nutrition_plan.gym_id != current_gym.id:
+        raise HTTPException(status_code=404, detail="Comida no pertenece a este gimnasio")
+    
+    # Validar permisos: solo el creador del plan puede generar ingredientes
+    if meal.daily_plan.nutrition_plan.creator_id != db_user.id:
+        raise HTTPException(
+            status_code=403, 
+            detail="Solo el creador del plan puede generar ingredientes con IA"
+        )
+    
+    try:
+        # Obtener servicio de IA
+        from app.services.nutrition_ai import get_nutrition_ai_service, NutritionAIError
+        ai_service = get_nutrition_ai_service()
+        
+        # Generar ingredientes con IA
+        logger.info(f"🤖 Generando ingredientes IA para meal {meal_id}: '{request.recipe_name}'")
+        result = await ai_service.generate_recipe_ingredients(request)
+        
+        logger.info(f"✅ IA generó {len(result.ingredients)} ingredientes para meal {meal_id}")
+        return result
+        
+    except NutritionAIError as e:
+        logger.error(f"❌ Error de IA nutricional: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as e:
+        logger.error(f"❌ Error inesperado en generación IA: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Error interno en generación de IA")
+
+
+@router.post("/meals/{meal_id}/ingredients/ai-apply", response_model=ApplyIngredientsResponse)
+async def apply_generated_ingredients(
+    request: ApplyGeneratedIngredientsRequest,
+    meal_id: int = Path(..., description="ID de la comida donde aplicar ingredientes"),
+    db: Session = Depends(get_db),
+    current_gym: Gym = Depends(verify_gym_access),
+    current_user: Auth0User = Depends(get_current_user)
+):
+    """
+    ✅ **Aplicar Ingredientes Generados por IA a Comida**
+    
+    **Descripción:**
+    Aplica una lista de ingredientes generados por IA a una comida específica,
+    actualizando automáticamente los valores nutricionales totales.
+    
+    **Proceso de Aplicación:**
+    1. **Validación:** Verifica permisos y existencia de comida
+    2. **Limpieza:** Opcionalmente reemplaza ingredientes existentes
+    3. **Creación:** Crea nuevos MealIngredient en la base de datos
+    4. **Cálculo:** Actualiza valores nutricionales de la comida
+    5. **Response:** Confirma aplicación exitosa
+    
+    **Opciones de Aplicación:**
+    - `replace_existing`: Si reemplazar ingredientes existentes
+    - `update_meal_nutrition`: Si actualizar valores nutricionales automáticamente
+    
+    **Validaciones Automáticas:**
+    - ✅ Solo el creador puede aplicar ingredientes
+    - ✅ Ingredientes válidos según schemas
+    - ✅ Valores nutricionales realistas
+    - ✅ Unidades de medida válidas
+    
+    **Ejemplo de Request:**
+    ```json
+    {
+      "ingredients": [
+        {
+          "name": "Arroz bomba",
+          "quantity": 320,
+          "unit": "gr",
+          "calories_per_unit": 3.5,
+          "protein_g_per_unit": 0.07,
+          "carbs_g_per_unit": 0.77,
+          "fat_g_per_unit": 0.006,
+          "notes": "Arroz tradicional"
+        }
+      ],
+      "replace_existing": false,
+      "update_meal_nutrition": true
+    }
+    ```
+    
+    **Códigos de Error:**
+    - `400`: Ingredientes inválidos o datos malformados
+    - `403`: Sin permisos para modificar la comida
+    - `404`: Comida no encontrada
+    - `500`: Error interno en aplicación
+    """
+    # Obtener usuario local
+    db_user = user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
+    if not db_user:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    
+    # Validar comida y permisos (mismo código que endpoint anterior)
+    meal = db.query(Meal).options(
+        joinedload(Meal.daily_plan).joinedload(DailyNutritionPlan.nutrition_plan),
+        joinedload(Meal.ingredients)
+    ).filter(Meal.id == meal_id).first()
+    
+    if not meal:
+        raise HTTPException(status_code=404, detail="Comida no encontrada")
+    
+    if meal.daily_plan.nutrition_plan.gym_id != current_gym.id:
+        raise HTTPException(status_code=404, detail="Comida no pertenece a este gimnasio")
+    
+    if meal.daily_plan.nutrition_plan.creator_id != db_user.id:
+        raise HTTPException(
+            status_code=403, 
+            detail="Solo el creador del plan puede aplicar ingredientes"
+        )
+    
+    try:
+        # Importar servicios necesarios
+        from app.services.nutrition import NutritionService
+        nutrition_service = NutritionService(db)
+        
+        # Si se debe reemplazar ingredientes existentes
+        ingredients_replaced = 0
+        if request.replace_existing and meal.ingredients:
+            # Eliminar ingredientes existentes
+            for existing_ingredient in meal.ingredients:
+                db.delete(existing_ingredient)
+            ingredients_replaced = len(meal.ingredients)
+            db.flush()  # Aplicar eliminaciones
+        
+        # Crear nuevos ingredientes
+        ingredients_added = 0
+        total_calories = 0
+        total_protein = 0
+        total_carbs = 0
+        total_fat = 0
+        
+        for generated_ingredient in request.ingredients:
+            # Crear MealIngredient
+            meal_ingredient = MealIngredient(
+                meal_id=meal_id,
+                name=generated_ingredient.name,
+                quantity=generated_ingredient.quantity,
+                unit=generated_ingredient.unit,
+                calories_per_serving=generated_ingredient.calories_per_unit * generated_ingredient.quantity,
+                protein_per_serving=generated_ingredient.protein_g_per_unit * generated_ingredient.quantity,
+                carbs_per_serving=generated_ingredient.carbs_g_per_unit * generated_ingredient.quantity,
+                fat_per_serving=generated_ingredient.fat_g_per_unit * generated_ingredient.quantity,
+                alternatives=generated_ingredient.notes
+            )
+            
+            db.add(meal_ingredient)
+            ingredients_added += 1
+            
+            # Sumar a totales
+            total_calories += meal_ingredient.calories_per_serving
+            total_protein += meal_ingredient.protein_per_serving
+            total_carbs += meal_ingredient.carbs_per_serving
+            total_fat += meal_ingredient.fat_per_serving
+        
+        # Actualizar valores nutricionales de la comida si se solicita
+        meal_updated = False
+        if request.update_meal_nutrition:
+            meal.calories = int(total_calories)
+            meal.protein_g = total_protein
+            meal.carbs_g = total_carbs
+            meal.fat_g = total_fat
+            meal_updated = True
+        
+        # Commit cambios
+        db.commit()
+        
+        logger.info(f"✅ Aplicados {ingredients_added} ingredientes IA a meal {meal_id}")
+        
+        return ApplyIngredientsResponse(
+            success=True,
+            ingredients_added=ingredients_added,
+            ingredients_replaced=ingredients_replaced,
+            meal_updated=meal_updated,
+            total_calories=total_calories if meal_updated else None,
+            total_protein=total_protein if meal_updated else None,
+            total_carbs=total_carbs if meal_updated else None,
+            total_fat=total_fat if meal_updated else None
+        )
+        
+    except Exception as e:
+        db.rollback()
+        logger.error(f"❌ Error aplicando ingredientes IA: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error aplicando ingredientes: {str(e)}")
+
+
+@router.get("/ai/test-connection")
+async def test_ai_connection(
+    current_user: Auth0User = Depends(get_current_user)
+):
+    """
+    🔧 **Probar Conexión con OpenAI**
+    
+    **Descripción:**
+    Endpoint de diagnóstico para verificar que la conexión con OpenAI
+    está funcionando correctamente.
+    
+    **Uso:**
+    - Verificar configuración de API key
+    - Diagnosticar problemas de conectividad
+    - Validar funcionamiento del servicio de IA
+    
+    **Response:**
+    ```json
+    {
+      "success": true,
+      "message": "Conexión OpenAI exitosa",
+      "model": "gpt-4o-mini",
+      "api_key_configured": true
+    }
+    ```
+    """
+    try:
+        from app.services.nutrition_ai import get_nutrition_ai_service, NutritionAIError
+        
+        # Obtener servicio
+        ai_service = get_nutrition_ai_service()
+        
+        # Probar conexión
+        connection_ok = await ai_service.test_connection()
+        
+        if connection_ok:
+            return {
+                "success": True,
+                "message": "Conexión OpenAI exitosa",
+                "model": ai_service.model,
+                "api_key_configured": bool(ai_service.settings.OPENAI_API_KEY)
+            }
+        else:
+            return {
+                "success": False,
+                "message": "Error en conexión OpenAI",
+                "model": ai_service.model,
+                "api_key_configured": bool(ai_service.settings.OPENAI_API_KEY)
+            }
+            
+    except NutritionAIError as e:
+        return {
+            "success": False,
+            "message": f"Error de configuración: {str(e)}",
+            "api_key_configured": False
+        }
+    except Exception as e:
+        logger.error(f"Error en test de conexión IA: {str(e)}")
+        return {
+            "success": False,
+            "message": f"Error inesperado: {str(e)}",
+            "api_key_configured": False
+        }
 
 
 # ===== ENDPOINTS DE ANALYTICS =====
