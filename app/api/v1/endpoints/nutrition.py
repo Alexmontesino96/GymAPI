@@ -28,7 +28,7 @@ from app.schemas.nutrition_ai import (
 from app.services.nutrition import NutritionService, NotFoundError, ValidationError, PermissionError
 from app.services.user import user_service
 from app.core.dependencies import module_enabled
-from app.models.nutrition import Meal, DailyNutritionPlan, MealIngredient
+from app.models.nutrition import Meal as MealModel, DailyNutritionPlan as DailyNutritionPlanModel, MealIngredient as MealIngredientModel
 from sqlalchemy.orm import joinedload
 import logging
 
@@ -1396,9 +1396,9 @@ async def generate_ingredients_with_ai(
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
     
     # Validar que la comida existe y pertenece al gimnasio
-    meal = db.query(Meal).options(
-        joinedload(Meal.daily_plan).joinedload(DailyNutritionPlan.nutrition_plan)
-    ).filter(Meal.id == meal_id).first()
+    meal = db.query(MealModel).options(
+        joinedload(MealModel.daily_plan).joinedload(DailyNutritionPlanModel.nutrition_plan)
+    ).filter(MealModel.id == meal_id).first()
     
     if not meal:
         raise HTTPException(status_code=404, detail="Comida no encontrada")
@@ -1497,11 +1497,11 @@ async def apply_generated_ingredients(
     if not db_user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
     
-    # Validar comida y permisos (mismo código que endpoint anterior)
-    meal = db.query(Meal).options(
-        joinedload(Meal.daily_plan).joinedload(DailyNutritionPlan.nutrition_plan),
-        joinedload(Meal.ingredients)
-    ).filter(Meal.id == meal_id).first()
+            # Validar comida y permisos (mismo código que endpoint anterior)
+        meal = db.query(MealModel).options(
+            joinedload(MealModel.daily_plan).joinedload(DailyNutritionPlanModel.nutrition_plan),
+            joinedload(MealModel.ingredients)
+        ).filter(MealModel.id == meal_id).first()
     
     if not meal:
         raise HTTPException(status_code=404, detail="Comida no encontrada")
