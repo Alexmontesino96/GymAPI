@@ -145,6 +145,7 @@ def mark_completed_sessions():
     with SessionLocal() as db:
         try:
             from sqlalchemy import and_, or_
+            from sqlalchemy.exc import SQLAlchemyError
             
             current_time = datetime.now(timezone.utc)
             
@@ -191,6 +192,9 @@ def mark_completed_sessions():
             else:
                 logger.debug("No sessions needed status updates")
                 
+        except SQLAlchemyError as e:
+            logger.error(f"SQLAlchemy error in mark_completed_sessions task: {str(e)}", exc_info=True)
+            db.rollback()
         except Exception as e:
             logger.error(f"Error in mark_completed_sessions task: {str(e)}", exc_info=True)
             db.rollback()
