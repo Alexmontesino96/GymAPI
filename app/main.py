@@ -104,6 +104,21 @@ async def log_requests(request: Request, call_next):
     # Cambiar a logger.info para mayor visibilidad estándar
     logger.info(f"Middleware: Recibida petición: {request.method} {request.url}")
     logger.info(f"Middleware: Headers: {dict(request.headers)}")
+    
+    # 🔍 LOGGING ESPECÍFICO PARA TOKENS BEARER COMPLETOS
+    auth_header = request.headers.get("authorization", "")
+    if auth_header:
+        if auth_header.startswith("Bearer "):
+            # Extraer el token completo
+            token = auth_header[7:]  # Remover "Bearer "
+            logger.info(f"🔑 TOKEN COMPLETO: Bearer {token}")
+            logger.info(f"🔑 TOKEN LENGTH: {len(token)} caracteres")
+            logger.info(f"🔑 TOKEN PREVIEW: {token[:50]}...")
+        else:
+            logger.info(f"🔑 AUTH HEADER (no Bearer): {auth_header}")
+    else:
+        logger.info("🔑 NO AUTH HEADER presente")
+    
     # El logger ya captura la IP, no es necesario extraerla aquí.
     
     response = await call_next(request)

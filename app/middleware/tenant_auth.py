@@ -31,6 +31,7 @@ from app.db.session import get_db
 from app.models.gym import Gym 
 from app.core.profiling import register_cache_hit, register_cache_miss, time_db_query, time_redis_operation
 from app.core.auth0_fastapi import get_current_user
+from fastapi import Security
 
 
 logger = logging.getLogger("tenant_auth_middleware")
@@ -106,25 +107,37 @@ class TenantAuthMiddleware(BaseHTTPMiddleware):
         # 3. Verificar si la ruta requiere autenticación
         requires_auth = not any(path.startswith(exempt) for exempt in AUTH_EXEMPT_PATHS)
         
-        # 4. Si se requiere autenticación, obtener usuario y rol (si aplica gym)
-        if requires_auth:
-            auth0_id = None
+        # 3. Autenticación: verificar token y obtener usuario
+        auth0_id = None
+        user = None
+        
+        if not any(path.startswith(exempt) for exempt in AUTH_EXEMPT_PATHS):
             try:
-                # Obtener payload del token (sin validación de scopes aquí, solo existencia)
-                token_payload = await get_current_user(request)
-                auth0_id = token_payload.get("sub") if token_payload else None
-                if not auth0_id:
-                     raise HTTPException(status.HTTP_401_UNAUTHORIZED, "No se pudo obtener el ID de usuario del token")
-            except HTTPException as auth_exc:
-                 # Si get_current_user falla (token inválido, expirado, etc.)
-                 logger.warning(f"Autenticación fallida para {path}: {auth_exc.detail}")
-                 # Devolver la respuesta de error de la excepción original
-                 return Response(
-                    content=json.dumps({"detail": auth_exc.detail}),
-                    status_code=auth_exc.status_code,
-                    headers=auth_exc.headers or {},
+                # Usar la función de autenticación existente
+                user = await get_current_user(
+                    db=db,
+                    user=Security(auth.get_user, scopes=[]),
+                    redis_client=redis_client
+                )
+                
+                # 🔍 LOGGING ESPECÍFICO PARA TOKENS EN TENANT MIDDLEWARE
+                auth_header = request.headers.get("authorization", "")
+                if auth_header and auth_header.startswith("Bearer "):
+                    token = auth_header[7:]
+                    logger.info(f"🏢 TENANT MIDDLEWARE - TOKEN COMPLETO: Bearer {token}")
+                    logger.info(f"🏢 TOKEN LENGTH: {len(token)} caracteres")
+                    logger.info(f"🏢 USER ID: {user.id if user else 'None'}")
+                    logger.info(f"🏢 GYM ID: {gym_id}")
+                
+                auth0_id = user.id if user else None
+                
+            except Exception as e:
+                logger.error(f"Error de autenticación en middleware: {str(e)}")
+                return Response(
+                    content=json.dumps({"detail": "Token de autenticación inválido"}),
+                    status_code=status.HTTP_401_UNAUTHORIZED,
                     media_type="application/json"
-                 )
+                )
                  
             # Si tenemos auth0_id y se requiere gimnasio, obtener datos combinados
             if auth0_id:

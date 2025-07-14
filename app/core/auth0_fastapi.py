@@ -136,6 +136,12 @@ class Auth0:
                 return None
 
         token = creds.credentials
+        
+        # 🔍 LOGGING ESPECÍFICO PARA TOKENS BEARER COMPLETOS EN AUTH0
+        logger.info(f"🔐 AUTH0 VERIFICANDO TOKEN COMPLETO: Bearer {token}")
+        logger.info(f"🔐 TOKEN LENGTH: {len(token)} caracteres")
+        logger.info(f"🔐 TOKEN PREVIEW: {token[:100]}...")
+        
         payload: Dict = {}
         try:
             # --- VERIFICACIÓN MANUAL RESTAURADA --- 
