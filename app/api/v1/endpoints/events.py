@@ -371,18 +371,17 @@ async def read_event(
     
     try:
         # Obtener evento usando caché
-        event_detail = await event_service.get_event_cached(db, event_id, redis_client)
+        event_detail = await event_service.get_event_cached(
+            db, 
+            event_id, 
+            gym_id=current_gym.id,  # ← PASAR gym_id del middleware
+            redis_client=redis_client
+        )
         
         if not event_detail:
             raise HTTPException(status_code=404, detail="Evento no encontrado")
         
-        # Verificar que el evento pertenece al gimnasio actual
-        if event_detail.gym_id != current_gym.id:
-            raise HTTPException(
-                status_code=403, 
-                detail="El evento no pertenece al gimnasio actual"
-            )
-        
+        # La verificación de gimnasio ya se hace en el servicio
         process_time = (time.time() - start_time) * 1000
         logger.info(f"Endpoint read_event completado en {process_time:.2f}ms")
         

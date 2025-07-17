@@ -335,8 +335,8 @@ async def process_event_completion(
         Updated event
     """
     try:
-        # Get event using cache with skip_validation
-        event = await event_service.get_event_cached(db, event_id, redis_client, skip_validation=True)
+        # Get event using cache
+        event = await event_service.get_event_cached(db, event_id, redis_client=redis_client)
         if not event:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,

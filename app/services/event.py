@@ -145,6 +145,7 @@ class EventService:
         self,
         db: Session,
         event_id: int,
+        gym_id: Optional[int] = None,  # ← HACER OPCIONAL para compatibilidad con worker
         redis_client: Optional[Redis] = None
     ) -> Optional[EventDetail]:
         """
@@ -153,6 +154,7 @@ class EventService:
         Args:
             db: Sesión de base de datos
             event_id: ID del evento
+            gym_id: ID del gimnasio (opcional, para validación multi-tenant)
             redis_client: Cliente Redis para caché
             
         Returns:
@@ -160,11 +162,17 @@ class EventService:
         """
         # Definir clave de caché
         cache_key = f"event:detail:{event_id}"
+        if gym_id:
+            cache_key += f":gym:{gym_id}"
         
         # Definir función de consulta a BD
         async def db_fetch():
             event = event_repository.get_event(db, event_id=event_id)
             if not event:
+                return None
+                
+            # Verificar que el evento pertenece al gimnasio actual (solo si gym_id se proporciona)
+            if gym_id and event.gym_id != gym_id:
                 return None
                 
             # Obtener datos adicionales para EventDetail
@@ -186,7 +194,7 @@ class EventService:
                 creator=event.creator,
                 participants=event.participants,
                 participants_count=participants_count,
-                gym_id=event.gym_id
+                gym_id=event.gym_id  # ← USAR gym_id del evento (no del parámetro)
             )
             return event_detail
         
