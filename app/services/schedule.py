@@ -2260,7 +2260,28 @@ class ClassParticipationService:
         session = session_data["session"]
         class_obj = session_data["class"] # Ya sabemos que la sesión pertenece al gym_id
         
-        # ... (resto de validaciones: status, start_time, is_full) ...
+        # Validar que la sesión esté en estado programado
+        if session.status != ClassSessionStatus.SCHEDULED:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No se puede registrar en una sesión que no está programada"
+            )
+        
+        # Validar que la sesión no haya comenzado aún
+        from datetime import datetime, timezone
+        current_time = datetime.now(timezone.utc)
+        if session.start_time <= current_time:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No se puede registrar en una sesión que ya ha comenzado o terminado"
+            )
+        
+        # Validar que la sesión no esté llena
+        if session_data["is_full"]:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="La sesión está llena"
+            )
         
         # Verificar si el miembro ya está registrado
         existing = class_participation_repository.get_by_session_and_member(
