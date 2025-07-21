@@ -446,6 +446,80 @@ async def get_my_upcoming_classes(
     return serialized_results
 
 
+@router.get("/my-classes-simple")
+async def get_my_upcoming_classes_simple(
+    skip: int = 0,
+    limit: int = 100,
+    db: Session = Depends(get_db),
+    current_gym: Gym = Depends(verify_gym_access),
+    user: Auth0User = Security(auth.get_user, scopes=["resource:read"]),
+    redis_client: Redis = Depends(get_redis_client)
+) -> Any:
+    """
+    📱 **Get My Upcoming Classes (Simple/Mobile)**
+
+    Endpoint simplificado que devuelve solo información básica de las clases
+    registradas del usuario. Optimizado para aplicaciones móviles.
+
+    Args:
+        skip (int): Registros a omitir para paginación
+        limit (int): Máximo número de registros
+        db: Sesión de base de datos
+        current_gym: Gimnasio actual
+        user: Usuario autenticado
+        redis_client: Cliente Redis
+
+    Permissions:
+        - Requires 'resource:read' scope
+
+    Returns:
+        List[Dict]: Lista simple con información básica:
+        - session_id: ID de la sesión (para cancelar)
+        - class_name: Nombre de la clase
+        - start_time: Fecha y hora de inicio
+        - participation_status: Estado de participación
+        - room: Sala (si existe)
+        - current_participants: Participantes actuales
+        - max_capacity: Capacidad máxima
+    """
+    auth0_id = user.id
+    # Usar versión con caché
+    db_user = await user_service.get_user_by_auth0_id_cached(db, auth0_id=auth0_id, redis_client=redis_client)
+
+    if not db_user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found in database"
+        )
+
+    # Reutilizar el servicio existente
+    raw_results = await class_participation_service.get_member_upcoming_classes(
+        db, member_id=db_user.id, skip=skip, limit=limit, gym_id=current_gym.id, redis_client=redis_client
+    )
+    
+    # Extraer solo información esencial
+    simple_results = []
+    for item in raw_results:
+        participation = item["participation"]
+        session = item["session"]
+        gym_class = item["gym_class"]
+        
+        # Calcular capacidad efectiva
+        effective_capacity = session.override_capacity if session.override_capacity else gym_class.max_capacity
+        
+        simple_results.append({
+            "session_id": session.id,
+            "class_name": gym_class.name,
+            "start_time": session.start_time,
+            "participation_status": participation.status.value,  # Convertir enum a string
+            "room": session.room,
+            "current_participants": session.current_participants,
+            "max_capacity": effective_capacity
+        })
+    
+    return simple_results
+
+
 @router.get("/member-classes/{member_id}", response_model=List[Dict[str, Any]])
 async def get_member_upcoming_classes(
     member_id: int = Path(..., description="ID of the member"),
