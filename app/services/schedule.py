@@ -4,6 +4,7 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
 import asyncio
+import json
 
 from app.repositories.schedule import (
     gym_hours_repository,
@@ -2435,7 +2436,7 @@ class ClassParticipationService:
         redis_client: Optional[Redis] = None
     ) -> List[Dict[str, Any]]:
         """
-        Get upcoming classes for a member.
+        Get upcoming classes for a member (with Redis cache).
 
         Args:
             db (Session): Database session
@@ -2447,6 +2448,71 @@ class ClassParticipationService:
 
         Returns:
             List[Dict[str, Any]]: List of dictionaries containing participation and session information
+        """
+        # Si no hay Redis, usar consulta directa
+        if not redis_client:
+            return await self._get_member_upcoming_classes_direct(db, member_id, gym_id, skip, limit)
+        
+        # Crear clave de caché
+        cache_key = f"schedule:member_upcoming:member:{member_id}:gym:{gym_id}:skip:{skip}:limit:{limit}"
+        
+        # Función para obtener datos de la BD
+        async def db_fetch():
+            logger.info(f"Cache miss para upcoming classes: member={member_id}, gym={gym_id}")
+            return await self._get_member_upcoming_classes_direct(db, member_id, gym_id, skip, limit)
+        
+        # Intentar obtener de caché o generar nuevos datos
+        try:
+            cached_data = await redis_client.get(cache_key)
+            
+            if cached_data:
+                # Cache hit
+                logger.debug(f"Cache HIT para upcoming classes: {cache_key}")
+                data = json.loads(cached_data)
+                
+                # Reconstruir objetos desde cache
+                result = []
+                for item in data:
+                    result.append({
+                        "participation": ClassParticipationSchema.parse_obj(item["participation"]),
+                        "session": ClassSessionSchema.parse_obj(item["session"]),
+                        "gym_class": ClassSchema.parse_obj(item["gym_class"])
+                    })
+                return result
+            
+            # Cache miss - obtener de BD
+            logger.debug(f"Cache MISS para upcoming classes: {cache_key}")
+            raw_data = await db_fetch()
+            
+            # Serializar para cache (convertir objetos Pydantic a dict)
+            cache_data = []
+            for item in raw_data:
+                cache_data.append({
+                    "participation": item["participation"].dict(),
+                    "session": item["session"].dict(),
+                    "gym_class": item["gym_class"].dict()
+                })
+            
+            # Guardar en caché (TTL: 5 minutos para datos dinámicos)
+            await redis_client.set(
+                cache_key,
+                json.dumps(cache_data, default=str),  # default=str para datetime
+                ex=300  # 5 minutos TTL
+            )
+            
+            logger.debug(f"Datos guardados en cache: {cache_key}")
+            return raw_data
+            
+        except Exception as e:
+            logger.error(f"Error en cache para upcoming classes: {e}", exc_info=True)
+            # Fallback a consulta directa
+            return await self._get_member_upcoming_classes_direct(db, member_id, gym_id, skip, limit)
+
+    async def _get_member_upcoming_classes_direct(
+        self, db: Session, member_id: int, gym_id: int, skip: int = 0, limit: int = 100
+    ) -> List[Dict[str, Any]]:
+        """
+        Consulta directa a BD para obtener clases próximas del usuario (método privado).
         """
         now = datetime.utcnow()
         
@@ -2479,7 +2545,7 @@ class ClassParticipationService:
             })
             
         return result
-        
+    
     async def get_member_attendance_history(
         self, db: Session, member_id: int, gym_id: int, 
         start_date: Optional[datetime] = None, end_date: Optional[datetime] = None,
