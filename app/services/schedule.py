@@ -2268,8 +2268,7 @@ class ClassParticipationService:
             )
         
         # Validar que la sesión no haya comenzado aún
-        from datetime import datetime, timezone
-        current_time = datetime.now(timezone.utc)
+        current_time = datetime.utcnow()
         if session.start_time <= current_time:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
