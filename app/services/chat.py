@@ -72,7 +72,6 @@ class ChatService:
                 )
                 
                 # Generar token con restricciones de gimnasio y expiración
-                import time
                 exp_time = int(time.time()) + 3600  # 1 hora de expiración
                 
                 # Crear token con metadatos del gimnasio para validación posterior
