@@ -41,9 +41,12 @@ try:
         connect_args={"connect_timeout": 10} # Timeout de conexión explícito
     )
 
-    # Verificar la conexión al crear el engine
+    # Verificar la conexión al crear el engine y establecer search_path para Supabase
     with engine.connect() as conn:
-        logger.info(f"Verificación de conexión inicial EXITOSA con: {display_url}")
+        # Establecer search_path para Supabase
+        from sqlalchemy import text
+        conn.execute(text("SET search_path TO public"))
+        logger.info(f"Verificación de conexión inicial EXITOSA con search_path=public: {display_url}")
 
 except Exception as e:
     logger.critical(f"¡¡¡FALLO CRÍTICO AL CREAR ENGINE CON URL: {display_url}!!! Error: {e}", exc_info=True)
@@ -55,6 +58,10 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 def get_db():
     db = SessionLocal()
     try:
+        # Establecer search_path para cada sesión en Supabase
+        from sqlalchemy import text
+        db.execute(text("SET search_path TO public"))
+        db.commit()  # Commit para que el SET tenga efecto
         yield db
     except SQLAlchemyError as e:
         logger.error(f"Error de SQLAlchemy en la sesión: {e}", exc_info=True)
