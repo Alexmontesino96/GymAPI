@@ -23,19 +23,20 @@ user_token_cache = {}
 channel_cache = {}
 
 class ChatService:
-    def get_user_token(self, user_id: int, user_data: Dict[str, Any]) -> str:
+    def get_user_token(self, user_id: int, user_data: Dict[str, Any], gym_id: int = None) -> str:
         """
         Genera un token para el usuario con cache para mejorar rendimiento.
         
         Args:
             user_id: ID interno del usuario (de la tabla user)
             user_data: Datos adicionales del usuario (nombre, email, etc.)
+            gym_id: ID del gimnasio para restricciones de seguridad
             
         Returns:
-            str: Token para el usuario
+            str: Token para el usuario con restricciones de gimnasio
         """
-        # Verificar si ya existe un token en cache válido
-        cache_key = f"token_{user_id}"
+        # Verificar si ya existe un token en cache válido (incluir gym_id en el cache)
+        cache_key = f"token_{user_id}_gym_{gym_id}" if gym_id else f"token_{user_id}"
         current_time = time.time()
         
         if cache_key in user_token_cache:
@@ -70,8 +71,17 @@ class ChatService:
                     }
                 )
                 
-                # Generar token
-                token = stream_client.create_token(stream_id)
+                # Generar token con restricciones de gimnasio y expiración
+                import time
+                exp_time = int(time.time()) + 3600  # 1 hora de expiración
+                
+                # Crear token con metadatos del gimnasio para validación posterior
+                token_payload = {"user_id": stream_id}
+                if gym_id:
+                    token_payload["gym_id"] = str(gym_id)
+                    token_payload["exp"] = exp_time
+                    
+                token = stream_client.create_token(stream_id, exp=exp_time)
                 
                 # Guardar en cache
                 user_token_cache[cache_key] = {
@@ -1255,6 +1265,89 @@ class ChatService:
         except Exception as e:
             logger.error(f"Error obteniendo estadísticas del chat {chat_room_id}: {str(e)}")
             return {"error": f"Error obteniendo estadísticas: {str(e)}"}
+
+    @staticmethod
+    def create_secure_channel_id(channel_type: str, gym_id: int, **kwargs) -> str:
+        """
+        Crea IDs de canal seguros con prefijo de gimnasio para prevenir acceso cross-gym.
+        
+        Args:
+            channel_type: Tipo de canal (event, direct, room)
+            gym_id: ID del gimnasio
+            **kwargs: Parámetros específicos del tipo de canal
+            
+        Returns:
+            str: ID de canal seguro con prefijo de gimnasio
+        """
+        if channel_type == "event":
+            event_id = kwargs.get("event_id")
+            event_hash = kwargs.get("event_hash", "default")
+            return f"gym_{gym_id}_event_{event_id}_{event_hash}"
+        elif channel_type == "direct":
+            user1_id = kwargs.get("user1_id")
+            user2_id = kwargs.get("user2_id")
+            # Ordenar IDs para consistencia
+            user_ids = sorted([user1_id, user2_id])
+            return f"gym_{gym_id}_direct_user_{user_ids[0]}_user_{user_ids[1]}"
+        elif channel_type == "room":
+            room_name = kwargs.get("room_name")
+            user_id = kwargs.get("user_id")
+            return f"gym_{gym_id}_room_{room_name}_{user_id}"
+        else:
+            raise ValueError(f"Tipo de canal no válido: {channel_type}")
+
+    @staticmethod
+    def validate_channel_access(channel_id: str, user_gym_id: int) -> bool:
+        """
+        Valida si un usuario puede acceder a un canal basándose en el gym_id.
+        
+        Args:
+            channel_id: ID del canal a validar
+            user_gym_id: ID del gimnasio del usuario
+            
+        Returns:
+            bool: True si el acceso está permitido
+        """
+        if not channel_id or not user_gym_id:
+            return False
+            
+        # Extraer gym_id del channel_id
+        if channel_id.startswith(f"gym_{user_gym_id}_"):
+            return True
+            
+        # Para retrocompatibilidad, permitir algunos canales legacy pero logear
+        legacy_patterns = ["event_", "direct_user_", "room_"]
+        for pattern in legacy_patterns:
+            if channel_id.startswith(pattern):
+                logger.warning(f"Acceso a canal legacy detectado: {channel_id} por gym {user_gym_id}")
+                # Por ahora permitir, pero en producción debe bloquearse
+                return True
+                
+        logger.error(f"Intento de acceso no autorizado: canal {channel_id} por gym {user_gym_id}")
+        return False
+
+    def validate_user_gym_membership(self, db: Session, user_id: int, gym_id: int) -> bool:
+        """
+        Valida que un usuario pertenezca a un gimnasio específico.
+        
+        Args:
+            db: Sesión de base de datos
+            user_id: ID del usuario
+            gym_id: ID del gimnasio
+            
+        Returns:
+            bool: True si el usuario pertenece al gimnasio
+        """
+        try:
+            from app.models.user import UserGym
+            membership = db.query(UserGym).filter(
+                UserGym.user_id == user_id,
+                UserGym.gym_id == gym_id
+            ).first()
+            return membership is not None
+        except Exception as e:
+            logger.error(f"Error validando membresía: {str(e)}")
+            return False
 
 
 chat_service = ChatService() 

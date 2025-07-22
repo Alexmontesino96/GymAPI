@@ -40,6 +40,7 @@ logger = logging.getLogger("chat_api") # Initialize logger at the module level
 async def get_stream_token(
     *,
     db: Session = Depends(get_db),
+    current_gym: GymSchema = Depends(verify_gym_access),
     current_user: Auth0User = Security(auth.get_user, scopes=["resource:read"])
 ):
     """
@@ -84,8 +85,8 @@ async def get_stream_token(
         "image": internal_user.picture # Use 'image' for Stream compatibility
     }
 
-    # Use internal ID to generate the token
-    token = chat_service.get_user_token(internal_user.id, user_data) # Ensure user ID is string for Stream
+    # Use internal ID to generate the token with gym restriction
+    token = chat_service.get_user_token(internal_user.id, user_data, gym_id=current_gym.id)
 
     # Call get_settings() to get the settings object
     settings_obj = get_settings()

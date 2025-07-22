@@ -66,7 +66,7 @@ class MembershipPlan(Base):
     @property
     def is_recurring(self) -> bool:
         """Verificar si es un plan recurrente"""
-        return self.billing_interval in ["month", "year"]
+        return self.billing_interval in ["month", "year"] 
     
     @property
     def is_limited_duration(self) -> bool:

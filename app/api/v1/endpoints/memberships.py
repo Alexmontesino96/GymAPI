@@ -687,7 +687,7 @@ async def get_user_membership_status(
     status_info = membership_service.get_membership_status(
         db, user_id, current_gym.id
     )
-
+    
     return status_info
 
 
@@ -811,7 +811,7 @@ async def purchase_membership(
             )
             
         logger.info(f"✅ Usuario local encontrado: ID {local_user.id}")
-        
+
         # Crear sesión de checkout con Stripe
         logger.info(f"🔍 Creando checkout session - User: {local_user.id}, Gym: {current_gym.id}, Plan: {purchase_data.plan_id}")
         checkout_data = await stripe_service.create_checkout_session(

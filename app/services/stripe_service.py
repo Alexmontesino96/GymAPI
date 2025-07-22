@@ -418,7 +418,7 @@ class StripeService:
                 from app.services.stripe_connect_service import stripe_connect_service
                 await stripe_connect_service.update_subscription_for_user_gym(
                     db, int(user_id), gym_id, stripe_subscription_id
-                )
+            )
                 logger.info(f"Suscripción {stripe_subscription_id} guardada para user {user_id} en gym {gym_id}")
 
             logger.info(f"Membresía activada exitosamente para usuario {user_id} en gym {gym_id}")

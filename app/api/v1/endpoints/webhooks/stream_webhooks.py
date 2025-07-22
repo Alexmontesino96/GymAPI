@@ -12,6 +12,7 @@ from app.services.chat import chat_service
 from app.core.stream_client import stream_client
 from app.models.user import User
 from app.models.chat import ChatRoom
+from app.webhooks.stream_security import stream_security_webhook
 
 # Valor de webhook secret fijo para pruebas
 TEST_WEBHOOK_SECRET = "test_webhook_secret_for_local_testing"
@@ -419,4 +420,86 @@ async def handle_user_banned(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error processing webhook: {str(e)}"
-        ) 
+        )
+
+
+@router.post("/stream/auth", status_code=status.HTTP_200_OK)
+async def stream_auth_webhook(request: Request):
+    """
+    Webhook de autorización para Stream Chat.
+    Valida el acceso de usuarios a canales específicos basándose en membresía de gimnasio.
+    
+    Este webhook se ejecuta cada vez que un usuario intenta:
+    - Unirse a un canal
+    - Leer mensajes de un canal  
+    - Enviar mensajes a un canal
+    
+    Returns:
+        Dict: {"allow": true/false, "reason": "..."}
+    """
+    try:
+        # Obtener el payload del webhook
+        payload = await request.json()
+        
+        # Obtener información del webhook
+        webhook_type = payload.get("type", "")
+        user_data = payload.get("user", {})
+        channel_data = payload.get("channel", {})
+        
+        logger.info(f"🔐 Stream auth webhook: type={webhook_type}, user={user_data.get('id')}, channel={channel_data.get('id')}")
+        
+        # Validar acceso según el tipo de webhook
+        if webhook_type in ["channel.join", "message.new", "channel.read", "channel.query"]:
+            result = stream_security_webhook.validate_channel_access(payload)
+            
+            # Registrar eventos de seguridad si el acceso es denegado
+            if not result.get("allow", False):
+                stream_security_webhook.log_security_event(
+                    event_type="access_denied",
+                    user_id=user_data.get("id", ""),
+                    channel_id=channel_data.get("id", ""),
+                    details={
+                        "webhook_type": webhook_type,
+                        "reason": result.get("reason", "Unknown"),
+                        "user_agent": request.headers.get("user-agent", ""),
+                        "ip": request.client.host if request.client else "unknown"
+                    }
+                )
+                
+            logger.info(f"🔐 Auth result: {result}")
+            return result
+        
+        # Para otros tipos de webhook, permitir por defecto pero logear
+        logger.info(f"🔐 Webhook type {webhook_type} permitido por defecto")
+        return {"allow": True}
+        
+    except Exception as e:
+        logger.error(f"🔐 Error procesando webhook de autorización: {str(e)}", exc_info=True)
+        
+        # En caso de error, denegar acceso por seguridad
+        return {"allow": False, "reason": "Error interno del servidor"}
+
+
+@router.post("/stream/events", status_code=status.HTTP_200_OK)
+async def stream_events_webhook(request: Request):
+    """
+    Webhook para eventos generales de Stream Chat.
+    Usado para auditoría y monitoreo adicional.
+    """
+    try:
+        payload = await request.json()
+        event_type = payload.get("type", "")
+        
+        # Log de eventos para auditoría
+        logger.info(f"📊 Stream event recibido: {event_type}")
+        
+        # Procesar eventos específicos que requieren atención
+        if event_type in ["user.banned", "user.muted", "channel.truncated"]:
+            logger.warning(f"⚠️  Evento de moderación detectado: {event_type}")
+            # Aquí se pueden agregar alertas adicionales
+        
+        return {"status": "received"}
+        
+    except Exception as e:
+        logger.error(f"📊 Error procesando evento de Stream: {str(e)}")
+        return {"status": "error"} 
