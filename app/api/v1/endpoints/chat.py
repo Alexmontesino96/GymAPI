@@ -23,6 +23,8 @@ from app.core.auth0_fastapi import get_current_user, Auth0User, auth
 from app.core.config import get_settings
 from app.core.tenant import verify_gym_admin_access, verify_gym_access, verify_gym_trainer_access, get_current_gym, get_tenant_id
 from app.schemas.gym import GymSchema
+from app.models.user_gym import UserGym, GymRoleType
+from app.models.event import Event
 from app.services.chat import chat_service
 from app.repositories.chat import chat_repository
 from app.schemas.chat import (
@@ -282,7 +284,39 @@ async def get_event_chat(
                 detail=f"No tienes acceso a este evento - pertenece a otro gimnasio"
             )
 
-        # Service layer handles permission check (user registered for event) and room logic
+        # VALIDACIÓN CRÍTICA: Verificar que el usuario esté inscrito en el evento
+        # EXCEPCIÓN: Trainers y admins pueden acceder sin estar inscritos
+        from app.models.event import EventParticipation, EventParticipationStatus
+        
+        # Obtener membresía del usuario para verificar su rol
+        user_membership = db.query(UserGym).filter(
+            UserGym.user_id == internal_user.id,
+            UserGym.gym_id == current_gym.id
+        ).first()
+        
+        # Si es trainer, admin, o creador del evento, permitir acceso
+        is_trainer_or_admin = (user_membership and 
+                              user_membership.role in [GymRoleType.TRAINER, GymRoleType.ADMIN])
+        is_event_creator = (event.creator_id == internal_user.id)
+        
+        if not (is_trainer_or_admin or is_event_creator):
+            # Para miembros regulares, verificar inscripción
+            participation = db.query(EventParticipation).filter(
+                EventParticipation.event_id == event_id,
+                EventParticipation.member_id == internal_user.id,
+                EventParticipation.gym_id == current_gym.id,
+                EventParticipation.status == EventParticipationStatus.REGISTERED
+            ).first()
+            
+            if not participation:
+                logger.warning(f"Member {internal_user.id} attempted to access event {event_id} chat without registration")
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Debes estar inscrito en este evento para acceder a su chat"
+                )
+        
+        logger.info(f"User {internal_user.id} granted access to event {event_id} chat")
+        
         try:
             # Use internal user ID (integer) directly
             user_id = internal_user.id

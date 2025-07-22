@@ -77,6 +77,10 @@ def run_migrations_online():
     )
 
     with connectable.connect() as connection:
+        # Establecer el search_path a public para Supabase
+        from sqlalchemy import text
+        connection.execute(text("SET search_path TO public"))
+        
         context.configure(
             connection=connection, target_metadata=target_metadata
         )
