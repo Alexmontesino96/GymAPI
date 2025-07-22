@@ -1339,7 +1339,7 @@ class ChatService:
             bool: True si el usuario pertenece al gimnasio
         """
         try:
-            from app.models.user import UserGym
+            from app.models.user_gym import UserGym
             membership = db.query(UserGym).filter(
                 UserGym.user_id == user_id,
                 UserGym.gym_id == gym_id

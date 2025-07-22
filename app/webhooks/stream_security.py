@@ -10,7 +10,8 @@ from sqlalchemy.orm import Session
 
 from app.db.session import SessionLocal
 from app.services.chat import chat_service
-from app.models.user import User, UserGym
+from app.models.user import User
+from app.models.user_gym import UserGym
 
 logger = logging.getLogger(__name__)
 
