@@ -61,15 +61,29 @@ class ChatService:
                 # Adaptador interno: Convertir ID interno a stream_id (basado en auth0_id)
                 stream_id = self._get_stream_id_for_user(user)
                 
-                # Actualizar usuario en Stream
-                stream_client.update_user(
-                    {
-                        "id": stream_id,
-                        "name": user_data.get("name", user.id),  # Usar ID interno como fallback
-                        "email": user_data.get("email"),
-                        "image": user_data.get("picture")
-                    }
-                )
+                # Obtener los gimnasios del usuario para asignar teams
+                user_teams = []
+                if gym_id:
+                    # Si se especifica un gym_id, incluirlo
+                    user_teams.append(f"gym_{gym_id}")
+                else:
+                    # Obtener todos los gimnasios del usuario
+                    from app.models.user_gym import UserGym
+                    user_gyms = db.query(UserGym).filter(UserGym.user_id == user.id).all()
+                    user_teams = [f"gym_{ug.gym_id}" for ug in user_gyms]
+                
+                # Actualizar usuario en Stream con teams
+                stream_user_data = {
+                    "id": stream_id,
+                    "name": user_data.get("name", user.id),  # Usar ID interno como fallback
+                    "email": user_data.get("email"),
+                    "image": user_data.get("picture")
+                }
+                
+                if user_teams:
+                    stream_user_data["teams"] = user_teams
+                    
+                stream_client.update_user(stream_user_data)
                 
                 # Generar token con restricciones de gimnasio y expiración
                 exp_time = int(time.time()) + 3600  # 1 hora de expiración
@@ -164,11 +178,21 @@ class ChatService:
                 logger.info(f"[DEBUG-CREATE] Asegurando usuarios en Stream: {member_stream_ids}")
                 for i, stream_id in enumerate(member_stream_ids):
                     try:
+                        # Obtener teams del usuario
+                        from app.models.user_gym import UserGym
+                        member_gyms = db.query(UserGym).filter(UserGym.user_id == member_users[i].id).all()
+                        member_teams = [f"gym_{ug.gym_id}" for ug in member_gyms]
+                        
                         # Crear un objeto de usuario mínimo en Stream si no existe
-                        stream_client.update_user({
+                        member_data = {
                             "id": stream_id,
                             "name": getattr(member_users[i], 'email', f"user_{member_users[i].id}"),
-                        })
+                        }
+                        
+                        if member_teams:
+                            member_data["teams"] = member_teams
+                            
+                        stream_client.update_user(member_data)
                         logger.info(f"[DEBUG-CREATE] Usuario {stream_id} (ID interno: {member_users[i].id}) creado/actualizado en Stream")
                     except Exception as e:
                         logger.error(f"[DEBUG-CREATE] Error creando usuario {stream_id} en Stream: {str(e)}")
@@ -237,8 +261,13 @@ class ChatService:
                 # PASO 1: Obtener un objeto canal
                 channel = stream_client.channel(channel_type, channel_id)
                 
-                # PASO 2: Crear el canal con el creador
-                response = channel.create(user_id=creator_stream_id)
+                # PASO 2: Crear el canal con el creador y asignarlo al team del gimnasio
+                channel_data_create = {"created_by_id": creator_stream_id}
+                if gym_id:
+                    channel_data_create["team"] = f"gym_{gym_id}"
+                    channel_data_create["gym_id"] = str(gym_id)
+                    
+                response = channel.create(user_id=creator_stream_id, data=channel_data_create)
                 logger.info(f"[DEBUG-CREATE] Canal creado en Stream: user_id={creator_stream_id} (ID interno: {creator_id})")
                 
                 # Extraer datos del canal de la respuesta
@@ -505,21 +534,34 @@ class ChatService:
         # Asegurar que ambos usuarios existen en Stream
         try:
             # Crear/actualizar el primer usuario en Stream
-            stream_client.update_user(
-                {
-                    "id": safe_user1_id,
-                    "name": safe_user1_id[:20],  # Limitar longitud del nombre
-                }
-            )
+            # Obtener gimnasios del usuario 1 para teams
+            from app.models.user_gym import UserGym
+            user1_gyms = db.query(UserGym).filter(UserGym.user_id == user1_id).all()
+            user1_teams = [f"gym_{ug.gym_id}" for ug in user1_gyms]
+            
+            user1_data = {
+                "id": safe_user1_id,
+                "name": safe_user1_id[:20],  # Limitar longitud del nombre
+            }
+            if user1_teams:
+                user1_data["teams"] = user1_teams
+                
+            stream_client.update_user(user1_data)
             logger.info(f"Usuario {safe_user1_id} creado/actualizado en Stream")
             
             # Crear/actualizar el segundo usuario en Stream
-            stream_client.update_user(
-                {
-                    "id": safe_user2_id,
-                    "name": safe_user2_id[:20],  # Limitar longitud del nombre
-                }
-            )
+            # Obtener gimnasios del usuario 2 para teams
+            user2_gyms = db.query(UserGym).filter(UserGym.user_id == user2_id).all()
+            user2_teams = [f"gym_{ug.gym_id}" for ug in user2_gyms]
+            
+            user2_data = {
+                "id": safe_user2_id,
+                "name": safe_user2_id[:20],  # Limitar longitud del nombre
+            }
+            if user2_teams:
+                user2_data["teams"] = user2_teams
+                
+            stream_client.update_user(user2_data)
             logger.info(f"Usuario {safe_user2_id} creado/actualizado en Stream")
         except Exception as e:
             logger.error(f"Error creando usuarios en Stream: {str(e)}")
@@ -578,12 +620,19 @@ class ChatService:
             # Verificar si el usuario existe en Stream
             user_exists_in_stream = True
             try:
-                stream_client.update_user(
-                    {
-                        "id": creator_stream_id,
-                        "name": f"Usuario {creator_id}",  # Nombre genérico basado en ID
-                    }
-                )
+                # Obtener gimnasios del creador para teams
+                from app.models.user_gym import UserGym
+                creator_gyms = db.query(UserGym).filter(UserGym.user_id == creator_id).all()
+                creator_teams = [f"gym_{ug.gym_id}" for ug in creator_gyms]
+                
+                creator_data = {
+                    "id": creator_stream_id,
+                    "name": f"Usuario {creator_id}",  # Nombre genérico basado en ID
+                }
+                if creator_teams:
+                    creator_data["teams"] = creator_teams
+                    
+                stream_client.update_user(creator_data)
                 logger.info(f"[DEBUG] Usuario {creator_stream_id} creado/actualizado en Stream")
             except Exception as e:
                 logger.error(f"[DEBUG] Error creando usuario en Stream: {str(e)}")
@@ -705,9 +754,14 @@ class ChatService:
                     channel_id = f"event_{room_data.event_id}_{creator_hash}"
                     
                     try:
-                        # Crear canal de manera manual
+                        # Crear canal de manera manual con team del gimnasio
                         channel = stream_client.channel(channel_type, channel_id)
-                        response = channel.create(user_id="system")
+                        channel_data_create = {}
+                        if gym_id:
+                            channel_data_create["team"] = f"gym_{gym_id}"
+                            channel_data_create["gym_id"] = str(gym_id)
+                            
+                        response = channel.create(user_id="system", data=channel_data_create)
                         
                         if response and 'channel' in response:
                             # Guardar en base de datos local
@@ -775,12 +829,19 @@ class ChatService:
             
             # Luego intentar crear usuario en Stream antes de añadirlo al canal
             try:
-                stream_client.update_user(
-                    {
-                        "id": safe_user_id,
-                        "name": safe_user_id,  # Usar ID como nombre por defecto
-                    }
-                )
+                # Obtener gimnasios del usuario para teams
+                from app.models.user_gym import UserGym
+                user_gyms = db.query(UserGym).filter(UserGym.user_id == user_id).all()
+                user_teams = [f"gym_{ug.gym_id}" for ug in user_gyms]
+                
+                user_data = {
+                    "id": safe_user_id,
+                    "name": safe_user_id,  # Usar ID como nombre por defecto
+                }
+                if user_teams:
+                    user_data["teams"] = user_teams
+                    
+                stream_client.update_user(user_data)
                 logger.info(f"Usuario {safe_user_id} creado/actualizado en Stream antes de añadirlo al canal")
             except Exception as e:
                 logger.error(f"Error creando usuario {safe_user_id} en Stream: {str(e)}")

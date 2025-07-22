@@ -267,7 +267,8 @@ class GymChatService:
                         "id": gym_bot_user_id,
                         "name": f"{gym.name} - Equipo",
                         "image": gym.logo_url or "https://via.placeholder.com/150",
-                        "role": "admin"
+                        "role": "admin",
+                        "teams": [f"gym_{gym_id}"]  # Asignar bot al team del gimnasio
                     })
                 except Exception as user_error:
                     logger.warning(f"No se pudo crear/actualizar usuario bot del gimnasio: {user_error}")
