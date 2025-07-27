@@ -359,6 +359,12 @@ class ClassSessionWithParticipations(ClassSession):
     class_details: Optional[Class] = None
 
 
+class ClassSessionWithTimezone(ClassSession):
+    """Esquema de sesión que incluye información del timezone del gimnasio"""
+    gym_timezone: str = Field(..., description="Zona horaria del gimnasio donde se realiza la sesión")
+    time_info: dict = Field(..., description="Información adicional sobre horarios y zona horaria")
+
+
 # ClassParticipation schemas
 class ClassParticipationBase(BaseModel):
     session_id: int
@@ -481,4 +487,33 @@ class SessionWithClass(BaseModel):
                 }
             ]
         }
-    } 
+    }
+
+
+def format_session_with_timezone(session, gym_timezone: str) -> ClassSessionWithTimezone:
+    """
+    Convierte una sesión agregando información de timezone.
+    
+    Args:
+        session: Objeto ClassSession o esquema
+        gym_timezone: Zona horaria del gimnasio
+        
+    Returns:
+        ClassSessionWithTimezone: Sesión con información de timezone
+    """
+    from app.core.timezone_utils import format_session_time_with_timezone
+    
+    # Convertir a dict si es un modelo de SQLAlchemy
+    if hasattr(session, '__dict__'):
+        session_dict = ClassSession.model_validate(session).model_dump()
+    else:
+        session_dict = session.model_dump() if hasattr(session, 'model_dump') else session
+    
+    # Generar información de tiempo con timezone
+    time_info = format_session_time_with_timezone(session_dict['start_time'], gym_timezone)
+    
+    return ClassSessionWithTimezone(
+        **session_dict,
+        gym_timezone=gym_timezone,
+        time_info=time_info
+    ) 

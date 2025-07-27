@@ -4,6 +4,7 @@ from app.models.gym import Gym
 from app.models.user import UserRole
 from app.models.user_gym import GymRoleType
 from app.services.gym import gym_service
+from app.schemas.schedule import ClassSessionWithTimezone, format_session_with_timezone
 
 router = APIRouter()
 
@@ -65,6 +66,66 @@ async def get_upcoming_sessions(
         session_schema = ClassSession.model_validate(sess)
         class_schema = Class.model_validate(class_obj) if class_obj else None
         results.append(SessionWithClass(session=session_schema, class_info=class_schema))
+
+    return results
+
+
+@router.get("/sessions-with-timezone", response_model=List[ClassSessionWithTimezone])
+async def get_upcoming_sessions_with_timezone(
+    skip: int = 0,
+    limit: int = 100,
+    db: Session = Depends(get_db),
+    current_gym: Gym = Depends(verify_gym_access),
+    user: Auth0User = Security(auth.get_user, scopes=["resource:read"]),
+    redis_client: Redis = Depends(get_redis_client)
+) -> Any:
+    """
+    Get Upcoming Class Sessions with Timezone Information
+    
+    Retrieves a list of upcoming class sessions with timezone information.
+    Las horas se muestran como datetime naive (hora local del gimnasio) 
+    junto con información del timezone del gimnasio para conversión.
+    
+    Args:
+        skip (int): Records to skip for pagination
+        limit (int): Maximum records to return  
+        db: Database session
+        current_gym: Current gym context
+        user: Authenticated user
+        redis_client: Redis client
+        
+    Returns:
+        List[ClassSessionWithTimezone]: Sessions with timezone info
+        
+    Example Response:
+        [{
+            "id": 123,
+            "start_time": "2025-07-27T14:00:00",  // Hora local del gym (naive)
+            "end_time": "2025-07-27T15:00:00",
+            "gym_timezone": "America/Mexico_City",
+            "time_info": {
+                "local_time": "2025-07-27T14:00:00",
+                "gym_timezone": "America/Mexico_City", 
+                "iso_with_timezone": "2025-07-27T14:00:00-06:00",
+                "utc_time": "2025-07-27T20:00:00+00:00"
+            },
+            // ... other session fields
+        }]
+    """
+    # Obtener las sesiones próximas
+    upcoming = await class_session_service.get_upcoming_sessions(
+        db,
+        skip=skip,
+        limit=limit,
+        gym_id=current_gym.id,
+        redis_client=redis_client
+    )
+
+    # Convertir cada sesión agregando información de timezone
+    results: List[ClassSessionWithTimezone] = []
+    for session in upcoming:
+        session_with_tz = format_session_with_timezone(session, current_gym.timezone)
+        results.append(session_with_tz)
 
     return results
 
@@ -416,6 +477,72 @@ async def get_sessions_by_date_range(
         session_schema = ClassSession.model_validate(sess)
         class_schema = Class.model_validate(class_obj) if class_obj else None
         results.append(SessionWithClass(session=session_schema, class_info=class_schema))
+
+    return results
+
+
+@router.get("/date-range-with-timezone", response_model=List[ClassSessionWithTimezone])
+async def get_sessions_by_date_range_with_timezone(
+    start_date: date = Query(..., description="Start date (YYYY-MM-DD)"),
+    end_date: date = Query(..., description="End date (YYYY-MM-DD)"),
+    skip: int = 0,
+    limit: int = 100,
+    db: Session = Depends(get_db),
+    current_gym: Gym = Depends(verify_gym_access),
+    user: Auth0User = Security(auth.get_user, scopes=["resource:read"]),
+    redis_client: Redis = Depends(get_redis_client)
+) -> Any:
+    """
+    Get Sessions by Date Range with Timezone Information
+    
+    Devuelve las sesiones programadas dentro de un rango de fechas **incluyendo**
+    información completa de timezone. Ideal para aplicaciones que necesitan
+    mostrar horarios precisos a usuarios en diferentes zonas horarias.
+    
+    Args:
+        start_date (date): Fecha de inicio del rango (YYYY-MM-DD)
+        end_date (date): Fecha de fin del rango (YYYY-MM-DD)
+        skip (int): Registros a omitir para paginación
+        limit (int): Máximo número de registros
+        db: Sesión de base de datos
+        current_gym: Contexto del gimnasio actual
+        user: Usuario autenticado
+        redis_client: Cliente Redis
+        
+    Returns:
+        List[ClassSessionWithTimezone]: Sesiones con información de timezone
+        
+    Response Format:
+        [{
+            "id": 123,
+            "start_time": "2025-07-27T14:00:00",  // Hora local del gym (naive)
+            "end_time": "2025-07-27T15:00:00",
+            "gym_timezone": "America/Mexico_City",
+            "time_info": {
+                "local_time": "2025-07-27T14:00:00",
+                "gym_timezone": "America/Mexico_City",
+                "iso_with_timezone": "2025-07-27T14:00:00-06:00",
+                "utc_time": "2025-07-27T20:00:00+00:00"
+            },
+            // ... otros campos de sesión
+        }]
+    """
+    # Obtener sesiones del rango de fechas
+    sessions = await class_session_service.get_sessions_by_date_range(
+        db,
+        start_date=start_date,
+        end_date=end_date,
+        skip=skip,
+        limit=limit,
+        gym_id=current_gym.id,
+        redis_client=redis_client
+    )
+
+    # Convertir cada sesión agregando información de timezone
+    results: List[ClassSessionWithTimezone] = []
+    for session in sessions:
+        session_with_tz = format_session_with_timezone(session, current_gym.timezone)
+        results.append(session_with_tz)
 
     return results
 

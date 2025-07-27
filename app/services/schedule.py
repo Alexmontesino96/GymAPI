@@ -50,6 +50,7 @@ from app.schemas.schedule import ClassCategoryCustom as ClassCategoryCustomSchem
 from app.schemas.schedule import Class as ClassSchema # Añadir importación para Class
 from app.schemas.schedule import ClassSession as ClassSessionSchema # Añadir importación para ClassSession
 from app.schemas.schedule import ClassParticipation as ClassParticipationSchema # Añadir importación para ClassParticipation
+from app.core.timezone_utils import is_session_in_future, get_current_time_in_gym_timezone
 # --- Fin importaciones Caché --- 
 
 # --- Añadir logger ---
@@ -2267,9 +2268,17 @@ class ClassParticipationService:
                 detail="No se puede registrar en una sesión que no está programada"
             )
         
-        # Validar que la sesión no haya comenzado aún
-        current_time = datetime.utcnow()
-        if session.start_time <= current_time:
+        # Obtener información del gimnasio para usar su timezone
+        from app.repositories.gym import gym_repository
+        gym = gym_repository.get(db, id=gym_id)
+        if not gym:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Gimnasio no encontrado"
+            )
+        
+        # Validar que la sesión no haya comenzado aún usando timezone del gimnasio
+        if not is_session_in_future(session.start_time, gym.timezone):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="No se puede registrar en una sesión que ya ha comenzado o terminado"

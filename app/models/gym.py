@@ -28,6 +28,7 @@ class Gym(Base):
     phone = Column(String(20), nullable=True)
     email = Column(String(100), nullable=True)
     description = Column(String(500), nullable=True)
+    timezone = Column(String(50), nullable=False, default='UTC')  # Zona horaria del gimnasio (ej: 'America/Mexico_City')
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

@@ -2,6 +2,7 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime
 from pydantic import BaseModel, EmailStr, HttpUrl, Field, validator
 from app.models.user_gym import GymRoleType # Importar Enum
+import pytz
 
 class GymBase(BaseModel):
     """Esquema base para gimnasios (tenants)"""
@@ -12,11 +13,18 @@ class GymBase(BaseModel):
     phone: Optional[str] = Field(None, title="Número de teléfono", max_length=20)
     email: Optional[EmailStr] = Field(None, title="Email de contacto del gimnasio")
     description: Optional[str] = Field(None, title="Descripción del gimnasio", max_length=500)
+    timezone: str = Field('UTC', title="Zona horaria del gimnasio", max_length=50, description="Timezone en formato pytz (ej: 'America/Mexico_City')")
     
     @validator('subdomain')
     def validate_subdomain(cls, v):
         if not v or len(v) < 3:
             raise ValueError("El subdominio debe tener al menos 3 caracteres")
+        return v
+    
+    @validator('timezone')
+    def validate_timezone(cls, v):
+        if v not in pytz.all_timezones:
+            raise ValueError(f"Zona horaria inválida: {v}. Debe ser una zona horaria válida de pytz.")
         return v
 
 class GymCreate(GymBase):
@@ -31,7 +39,14 @@ class GymUpdate(BaseModel):
     phone: Optional[str] = Field(None, title="Número de teléfono", max_length=20)
     email: Optional[EmailStr] = Field(None, title="Email de contacto del gimnasio")
     description: Optional[str] = Field(None, title="Descripción del gimnasio", max_length=500)
+    timezone: Optional[str] = Field(None, title="Zona horaria del gimnasio", max_length=50, description="Timezone en formato pytz (ej: 'America/Mexico_City')")
     is_active: Optional[bool] = Field(None, title="Estado del gimnasio")
+    
+    @validator('timezone')
+    def validate_timezone(cls, v):
+        if v is not None and v not in pytz.all_timezones:
+            raise ValueError(f"Zona horaria inválida: {v}. Debe ser una zona horaria válida de pytz.")
+        return v
 
 class GymStatusUpdate(BaseModel):
     """Esquema para actualizar solo el estado de un gimnasio"""
@@ -81,9 +96,17 @@ class UserGymSchema(BaseModel):
         from_attributes = True # Permite crear desde el modelo ORM 
 
 # Esquema público para respuestas de gimnasios accesibles públicamente
-class GymPublicSchema(GymBase):
+class GymPublicSchema(BaseModel):
     """Esquema público de gimnasio para respuestas públicas"""
     id: int
+    name: str
+    subdomain: str
+    logo_url: Optional[HttpUrl] = None
+    address: Optional[str] = None
+    phone: Optional[str] = None
+    email: Optional[EmailStr] = None
+    description: Optional[str] = None
+    timezone: str  # Incluir timezone en respuestas públicas
     is_active: bool
 
     class Config:
