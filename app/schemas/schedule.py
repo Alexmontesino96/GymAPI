@@ -365,6 +365,47 @@ class ClassSessionWithTimezone(ClassSession):
     time_info: dict = Field(..., description="Información adicional sobre horarios y zona horaria")
 
 
+class SessionWithClassAndTimezone(BaseModel):
+    """Esquema que combina SessionWithClass con información de timezone"""
+    session: ClassSessionWithTimezone
+    class_info: Class
+
+    model_config = {
+        "from_attributes": True,
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "session": {
+                        "id": 837,
+                        "class_id": 145,
+                        "trainer_id": 8,
+                        "start_time": "2025-07-27T17:00:00",
+                        "end_time": "2025-07-27T18:00:00",
+                        "status": "completed",
+                        "gym_id": 4,
+                        "current_participants": 0,
+                        "gym_timezone": "America/New_York",
+                        "time_info": {
+                            "local_time": "2025-07-27T17:00:00",
+                            "gym_timezone": "America/New_York",
+                            "iso_with_timezone": "2025-07-27T17:00:00-04:00",
+                            "utc_time": "2025-07-27T21:00:00+00:00"
+                        }
+                    },
+                    "class_info": {
+                        "id": 145,
+                        "name": "Cardio Hit",
+                        "description": "Seccion de cardio, para quemar calorias",
+                        "duration": 60,
+                        "max_capacity": 20,
+                        "difficulty_level": "beginner"
+                    }
+                }
+            ]
+        }
+    }
+
+
 # ClassParticipation schemas
 class ClassParticipationBase(BaseModel):
     session_id: int
@@ -516,4 +557,31 @@ def format_session_with_timezone(session, gym_timezone: str) -> ClassSessionWith
         **session_dict,
         gym_timezone=gym_timezone,
         time_info=time_info
+    )
+
+
+def format_session_with_class_and_timezone(session, class_obj, gym_timezone: str) -> SessionWithClassAndTimezone:
+    """
+    Convierte una sesión y su clase agregando información de timezone.
+    
+    Args:
+        session: Objeto ClassSession o esquema
+        class_obj: Objeto Class o esquema
+        gym_timezone: Zona horaria del gimnasio
+        
+    Returns:
+        SessionWithClassAndTimezone: Sesión con clase e información de timezone
+    """
+    # Formatear sesión con timezone
+    session_with_tz = format_session_with_timezone(session, gym_timezone)
+    
+    # Convertir clase a esquema si es necesario
+    if hasattr(class_obj, '__dict__'):
+        class_schema = Class.model_validate(class_obj)
+    else:
+        class_schema = class_obj if isinstance(class_obj, Class) else Class.model_validate(class_obj)
+    
+    return SessionWithClassAndTimezone(
+        session=session_with_tz,
+        class_info=class_schema
     ) 
