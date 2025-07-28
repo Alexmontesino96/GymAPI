@@ -28,8 +28,14 @@ async def verify_stream_webhook_signature(request: Request):
     Esta implementación usa directamente el STREAM_API_SECRET para calcular y verificar
     la firma, igual que lo hace el script de prueba.
     """
+    # Log detallado de la verificación
+    logger.info("🔐 Iniciando verificación de firma de webhook Stream")
+    
     signature = request.headers.get("X-Signature")
+    logger.info(f"🔐 Signature recibida: {signature}")
+    
     if not signature:
+        logger.error("🔐 ERROR: Signature faltante en headers")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Missing signature"
@@ -37,9 +43,11 @@ async def verify_stream_webhook_signature(request: Request):
     
     # Obtener el cuerpo del request
     body = await request.body()
+    logger.info(f"🔐 Body size: {len(body)} bytes")
     
     # Obtener el API_SECRET de la configuración
     api_secret = settings.STREAM_API_SECRET
+    logger.info(f"🔐 API Secret configurado: {api_secret[:8]}...")
     
     # Calcular la firma esperada
     expected_signature = hmac.new(
@@ -48,13 +56,18 @@ async def verify_stream_webhook_signature(request: Request):
         hashlib.sha256
     ).hexdigest()
     
+    logger.info(f"🔐 Signature esperada: {expected_signature}")
+    logger.info(f"🔐 Signature recibida: {signature}")
+    
     # Comparar firmas de manera segura
     if not hmac.compare_digest(signature, expected_signature):
-        logger.warning(f"Firma del webhook inválida. Esperada: {expected_signature}, Recibida: {signature}")
+        logger.error(f"🔐 ERROR: Firma del webhook inválida. Esperada: {expected_signature}, Recibida: {signature}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid signature"
         )
+    
+    logger.info("🔐 ✅ Firma verificada exitosamente")
 
 @router.post("/stream/new-message", status_code=status.HTTP_200_OK)
 async def handle_new_message(
@@ -67,16 +80,27 @@ async def handle_new_message(
     Webhook endpoint for handling new messages from GetStream.
     When a new message is created, this endpoint will be called to send notifications.
     """
+    # LOGGING COMPLETO - Log antes de cualquier procesamiento
+    logger.info("🔔 ========== WEBHOOK STREAM NEW MESSAGE RECIBIDO ==========")
+    logger.info(f"📡 Headers completos: {dict(request.headers)}")
+    logger.info(f"🌐 Client host: {request.client.host if request.client else 'unknown'}")
+    logger.info(f"🌐 URL path: {request.url.path}")
+    logger.info(f"📊 Method: {request.method}")
+    
     try:
         # Get webhook payload
         payload = await request.json()
+        logger.info(f"📦 Payload completo: {payload}")
         
         # Extract message data
         message = payload.get("message", {})
         channel = payload.get("channel", {})
         
+        logger.info(f"✉️  Mensaje extraído: {message}")
+        logger.info(f"📺 Canal extraído: {channel}")
+        
         if not message or not channel:
-            logger.warning("Payload de webhook inválido: falta message o channel")
+            logger.error("❌ ERROR: Payload de webhook inválido: falta message o channel")
             return {"status": "error", "message": "Invalid webhook payload"}
         
         # Get channel type and id
@@ -86,12 +110,20 @@ async def handle_new_message(
         # Get message sender (Stream user_id)
         stream_user_id = message.get("user", {}).get("id")
         
-        # Log para diagnóstico
-        logger.info(f"Webhook recibido - Canal: {channel_id}, Tipo: {channel_type}, Remitente Stream: {stream_user_id}")
-        logger.info(f"Mensaje: {message.get('text', '(sin texto)')}")
+        # Log detallado para diagnóstico
+        logger.info(f"📋 DATOS PROCESADOS:")
+        logger.info(f"   📺 Canal ID: {channel_id}")
+        logger.info(f"   📺 Canal tipo: {channel_type}")
+        logger.info(f"   👤 Remitente Stream: {stream_user_id}")
+        logger.info(f"   ✉️  Texto mensaje: {message.get('text', '(sin texto)')}")
+        logger.info(f"   🕐 Timestamp: {message.get('created_at', 'N/A')}")
+        logger.info(f"   🆔 Message ID: {message.get('id', 'N/A')}")
         
         if not all([channel_type, channel_id, stream_user_id]):
-            logger.warning(f"Campos faltantes en webhook: channel_type={channel_type}, channel_id={channel_id}, stream_user_id={stream_user_id}")
+            logger.error(f"❌ ERROR: Campos faltantes en webhook:")
+            logger.error(f"   channel_type: {channel_type}")
+            logger.error(f"   channel_id: {channel_id}")
+            logger.error(f"   stream_user_id: {stream_user_id}")
             return {"status": "error", "message": "Missing required fields"}
             
         # Inicializar ID interno del remitente
@@ -502,4 +534,92 @@ async def stream_events_webhook(request: Request):
         
     except Exception as e:
         logger.error(f"📊 Error procesando evento de Stream: {str(e)}")
-        return {"status": "error"} 
+        return {"status": "error"}
+
+
+# ========== ENDPOINTS DE DIAGNÓSTICO ==========
+
+@router.post("/stream/test", status_code=status.HTTP_200_OK)
+async def stream_test_webhook(request: Request):
+    """
+    Endpoint de diagnóstico para probar conectividad con Stream.
+    NO requiere verificación de firma para testing inicial.
+    """
+    logger.info("🧪 ========== TEST WEBHOOK STREAM ==========")
+    logger.info(f"📡 Headers: {dict(request.headers)}")
+    logger.info(f"🌐 Client: {request.client.host if request.client else 'unknown'}")
+    logger.info(f"📊 Method: {request.method}")
+    logger.info(f"🌐 URL: {request.url}")
+    
+    try:
+        body = await request.body()
+        logger.info(f"📦 Body size: {len(body)} bytes")
+        
+        if body:
+            payload = await request.json()
+            logger.info(f"📦 Payload: {payload}")
+        else:
+            logger.info("📦 Body vacío")
+            
+        return {
+            "status": "success", 
+            "message": "Test webhook recibido correctamente",
+            "timestamp": "2025-07-28",
+            "endpoint": "/stream/test"
+        }
+        
+    except Exception as e:
+        logger.error(f"🧪 Error en test webhook: {str(e)}", exc_info=True)
+        return {
+            "status": "error",
+            "message": f"Error: {str(e)}"
+        }
+
+
+@router.get("/stream/health", status_code=status.HTTP_200_OK)
+async def stream_health_check():
+    """
+    Health check simple para verificar que el endpoint está disponible.
+    """
+    logger.info("❤️  Health check de Stream webhooks")
+    return {
+        "status": "healthy",
+        "service": "stream-webhooks",
+        "timestamp": "2025-07-28",
+        "endpoints": [
+            "/stream/new-message",
+            "/stream/test", 
+            "/stream/health",
+            "/stream/auth",
+            "/stream/events"
+        ]
+    }
+
+
+@router.post("/stream/debug", status_code=status.HTTP_200_OK)
+async def stream_debug_webhook(request: Request):
+    """
+    Endpoint de debug que loggea TODO sin procesar nada.
+    Útil para ver exactamente qué está enviando Stream.
+    """
+    logger.info("🐛 ========== DEBUG WEBHOOK STREAM ==========")
+    
+    # Log de TODOS los headers
+    for header_name, header_value in request.headers.items():
+        logger.info(f"🏷️  Header {header_name}: {header_value}")
+    
+    # Log del body raw
+    body = await request.body()
+    logger.info(f"📦 Raw body: {body}")
+    
+    # Log del JSON parseado
+    try:
+        if body:
+            payload = await request.json()
+            logger.info(f"📋 Parsed JSON: {payload}")
+    except Exception as e:
+        logger.error(f"🐛 Error parsing JSON: {str(e)}")
+    
+    logger.info("🐛 ========== FIN DEBUG WEBHOOK ==========")
+    
+    return {"status": "debug_complete", "logged": True} 
