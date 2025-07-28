@@ -267,7 +267,7 @@ async def send_smart_notifications_with_role_logic_async(
             for member in members_with_unread:
                 member_stream_id = member.get("user_id", "")
                 member_user_data = member.get("user", {})
-                unread_count = member.get("channel_unread_count", 0)
+                unread_count = member_user_data.get("channel_unread_count", 0)
                 is_online = member_user_data.get("online", False)
                 
                 # Lógica de notificación inteligente (igual para ambos tipos)
@@ -340,7 +340,7 @@ async def send_smart_chat_notifications_async(
             for member in members_with_unread:
                 member_stream_id = member.get("user_id", "")
                 member_user_data = member.get("user", {})
-                unread_count = member.get("channel_unread_count", 0)
+                unread_count = member_user_data.get("channel_unread_count", 0)
                 is_online = member_user_data.get("online", False)
                 
                 # Lógica de notificación inteligente
