@@ -481,7 +481,19 @@ async def send_targeted_notifications(
         # Obtener información del remitente
         from app.models.user import User
         sender = db.query(User).filter(User.id == sender_id).first()
-        sender_name = sender.name if sender else "Alguien"
+        
+        # Construir nombre completo del remitente
+        if sender:
+            if sender.first_name and sender.last_name:
+                sender_name = f"{sender.first_name} {sender.last_name}"
+            elif sender.first_name:
+                sender_name = sender.first_name
+            elif sender.email:
+                sender_name = sender.email.split('@')[0]  # Usar parte antes del @
+            else:
+                sender_name = f"Usuario {sender.id}"
+        else:
+            sender_name = "Alguien"
         
         # LÓGICA BASADA EN TIPO DE CONTENIDO
         if content_type == "event":
