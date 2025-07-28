@@ -180,13 +180,19 @@ async def handle_new_message(
             
             # Ejecutar tareas en segundo plano para no bloquear la respuesta del webhook
             if sender_internal_id and message_text:
-                # 1. Enviar notificaciones push
+                # Determinar tipo de contenido basado en el canal y mensaje
+                content_type = determine_content_type(chat_room, message_text)
+                
+                # 1. Enviar notificaciones push inteligentes con lógica basada en roles
+                members_with_unread = payload.get("members", [])
                 background_tasks.add_task(
-                    send_chat_notifications_async,
+                    send_smart_notifications_with_role_logic_async,
                     db,
                     sender_internal_id,
                     chat_room,
-                    message_text
+                    message_text,
+                    members_with_unread,
+                    content_type
                 )
                 
                 # 2. Procesar menciones
@@ -232,6 +238,312 @@ async def handle_new_message(
 
 
 # Funciones asíncronas para procesamiento en segundo plano
+async def send_smart_notifications_with_role_logic_async(
+    db: Session, 
+    sender_id: int, 
+    chat_room: ChatRoom, 
+    message_text: str,
+    members_with_unread: list,
+    content_type: str = "chat"
+):
+    """
+    Envía notificaciones push inteligentes con lógica basada en roles según el tipo de contenido.
+    
+    - Para EVENTOS: Solo notifica si el remitente tiene autoridad (TRAINER/ADMIN/OWNER)
+    - Para CHAT: Notificación normal a usuarios offline con mensajes no leídos
+    """
+    try:
+        # Crear nueva sesión de DB para el hilo de background
+        from app.db.session import SessionLocal
+        async_db = SessionLocal()
+        
+        try:
+            # Filtrar usuarios que NO son el remitente y que tienen mensajes no leídos
+            sender_stream_id = f"user_{sender_id}"
+            users_to_notify = []
+            
+            logger.info(f"📊 Analizando {len(members_with_unread)} miembros para notificaciones ({content_type})")
+            
+            for member in members_with_unread:
+                member_stream_id = member.get("user_id", "")
+                member_user_data = member.get("user", {})
+                unread_count = member.get("channel_unread_count", 0)
+                is_online = member_user_data.get("online", False)
+                
+                # Lógica de notificación inteligente (igual para ambos tipos)
+                should_notify = (
+                    member_stream_id != sender_stream_id and  # No notificar al remitente
+                    unread_count > 0 and                     # Tiene mensajes no leídos
+                    not is_online                            # No está online actualmente
+                )
+                
+                logger.info(f"👤 {member_stream_id}: unread={unread_count}, online={is_online}, notify={should_notify}")
+                
+                if should_notify:
+                    # Extraer ID interno del formato user_X
+                    try:
+                        internal_id = int(member_stream_id.replace("user_", ""))
+                        users_to_notify.append({
+                            "internal_id": internal_id,
+                            "stream_id": member_stream_id,
+                            "unread_count": unread_count,
+                            "name": member_user_data.get("name", "Usuario"),
+                            "email": member_user_data.get("email", "")
+                        })
+                    except ValueError:
+                        logger.warning(f"⚠️ No se pudo extraer ID interno de {member_stream_id}")
+            
+            logger.info(f"🎯 Usuarios elegibles antes del filtro por roles: {len(users_to_notify)}")
+            
+            if users_to_notify:
+                # Enviar notificaciones usando la nueva lógica basada en roles
+                await send_targeted_notifications(
+                    async_db,
+                    users_to_notify,
+                    chat_room,
+                    message_text,
+                    sender_id,
+                    content_type  # Pasar el tipo de contenido
+                )
+            else:
+                logger.info("📭 No hay usuarios elegibles para notificación")
+                
+        finally:
+            async_db.close()
+            
+    except Exception as e:
+        logger.error(f"Error en notificaciones inteligentes con roles: {str(e)}", exc_info=True)
+
+
+async def send_smart_chat_notifications_async(
+    db: Session, 
+    sender_id: int, 
+    chat_room: ChatRoom, 
+    message_text: str,
+    members_with_unread: list
+):
+    """
+    Envía notificaciones push inteligentes solo a usuarios con mensajes no leídos (función legacy).
+    """
+    try:
+        # Crear nueva sesión de DB para el hilo de background
+        from app.db.session import SessionLocal
+        async_db = SessionLocal()
+        
+        try:
+            # Filtrar usuarios que NO son el remitente y que tienen mensajes no leídos
+            sender_stream_id = f"user_{sender_id}"
+            users_to_notify = []
+            
+            logger.info(f"📊 Analizando {len(members_with_unread)} miembros para notificaciones")
+            
+            for member in members_with_unread:
+                member_stream_id = member.get("user_id", "")
+                member_user_data = member.get("user", {})
+                unread_count = member.get("channel_unread_count", 0)
+                is_online = member_user_data.get("online", False)
+                
+                # Lógica de notificación inteligente
+                should_notify = (
+                    member_stream_id != sender_stream_id and  # No notificar al remitente
+                    unread_count > 0 and                     # Tiene mensajes no leídos
+                    not is_online                            # No está online actualmente
+                )
+                
+                logger.info(f"👤 {member_stream_id}: unread={unread_count}, online={is_online}, notify={should_notify}")
+                
+                if should_notify:
+                    # Extraer ID interno del formato user_X
+                    try:
+                        internal_id = int(member_stream_id.replace("user_", ""))
+                        users_to_notify.append({
+                            "internal_id": internal_id,
+                            "stream_id": member_stream_id,
+                            "unread_count": unread_count,
+                            "name": member_user_data.get("name", "Usuario"),
+                            "email": member_user_data.get("email", "")
+                        })
+                    except ValueError:
+                        logger.warning(f"⚠️ No se pudo extraer ID interno de {member_stream_id}")
+            
+            logger.info(f"🎯 Enviando notificaciones a {len(users_to_notify)} usuarios")
+            
+            if users_to_notify:
+                # Enviar notificaciones usando OneSignal (sin filtro por roles)
+                await send_targeted_notifications(
+                    async_db,
+                    users_to_notify,
+                    chat_room,
+                    message_text,
+                    sender_id
+                )
+            else:
+                logger.info("📭 No hay usuarios elegibles para notificación")
+                
+        finally:
+            async_db.close()
+            
+    except Exception as e:
+        logger.error(f"Error en notificaciones inteligentes: {str(e)}", exc_info=True)
+
+
+def determine_content_type(chat_room: ChatRoom, message_text: str) -> str:
+    """
+    Determina el tipo de contenido del mensaje para aplicar lógica de notificación correcta.
+    
+    Args:
+        chat_room: Sala de chat donde se envió el mensaje
+        message_text: Texto del mensaje
+        
+    Returns:
+        str: "event" si es relacionado con eventos, "chat" para mensajes normales
+    """
+    try:
+        # Indicadores de que el mensaje es relacionado con eventos/clases
+        event_keywords = [
+            "clase", "sesion", "session", "entrenamiento", "training",
+            "evento", "event", "reserva", "booking", "cancelar", "cancel",
+            "horario", "schedule", "gimnasio", "gym", "instructor", "trainer"
+        ]
+        
+        # Verificar si el nombre del canal indica que es de eventos
+        channel_name = chat_room.name.lower() if chat_room.name else ""
+        is_event_channel = any(keyword in channel_name for keyword in ["evento", "event", "clase", "class", "schedule"])
+        
+        # Verificar si el mensaje contiene palabras clave de eventos
+        message_lower = message_text.lower()
+        has_event_keywords = any(keyword in message_lower for keyword in event_keywords)
+        
+        # Determinar tipo basado en canal y contenido
+        if is_event_channel or has_event_keywords:
+            logger.info(f"🎭 Mensaje detectado como EVENTO: canal='{channel_name}', keywords={has_event_keywords}")
+            return "event"
+        else:
+            logger.info(f"💬 Mensaje detectado como CHAT normal")
+            return "chat"
+            
+    except Exception as e:
+        logger.error(f"Error determinando tipo de contenido: {str(e)}")
+        # En caso de error, asumir chat normal
+        return "chat"
+
+
+async def check_user_authority_in_gym(db: Session, user_id: int, gym_id: int) -> bool:
+    """
+    Verifica si un usuario tiene autoridad en el gimnasio (TRAINER, ADMIN, o OWNER).
+    
+    Args:
+        db: Sesión de base de datos
+        user_id: ID interno del usuario
+        gym_id: ID del gimnasio
+        
+    Returns:
+        bool: True si el usuario tiene autoridad (TRAINER+), False si es MEMBER o no existe
+    """
+    try:
+        from app.models.user_gym import UserGym, GymRoleType
+        
+        user_gym = db.query(UserGym).filter(
+            UserGym.user_id == user_id,
+            UserGym.gym_id == gym_id,
+            UserGym.is_active == True
+        ).first()
+        
+        if not user_gym:
+            logger.info(f"👤 Usuario {user_id} no encontrado en gym {gym_id}")
+            return False
+        
+        has_authority = user_gym.role in [GymRoleType.TRAINER, GymRoleType.ADMIN, GymRoleType.OWNER]
+        
+        logger.info(f"🎭 Usuario {user_id} role: {user_gym.role}, autoridad: {has_authority}")
+        return has_authority
+        
+    except Exception as e:
+        logger.error(f"Error verificando autoridad del usuario: {str(e)}", exc_info=True)
+        return False
+
+
+async def send_targeted_notifications(
+    db: Session,
+    users_to_notify: list,
+    chat_room: ChatRoom,
+    message_text: str,
+    sender_id: int,
+    content_type: str = "chat"
+):
+    """
+    Envía notificaciones específicas a usuarios seleccionados según el tipo de contenido.
+    
+    Args:
+        content_type: "chat" (normal) o "event" (requiere autoridad del remitente)
+    """
+    try:
+        # Obtener información del remitente
+        from app.models.user import User
+        sender = db.query(User).filter(User.id == sender_id).first()
+        sender_name = sender.name if sender else "Alguien"
+        
+        # LÓGICA BASADA EN TIPO DE CONTENIDO
+        if content_type == "event":
+            # Para eventos: verificar que el remitente tenga autoridad
+            gym_id = chat_room.gym_id
+            has_authority = await check_user_authority_in_gym(db, sender_id, gym_id)
+            
+            if not has_authority:
+                logger.info(f"🚫 Evento NO notificado: {sender_name} (ID: {sender_id}) no tiene autoridad en gym {gym_id}")
+                return
+            else:
+                logger.info(f"✅ Evento SÍ notificado: {sender_name} tiene autoridad ({has_authority})")
+        
+        # Para chat: notificación normal (ya filtrado previamente)
+        
+        # Preparar IDs para OneSignal (usando user_id como external_user_id)
+        user_ids_for_onesignal = [str(user["internal_id"]) for user in users_to_notify]
+        
+        # Personalizar mensaje según el contexto
+        chat_name = chat_room.name or "chat"
+        
+        # Personalizar título según tipo de contenido
+        if content_type == "event":
+            notification_title = f"📅 {sender_name} - Evento en {chat_name}"
+        else:
+            notification_title = f"💬 {sender_name} en {chat_name}"
+        
+        # Truncar mensaje si es muy largo
+        truncated_message = message_text[:100] + "..." if len(message_text) > 100 else message_text
+        
+        # Datos adicionales para deep linking
+        notification_data = {
+            "type": "chat_message" if content_type == "chat" else "event_notification",
+            "content_type": content_type,
+            "chat_room_id": str(chat_room.id),
+            "channel_id": chat_room.stream_channel_id,
+            "sender_id": str(sender_id),
+            "message_preview": truncated_message
+        }
+        
+        logger.info(f"📤 Enviando notificación {content_type} a {len(user_ids_for_onesignal)} usuarios:")
+        for user in users_to_notify:
+            logger.info(f"   👤 {user['name']} (ID: {user['internal_id']}, unread: {user['unread_count']})")
+        
+        # Enviar via OneSignal
+        result = notification_service.send_to_users(
+            user_ids=user_ids_for_onesignal,
+            title=notification_title,
+            message=truncated_message,
+            data=notification_data,
+            db=db
+        )
+        
+        if result.get("success"):
+            logger.info(f"✅ Notificación {content_type} enviada exitosamente: {result.get('recipients', 0)} destinatarios")
+        else:
+            logger.error(f"❌ Error enviando notificación {content_type}: {result.get('errors', [])}")
+            
+    except Exception as e:
+        logger.error(f"Error enviando notificaciones dirigidas: {str(e)}", exc_info=True)
+
+
 async def send_chat_notifications_async(
     db: Session, 
     sender_id: int, 
@@ -239,7 +551,7 @@ async def send_chat_notifications_async(
     message_text: str
 ):
     """
-    Envía notificaciones push en segundo plano.
+    Envía notificaciones push en segundo plano (función legacy).
     """
     try:
         # Crear nueva sesión de DB para el hilo de background
