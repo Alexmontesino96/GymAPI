@@ -283,13 +283,23 @@ async def send_smart_notifications_with_role_logic_async(
                     # Extraer ID interno del formato user_X
                     try:
                         internal_id = int(member_stream_id.replace("user_", ""))
-                        users_to_notify.append({
-                            "internal_id": internal_id,
-                            "stream_id": member_stream_id,
-                            "unread_count": unread_count,
-                            "name": member_user_data.get("name", "Usuario"),
-                            "email": member_user_data.get("email", "")
-                        })
+                        
+                        # Obtener auth0_id del usuario para OneSignal
+                        from app.models.user import User
+                        user_data = async_db.query(User).filter(User.id == internal_id).first()
+                        auth0_id = user_data.auth0_id if user_data else None
+                        
+                        if auth0_id:
+                            users_to_notify.append({
+                                "internal_id": internal_id,
+                                "auth0_id": auth0_id,
+                                "stream_id": member_stream_id,
+                                "unread_count": unread_count,
+                                "name": member_user_data.get("name", "Usuario"),
+                                "email": member_user_data.get("email", "")
+                            })
+                        else:
+                            logger.warning(f"⚠️ Usuario {internal_id} no tiene auth0_id configurado")
                     except ValueError:
                         logger.warning(f"⚠️ No se pudo extraer ID interno de {member_stream_id}")
             
@@ -356,13 +366,23 @@ async def send_smart_chat_notifications_async(
                     # Extraer ID interno del formato user_X
                     try:
                         internal_id = int(member_stream_id.replace("user_", ""))
-                        users_to_notify.append({
-                            "internal_id": internal_id,
-                            "stream_id": member_stream_id,
-                            "unread_count": unread_count,
-                            "name": member_user_data.get("name", "Usuario"),
-                            "email": member_user_data.get("email", "")
-                        })
+                        
+                        # Obtener auth0_id del usuario para OneSignal
+                        from app.models.user import User
+                        user_data = async_db.query(User).filter(User.id == internal_id).first()
+                        auth0_id = user_data.auth0_id if user_data else None
+                        
+                        if auth0_id:
+                            users_to_notify.append({
+                                "internal_id": internal_id,
+                                "auth0_id": auth0_id,
+                                "stream_id": member_stream_id,
+                                "unread_count": unread_count,
+                                "name": member_user_data.get("name", "Usuario"),
+                                "email": member_user_data.get("email", "")
+                            })
+                        else:
+                            logger.warning(f"⚠️ Usuario {internal_id} no tiene auth0_id configurado")
                     except ValueError:
                         logger.warning(f"⚠️ No se pudo extraer ID interno de {member_stream_id}")
             
@@ -509,8 +529,8 @@ async def send_targeted_notifications(
         
         # Para chat: notificación normal (ya filtrado previamente)
         
-        # Preparar IDs para OneSignal (usando user_id como external_user_id)
-        user_ids_for_onesignal = [str(user["internal_id"]) for user in users_to_notify]
+        # Preparar IDs para OneSignal (usando auth0_id como external_user_id)
+        user_ids_for_onesignal = [user["auth0_id"] for user in users_to_notify if user.get("auth0_id")]
         
         # Personalizar mensaje según el contexto
         chat_name = chat_room.name or "chat"
