@@ -284,6 +284,11 @@ class Settings(BaseSettings):
     CACHE_TTL_GYM_DETAILS: int = 3600 # 1 hora para detalles del gym
     CACHE_TTL_USER_PROFILE: int = 300 # <<< NUEVO: 5 minutos para perfil de usuario >>>
     
+    # Configuración Chat Activity Batcher
+    CHAT_ACTIVITY_FLUSH_INTERVAL: int = int(os.getenv("CHAT_ACTIVITY_FLUSH_INTERVAL", "300"))  # 5 minutos por defecto
+    CHAT_ACTIVITY_CACHE_MAX_AGE: int = int(os.getenv("CHAT_ACTIVITY_CACHE_MAX_AGE", "3600"))  # 1 hora por defecto
+    CHAT_ACTIVITY_BATCH_SIZE: int = int(os.getenv("CHAT_ACTIVITY_BATCH_SIZE", "100"))  # Máximo de chats por batch
+    
     # AWS Configuration
     AWS_ACCESS_KEY_ID: Optional[str] = None
     AWS_SECRET_ACCESS_KEY: Optional[str] = None

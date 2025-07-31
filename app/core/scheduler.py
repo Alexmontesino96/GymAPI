@@ -11,6 +11,7 @@ from app.repositories.schedule import class_repository, class_session_repository
 from app.repositories.event import EventRepository
 from app.models.event import EventStatus
 from app.models.schedule import ClassSession, ClassSessionStatus
+from app.core.chat_activity_batcher import get_chat_activity_batcher
 
 logger = logging.getLogger(__name__)
 event_repository = EventRepository()
@@ -199,6 +200,46 @@ def mark_completed_sessions():
             logger.error(f"Error in mark_completed_sessions task: {str(e)}", exc_info=True)
             db.rollback()
 
+def flush_chat_activity_cache():
+    """
+    Flush el cache de actividad de chats a la base de datos.
+    
+    Esta tarea se ejecuta periódicamente para sincronizar los timestamps
+    de última actividad desde el cache en memoria a la BD.
+    """
+    logger.info("Running scheduled task: flush_chat_activity_cache")
+    try:
+        batcher = get_chat_activity_batcher()
+        updates_count = batcher.flush_to_database()
+        
+        if updates_count > 0:
+            logger.info(f"Chat activity flush completed: {updates_count} chats updated")
+        else:
+            logger.debug("No chat activity updates to flush")
+            
+    except Exception as e:
+        logger.error(f"Error in flush_chat_activity_cache task: {str(e)}", exc_info=True)
+
+def cleanup_chat_activity_cache():
+    """
+    Limpia entradas expiradas del cache de actividad de chats.
+    
+    Esta tarea se ejecuta menos frecuentemente para mantener el cache limpio
+    y evitar acumulación de memoria.
+    """
+    logger.info("Running scheduled task: cleanup_chat_activity_cache")
+    try:
+        batcher = get_chat_activity_batcher()
+        cleaned_count = batcher.cleanup_expired_cache()
+        
+        if cleaned_count > 0:
+            logger.info(f"Chat activity cache cleanup: {cleaned_count} expired entries removed")
+        else:
+            logger.debug("No expired cache entries to clean")
+            
+    except Exception as e:
+        logger.error(f"Error in cleanup_chat_activity_cache task: {str(e)}", exc_info=True)
+
 def init_scheduler():
     """
     Inicializa el programador de tareas
@@ -242,9 +283,27 @@ def init_scheduler():
         replace_existing=True
     )
     
+    # Flush de actividad de chats cada 5 minutos
+    # Sincroniza timestamps del cache a la BD para mantener datos actualizados
+    _scheduler.add_job(
+        flush_chat_activity_cache,
+        trigger=CronTrigger(minute='*/5'),  # Cada 5 minutos
+        id='chat_activity_flush',
+        replace_existing=True
+    )
+    
+    # Limpieza de cache de chats cada hora
+    # Elimina entradas expiradas para optimizar uso de memoria
+    _scheduler.add_job(
+        cleanup_chat_activity_cache,
+        trigger=CronTrigger(minute=30),  # A los 30 minutos de cada hora
+        id='chat_cache_cleanup',
+        replace_existing=True
+    )
+    
     # Iniciar el scheduler
     _scheduler.start()
-    logger.info("Scheduler started with UTC timezone - includes session completion task")
+    logger.info("Scheduler started with UTC timezone - includes chat activity tasks")
     
     return _scheduler
 

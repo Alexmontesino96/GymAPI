@@ -20,6 +20,10 @@ class ChatRoom(Base):
     gym_id = Column(Integer, ForeignKey("gyms.id"), nullable=False, index=True)  # Asociación al gimnasio
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    last_message_at = Column(DateTime, nullable=True)
+    last_message_text = Column(String(200), nullable=True)
+    last_message_sender_id = Column(Integer, ForeignKey("user.id"), nullable=True)
+    last_message_type = Column(String(20), default="text", nullable=True)
     event_id = Column(Integer, ForeignKey("events.id"), nullable=True, index=True)
     is_direct = Column(Boolean, default=False, index=True)
     status = Column(Enum(ChatRoomStatus), default=ChatRoomStatus.ACTIVE, index=True)

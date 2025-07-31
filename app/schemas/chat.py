@@ -19,6 +19,10 @@ class ChatRoom(ChatRoomBase):
     stream_channel_id: str
     stream_channel_type: str
     created_at: datetime
+    last_message_at: Optional[datetime] = None
+    last_message_text: Optional[str] = None
+    last_message_sender_id: Optional[int] = None
+    last_message_type: Optional[str] = "text"
     
     class Config:
         from_attributes = True
