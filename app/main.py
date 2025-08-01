@@ -111,9 +111,8 @@ async def log_requests(request: Request, call_next):
         if auth_header.startswith("Bearer "):
             # Extraer el token completo
             token = auth_header[7:]  # Remover "Bearer "
-            logger.info(f"🔑 TOKEN COMPLETO: Bearer {token}")
             logger.info(f"🔑 TOKEN LENGTH: {len(token)} caracteres")
-            logger.info(f"🔑 TOKEN PREVIEW: {token[:50]}...")
+            logger.info(f"🔑 TOKEN PREVIEW: {token[:20]}***")
         else:
             logger.info(f"🔑 AUTH HEADER (no Bearer): {auth_header}")
     else:

@@ -33,7 +33,6 @@ from app.schemas.chat import (
     StreamTokenResponse,
     StreamMessageSend
 )
-from app.core.chat_activity_batcher import get_chat_activity_batcher
 from app.models.user import User
 
 router = APIRouter()
@@ -837,69 +836,6 @@ async def remove_member_from_general_channel(
         )
     
     return {"message": f"Usuario {user_id} removido del canal general"}
-
-@router.get("/batcher/stats")
-async def get_chat_activity_batcher_stats(
-    request: Request,
-    *,
-    current_gym: GymSchema = Depends(verify_gym_admin_access),
-    current_user: Auth0User = Security(auth.get_user, scopes=["resource:admin"])
-):
-    """
-    Obtener estadísticas del chat activity batcher (solo administradores).
-    
-    Devuelve información sobre el estado del cache, configuración,
-    y estadísticas de performance para monitoreo.
-    """
-    try:
-        batcher = get_chat_activity_batcher()
-        stats = batcher.get_cache_stats()
-        
-        return {
-            "status": "success",
-            "batcher_stats": stats,
-            "gym_id": current_gym.id,
-            "admin_user": current_user.id
-        }
-        
-    except Exception as e:
-        logger.error(f"Error obteniendo estadísticas del batcher: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Error obteniendo estadísticas del batcher"
-        )
-
-@router.post("/batcher/force-flush")
-async def force_chat_activity_flush(
-    request: Request,
-    *,
-    current_gym: GymSchema = Depends(verify_gym_admin_access),
-    current_user: Auth0User = Security(auth.get_user, scopes=["resource:admin"])
-):
-    """
-    Forzar flush inmediato del chat activity batcher (solo administradores).
-    
-    Útil para debugging o para sincronizar inmediatamente los timestamps
-    antes de operaciones críticas.
-    """
-    try:
-        batcher = get_chat_activity_batcher()
-        updates_count = batcher.force_flush()
-        
-        return {
-            "status": "success",
-            "message": f"Flush forzado completado: {updates_count} chats actualizados",
-            "updates_count": updates_count,
-            "gym_id": current_gym.id,
-            "admin_user": current_user.id
-        }
-        
-    except Exception as e:
-        logger.error(f"Error en flush forzado: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Error ejecutando flush forzado"
-        )
 
 @router.get("/debug/headers")
 async def debug_headers(

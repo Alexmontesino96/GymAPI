@@ -1,0 +1,13 @@
+{
+  "timestamp": "20250722_144036",
+  "total_records": 303,
+  "database_url": "aws-0-us-west-1.pooler.supabase.com:6543/postgres",
+  "tables_backed_up": [
+    "user",
+    "user_gyms",
+    "gyms",
+    "chat_rooms",
+    "chat_members",
+    "events"
+  ]
+}

@@ -4,7 +4,6 @@ from typing import Dict, Any
 import hmac
 import hashlib
 import logging
-from datetime import datetime
 
 from app.db.session import get_db
 from app.core.config import get_settings
@@ -14,7 +13,6 @@ from app.core.stream_client import stream_client
 from app.models.user import User
 from app.models.chat import ChatRoom
 from app.webhooks.stream_security import stream_security_webhook
-from app.core.chat_activity_batcher import get_chat_activity_batcher
 
 # Valor de webhook secret fijo para pruebas
 TEST_WEBHOOK_SECRET = "test_webhook_secret_for_local_testing"
@@ -177,38 +175,8 @@ async def handle_new_message(
                 logger.warning(f"Sala de chat no encontrada para canal {channel_id}")
                 return {"status": "success", "message": "Message processed, chat room not found in DB"}
             
-            # Obtener el texto del mensaje y timestamp
+            # Obtener el texto del mensaje
             message_text = message.get("text", "")
-            message_timestamp_str = message.get("created_at")
-            
-            # Generar preview inteligente del mensaje
-            from app.utils.message_preview import generate_message_preview
-            preview_text, message_type = generate_message_preview(message)
-            
-            # Convertir timestamp de Stream (ISO string) a datetime
-            message_timestamp = None
-            if message_timestamp_str:
-                try:
-                    # Stream envía timestamps en formato ISO 8601
-                    message_timestamp = datetime.fromisoformat(message_timestamp_str.replace('Z', '+00:00'))
-                    logger.debug(f"⏰ Timestamp del mensaje convertido: {message_timestamp}")
-                except (ValueError, AttributeError) as e:
-                    logger.warning(f"Error parseando timestamp '{message_timestamp_str}': {e}")
-                    message_timestamp = datetime.utcnow()  # Fallback a tiempo actual
-            else:
-                message_timestamp = datetime.utcnow()  # Fallback si no hay timestamp
-            
-            # ⚡ ACTUALIZAR ACTIVIDAD CON BATCHER (MUY EFICIENTE)
-            # Esto reemplaza la actualización directa a BD con un sistema de cache + batch updates
-            batcher = get_chat_activity_batcher()
-            batcher.update_activity(
-                chat_room.id, 
-                message_timestamp,
-                message_text=preview_text,
-                sender_id=sender_internal_id,
-                message_type=message_type
-            )
-            logger.debug(f"📊 Actividad actualizada en batcher para chat {chat_room.id} - tipo: {message_type}")
             
             # Ejecutar tareas en segundo plano para no bloquear la respuesta del webhook
             if sender_internal_id and message_text:
@@ -236,8 +204,13 @@ async def handle_new_message(
                     sender_internal_id
                 )
                 
-                # 3. Ya no necesitamos update_chat_activity_async - el batcher lo maneja
-                # La actualización de actividad ahora se hace sincrónicamente arriba con el batcher
+                # 3. Actualizar actividad del chat
+                background_tasks.add_task(
+                    update_chat_activity_async,
+                    db,
+                    chat_room,
+                    sender_internal_id
+                )
                 
                 # 4. Procesar eventos especiales (si es necesario)
                 if message.get("type") == "system" or "bienvenido" in message_text.lower():

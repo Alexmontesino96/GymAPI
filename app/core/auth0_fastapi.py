@@ -138,9 +138,8 @@ class Auth0:
         token = creds.credentials
         
         # 🔍 LOGGING ESPECÍFICO PARA TOKENS BEARER COMPLETOS EN AUTH0
-        logger.info(f"🔐 AUTH0 VERIFICANDO TOKEN COMPLETO: Bearer {token}")
-        logger.info(f"🔐 TOKEN LENGTH: {len(token)} caracteres")
-        logger.info(f"🔐 TOKEN PREVIEW: {token[:100]}...")
+        logger.info(f"🔐 AUTH0 VERIFICANDO TOKEN LENGTH: {len(token)} caracteres")
+        logger.info(f"🔐 TOKEN PREVIEW: {token[:20]}***")
         
         payload: Dict = {}
         try:

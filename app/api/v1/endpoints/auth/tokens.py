@@ -173,14 +173,14 @@ async def exchange_token(
             refresh_token = token_data.get("refresh_token", "")
             id_token = token_data.get("id_token", "")
             
-            logger.info(f"🎯 ACCESS TOKEN RECIBIDO: {access_token}")
             logger.info(f"🎯 ACCESS TOKEN LENGTH: {len(access_token)} caracteres")
+            logger.info(f"🎯 ACCESS TOKEN PREVIEW: {access_token[:20]}***")
             if refresh_token:
-                logger.info(f"🎯 REFRESH TOKEN RECIBIDO: {refresh_token}")
                 logger.info(f"🎯 REFRESH TOKEN LENGTH: {len(refresh_token)} caracteres")
+                logger.info(f"🎯 REFRESH TOKEN PREVIEW: {refresh_token[:20]}***")
             if id_token:
-                logger.info(f"🎯 ID TOKEN RECIBIDO: {id_token}")
                 logger.info(f"🎯 ID TOKEN LENGTH: {len(id_token)} caracteres")
+                logger.info(f"🎯 ID TOKEN PREVIEW: {id_token[:20]}***")
             
             logger.info("Tokens received successfully")
             return token_data

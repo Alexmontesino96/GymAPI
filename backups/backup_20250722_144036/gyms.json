@@ -1,0 +1,54 @@
+[
+  {
+    "id": 1,
+    "name": "Gimnasio Predeterminado",
+    "subdomain": "default",
+    "logo_url": null,
+    "address": null,
+    "phone": null,
+    "email": null,
+    "description": null,
+    "is_active": true,
+    "created_at": "2025-04-01T02:36:24.159799",
+    "updated_at": "2025-04-01T02:36:24.159799"
+  },
+  {
+    "id": 2,
+    "name": "CKO-Downtown",
+    "subdomain": "iguqsom-q0l3c9074jqr57l5qp-8ne-0t73jtit8",
+    "logo_url": "https://example.com/",
+    "address": "string",
+    "phone": "string",
+    "email": "user@example.com",
+    "description": "string",
+    "is_active": true,
+    "created_at": "2025-04-08T21:32:23.516932",
+    "updated_at": "2025-04-08T21:32:23.516935"
+  },
+  {
+    "id": 3,
+    "name": "One Hundry Kick",
+    "subdomain": "bdx9nn80h08v0",
+    "logo_url": "https://example.com/",
+    "address": "Brickell",
+    "phone": "7865432341",
+    "email": "user@example.com",
+    "description": "Somos un gimnasio de kickboxing",
+    "is_active": true,
+    "created_at": "2025-05-16T01:51:51.082715",
+    "updated_at": "2025-05-16T01:51:51.082718"
+  },
+  {
+    "id": 4,
+    "name": "1Kick",
+    "subdomain": "y-8ev72zyr0ks2adzyeccqzf1n1k2",
+    "logo_url": "https://example.com/",
+    "address": "5715 North River",
+    "phone": "7865432312",
+    "email": "user@example.com",
+    "description": "string",
+    "is_active": true,
+    "created_at": "2025-05-16T02:05:41.017704",
+    "updated_at": "2025-06-29T05:32:58.420429"
+  }
+]
