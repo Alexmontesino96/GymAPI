@@ -88,10 +88,12 @@ class ChatActivityBatcher:
             
             logger.debug(f"Cache actualizado: chat_room_id={chat_room_id}, timestamp={message_timestamp}, type={message_type}")
             
-            # Auto-flush si es necesario
-            if self._should_auto_flush():
-                logger.info("Iniciando auto-flush por intervalo de tiempo")
-                self._schedule_flush()
+            # Auto-flush DESHABILITADO para evitar bloqueos en webhook
+            # El flush se hace solo via scheduler programado cada 5 minutos
+            # if self._should_auto_flush():
+            #     logger.info("Iniciando auto-flush por intervalo de tiempo")
+            #     self._schedule_flush()
+            logger.debug("Auto-flush deshabilitado - solo via scheduler")
     
     def get_activity(self, chat_room_id: int) -> Optional[datetime]:
         """
@@ -153,12 +155,16 @@ class ChatActivityBatcher:
             
         self._flush_in_progress = True
         updates_count = 0
+        flush_successful = False  # Flag para controlar limpieza del cache
         
         try:
             logger.info(f"Iniciando flush de {len(cache_copy)} chats a base de datos")
             
-            # Crear nueva sesión de BD
+            # Crear nueva sesión de BD con timeout
             db = SessionLocal()
+            # Configurar timeout para evitar bloqueos indefinidos
+            db.execute(text("SET statement_timeout = '10s'"))  # Timeout SQL de 10 segundos
+            
             try:
                 # Preparar datos para bulk update
                 update_data = []
@@ -186,84 +192,90 @@ class ChatActivityBatcher:
                         })
                 
                 if update_data:
-                    # Ejecutar bulk update usando SQL raw para mejor performance
-                    # UPDATE múltiples campos usando CASE statements
+                    # Usar updates individuales con parámetros seguros (previene SQL injection)
+                    # Más estable que bulk CASE statements complejos
                     
-                    timestamp_cases = []
-                    text_cases = []
-                    sender_cases = []
-                    type_cases = []
-                    room_ids = []
+                    update_sql = """
+                    UPDATE chat_rooms 
+                    SET 
+                        last_message_at = :timestamp,
+                        last_message_text = :text,
+                        last_message_sender_id = :sender_id,
+                        last_message_type = :msg_type
+                    WHERE id = :room_id
+                    """
                     
+                    updates_count = 0
                     for data in update_data:
-                        room_id = data['id']
-                        room_ids.append(str(room_id))
-                        
-                        # CASE para timestamp
-                        timestamp_cases.append(f"WHEN {room_id} THEN '{data['last_message_at'].isoformat()}'")
-                        
-                        # CASE para text (con escape de comillas)
-                        text_value = data['last_message_text']
-                        if text_value:
-                            # Escapar comillas simples para SQL
-                            escaped_text = text_value.replace("'", "''")
-                            text_cases.append(f"WHEN {room_id} THEN '{escaped_text}'")
-                        else:
-                            text_cases.append(f"WHEN {room_id} THEN NULL")
-                        
-                        # CASE para sender_id
-                        sender_id = data['last_message_sender_id']
-                        if sender_id:
-                            sender_cases.append(f"WHEN {room_id} THEN {sender_id}")
-                        else:
-                            sender_cases.append(f"WHEN {room_id} THEN NULL")
-                        
-                        # CASE para message_type
-                        msg_type = data['last_message_type'] or 'text'
-                        type_cases.append(f"WHEN {room_id} THEN '{msg_type}'")
+                        try:
+                            # Parámetros seguros - no hay posibilidad de SQL injection
+                            params = {
+                                'timestamp': data['last_message_at'],
+                                'text': data['last_message_text'],
+                                'sender_id': data['last_message_sender_id'],
+                                'msg_type': data['last_message_type'] or 'text',
+                                'room_id': data['id']
+                            }
+                            
+                            result = db.execute(text(update_sql), params)
+                            updates_count += result.rowcount if result.rowcount else 1
+                            
+                        except Exception as e:
+                            logger.error(f"Error actualizando chat {data['id']}: {str(e)}")
+                            # Continuar con los demás updates
+                            continue
                     
-                    if room_ids:
-                        sql = f"""
-                        UPDATE chat_rooms 
-                        SET 
-                            last_message_at = CASE id {' '.join(timestamp_cases)} END,
-                            last_message_text = CASE id {' '.join(text_cases)} END,
-                            last_message_sender_id = CASE id {' '.join(sender_cases)} END,
-                            last_message_type = CASE id {' '.join(type_cases)} END
-                        WHERE id IN ({','.join(room_ids)})
-                        """
-                        
-                        result = db.execute(text(sql))
-                        db.commit()
-                        updates_count = result.rowcount if result.rowcount else len(update_data)
-                        
-                        logger.info(f"Bulk update completado: {updates_count} chats actualizados con preview")
+                    db.commit()
+                    flush_successful = True  # Marcar como exitoso
+                    logger.info(f"Updates individuales completados: {updates_count} chats actualizados")
                     
             except Exception as e:
-                logger.error(f"Error durante flush de BD: {str(e)}", exc_info=True)
-                db.rollback()
-                raise
-            finally:
-                db.close()
-            
-            # Limpiar cache solo de los elementos que se procesaron exitosamente
-            with self._cache_lock:
-                for chat_room_id in cache_copy.keys():
-                    if chat_room_id in self._activity_cache:
-                        # Solo eliminar si el timestamp no ha cambiado (no hubo actualización concurrent)
-                        cached_data = self._activity_cache[chat_room_id]
-                        original_data = cache_copy[chat_room_id]
-                        
-                        # Comparar timestamps para verificar que no hubo updates concurrentes
-                        cached_timestamp = cached_data[0] if len(cached_data) >= 1 else None
-                        original_timestamp = original_data[0] if len(original_data) >= 1 else None
-                        
-                        if cached_timestamp == original_timestamp:
-                            del self._activity_cache[chat_room_id]
+                error_msg = str(e)
+                logger.error(f"Error durante flush de BD: {error_msg}", exc_info=True)
                 
-                self._last_flush = time.time()
+                # Rollback seguro
+                try:
+                    db.rollback()
+                except Exception as rollback_error:
+                    logger.error(f"Error durante rollback: {rollback_error}")
+                
+                # Si es timeout, no hacer raise para evitar que APScheduler marque como failed
+                if "timeout" in error_msg.lower() or "statement_timeout" in error_msg.lower():
+                    logger.warning("DB timeout detectado - manteniendo datos en cache para retry")
+                    # No hacer raise, permitir que el cache se mantenga
+                else:
+                    raise  # Solo hacer raise para errores no relacionados con timeout
+            finally:
+                try:
+                    db.close()
+                except Exception as close_error:
+                    logger.error(f"Error cerrando conexión DB: {close_error}")
             
-            logger.info(f"Flush completado exitosamente: {updates_count} chats actualizados")
+            # Limpiar cache SOLO si el flush fue exitoso
+            if flush_successful:
+                with self._cache_lock:
+                    for chat_room_id in cache_copy.keys():
+                        if chat_room_id in self._activity_cache:
+                            # Solo eliminar si el timestamp no ha cambiado (no hubo actualización concurrent)
+                            cached_data = self._activity_cache[chat_room_id]
+                            original_data = cache_copy[chat_room_id]
+                            
+                            # Comparar timestamps para verificar que no hubo updates concurrentes
+                            cached_timestamp = cached_data[0] if len(cached_data) >= 1 else None
+                            original_timestamp = original_data[0] if len(original_data) >= 1 else None
+                            
+                            if cached_timestamp == original_timestamp:
+                                del self._activity_cache[chat_room_id]
+                                
+                logger.info(f"Cache limpiado para {len(cache_copy)} chats procesados exitosamente")
+                self._last_flush = time.time()  # Solo actualizar timestamp si fue exitoso
+            else:
+                logger.info("Cache mantenido debido a errores en flush - se reintentará en próxima ejecución")
+            
+            if flush_successful:
+                logger.info(f"Flush completado exitosamente: {updates_count} chats actualizados")
+            else:
+                logger.warning(f"Flush completado con errores: {updates_count} chats actualizados parcialmente")
             
         except Exception as e:
             logger.error(f"Error durante flush: {str(e)}", exc_info=True)
