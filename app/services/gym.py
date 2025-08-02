@@ -8,6 +8,8 @@ from app.models.user_gym import UserGym, GymRoleType
 from app.models.user import User
 from app.models.event import Event
 from app.models.schedule import ClassSession
+from app.models.gym_module import GymModule
+from app.models.module import Module
 
 from app.schemas.gym import GymCreate, GymUpdate, GymWithStats
 from app.repositories.gym import gym_repository
@@ -635,7 +637,7 @@ class GymService:
         gym = db.query(Gym).options(
             joinedload(Gym.gym_hours),
             joinedload(Gym.membership_planes),
-            joinedload(Gym.modules).joinedload("module")  # Cargar también el módulo relacionado
+            joinedload(Gym.modules).joinedload(GymModule.module)  # Usar referencia de clase directamente
         ).filter(
             Gym.id == gym_id,
             Gym.is_active == True  # Solo gimnasios activos para público
