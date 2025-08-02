@@ -617,5 +617,88 @@ class GymService:
             logger.error(f"Error al obtener usuarios cacheados para gym {gym_id}: {str(e)}", exc_info=True)
             # Fallback a la versión no cacheada
             return self.get_gym_users(db=db, gym_id=gym_id, role=role, skip=skip, limit=limit)
+    
+    def get_gym_details_public(self, db: Session, *, gym_id: int):
+        """
+        Obtener detalles completos de un gimnasio para discovery público.
+        
+        Args:
+            db: Sesión de base de datos
+            gym_id: ID del gimnasio
+            
+        Returns:
+            GymDetailedPublicSchema: Detalles completos del gimnasio o None si no existe/inactivo
+        """
+        from app.schemas.gym import GymDetailedPublicSchema, GymHoursPublic, MembershipPlanPublic, GymModulePublic
+        
+        # Obtener gimnasio con todas las relaciones necesarias
+        gym = db.query(Gym).options(
+            joinedload(Gym.gym_hours),
+            joinedload(Gym.membership_planes),
+            joinedload(Gym.modules)
+        ).filter(
+            Gym.id == gym_id,
+            Gym.is_active == True  # Solo gimnasios activos para público
+        ).first()
+        
+        if not gym:
+            return None
+        
+        # Convertir horarios
+        gym_hours = []
+        if gym.gym_hours:
+            for hour in gym.gym_hours:
+                gym_hours.append(GymHoursPublic(
+                    day_of_week=hour.day_of_week,
+                    open_time=hour.open_time,
+                    close_time=hour.close_time,
+                    is_closed=hour.is_closed
+                ))
+        
+        # Convertir planes de membresía (solo activos)
+        membership_plans = []
+        if gym.membership_planes:
+            for plan in gym.membership_planes:
+                if plan.is_active:  # Solo planes activos para público
+                    membership_plans.append(MembershipPlanPublic(
+                        id=plan.id,
+                        name=plan.name,
+                        description=plan.description,
+                        price_cents=plan.price_cents,
+                        currency=plan.currency,
+                        billing_interval=plan.billing_interval,
+                        duration_days=plan.duration_days,
+                        max_billing_cycles=plan.max_billing_cycles,
+                        features=plan.features,
+                        max_bookings_per_month=plan.max_bookings_per_month,
+                        price_amount=plan.price_cents / 100.0  # Convertir centavos a euros
+                    ))
+        
+        # Convertir módulos (solo habilitados)
+        modules = []
+        if gym.modules:
+            for module in gym.modules:
+                if module.is_enabled:  # Solo módulos habilitados para público
+                    modules.append(GymModulePublic(
+                        module_name=module.module_name,
+                        is_enabled=module.is_enabled
+                    ))
+        
+        # Crear el schema detallado
+        return GymDetailedPublicSchema(
+            id=gym.id,
+            name=gym.name,
+            subdomain=gym.subdomain,
+            logo_url=gym.logo_url,
+            address=gym.address,
+            phone=gym.phone,
+            email=gym.email,
+            description=gym.description,
+            timezone=gym.timezone,
+            is_active=gym.is_active,
+            gym_hours=gym_hours,
+            membership_plans=membership_plans,
+            modules=modules
+        )
 
 gym_service = GymService() 

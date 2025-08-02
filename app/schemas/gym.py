@@ -1,5 +1,5 @@
 from typing import Optional, List, Dict, Any
-from datetime import datetime
+from datetime import datetime, time
 from pydantic import BaseModel, EmailStr, HttpUrl, Field, validator
 from app.models.user_gym import GymRoleType # Importar Enum
 import pytz
@@ -109,5 +109,70 @@ class GymPublicSchema(BaseModel):
     timezone: str  # Incluir timezone en respuestas públicas
     is_active: bool
 
+    class Config:
+        from_attributes = True
+
+
+# === Esquemas para Discovery Público Detallado ===
+
+class GymHoursPublic(BaseModel):
+    """Horarios públicos del gimnasio para discovery"""
+    day_of_week: int = Field(..., ge=0, le=6, description="Día de la semana (0=Lunes, 6=Domingo)")
+    open_time: Optional[time] = None
+    close_time: Optional[time] = None
+    is_closed: bool = False
+
+    class Config:
+        from_attributes = True
+
+
+class MembershipPlanPublic(BaseModel):
+    """Plan de membresía público para discovery"""
+    id: int
+    name: str
+    description: Optional[str] = None
+    price_cents: int
+    currency: str
+    billing_interval: str
+    duration_days: int
+    max_billing_cycles: Optional[int] = None
+    features: Optional[str] = None
+    max_bookings_per_month: Optional[int] = None
+    
+    # Campo calculado para facilitar el frontend
+    price_amount: Optional[float] = None
+    
+    class Config:
+        from_attributes = True
+
+
+class GymModulePublic(BaseModel):
+    """Módulos públicos del gimnasio para discovery"""
+    module_name: str
+    is_enabled: bool
+    
+    class Config:
+        from_attributes = True
+
+
+class GymDetailedPublicSchema(BaseModel):
+    """Esquema público detallado de gimnasio para discovery completo"""
+    # Información básica del gimnasio
+    id: int
+    name: str
+    subdomain: str
+    logo_url: Optional[HttpUrl] = None
+    address: Optional[str] = None
+    phone: Optional[str] = None
+    email: Optional[EmailStr] = None
+    description: Optional[str] = None
+    timezone: str
+    is_active: bool
+    
+    # Información detallada adicional
+    gym_hours: List[GymHoursPublic] = []
+    membership_plans: List[MembershipPlanPublic] = []
+    modules: List[GymModulePublic] = []
+    
     class Config:
         from_attributes = True

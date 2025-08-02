@@ -14,7 +14,7 @@ from app.models.gym import Gym
 from app.models.user_gym import UserGym, GymRoleType
 from app.services.gym import gym_service
 from app.services.user import user_service
-from app.schemas.gym import Gym as GymSchema, GymCreate, GymUpdate, GymStatusUpdate, GymWithStats, UserGymMembershipSchema, UserGymRoleUpdate, UserGymSchema, GymPublicSchema
+from app.schemas.gym import Gym as GymSchema, GymCreate, GymUpdate, GymStatusUpdate, GymWithStats, UserGymMembershipSchema, UserGymRoleUpdate, UserGymSchema, GymPublicSchema, GymDetailedPublicSchema
 from app.core.auth0_fastapi import auth, get_current_user, Auth0User
 from app.core.tenant import verify_gym_access, verify_admin_role
 from app.db.session import get_db
@@ -74,35 +74,68 @@ async def create_gym(
 
 
 @router.get("/", response_model=List[GymPublicSchema])
-async def read_gyms(
+async def read_gyms_public(
     *,
     db: Session = Depends(get_db),
     skip: int = 0,
     limit: int = 100,
-    is_active: Optional[bool] = None,
-    current_user: Auth0User = Depends(auth.get_user)
+    is_active: Optional[bool] = True  # Por defecto solo gimnasios activos para público
 ) -> Any:
     """
-    Obtener todos los gimnasios.
+    Obtener todos los gimnasios (PÚBLICO - sin autenticación).
     
-    Este endpoint permite a cualquier usuario autenticado ver todos los gimnasios
-    registrados en el sistema. Se puede filtrar por estado (activo/inactivo).
+    Este endpoint permite a cualquier usuario (incluso sin autenticar) ver todos los 
+    gimnasios activos registrados en el sistema para discovery público.
     
     Permissions:
-        - Requiere autenticación básica
+        - Sin autenticación requerida (público)
         
     Args:
         db: Sesión de base de datos
         skip: Número de registros a omitir (paginación)
         limit: Número máximo de registros a devolver
-        is_active: Filtrar por estado activo/inactivo
-        current_user: Usuario autenticado
+        is_active: Filtrar por estado activo/inactivo (default: True para público)
         
     Returns:
-        List[Gym]: Lista de gimnasios
+        List[GymPublicSchema]: Lista de gimnasios públicos
     """
     gyms = gym_service.get_gyms(db, skip=skip, limit=limit, is_active=is_active)
     return gyms
+
+
+@router.get("/{gym_id}/details", response_model=GymDetailedPublicSchema)
+async def get_gym_details_public(
+    *,
+    db: Session = Depends(get_db),
+    gym_id: int = Path(..., title="ID del gimnasio")
+) -> Any:
+    """
+    Obtener detalles completos de un gimnasio (PÚBLICO - sin autenticación).
+    
+    Este endpoint permite a cualquier usuario (incluso sin autenticar) ver los 
+    detalles completos de un gimnasio específico, incluyendo horarios, planes 
+    de membresía y módulos disponibles para discovery público.
+    
+    Permissions:
+        - Sin autenticación requerida (público)
+        
+    Args:
+        db: Sesión de base de datos
+        gym_id: ID del gimnasio
+        
+    Returns:
+        GymDetailedPublicSchema: Detalles completos del gimnasio
+        
+    Raises:
+        HTTPException 404: Si el gimnasio no existe o está inactivo
+    """
+    gym = gym_service.get_gym_details_public(db, gym_id=gym_id)
+    if not gym:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Gimnasio no encontrado o inactivo"
+        )
+    return gym
 
 
 @router.get("/my", response_model=List[UserGymMembershipSchema])
