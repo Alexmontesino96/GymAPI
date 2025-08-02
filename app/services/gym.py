@@ -635,7 +635,7 @@ class GymService:
         gym = db.query(Gym).options(
             joinedload(Gym.gym_hours),
             joinedload(Gym.membership_planes),
-            joinedload(Gym.modules)
+            joinedload(Gym.modules).joinedload("module")  # Cargar también el módulo relacionado
         ).filter(
             Gym.id == gym_id,
             Gym.is_active == True  # Solo gimnasios activos para público
@@ -674,14 +674,14 @@ class GymService:
                         price_amount=plan.price_cents / 100.0  # Convertir centavos a euros
                     ))
         
-        # Convertir módulos (solo habilitados)
+        # Convertir módulos (solo activos)
         modules = []
         if gym.modules:
-            for module in gym.modules:
-                if module.is_enabled:  # Solo módulos habilitados para público
+            for gym_module in gym.modules:
+                if gym_module.active:  # Solo módulos activos para público
                     modules.append(GymModulePublic(
-                        module_name=module.module_name,
-                        is_enabled=module.is_enabled
+                        module_name=gym_module.module.name,  # Acceder al nombre del módulo relacionado
+                        is_enabled=gym_module.active
                     ))
         
         # Crear el schema detallado
