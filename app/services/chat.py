@@ -815,12 +815,8 @@ class ChatService:
         if not user:
             raise ValueError(f"Usuario con ID interno {user_id} no encontrado")
         
-        # Verificar que el usuario tiene un auth0_id (necesario para Stream)
-        if not user.auth0_id:
-            raise ValueError(f"Usuario {user_id} no tiene auth0_id asignado")
-        
-        # Sanitizar ID de usuario para Stream
-        safe_user_id = re.sub(r'[^a-zA-Z0-9@_\-]', '_', user.auth0_id)
+        # Obtener Stream ID usando el método estándar
+        stream_id = self._get_stream_id_for_user(user)
         
         try:
             # Primero añadir a la base de datos local usando ID interno
@@ -835,25 +831,26 @@ class ChatService:
                 user_teams = [f"gym_{ug.gym_id}" for ug in user_gyms]
                 
                 user_data = {
-                    "id": safe_user_id,
-                    "name": safe_user_id,  # Usar ID como nombre por defecto
+                    "id": stream_id,
+                    "name": f"Usuario {user_id}",  # Usar ID interno como nombre
                 }
                 if user_teams:
                     user_data["teams"] = user_teams
                     
                 stream_client.update_user(user_data)
-                logger.info(f"Usuario {safe_user_id} creado/actualizado en Stream antes de añadirlo al canal")
+                logger.info(f"Usuario {stream_id} creado/actualizado en Stream antes de añadirlo al canal")
             except Exception as e:
-                logger.error(f"Error creando usuario {safe_user_id} en Stream: {str(e)}")
+                logger.error(f"Error creando usuario {stream_id} en Stream: {str(e)}")
                 # Continuamos aunque haya error para intentar añadirlo al canal
             
-            # Añadir a Stream usando auth0_id sanitizado
+            # Añadir a Stream usando stream_id estándar
             channel = stream_client.channel(db_room.stream_channel_type, db_room.stream_channel_id)
-            response = channel.add_members([safe_user_id])
+            response = channel.add_members([stream_id])
             
             return {
                 "room_id": room_id,
                 "user_id": user_id,
+                "stream_id": stream_id,
                 "stream_response": response
             }
         except Exception as e:
@@ -885,23 +882,19 @@ class ChatService:
         if not user:
             raise ValueError(f"Usuario con ID interno {user_id} no encontrado")
         
-        # Verificar que el usuario tiene un auth0_id (necesario para Stream)
-        if not user.auth0_id:
-            raise ValueError(f"Usuario {user_id} no tiene auth0_id asignado")
-        
-        # Sanitizar ID de usuario para Stream
-        safe_user_id = re.sub(r'[^a-zA-Z0-9@_\-]', '_', user.auth0_id)
+        # Obtener Stream ID usando el método estándar
+        stream_id = self._get_stream_id_for_user(user)
         
         try:
-            # Primero intentar eliminar de Stream usando auth0_id sanitizado
+            # Primero intentar eliminar de Stream usando stream_id estándar
             # Si Stream falla, continuamos para mantener consistente la BD local
             stream_response = None
             try:
                 channel = stream_client.channel(db_room.stream_channel_type, db_room.stream_channel_id)
-                stream_response = channel.remove_members([safe_user_id])
-                logger.info(f"Usuario {safe_user_id} eliminado de Stream Chat")
+                stream_response = channel.remove_members([stream_id])
+                logger.info(f"Usuario {stream_id} eliminado de Stream Chat")
             except Exception as e:
-                logger.error(f"Error eliminando usuario {safe_user_id} de Stream: {str(e)}")
+                logger.error(f"Error eliminando usuario {stream_id} de Stream: {str(e)}")
                 # Continuamos para eliminar de la BD local
             
             # Eliminar de la base de datos local usando ID interno
@@ -911,6 +904,7 @@ class ChatService:
             return {
                 "room_id": room_id,
                 "user_id": user_id,
+                "stream_id": stream_id,
                 "stream_response": stream_response
             }
         except Exception as e:

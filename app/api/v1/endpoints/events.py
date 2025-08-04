@@ -869,6 +869,17 @@ async def register_for_event(
             db.commit()
             db.refresh(existing)
             participation = existing # Asignar el objeto actualizado a participation
+            
+            # Añadir usuario al canal de Stream Chat del evento para reactivación
+            try:
+                event_room = chat_service.get_event_room(db, event_id=participation_in.event_id)
+                if event_room:
+                    chat_service.add_user_to_channel(db, room_id=event_room.id, user_id=user.id)
+                    logger.info(f"Usuario {user.id} añadido al canal de chat del evento {participation_in.event_id} (reactivación)")
+                else:
+                    logger.warning(f"No se encontró canal de chat para evento {participation_in.event_id} (reactivación)")
+            except Exception as e:
+                logger.error(f"Error añadiendo usuario al canal de chat del evento (reactivación): {e}", exc_info=True)
         else:
             # Por ejemplo, si está en WAITING_LIST, no debería poder registrarse de nuevo por esta vía
             raise HTTPException(
@@ -887,6 +898,17 @@ async def register_for_event(
             status_code=400,
             detail="Error al registrarse para el evento"
         )
+    
+    # Añadir usuario al canal de Stream Chat del evento
+    try:
+        event_room = chat_service.get_event_room(db, event_id=participation_in.event_id)
+        if event_room:
+            chat_service.add_user_to_channel(db, room_id=event_room.id, user_id=user.id)
+            logger.info(f"Usuario {user.id} añadido al canal de chat del evento {participation_in.event_id}")
+        else:
+            logger.warning(f"No se encontró canal de chat para evento {participation_in.event_id}")
+    except Exception as e:
+        logger.error(f"Error añadiendo usuario al canal de chat del evento: {e}", exc_info=True)
     
     # Invalidar cachés relacionadas
     if redis_client:
