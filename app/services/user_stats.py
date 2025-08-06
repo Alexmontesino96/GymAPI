@@ -19,7 +19,7 @@ from app.schemas.user_stats import (
     PeriodType, TrendDirection, GoalStatus, BMICategory
 )
 from app.services.cache_service import CacheService
-from app.core.profiling import time_db_query, register_cache_hit, register_cache_miss
+from app.core.profiling import async_db_query_timer, register_cache_hit, register_cache_miss
 from app.repositories.schedule import class_participation_repository
 from app.repositories.event import event_participation_repository
 from app.services.user import user_service
@@ -166,7 +166,7 @@ class UserStatsService:
             week_start = today - timedelta(days=today.weekday())
             
             # Obtener métricas básicas (queries optimizadas)
-            with time_db_query("dashboard_summary_queries"):
+            async with async_db_query_timer("dashboard_summary_queries"):
                 # Racha actual (simplificado)
                 current_streak = await self._calculate_current_streak_fast(db, user_id, gym_id)
                 
@@ -239,7 +239,7 @@ class UserStatsService:
         period_start, period_end = self._calculate_period_dates(period)
         
         try:
-            with time_db_query("comprehensive_stats_computation"):
+            async with async_db_query_timer("comprehensive_stats_computation"):
                 # Obtener todas las métricas en paralelo (donde sea posible)
                 fitness_metrics = await self._compute_fitness_metrics(
                     db, user_id, gym_id, period_start, period_end
