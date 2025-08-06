@@ -359,7 +359,7 @@ class UserStatsService:
             attendance_dates = db.query(
                 func.date(ClassParticipation.created_at).label('attendance_date')
             ).join(
-                ClassParticipation.class_session
+                ClassParticipation.session
             ).filter(
                 ClassParticipation.member_id == user_id,
                 ClassParticipation.gym_id == gym_id,
@@ -448,7 +448,7 @@ class UserStatsService:
             ).join(
                 ClassSession, Class.id == ClassSession.class_id
             ).join(
-                ClassParticipation, ClassSession.id == ClassParticipation.class_session_id
+                ClassParticipation, ClassSession.id == ClassParticipation.session_id
             ).filter(
                 ClassParticipation.member_id == user_id,
                 ClassParticipation.gym_id == gym_id,
@@ -554,10 +554,12 @@ class UserStatsService:
             favorite_classes_result = db.query(
                 Class.name,
                 func.count(ClassParticipation.id).label('count')
+            ).select_from(
+                Class
             ).join(
-                ClassSession
+                ClassSession, Class.id == ClassSession.class_id
             ).join(
-                ClassParticipation
+                ClassParticipation, ClassSession.id == ClassParticipation.session_id
             ).filter(
                 ClassParticipation.member_id == user_id,
                 ClassParticipation.gym_id == gym_id,
