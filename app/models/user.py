@@ -54,7 +54,7 @@ class User(Base):
     
     # Relaciones para health tracking
     health_records = relationship("UserHealthRecord", back_populates="user", cascade="all, delete-orphan")
-    goals = relationship("UserGoal", back_populates="user", cascade="all, delete-orphan")
+    health_goals = relationship("UserGoal", back_populates="user", cascade="all, delete-orphan")
     achievements = relationship("UserAchievement", back_populates="user", cascade="all, delete-orphan")
     
     # Relaciones para nutrición
