@@ -7,9 +7,10 @@ y análisis de tendencias.
 """
 
 from typing import List, Dict, Any, Optional, Union
-from datetime import datetime, date
+from datetime import datetime
+from datetime import date as DateType
 from enum import Enum
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 
 
 class PeriodType(str, Enum):
@@ -58,6 +59,14 @@ class FitnessMetrics(BaseModel):
     peak_workout_times: List[str] = Field(default_factory=list, description="Horarios pico de entrenamiento")
     calories_burned_estimate: Optional[int] = Field(None, ge=0, description="Estimación de calorías quemadas")
 
+    @field_validator('attendance_rate')
+    @classmethod
+    def validate_attendance_rate(cls, v):
+        """Validar que el porcentaje esté entre 0 y 100."""
+        if v < 0 or v > 100:
+            raise ValueError('Attendance rate must be between 0 and 100')
+        return v
+
 
 class EventsMetrics(BaseModel):
     """Métricas de participación en eventos."""
@@ -67,6 +76,14 @@ class EventsMetrics(BaseModel):
     attendance_rate: float = Field(..., ge=0, le=100, description="Tasa de asistencia a eventos")
     favorite_event_types: List[str] = Field(default_factory=list, description="Tipos de evento favoritos")
 
+    @field_validator('attendance_rate')
+    @classmethod
+    def validate_attendance_rate(cls, v):
+        """Validar que el porcentaje esté entre 0 y 100."""
+        if v < 0 or v > 100:
+            raise ValueError('Event attendance rate must be between 0 and 100')
+        return v
+
 
 class SocialMetrics(BaseModel):
     """Métricas de actividad social y chat."""
@@ -74,6 +91,14 @@ class SocialMetrics(BaseModel):
     chat_rooms_active: int = Field(..., ge=0, description="Salas de chat activas")
     social_score: float = Field(..., ge=0, le=10, description="Puntuación social (0-10)")
     trainer_interactions: int = Field(..., ge=0, description="Interacciones con entrenadores")
+
+    @field_validator('social_score')
+    @classmethod
+    def validate_social_score(cls, v):
+        """Validar que la puntuación esté entre 0 y 10."""
+        if v < 0 or v > 10:
+            raise ValueError('Social score must be between 0 and 10')
+        return v
 
 
 class GoalProgress(BaseModel):
@@ -84,6 +109,14 @@ class GoalProgress(BaseModel):
     current_value: float = Field(..., description="Valor actual")
     progress_percentage: float = Field(..., ge=0, le=100, description="Porcentaje de progreso")
     status: GoalStatus = Field(..., description="Estado del objetivo")
+
+    @field_validator('progress_percentage')
+    @classmethod
+    def validate_progress_percentage(cls, v):
+        """Validar que el porcentaje esté entre 0 y 100."""
+        if v < 0 or v > 100:
+            raise ValueError('Progress percentage must be between 0 and 100')
+        return v
 
 
 class HealthMetrics(BaseModel):
@@ -103,6 +136,22 @@ class MembershipUtilization(BaseModel):
     value_score: float = Field(..., ge=0, le=10, description="Puntuación de valor obtenido (0-10)")
     days_until_renewal: Optional[int] = Field(None, ge=0, description="Días hasta renovación")
     recommended_actions: List[str] = Field(default_factory=list, description="Acciones recomendadas")
+
+    @field_validator('utilization_rate')
+    @classmethod
+    def validate_utilization_rate(cls, v):
+        """Validar que el porcentaje esté entre 0 y 100."""
+        if v < 0 or v > 100:
+            raise ValueError('Utilization rate must be between 0 and 100')
+        return v
+
+    @field_validator('value_score')
+    @classmethod
+    def validate_value_score(cls, v):
+        """Validar que la puntuación esté entre 0 y 10."""
+        if v < 0 or v > 10:
+            raise ValueError('Value score must be between 0 and 10')
+        return v
 
 
 class Achievement(BaseModel):
@@ -157,7 +206,7 @@ class ComprehensiveUserStats(BaseModel):
 
 class WeeklyBreakdown(BaseModel):
     """Desglose diario de una semana."""
-    date: date = Field(..., description="Fecha del día")
+    date: DateType = Field(..., description="Fecha del día")
     day_name: str = Field(..., description="Nombre del día")
     workouts: int = Field(..., ge=0, description="Entrenamientos realizados")
     duration_minutes: int = Field(..., ge=0, description="Duración total en minutos")
@@ -237,19 +286,4 @@ class MonthlyTrends(BaseModel):
     forecasting: Forecasting = Field(..., description="Pronósticos")
 
 
-# === Validadores ===
-
-@validator('attendance_rate', 'utilization_rate', 'progress_percentage')
-def validate_percentage(cls, v):
-    """Validar que los porcentajes estén entre 0 y 100."""
-    if v < 0 or v > 100:
-        raise ValueError('Percentage must be between 0 and 100')
-    return v
-
-
-@validator('social_score', 'value_score') 
-def validate_score(cls, v):
-    """Validar que las puntuaciones estén entre 0 y 10."""
-    if v < 0 or v > 10:
-        raise ValueError('Score must be between 0 and 10')
-    return v
+# === Validadores están ahora dentro de cada clase específica ===
