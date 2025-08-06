@@ -309,7 +309,7 @@ class UserStatsService:
             attendance_dates = db.query(
                 func.date(ClassParticipation.created_at).label('attendance_date')
             ).filter(
-                ClassParticipation.user_id == user_id,
+                ClassParticipation.member_id == user_id,
                 ClassParticipation.gym_id == gym_id,
                 ClassParticipation.status == ClassParticipationStatus.ATTENDED,
                 func.date(ClassParticipation.created_at) >= thirty_days_ago
@@ -361,7 +361,7 @@ class UserStatsService:
             ).join(
                 ClassParticipation.class_session
             ).filter(
-                ClassParticipation.user_id == user_id,
+                ClassParticipation.member_id == user_id,
                 ClassParticipation.gym_id == gym_id,
                 ClassParticipation.status == ClassParticipationStatus.ATTENDED,
                 ClassParticipation.created_at >= start_date,
@@ -416,7 +416,7 @@ class UserStatsService:
             
             # Query optimizada: contar clases asistidas en la semana
             workout_count = db.query(ClassParticipation).filter(
-                ClassParticipation.user_id == user_id,
+                ClassParticipation.member_id == user_id,
                 ClassParticipation.gym_id == gym_id,
                 ClassParticipation.status == ClassParticipationStatus.ATTENDED,
                 func.date(ClassParticipation.created_at) >= week_start,
@@ -450,7 +450,7 @@ class UserStatsService:
             ).join(
                 ClassParticipation, ClassSession.id == ClassParticipation.class_session_id
             ).filter(
-                ClassParticipation.user_id == user_id,
+                ClassParticipation.member_id == user_id,
                 ClassParticipation.gym_id == gym_id,
                 ClassParticipation.status == ClassParticipationStatus.REGISTERED,
                 ClassSession.status == ClassSessionStatus.SCHEDULED,
@@ -510,7 +510,7 @@ class UserStatsService:
                     )
                 ).label('scheduled_classes')
             ).filter(
-                ClassParticipation.user_id == user_id,
+                ClassParticipation.member_id == user_id,
                 ClassParticipation.gym_id == gym_id,
                 ClassParticipation.created_at >= period_start,
                 ClassParticipation.created_at <= period_end
@@ -530,7 +530,7 @@ class UserStatsService:
             ).join(
                 ClassParticipation
             ).filter(
-                ClassParticipation.user_id == user_id,
+                ClassParticipation.member_id == user_id,
                 ClassParticipation.gym_id == gym_id,
                 ClassParticipation.status == ClassParticipationStatus.ATTENDED,
                 ClassParticipation.created_at >= period_start,
@@ -559,7 +559,7 @@ class UserStatsService:
             ).join(
                 ClassParticipation
             ).filter(
-                ClassParticipation.user_id == user_id,
+                ClassParticipation.member_id == user_id,
                 ClassParticipation.gym_id == gym_id,
                 ClassParticipation.status == ClassParticipationStatus.ATTENDED,
                 ClassParticipation.created_at >= period_start,
@@ -579,7 +579,7 @@ class UserStatsService:
             ).join(
                 ClassParticipation
             ).filter(
-                ClassParticipation.user_id == user_id,
+                ClassParticipation.member_id == user_id,
                 ClassParticipation.gym_id == gym_id,
                 ClassParticipation.status == ClassParticipationStatus.ATTENDED,
                 ClassParticipation.created_at >= period_start,
@@ -887,7 +887,7 @@ class UserStatsService:
             
             # Calcular utilización basada en clases asistidas vs disponibles
             classes_attended_count = db.query(ClassParticipation).filter(
-                ClassParticipation.user_id == user_id,
+                ClassParticipation.member_id == user_id,
                 ClassParticipation.gym_id == gym_id,
                 ClassParticipation.status == ClassParticipationStatus.ATTENDED,
                 ClassParticipation.created_at >= period_start,
