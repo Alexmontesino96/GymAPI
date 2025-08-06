@@ -157,7 +157,7 @@ class UserStatsService:
             from app.models.user_gym import UserGym
             
             # Obtener datos básicos del usuario
-            user = await user_service.get_user_by_id_cached(db, user_id=user_id)
+            user = user_service.get_user(db, user_id=user_id)
             if not user:
                 raise ValueError(f"Usuario {user_id} no encontrado")
             
