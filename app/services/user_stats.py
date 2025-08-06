@@ -10,7 +10,7 @@ import logging
 from typing import Optional, Dict, List, Any, Union
 from datetime import datetime, timedelta, date
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, case
 from redis.asyncio import Redis
 
 from app.schemas.user_stats import (
@@ -495,17 +495,17 @@ class UserStatsService:
             # Contar clases asistidas y programadas en una sola query usando agregaciones
             class_counts = db.query(
                 func.count(
-                    func.case(
-                        [(ClassParticipation.status == ClassParticipationStatus.ATTENDED, 1)], 
+                    case(
+                        (ClassParticipation.status == ClassParticipationStatus.ATTENDED, 1), 
                         else_=None
                     )
                 ).label('attended_classes'),
                 func.count(
-                    func.case(
-                        [(ClassParticipation.status.in_([
+                    case(
+                        (ClassParticipation.status.in_([
                             ClassParticipationStatus.REGISTERED,
                             ClassParticipationStatus.ATTENDED
-                        ]), 1)], 
+                        ]), 1), 
                         else_=None
                     )
                 ).label('scheduled_classes')
