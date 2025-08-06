@@ -971,19 +971,29 @@ class UserStatsService:
         period_start: datetime,
         period_end: datetime
     ) -> List[Achievement]:
-        """Obtiene logros recientes."""
+        """Obtiene logros recientes usando el health service."""
         try:
-            # TODO: Implementar sistema de achievements
-            return [
-                Achievement(
-                    id=5,
-                    type="attendance_streak",
-                    name="5 Day Streak",
-                    description="Attended classes 5 days in a row",
-                    earned_at=datetime(2025, 1, 15, 10, 30),
-                    badge_icon="🔥"
-                )
-            ]
+            from app.services.health import health_service
+            
+            # Obtener achievements del período usando el health service
+            user_achievements = health_service.get_user_achievements(db, user_id, gym_id, limit=10)
+            
+            # Filtrar por período si es necesario y convertir a Achievement schema
+            recent_achievements = []
+            for achievement in user_achievements:
+                # Filtrar por período
+                if period_start <= achievement.earned_at <= period_end:
+                    recent_achievements.append(Achievement(
+                        id=achievement.id,
+                        type=achievement.achievement_type.value,
+                        name=achievement.title,
+                        description=achievement.description,
+                        earned_at=achievement.earned_at,
+                        badge_icon=achievement.icon
+                    ))
+            
+            return recent_achievements
+            
         except Exception as e:
             logger.error(f"Error getting achievements: {e}")
             return []
