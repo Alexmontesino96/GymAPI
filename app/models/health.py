@@ -130,7 +130,7 @@ class UserGoal(Base):
     completed_at = Column(DateTime(timezone=True), nullable=True)
     
     # Relaciones
-    user = relationship("User", back_populates="goals")
+    user = relationship("User", back_populates="health_goals")
     gym = relationship("Gym")
 
 
