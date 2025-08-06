@@ -26,6 +26,7 @@ from app.repositories.event import event_participation_repository
 from app.services.user import user_service
 from app.services.membership import membership_service
 from app.services.chat_analytics import chat_analytics_service
+from app.services.health import health_service
 from app.models.user import User
 
 logger = logging.getLogger(__name__)
@@ -188,8 +189,8 @@ class UserStatsService:
                 # Próxima clase (query rápida)
                 next_class = await self._get_next_scheduled_class(db, user_id, gym_id)
                 
-                # Logro más reciente (simplificado)
-                recent_achievement = None  # TODO: Implementar sistema de achievements
+                # Logro más reciente usando health service
+                recent_achievement = health_service.get_recent_achievement(db, user_id, gym_id)
             
             return DashboardSummary(
                 user_id=user_id,
@@ -199,12 +200,7 @@ class UserStatsService:
                 next_class=next_class,
                 recent_achievement=recent_achievement,
                 membership_status=membership_status,
-                quick_stats={
-                    "total_sessions_month": weekly_workouts * 4,  # Estimación rápida
-                    "favorite_class": "Yoga",  # TODO: Calcular real
-                    "avg_duration": 90,  # TODO: Calcular real
-                    "social_score": 7.5  # TODO: Calcular real
-                }
+                quick_stats=await self._calculate_quick_stats(db, user_id, gym_id, weekly_workouts)
             )
             
         except Exception as e:
@@ -820,30 +816,15 @@ class UserStatsService:
         period_end: datetime,
         include_goals: bool
     ) -> HealthMetrics:
-        """Computa métricas de salud."""
+        """Computa métricas de salud usando el health service."""
         try:
-            # TODO: Obtener desde user profile y goals system
-            goals_progress = []
-            if include_goals:
-                goals_progress = [
-                    {
-                        "goal_id": 1,
-                        "goal_type": "weight_loss",
-                        "target_value": 70,
-                        "current_value": 75.5,
-                        "progress_percentage": 45.0,
-                        "status": GoalStatus.on_track
-                    }
-                ]
+            from app.services.health import health_service
             
-            return HealthMetrics(
-                current_weight=75.5,
-                current_height=175,
-                bmi=24.6,
-                bmi_category=BMICategory.normal,
-                weight_change=-2.1,
-                goals_progress=goals_progress
+            # Usar health service para obtener métricas reales
+            return health_service.calculate_health_metrics(
+                db, user_id, gym_id, include_goals=include_goals
             )
+            
         except Exception as e:
             logger.error(f"Error computing health metrics: {e}")
             raise
@@ -1089,6 +1070,81 @@ class UserStatsService:
             end = now
         
         return start, end
+
+    async def _calculate_quick_stats(
+        self,
+        db: Session,
+        user_id: int,
+        gym_id: int,
+        weekly_workouts: int
+    ) -> Dict[str, Any]:
+        """
+        Calcula estadísticas rápidas para el dashboard usando datos reales.
+        
+        Returns:
+            Dict con favorite_class, avg_duration, y social_score
+        """
+        try:
+            from app.models.schedule import ClassParticipation, ClassParticipationStatus, Class
+            from app.services.chat_analytics import chat_analytics_service
+            
+            # Calcular clase favorita basada en asistencia
+            favorite_class = None
+            favorite_class_query = db.query(
+                Class.name,
+                func.count(ClassParticipation.id).label('attendance_count')
+            ).join(
+                ClassParticipation, Class.id == ClassParticipation.class_id
+            ).filter(
+                ClassParticipation.member_id == user_id,
+                ClassParticipation.gym_id == gym_id,
+                ClassParticipation.status == ClassParticipationStatus.ATTENDED
+            ).group_by(Class.name).order_by(
+                func.count(ClassParticipation.id).desc()
+            ).first()
+            
+            if favorite_class_query:
+                favorite_class = favorite_class_query.name
+            
+            # Calcular duración promedio de sesiones (últimos 30 días)
+            thirty_days_ago = datetime.utcnow() - timedelta(days=30)
+            avg_duration_query = db.query(
+                func.avg(func.extract('epoch', 
+                    func.coalesce(ClassParticipation.end_time, ClassParticipation.created_at + timedelta(minutes=60)) 
+                    - ClassParticipation.created_at
+                ) / 60).label('avg_minutes')
+            ).filter(
+                ClassParticipation.member_id == user_id,
+                ClassParticipation.gym_id == gym_id,
+                ClassParticipation.status == ClassParticipationStatus.ATTENDED,
+                ClassParticipation.created_at >= thirty_days_ago
+            ).scalar()
+            
+            avg_duration = round(avg_duration_query or 60.0, 1)  # Default 60 min si no hay data
+            
+            # Calcular social score usando chat analytics service
+            try:
+                social_score = await chat_analytics_service.get_user_social_score(
+                    db, user_id, gym_id, days=30
+                )
+            except Exception as e:
+                logger.warning(f"Could not calculate social score: {e}")
+                social_score = 0.0
+            
+            return {
+                "favorite_class": favorite_class or "Ninguna",
+                "avg_duration": avg_duration,
+                "social_score": round(social_score, 1)
+            }
+            
+        except Exception as e:
+            logger.error(f"Error calculating quick stats for user {user_id}: {e}")
+            # Retornar valores por defecto en caso de error
+            return {
+                "favorite_class": "Ninguna",
+                "avg_duration": 60.0,
+                "social_score": 0.0
+            }
 
 
 # Instancia global del servicio

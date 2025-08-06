@@ -52,6 +52,11 @@ class User(Base):
     created_events = relationship("Event", back_populates="creator")
     event_participations = relationship("EventParticipation", back_populates="member")
     
+    # Relaciones para health tracking
+    health_records = relationship("UserHealthRecord", back_populates="user", cascade="all, delete-orphan")
+    goals = relationship("UserGoal", back_populates="user", cascade="all, delete-orphan")
+    achievements = relationship("UserAchievement", back_populates="user", cascade="all, delete-orphan")
+    
     # Relaciones para nutrición
     created_nutrition_plans = relationship("NutritionPlan", back_populates="creator")
     followed_nutrition_plans = relationship("NutritionPlanFollower", back_populates="user")

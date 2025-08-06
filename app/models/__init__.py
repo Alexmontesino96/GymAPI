@@ -15,4 +15,8 @@ from app.models.nutrition import (
     NutritionPlan, DailyNutritionPlan, Meal, MealIngredient,
     NutritionPlanFollower, UserDailyProgress, UserMealCompletion,
     NutritionGoal, DifficultyLevel, BudgetLevel, DietaryRestriction, MealType
+)
+from app.models.health import (
+    UserHealthRecord, UserGoal, UserAchievement, UserHealthSnapshot,
+    MeasurementType, GoalType, GoalStatus, AchievementType
 ) 
