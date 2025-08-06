@@ -10,6 +10,7 @@ import logging
 from typing import Optional, Dict, List, Any, Union
 from datetime import datetime, timedelta, date
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from redis.asyncio import Redis
 
 from app.schemas.user_stats import (
