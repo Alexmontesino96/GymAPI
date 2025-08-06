@@ -120,3 +120,80 @@ Los tests funcionales usan tokens de Auth0 reales definidos en `.env.test`. Reno
 # Verificar con pytest que incluye validación de tipos vía Pydantic
 pytest -v
 ```
+
+## Middlewares y Flujo de Peticiones
+
+### Orden de Middlewares (aplicado de abajo hacia arriba)
+1. **CORSMiddleware** - Manejo de CORS
+2. **ProfilingMiddleware** - Solo en modo debug para endpoints específicos
+3. **TenantAuthMiddleware** - Autenticación multi-tenant automática 
+4. **RateLimitMiddleware** - Limitación de tasa con SlowAPI
+5. **TimingMiddleware** - Medición de tiempo de respuesta
+6. **Custom Logging Middleware** - Log detallado de peticiones/respuestas
+
+### Flujo de Autenticación Multi-tenant
+- Extracción automática del `gym_id` desde el token JWT
+- Inyección de dependencia `current_gym_id` disponible en todos los endpoints
+- Validación cross-gym automática en servicios y repositorios
+- Cache segmentado por gimnasio usando prefijos `gym:{gym_id}:`
+
+## Patrones de Implementación Críticos
+
+### Factory Pattern para Módulos
+```python
+from app.core.dependencies import module_enabled
+# Usar antes de acceder a funcionalidades opcionales
+if not module_enabled(gym_id, "nutrition"):
+    raise HTTPException(status_code=404, detail="Módulo no disponible")
+```
+
+### Patrón Repository con Cache
+- Todos los repositorios extienden `BaseRepository`
+- Cache automático con TTL configurable
+- Invalidación inteligente por patrones de clave
+- Fallback a base de datos si Redis falla
+
+### Gestión de Dependencias Críticas
+- `app_wrapper.py` verifica e instala dependencias faltantes automáticamente
+- Usado como punto de entrada principal en lugar de `main.py` directo
+- Manejo robusto de fallos de importación de módulos críticos
+
+## Servicios Externos y Configuración
+
+### Variables de Entorno Críticas
+Definidas en `app/core/config.py` con validación Pydantic:
+- `DATABASE_URL` - PostgreSQL con connection pooling
+- `REDIS_URL` - Cache y sesiones
+- `AUTH0_*` - Configuración completa de Auth0
+- `STREAM_*` - Stream Chat con multi-tenancy
+- `STRIPE_*` - Pagos y suscripciones
+- `OPENAI_API_KEY` - IA nutricional
+- `AWS_*` - SQS para colas asíncronas
+- `ONESIGNAL_*` - Notificaciones push
+
+### Background Jobs con APScheduler
+- Inicializado en `app.main:lifespan`
+- Jobs definidos en `app/core/scheduler.py`
+- Manejo de timezone por gimnasio
+- Cleanup automático de datos temporales
+
+## Testing y Debugging
+
+### Estructura de Tests
+- `tests/api/` - Tests de endpoints con tokens reales de Auth0
+- `tests/chat/` - Flujos completos de Stream Chat
+- `tests/events/` - Lógica de eventos y cache
+- `tests/schedule/` - Sistema de horarios y participaciones
+- `conftest.py` - Fixtures compartidas y configuración
+
+### Profiling y Optimización
+- Middleware de profiling para endpoints específicos
+- Perfiles guardados en `profiles/` con análisis detallado
+- Métricas de performance en logs estructurados
+
+### Scripts de Mantenimiento
+Ubicados en `scripts/` para operaciones administrativas:
+- `backup_database.py` - Backups automatizados
+- `migrate_*.py` - Migraciones de datos específicas  
+- `test_*.py` - Scripts de verificación de servicios
+- `security_audit.py` - Auditoría de seguridad

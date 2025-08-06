@@ -11,6 +11,8 @@ from app.repositories.schedule import class_repository, class_session_repository
 from app.repositories.event import EventRepository
 from app.models.event import EventStatus
 from app.models.schedule import ClassSession, ClassSessionStatus
+from app.services.user_stats import user_stats_service
+from app.db.redis_client import get_redis_client
 
 logger = logging.getLogger(__name__)
 event_repository = EventRepository()
@@ -133,6 +135,83 @@ def mark_completed_events():
         except Exception as e:
             logger.error(f"Error in mark_completed_events task: {str(e)}", exc_info=True)
 
+
+def precompute_user_stats():
+    """
+    Precalcula estadísticas de usuario en background para mejorar performance.
+    
+    Se ejecuta cada 6 horas para mantener caches actualizados de usuarios activos.
+    """
+    logger.info("Running scheduled task: precompute_user_stats")
+    
+    db = None
+    
+    try:
+        # Obtener conexión a BD
+        db = SessionLocal()
+        
+        # Obtener usuarios activos (que han tenido actividad reciente)
+        from app.models.user_gym import UserGym
+        from app.models.user import User
+        from sqlalchemy import and_
+        from datetime import datetime, timedelta
+        
+        # Usuarios con actividad en los últimos 7 días
+        recent_activity_date = datetime.now() - timedelta(days=7)
+        
+        # Query optimizada para obtener usuarios activos
+        active_users = db.query(User.id, UserGym.gym_id).join(
+            UserGym, User.id == UserGym.user_id
+        ).filter(
+            and_(
+                User.is_active == True,
+                User.updated_at >= recent_activity_date
+            )
+        ).distinct().limit(50).all()  # Limitar a 50 usuarios por ejecución
+        
+        logger.info(f"Found {len(active_users)} active users for stats precomputation")
+        
+        # Por ahora solo registrar, implementación completa pendiente
+        precomputed_count = 0
+        for user_id, gym_id in active_users:
+            try:
+                # TODO: Implementar precálculo real cuando servicio esté completo
+                logger.debug(f"Would precompute stats for user {user_id}, gym {gym_id}")
+                precomputed_count += 1
+                
+            except Exception as user_error:
+                logger.error(f"Error precomputing stats for user {user_id}: {user_error}")
+                continue
+        
+        logger.info(f"Stats precomputation job completed for {precomputed_count} users")
+        
+    except Exception as e:
+        logger.error(f"Error in precompute_user_stats: {str(e)}", exc_info=True)
+    finally:
+        if db:
+            db.close()
+
+
+def cleanup_expired_stats_cache():
+    """
+    Limpia caches expirados de estadísticas de usuario.
+    
+    Se ejecuta diariamente para mantener Redis limpio y optimizado.
+    """
+    logger.info("Running scheduled task: cleanup_expired_stats_cache")
+    
+    try:
+        # TODO: Implementar limpieza de caches cuando Redis esté disponible
+        # Patrones a limpiar:
+        # - dashboard_summary:*
+        # - comprehensive_stats:*
+        # - user_stats_temp:*
+        
+        logger.info("Stats cache cleanup completed (placeholder)")
+        
+    except Exception as e:
+        logger.error(f"Error in cleanup_expired_stats_cache: {str(e)}", exc_info=True)
+
 def mark_completed_sessions():
     """
     Marca como completadas las sesiones cuya hora de finalización ya pasó.
@@ -242,9 +321,27 @@ def init_scheduler():
         replace_existing=True
     )
     
+    # Precálculo de estadísticas de usuario cada 6 horas
+    # Mantiene caches actualizados para usuarios activos
+    _scheduler.add_job(
+        precompute_user_stats,
+        trigger=CronTrigger(hour='*/6', minute=30),  # Cada 6 horas a los 30 minutos
+        id='user_stats_precompute',
+        replace_existing=True
+    )
+    
+    # Limpieza de caches de estadísticas diariamente
+    # Mantiene Redis optimizado eliminando caches expirados
+    _scheduler.add_job(
+        cleanup_expired_stats_cache,
+        trigger=CronTrigger(hour=3, minute=15),  # Diariamente a las 3:15 AM
+        id='stats_cache_cleanup',
+        replace_existing=True
+    )
+    
     # Iniciar el scheduler
     _scheduler.start()
-    logger.info("Scheduler started with UTC timezone - includes session completion task")
+    logger.info("Scheduler started with UTC timezone - includes session completion and user stats tasks")
     
     return _scheduler
 

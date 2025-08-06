@@ -6,6 +6,7 @@ from app.api.v1.endpoints.notification import router as notification_router
 from app.api.v1.endpoints.webhooks.stream_webhooks import router as stream_webhooks_router
 from app.api.v1.endpoints.nutrition import router as nutrition_router
 from app.api.v1.endpoints.stripe_connect import router as stripe_connect_router
+from app.api.v1.endpoints.user_dashboard import router as user_dashboard_router
 
 # Import modular packages directly
 from app.api.v1.endpoints.auth import router as auth_router
@@ -19,6 +20,9 @@ api_router.include_router(auth_router, prefix="/auth")
 
 # Users module
 api_router.include_router(users.router, prefix="/users")
+
+# User Dashboard module  
+api_router.include_router(user_dashboard_router, prefix="/users", tags=["user-dashboard"])
 
 # Events module
 api_router.include_router(events.router, prefix="/events", tags=["events"])
