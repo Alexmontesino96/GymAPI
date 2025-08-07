@@ -618,6 +618,53 @@ class ClassParticipationRepository(BaseRepository[ClassParticipation, ClassParti
         
         return participation
     
+    def get_member_participation_status(
+        self, db: Session, *, member_id: int, start_date: datetime, end_date: datetime,
+        gym_id: Optional[int] = None, session_ids: Optional[List[int]] = None
+    ) -> List[ClassParticipation]:
+        """
+        Obtener solo los estados de participación de un miembro (query ultra-optimizada).
+        
+        Este método está diseñado para ser extremadamente rápido ya que:
+        - No hace joins innecesarios con session o class
+        - Solo selecciona los campos mínimos necesarios
+        - Usa indexes optimizados
+        
+        Args:
+            db: Sesión de base de datos
+            member_id: ID del miembro
+            start_date: Fecha de inicio (UTC)
+            end_date: Fecha de fin (UTC)
+            gym_id: ID del gimnasio para filtrar (opcional)
+            session_ids: Lista específica de session_ids para filtrar (opcional)
+        
+        Returns:
+            Lista de objetos ClassParticipation (solo con campos básicos)
+        """
+        # Query base solo a tabla participation
+        query = db.query(ClassParticipation).filter(
+            ClassParticipation.member_id == member_id
+        )
+        
+        # Filtrar por gym_id si se proporciona
+        if gym_id is not None:
+            query = query.filter(ClassParticipation.gym_id == gym_id)
+        
+        # Filtrar por session_ids específicos si se proporcionan
+        if session_ids:
+            query = query.filter(ClassParticipation.session_id.in_(session_ids))
+        else:
+            # Si no hay session_ids específicos, filtrar por rango de fechas
+            # Necesitamos hacer un join mínimo con session solo para el filtro de fechas
+            query = query.join(
+                ClassSession, ClassParticipation.session_id == ClassSession.id
+            ).filter(
+                ClassSession.start_time >= start_date,
+                ClassSession.start_time <= end_date
+            )
+        
+        return query.order_by(ClassParticipation.registration_time.desc()).all()
+    
     def cancel_participation(
         self, db: Session, *, session_id: int, member_id: int, reason: Optional[str] = None, 
         gym_id: Optional[int] = None

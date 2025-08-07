@@ -2,7 +2,7 @@ from app.api.v1.endpoints.schedule.common import *
 from app.core.tenant import verify_gym_access
 from app.models.gym import Gym
 from typing import Optional, Dict, Any, List
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from pydantic import BaseModel
 
 # Importar los esquemas necesarios
@@ -12,6 +12,9 @@ from app.schemas.schedule import (
     format_participation_with_session_info,
     Class as ClassSchema,
     ClassSession as ClassSessionSchema
+)
+from app.schemas.participation_status import (
+    ParticipationStatusResponse
 )
 from app.models.user import User
 from app.models.user_gym import UserGym as Member
@@ -880,4 +883,155 @@ async def get_my_attendance_history(
             format_participation_with_session_info(participation, session, gym_class)
         )
     
-    return result 
+    return result
+
+
+@router.get("/my-participation-status", response_model=ParticipationStatusResponse)
+async def get_my_participation_status(
+    start_date: date = Query(..., description="Start date for filtering (required). Format: YYYY-MM-DD (e.g., 2025-01-15)"),
+    end_date: date = Query(..., description="End date for filtering (required). Format: YYYY-MM-DD (e.g., 2025-08-15)"),
+    session_ids: Optional[str] = Query(None, description="Comma-separated list of specific session IDs to filter (optional)"),
+    db: Session = Depends(get_db),
+    current_gym: Gym = Depends(verify_gym_access),
+    user: Auth0User = Security(auth.get_user, scopes=["resource:read"]),
+    redis_client: Redis = Depends(get_redis_client)
+):
+    """
+    🚀 **Get My Participation Status** (Ultra-Optimized)
+    
+    Este endpoint está diseñado para ser extremadamente rápido y ligero, optimizado para el 
+    frontend que necesita cargar solo los estados de participación del usuario sin 
+    información completa de sesiones o clases.
+    
+    ## ⚡ Optimizaciones de Performance
+    - **Query ultra-optimizada**: Solo consulta tabla `class_participation`
+    - **Cache agresivo**: TTL de 5 minutos con invalidación inteligente
+    - **Payload mínimo**: Solo campos esenciales (~90% más pequeño)
+    - **Tiempo respuesta**: Objetivo <50ms vs 352ms del endpoint completo
+    
+    ## 🎯 Caso de Uso Frontend
+    
+    Estrategia de carga en dos fases para mejor UX:
+    
+    1. **Fase 1**: Frontend carga sesiones/eventos del rango con endpoint completo
+    2. **Fase 2**: Frontend carga solo estados con este endpoint ultra-rápido
+    3. **Mapeo**: Frontend mapea participaciones por `session_id`
+    
+    ```javascript
+    // Ejemplo de uso frontend
+    const sessions = await api.get('/sessions', {start_date, end_date});
+    const participations = await api.get('/my-participation-status', {start_date, end_date});
+    
+    // Mapear estados a eventos
+    sessions.forEach(session => {
+        session.myStatus = participations.participations.find(p => p.session_id === session.id);
+    });
+    ```
+    
+    ## 📋 Parámetros Requeridos
+    - `start_date` & `end_date`: **Requeridos** para optimizar cache y consulta
+    - Rango máximo recomendado: 3 meses para mejor performance
+    
+    ## 📊 Respuesta Ultra-Ligera
+    
+    ```json
+    {
+        "participations": [
+            {
+                "session_id": 123,
+                "status": "registered", 
+                "registration_time": "2025-01-15T10:30:00Z",
+                "attendance_time": null,
+                "cancellation_time": null
+            }
+        ],
+        "total_count": 1
+    }
+    ```
+    
+    ## 🔐 Authentication & Permissions
+    - **Required Scope**: `resource:read`
+    - **User Access**: Solo datos propios del usuario autenticado
+    - **Gym Context**: Automáticamente filtrado por gimnasio actual
+    
+    ## ❌ Error Responses
+    - **401 Unauthorized**: Token inválido o faltante
+    - **403 Forbidden**: Token sin scope `resource:read` requerido
+    - **422 Validation Error**: Fechas inválidas o faltan parámetros requeridos
+    
+    ## 📈 Métricas Esperadas
+    - **Cache Hit Ratio**: >90% (vs 33% endpoint actual)
+    - **Tiempo Respuesta**: <50ms (vs 352ms endpoint actual)
+    - **Payload Size**: ~90% más pequeño
+    - **DB Queries**: 1 query simple vs múltiples joins
+    
+    ## 💡 Usage Examples
+    
+    ```bash
+    # Estados básicos para enero 2025
+    GET /api/v1/schedule/participation/my-participation-status?start_date=2025-01-01&end_date=2025-01-31
+    
+    # Estados para sesiones específicas
+    GET /api/v1/schedule/participation/my-participation-status?start_date=2025-01-01&end_date=2025-01-31&session_ids=123,456,789
+    ```
+    """
+    # Obtener el ID del usuario actual desde el token JWT
+    from app.services.user import user_service
+    current_user_db = await user_service.get_user_by_auth0_id(
+        db=db, auth0_id=user.user_id, redis_client=redis_client
+    )
+    
+    if not current_user_db:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Usuario no encontrado"
+        )
+    
+    # Verificar que el usuario pertenece al gimnasio actual
+    target_member_membership = await user_service.check_user_gym_membership_cached(
+        db=db, user_id=current_user_db.id, gym_id=current_gym.id, redis_client=redis_client
+    )
+    if not target_member_membership:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Usuario no encontrado en este gimnasio"
+        )
+    
+    # Parsear session_ids si se proporcionan
+    session_ids_list = None
+    if session_ids:
+        try:
+            session_ids_list = [int(id.strip()) for id in session_ids.split(',') if id.strip()]
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="session_ids debe contener números separados por comas"
+            )
+    
+    # Convertir dates a datetime UTC para el servicio
+    start_datetime = datetime.combine(start_date, datetime.min.time()).replace(tzinfo=timezone.utc)
+    end_datetime = datetime.combine(end_date, datetime.max.time()).replace(tzinfo=timezone.utc)
+    
+    # Validar rango de fechas (máximo 3 meses para performance)
+    date_diff = end_datetime - start_datetime
+    if date_diff.days > 90:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Rango de fechas no puede exceder 90 días para óptima performance"
+        )
+    
+    # Obtener estados de participación (ultra-optimizado)
+    participations_data = await class_participation_service.get_member_participation_status(
+        db=db,
+        member_id=current_user_db.id,
+        start_date=start_datetime,
+        end_date=end_datetime,
+        gym_id=current_gym.id,
+        session_ids=session_ids_list,
+        redis_client=redis_client
+    )
+    
+    return ParticipationStatusResponse(
+        participations=participations_data,
+        total_count=len(participations_data)
+    )

@@ -2379,13 +2379,17 @@ class ClassParticipationService:
         # Actualizar contador de participantes y validar resultado
         if participation_result:
             class_session_repository.update_participant_count(db, session_id=session_id)
-            # Invalidar cachés de sesión al final
+            # Invalidar cachés de sesión y participación al final
             await self._invalidate_session_caches_from_participation(
                 session_id=session_id,
                 gym_id=gym_id,
                 redis_client=redis_client,
                 trainer_id=session.trainer_id, 
                 class_id=session.class_id
+            )
+            # Invalidar cache de participation status del miembro
+            await self.invalidate_member_participation_cache(
+                member_id=member_id, gym_id=gym_id, redis_client=redis_client
             )
             return participation_result
         else:
@@ -2427,6 +2431,10 @@ class ClassParticipationService:
                     trainer_id=session.trainer_id, 
                     class_id=session.class_id
                 )
+            # Invalidar cache de participation status del miembro
+            await self.invalidate_member_participation_cache(
+                member_id=member_id, gym_id=gym_id, redis_client=redis_client
+            )
             return cancelled_participation
         else:
              raise HTTPException(status_code=500, detail="No se pudo completar la cancelación")
@@ -2496,6 +2504,109 @@ class ClassParticipationService:
             db, session_id=session_id, skip=skip, limit=limit, gym_id=gym_id
         )
     
+    async def get_member_participation_status(
+        self, db: Session, member_id: int, start_date: datetime, end_date: datetime,
+        gym_id: int, session_ids: Optional[List[int]] = None, redis_client: Optional[Redis] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Obtener solo los estados de participación de un miembro (ultra-optimizado con caché agresivo).
+        
+        Este método es extremadamente rápido porque:
+        - Query mínima solo a tabla participation 
+        - Cache agresivo con TTL de 5 minutos
+        - Sin serialización compleja
+        - Payload ultra-ligero
+        
+        Args:
+            db: Sesión de base de datos
+            member_id: ID del miembro
+            start_date: Fecha inicio (UTC)
+            end_date: Fecha fin (UTC)
+            gym_id: ID del gimnasio
+            session_ids: Lista de session_ids específicos (opcional)
+            redis_client: Cliente Redis para cache
+            
+        Returns:
+            Lista de diccionarios con estados de participación
+        """
+        # Si no hay Redis, usar versión sin caché
+        if not redis_client:
+            participations = class_participation_repository.get_member_participation_status(
+                db, member_id=member_id, start_date=start_date, end_date=end_date,
+                gym_id=gym_id, session_ids=session_ids
+            )
+            return [self._format_participation_status(p) for p in participations]
+        
+        # Generar cache key específico
+        session_ids_str = ",".join(map(str, sorted(session_ids))) if session_ids else "all"
+        start_str = start_date.strftime("%Y%m%d")
+        end_str = end_date.strftime("%Y%m%d")
+        
+        cache_key = f"participation_status:{gym_id}:{member_id}:{start_str}:{end_str}:{session_ids_str}"
+        tracking_key = f"cache_keys:participation_status:{gym_id}:{member_id}"
+        
+        # Intentar obtener del cache
+        try:
+            cached_data = await redis_client.get(cache_key)
+            if cached_data:
+                import json
+                return json.loads(cached_data)
+        except Exception as e:
+            logger.warning(f"Error accessing cache: {e}")
+        
+        # Si no está en cache, consultar BD
+        participations = class_participation_repository.get_member_participation_status(
+            db, member_id=member_id, start_date=start_date, end_date=end_date,
+            gym_id=gym_id, session_ids=session_ids
+        )
+        
+        # Formatear resultados
+        formatted_results = [self._format_participation_status(p) for p in participations]
+        
+        # Guardar en cache con TTL de 5 minutos (datos menos volátiles)
+        try:
+            import json
+            await redis_client.setex(
+                cache_key, 
+                300,  # 5 minutos 
+                json.dumps(formatted_results, default=str)
+            )
+            # Añadir a tracking set para invalidación
+            await redis_client.sadd(tracking_key, cache_key)
+            await redis_client.expire(tracking_key, 3600)  # 1 hora de tracking
+        except Exception as e:
+            logger.warning(f"Error setting cache: {e}")
+        
+        return formatted_results
+    
+    def _format_participation_status(self, participation: ClassParticipation) -> Dict[str, Any]:
+        """Formatear participación a diccionario ultra-ligero"""
+        return {
+            "session_id": participation.session_id,
+            "status": participation.status.value,
+            "registration_time": participation.registration_time.isoformat(),
+            "attendance_time": participation.attendance_time.isoformat() if participation.attendance_time else None,
+            "cancellation_time": participation.cancellation_time.isoformat() if participation.cancellation_time else None
+        }
+    
+    async def invalidate_member_participation_cache(
+        self, member_id: int, gym_id: int, redis_client: Optional[Redis] = None
+    ):
+        """Invalidar cache de participaciones de un miembro específico"""
+        if not redis_client:
+            return
+            
+        try:
+            tracking_key = f"cache_keys:participation_status:{gym_id}:{member_id}"
+            cache_keys = await redis_client.smembers(tracking_key)
+            
+            if cache_keys:
+                await redis_client.delete(*cache_keys)
+                await redis_client.delete(tracking_key)
+                logger.info(f"Invalidated {len(cache_keys)} participation status cache keys for member {member_id}")
+        except Exception as e:
+            logger.warning(f"Error invalidating participation status cache: {e}")
+
     async def get_member_participations(
         self, db: Session, member_id: int, skip: int = 0, limit: int = 100, gym_id: Optional[int] = None, redis_client: Optional[Redis] = None
     ) -> List[Any]:
