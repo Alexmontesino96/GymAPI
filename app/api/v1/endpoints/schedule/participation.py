@@ -978,7 +978,7 @@ async def get_my_participation_status(
     # Obtener el ID del usuario actual desde el token JWT
     from app.services.user import user_service
     current_user_db = await user_service.get_user_by_auth0_id(
-        db=db, auth0_id=user.user_id, redis_client=redis_client
+        db=db, auth0_id=user.sub, redis_client=redis_client
     )
     
     if not current_user_db:
