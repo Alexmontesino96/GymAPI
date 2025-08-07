@@ -217,8 +217,8 @@ def mark_completed_sessions():
     Marca como completadas las sesiones cuya hora de finalización ya pasó.
     También actualiza sesiones a IN_PROGRESS cuando están dentro del horario.
     
-    Esta función se ejecuta cada 15 minutos para mantener estados actualizados
-    y proporcionar mejor experiencia de usuario.
+    Esta función ahora maneja correctamente las zonas horarias, comparando
+    tiempos UTC almacenados en la base de datos.
     """
     logger.info("Running scheduled task: mark_completed_sessions")
     with SessionLocal() as db:
@@ -226,43 +226,43 @@ def mark_completed_sessions():
             from sqlalchemy import and_, or_
             from sqlalchemy.exc import SQLAlchemyError
             
-            current_time = datetime.now(timezone.utc)
+            current_utc = datetime.now(timezone.utc)
             
-            # 1. Marcar sesiones como IN_PROGRESS
-            # (Sesiones que ya empezaron pero aún no terminan)
-            sessions_in_progress = db.query(ClassSession).filter(
-                and_(
-                    ClassSession.status == ClassSessionStatus.SCHEDULED,
-                    ClassSession.start_time <= current_time,
-                    ClassSession.end_time > current_time
-                )
+            # Query optimizada: Una sola consulta para obtener todas las sesiones activas
+            # Los tiempos ahora están en UTC, así que la comparación es directa
+            sessions_to_update = db.query(ClassSession).filter(
+                ClassSession.status.in_([
+                    ClassSessionStatus.SCHEDULED,
+                    ClassSessionStatus.IN_PROGRESS
+                ])
             ).all()
             
             progress_count = 0
-            for session in sessions_in_progress:
-                session.status = ClassSessionStatus.IN_PROGRESS
-                db.add(session)
-                progress_count += 1
-                logger.debug(f"Session {session.id} marked as IN_PROGRESS")
-            
-            # 2. Marcar sesiones como COMPLETED
-            # (Sesiones cuya hora de finalización ya pasó)
-            sessions_to_complete = db.query(ClassSession).filter(
-                and_(
-                    or_(
-                        ClassSession.status == ClassSessionStatus.SCHEDULED,
-                        ClassSession.status == ClassSessionStatus.IN_PROGRESS
-                    ),
-                    ClassSession.end_time <= current_time
-                )
-            ).all()
-            
             completion_count = 0
-            for session in sessions_to_complete:
-                session.status = ClassSessionStatus.COMPLETED
-                db.add(session)
-                completion_count += 1
-                logger.info(f"Session {session.id} marked as completed")
+            
+            for session in sessions_to_update:
+                # Comparación directa UTC vs UTC (sin conversiones)
+                if session.status == ClassSessionStatus.SCHEDULED:
+                    if session.start_time <= current_utc < session.end_time:
+                        # Sesión debe estar IN_PROGRESS
+                        session.status = ClassSessionStatus.IN_PROGRESS
+                        db.add(session)
+                        progress_count += 1
+                        logger.debug(f"Session {session.id} marked as IN_PROGRESS")
+                    elif session.end_time <= current_utc:
+                        # Sesión ya terminó, directamente a COMPLETED
+                        session.status = ClassSessionStatus.COMPLETED
+                        db.add(session)
+                        completion_count += 1
+                        logger.info(f"Session {session.id} marked as COMPLETED")
+                
+                elif session.status == ClassSessionStatus.IN_PROGRESS:
+                    if session.end_time <= current_utc:
+                        # Sesión IN_PROGRESS que ya terminó
+                        session.status = ClassSessionStatus.COMPLETED
+                        db.add(session)
+                        completion_count += 1
+                        logger.info(f"Session {session.id} marked as COMPLETED")
             
             # Confirmar cambios si hay actualizaciones
             if progress_count > 0 or completion_count > 0:

@@ -350,8 +350,22 @@ class ClassSession(ClassSessionBase):
     updated_at: Optional[datetime] = None
     created_by: Optional[int] = None
     override_capacity: Optional[int] = None
+    
+    # Campos adicionales para la respuesta
+    timezone: Optional[str] = Field(None, description="Zona horaria del gimnasio")
+    start_time_local: Optional[datetime] = Field(None, description="Hora de inicio en zona horaria local del gimnasio")
+    end_time_local: Optional[datetime] = Field(None, description="Hora de fin en zona horaria local del gimnasio")
 
     model_config = {"from_attributes": True}
+    
+    @validator('start_time_local', 'end_time_local', pre=False, always=True)
+    def compute_local_times(cls, v, values):
+        """
+        Los tiempos se almacenan en UTC en la BD.
+        Este validator los convierte a hora local del gimnasio para la respuesta.
+        """
+        # Por ahora retornamos None, se calculará en el servicio
+        return v
 
 
 class ClassSessionWithParticipations(ClassSession):

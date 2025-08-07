@@ -156,8 +156,8 @@ class ClassSession(Base):
     class_id = Column(Integer, ForeignKey("class.id"), nullable=False)
     trainer_id = Column(Integer, ForeignKey("user.id"), nullable=False)
     gym_id = Column(Integer, ForeignKey("gyms.id"), nullable=False)
-    start_time = Column(DateTime, nullable=False, index=True)
-    end_time = Column(DateTime, nullable=False)
+    start_time = Column(DateTime(timezone=True), nullable=False, index=True)  # Ahora almacena UTC
+    end_time = Column(DateTime(timezone=True), nullable=False)  # Ahora almacena UTC
     room = Column(String, nullable=True)  # Sala o ubicación
     is_recurring = Column(Boolean, default=False)  # Si es una clase recurrente
     recurrence_pattern = Column(String, nullable=True)  # Patrón de recurrencia (por ejemplo, "WEEKLY:0,2,4" para lunes, miércoles, viernes)

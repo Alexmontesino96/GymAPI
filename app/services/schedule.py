@@ -1732,6 +1732,15 @@ class ClassSessionService:
                 detail="La clase especificada no pertenece a este gimnasio"
             )
         
+        # Obtener el gimnasio para su timezone
+        from app.repositories.gym import gym_repository
+        gym = gym_repository.get(db, id=gym_id)
+        if not gym:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Gimnasio no encontrado"
+            )
+        
         # Calcular hora de fin si no se proporciona
         obj_in_data = session_data.model_dump()
         if not obj_in_data.get("end_time") and class_obj.duration:
@@ -1739,6 +1748,16 @@ class ClassSessionService:
             if start_time:
                 end_time = start_time + timedelta(minutes=class_obj.duration)
                 obj_in_data["end_time"] = end_time
+        
+        # Convertir tiempos de hora local del gimnasio a UTC
+        start_time_local = obj_in_data.get("start_time")
+        end_time_local = obj_in_data.get("end_time")
+        
+        if start_time_local and end_time_local:
+            # Convertir a UTC usando la timezone del gimnasio
+            from app.core.timezone_utils import convert_gym_time_to_utc
+            obj_in_data["start_time"] = convert_gym_time_to_utc(start_time_local, gym.timezone)
+            obj_in_data["end_time"] = convert_gym_time_to_utc(end_time_local, gym.timezone)
         
         # Agregar ID del creador si se proporciona
         if created_by_id:
@@ -1854,6 +1873,15 @@ class ClassSessionService:
                 detail="Clase inválida, inactiva o no pertenece a este gimnasio"
             )
         
+        # Obtener el gimnasio para su timezone
+        from app.repositories.gym import gym_repository
+        gym = gym_repository.get(db, id=gym_id)
+        if not gym:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Gimnasio no encontrado"
+            )
+        
         # Preparar datos base para las sesiones
         session_base_data = base_session_data.model_dump()
         session_base_data["gym_id"] = gym_id # Asegurar gym_id
@@ -1914,6 +1942,11 @@ class ClassSessionService:
                     new_end_datetime = new_start_datetime + timedelta(minutes=duration_minutes)
                     session_data["end_time"] = new_end_datetime
                 
+                # Convertir tiempos a UTC antes de crear la sesión
+                from app.core.timezone_utils import convert_gym_time_to_utc
+                session_data["start_time"] = convert_gym_time_to_utc(session_data["start_time"], gym.timezone)
+                session_data["end_time"] = convert_gym_time_to_utc(session_data["end_time"], gym.timezone)
+                
                 # Crear la sesión
                 session = class_session_repository.create(
                     db, obj_in=session_data
@@ -1941,15 +1974,33 @@ class ClassSessionService:
                 detail="Sesión no encontrada en este gimnasio"
             )
         
+        # Obtener el gimnasio para su timezone
+        from app.repositories.gym import gym_repository
+        gym = gym_repository.get(db, id=gym_id)
+        if not gym:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Gimnasio no encontrado"
+            )
+        
         # Guardar datos originales para invalidación si cambian
         original_trainer_id = session.trainer_id
         original_class_id = session.class_id
-            
-        # ... (lógica para recalcular end_time si es necesario) ...
+        
+        # Preparar datos de actualización
+        update_data = session_data.model_dump(exclude_unset=True)
+        
+        # Si se están actualizando los tiempos, convertir a UTC
+        if "start_time" in update_data or "end_time" in update_data:
+            from app.core.timezone_utils import convert_gym_time_to_utc
+            if "start_time" in update_data:
+                update_data["start_time"] = convert_gym_time_to_utc(update_data["start_time"], gym.timezone)
+            if "end_time" in update_data:
+                update_data["end_time"] = convert_gym_time_to_utc(update_data["end_time"], gym.timezone)
         
         # Actualizar en BD
         updated_session = class_session_repository.update(
-            db, db_obj=session, obj_in=session_data.model_dump(exclude_unset=True) # Usar exclude_unset
+            db, db_obj=session, obj_in=update_data
         )
         
         # Invalidar caché

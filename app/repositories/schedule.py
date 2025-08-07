@@ -1,5 +1,5 @@
 from typing import List, Optional, Dict, Any, Union, Type
-from datetime import datetime, time, timedelta, date
+from datetime import datetime, time, timedelta, date, timezone
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_, func
 import datetime as dt
@@ -362,7 +362,7 @@ class ClassSessionRepository(BaseRepository[ClassSession, ClassSessionCreate, Cl
             limit: Número máximo de registros a devolver (paginación)
             gym_id: ID del gimnasio para filtrar (opcional)
         """
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         
         query = db.query(ClassSession).filter(
             ClassSession.start_time >= now,
@@ -432,7 +432,7 @@ class ClassSessionRepository(BaseRepository[ClassSession, ClassSessionCreate, Cl
             limit: Número máximo de registros a devolver (paginación)
             gym_id: ID del gimnasio para filtrar (opcional)
         """
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         
         query = db.query(ClassSession).filter(
             ClassSession.trainer_id == trainer_id,
@@ -563,7 +563,7 @@ class ClassParticipationRepository(BaseRepository[ClassParticipation, ClassParti
         self, db: Session, *, member_id: int, skip: int = 0, limit: int = 100, gym_id: Optional[int] = None
     ) -> List[Dict[str, Any]]:
         """Obtener las próximas clases de un miembro"""
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         
         # Construir la consulta base
         query = db.query(
