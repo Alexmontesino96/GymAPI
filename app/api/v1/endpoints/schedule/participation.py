@@ -438,9 +438,9 @@ async def get_my_upcoming_classes(
     serialized_results = []
     for item in raw_results:
         serialized_results.append({
-            "participation": ClassParticipationSchema.parse_obj(item["participation"].__dict__),
-            "session": ClassSessionSchema.parse_obj(item["session"].__dict__),
-            "gym_class": ClassSchema.parse_obj(item["gym_class"].__dict__)
+            "participation": ClassParticipationSchema.model_validate(item["participation"]),
+            "session": ClassSessionSchema.model_validate(item["session"]),
+            "gym_class": ClassSchema.model_validate(item["gym_class"])
         })
     
     return serialized_results
@@ -575,9 +575,9 @@ async def get_member_upcoming_classes(
     serialized_results = []
     for item in raw_results:
         serialized_results.append({
-            "participation": ClassParticipationSchema.parse_obj(item["participation"].__dict__),
-            "session": ClassSessionSchema.parse_obj(item["session"].__dict__),
-            "gym_class": ClassSchema.parse_obj(item["gym_class"].__dict__)
+            "participation": ClassParticipationSchema.model_validate(item["participation"]),
+            "session": ClassSessionSchema.model_validate(item["session"]),
+            "gym_class": ClassSchema.model_validate(item["gym_class"])
         })
     
     return serialized_results
@@ -645,7 +645,7 @@ async def get_member_attendance_history_legacy(
     end_datetime = datetime.combine(end_date, datetime.max.time()) if end_date else None
     
     # Service retrieves attendance history for the member
-    return await class_participation_service.get_member_attendance_history(
+    raw_results = await class_participation_service.get_member_attendance_history(
         db, 
         member_id=member_id, 
         gym_id=current_gym.id,
@@ -655,49 +655,126 @@ async def get_member_attendance_history_legacy(
         limit=limit, 
         redis_client=redis_client
     )
+    
+    # Serializar los resultados para evitar el error de Pydantic
+    serialized_results = []
+    for item in raw_results:
+        serialized_results.append({
+            "participation": ClassParticipationSchema.model_validate(item["participation"]),
+            "session": ClassSessionSchema.model_validate(item["session"]),
+            "gym_class": ClassSchema.model_validate(item["gym_class"])
+        })
+    
+    return serialized_results
 
 @router.get("/my-attendance-history", response_model=List[Dict[str, Any]])
 async def get_my_attendance_history_legacy(
-    start_date: Optional[date] = Query(None, description="Start date for attendance history (inclusive)"),
-    end_date: Optional[date] = Query(None, description="End date for attendance history (inclusive)"),
-    skip: int = 0,
-    limit: int = 100,
+    start_date: Optional[date] = Query(None, description="Start date for attendance history (inclusive). Format: YYYY-MM-DD (e.g., 2025-01-15)"),
+    end_date: Optional[date] = Query(None, description="End date for attendance history (inclusive). Format: YYYY-MM-DD (e.g., 2025-08-15)"),
+    skip: int = Query(0, ge=0, description="Number of records to skip for pagination"),
+    limit: int = Query(100, ge=1, le=500, description="Maximum number of records to return (1-500)"),
     db: Session = Depends(get_db),
     current_gym: Gym = Depends(verify_gym_access),
     user: Auth0User = Security(auth.get_user, scopes=["resource:read"]),
     redis_client: Redis = Depends(get_redis_client)
 ) -> Any:
     """
-    Get My Attendance History (DEPRECATED - use /my-history instead)
+    📊 **Get My Attendance History** (DEPRECATED - use /my-history instead)
     
-    This endpoint is maintained for backward compatibility.
-    Please use /my-history for new implementations.
+    **⚠️ DEPRECATED**: This endpoint is maintained for backward compatibility.
+    Please use `/my-history` for new implementations.
     
-    Retrieves the authenticated user's history of attended class sessions, with optional date range filtering.
+    Retrieves the authenticated user's complete history of class participations, including 
+    attended sessions, cancelled registrations, and no-shows. Results are ordered by 
+    session start time (most recent first).
     
-    Args:
-        start_date (date, optional): If provided, only include attendances on or after this date.
-        end_date (date, optional): If provided, only include attendances on or before this date.
-        skip (int, optional): Pagination skip. Defaults to 0.
-        limit (int, optional): Pagination limit. Defaults to 100.
-        db (Session, optional): Database session dependency.
-        current_gym (Gym, optional): Current gym context dependency. Defaults to Depends(verify_gym_access).
-        user (Auth0User, optional): Authenticated user.
-        redis_client (Redis, optional): Redis client dependency. Defaults to Depends(get_redis_client).
+    ## Query Parameters
     
-    Permissions:
-        - Requires 'read:own_schedules' scope.
+    ### Date Range Filtering
+    - **start_date** (optional): Start date for filtering results (inclusive)
+        - **Format**: `YYYY-MM-DD` (ISO 8601 date format)
+        - **Examples**: `2025-01-15`, `2025-08-07`
+        - **Timezone**: Uses gym's local timezone for date comparisons
     
-    Returns:
-        List[Dict[str, Any]]: A list of dictionaries, each containing:
-                            - `participation`: ClassParticipationSchema object.
-                            - `session`: ClassSessionSchema object.
-                            - `gym_class`: ClassSchema object.
+    - **end_date** (optional): End date for filtering results (inclusive)  
+        - **Format**: `YYYY-MM-DD` (ISO 8601 date format)
+        - **Examples**: `2025-08-15`, `2025-12-31`
+        - **Timezone**: Uses gym's local timezone for date comparisons
     
-    Raises:
-        HTTPException 401: Invalid or missing token.
-        HTTPException 403: Token lacks required scope.
-        HTTPException 404: User not found in database.
+    ### Pagination
+    - **skip**: Number of records to skip (default: 0, min: 0)
+    - **limit**: Maximum records to return (default: 100, min: 1, max: 500)
+    
+    ## Response Format
+    
+    Returns a list of dictionaries, each containing:
+    
+    ```json
+    [
+        {
+            "participation": {
+                "id": 123,
+                "status": "attended",
+                "registration_time": "2025-08-07T10:30:00Z",
+                "attendance_time": "2025-08-07T18:00:00Z",
+                "cancellation_time": null,
+                "cancellation_reason": null
+            },
+            "session": {
+                "id": 456,
+                "start_time": "2025-08-07T18:00:00Z",
+                "end_time": "2025-08-07T19:00:00Z", 
+                "status": "completed",
+                "room": "Studio A",
+                "current_participants": 15
+            },
+            "gym_class": {
+                "id": 789,
+                "name": "Yoga Flow",
+                "description": "Vinyasa-style yoga class",
+                "duration": 60,
+                "max_capacity": 20,
+                "difficulty_level": "intermediate"
+            }
+        }
+    ]
+    ```
+    
+    ## Participation Status Values
+    - `registered`: User is registered but class hasn't occurred yet
+    - `attended`: User attended the class session
+    - `cancelled`: User cancelled their registration
+    - `no_show`: User was registered but didn't attend
+    
+    ## Session Status Values  
+    - `scheduled`: Class is scheduled but hasn't started
+    - `in_progress`: Class is currently happening
+    - `completed`: Class has finished
+    - `cancelled`: Class was cancelled by gym staff
+    
+    ## Authentication & Permissions
+    - **Required Scope**: `resource:read`
+    - **User Access**: Own data only (cannot view other users' history)
+    - **Gym Context**: Automatically filtered to current gym
+    
+    ## Error Responses
+    - **401 Unauthorized**: Invalid or missing authentication token
+    - **403 Forbidden**: Token lacks required `resource:read` scope  
+    - **404 Not Found**: User not found in database
+    - **422 Validation Error**: Invalid date format or parameter values
+    
+    ## Usage Examples
+    
+    ```bash
+    # Get all attendance history
+    GET /api/v1/schedule/participation/my-attendance-history
+    
+    # Get history for specific date range
+    GET /api/v1/schedule/participation/my-attendance-history?start_date=2025-01-01&end_date=2025-08-07
+    
+    # Get recent history with pagination
+    GET /api/v1/schedule/participation/my-attendance-history?skip=0&limit=20
+    ```
     """
     auth0_id = user.id
     # Use cached version
@@ -714,7 +791,7 @@ async def get_my_attendance_history_legacy(
     end_datetime = datetime.combine(end_date, datetime.max.time()) if end_date else None
     
     # Service retrieves attendance history for the current user within the gym
-    return await class_participation_service.get_member_attendance_history(
+    raw_results = await class_participation_service.get_member_attendance_history(
         db, 
         member_id=db_user.id, 
         gym_id=current_gym.id,
@@ -724,6 +801,17 @@ async def get_my_attendance_history_legacy(
         limit=limit, 
         redis_client=redis_client
     )
+    
+    # Serializar los resultados para evitar el error de Pydantic
+    serialized_results = []
+    for item in raw_results:
+        serialized_results.append({
+            "participation": ClassParticipationSchema.model_validate(item["participation"]),
+            "session": ClassSessionSchema.model_validate(item["session"]),
+            "gym_class": ClassSchema.model_validate(item["gym_class"])
+        })
+    
+    return serialized_results
 
 @router.get("/member/{member_id}/history", response_model=List[ParticipationWithSessionInfo])
 async def get_member_attendance_history(
@@ -798,33 +886,108 @@ async def get_member_attendance_history(
 
 @router.get("/my-history", response_model=List[ParticipationWithSessionInfo])
 async def get_my_attendance_history(
-    start_date: Optional[date] = None,
-    end_date: Optional[date] = None,
-    skip: int = Query(0, ge=0),
-    limit: int = Query(20, ge=1, le=100),
+    start_date: Optional[date] = Query(None, description="Start date for filtering (inclusive). Format: YYYY-MM-DD (e.g., 2025-01-15)"),
+    end_date: Optional[date] = Query(None, description="End date for filtering (inclusive). Format: YYYY-MM-DD (e.g., 2025-08-15)"),
+    skip: int = Query(0, ge=0, description="Number of records to skip for pagination"),
+    limit: int = Query(20, ge=1, le=100, description="Maximum number of records to return (1-100)"),
     db: Session = Depends(get_db),
     current_gym: Gym = Depends(verify_gym_access),
     current_user: Auth0User = Security(auth.get_user, scopes=["resource:read"]),
     redis_client: Redis = Depends(get_redis_client)
 ):
     """
-    Obtener el historial de asistencia del usuario autenticado.
+    📊 **Get My Attendance History** (Recommended Endpoint)
     
-    Args:
-        start_date: Fecha de inicio para filtrar (opcional)
-        end_date: Fecha de fin para filtrar (opcional)
-        skip: Número de registros a saltar para paginación
-        limit: Número máximo de registros a devolver
-        db: Sesión de base de datos
-        current_gym: Gimnasio actual
-        current_user: Usuario autenticado
-        redis_client: Cliente Redis
+    Retrieves the authenticated user's complete history of class participations with 
+    comprehensive session and class information. This is the recommended endpoint for 
+    attendance history queries.
     
-    Returns:
-        Lista de participaciones con información de la sesión
-        
-    Raises:
-        HTTPException 404: Si el usuario no existe
+    ## Features
+    - ✅ Modern structured response format  
+    - ✅ Comprehensive session and class details
+    - ✅ Optimized for performance with caching
+    - ✅ Proper timezone handling (UTC storage, gym local display)
+    
+    ## Query Parameters
+    
+    ### Date Range Filtering
+    - **start_date** (optional): Start date for filtering results (inclusive)
+        - **Format**: `YYYY-MM-DD` (ISO 8601 date format)
+        - **Examples**: `2025-01-15`, `2025-08-07` 
+        - **Timezone**: Interpreted as gym's local timezone
+    
+    - **end_date** (optional): End date for filtering results (inclusive)
+        - **Format**: `YYYY-MM-DD` (ISO 8601 date format) 
+        - **Examples**: `2025-08-15`, `2025-12-31`
+        - **Timezone**: Interpreted as gym's local timezone
+    
+    ### Pagination  
+    - **skip**: Number of records to skip (default: 0, min: 0)
+    - **limit**: Maximum records to return (default: 20, min: 1, max: 100)
+    
+    ## Response Format
+    
+    Returns a structured list with comprehensive information:
+    
+    ```json
+    [
+        {
+            "participation": {
+                "id": 123,
+                "session_id": 456,
+                "member_id": 789,
+                "gym_id": 4,
+                "status": "attended",
+                "registration_time": "2025-08-07T10:30:00Z",
+                "attendance_time": "2025-08-07T18:00:00Z"
+            },
+            "session": {
+                "id": 456,
+                "class_id": 101,
+                "trainer_id": 202,
+                "gym_id": 4,
+                "start_time": "2025-08-07T18:00:00Z", 
+                "end_time": "2025-08-07T19:00:00Z",
+                "status": "completed",
+                "room": "Studio A",
+                "current_participants": 15
+            },
+            "class": {
+                "id": 101,
+                "name": "Yoga Flow", 
+                "description": "Vinyasa-style yoga class",
+                "duration": 60,
+                "max_capacity": 20,
+                "difficulty_level": "intermediate",
+                "category": "yoga"
+            }
+        }
+    ]
+    ```
+    
+    ## Authentication & Permissions
+    - **Required Scope**: `resource:read`
+    - **User Access**: Own data only (cannot access other users' history)
+    - **Gym Context**: Automatically filtered to current gym membership
+    
+    ## Error Responses
+    - **401 Unauthorized**: Invalid or missing authentication token
+    - **403 Forbidden**: Token lacks required `resource:read` scope
+    - **404 Not Found**: User not found in database 
+    - **422 Validation Error**: Invalid date format or parameter values
+    
+    ## Usage Examples
+    
+    ```bash
+    # Get recent attendance history (last 20 records)
+    GET /api/v1/schedule/participation/my-history
+    
+    # Get history for January 2025
+    GET /api/v1/schedule/participation/my-history?start_date=2025-01-01&end_date=2025-01-31
+    
+    # Get next page of results
+    GET /api/v1/schedule/participation/my-history?skip=20&limit=20
+    ```
     """
     # Obtener el ID del usuario actual
     auth0_id = current_user.id
