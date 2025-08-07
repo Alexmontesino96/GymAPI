@@ -583,137 +583,64 @@ async def get_member_upcoming_classes(
     return serialized_results
 
 
-@router.get("/attendance-history/{member_id}", response_model=List[Dict[str, Any]])
-async def get_member_attendance_history_legacy(
-    member_id: int = Path(..., description="ID of the member"),
-    start_date: Optional[date] = Query(None, description="Start date for attendance history (YYYY-MM-DD)"),
-    end_date: Optional[date] = Query(None, description="End date for attendance history (YYYY-MM-DD)"),
-    skip: int = 0,
-    limit: int = 100,
-    db: Session = Depends(get_db),
-    current_gym: Gym = Depends(verify_gym_access),
-    user: Auth0User = Security(auth.get_user, scopes=["resource:admin"]),
-    redis_client: Redis = Depends(get_redis_client)
-) -> Any:
-    """
-    Get Member Attendance History (DEPRECATED - use /member/{member_id}/history instead)
-    
-    This endpoint is maintained for backward compatibility. 
-    Please use /member/{member_id}/history for new implementations.
-    
-    Retrieves a member's history of attended class sessions, with optional date range filtering.
-    This endpoint is for gym trainers and administrators to review a specific member's attendance.
-    
-    Args:
-        member_id (int): The ID of the member whose attendance history to retrieve.
-        start_date (date, optional): If provided, only include attendances on or after this date.
-        end_date (date, optional): If provided, only include attendances on or before this date.
-        skip (int, optional): Pagination skip. Defaults to 0.
-        limit (int, optional): Pagination limit. Defaults to 100.
-        db (Session, optional): Database session dependency.
-        current_gym (Gym, optional): Current gym context dependency.
-        user (Auth0User, optional): Authenticated user.
-        redis_client (Redis, optional): Redis client dependency.
-    
-    Permissions:
-        - Requires 'manage:class_registrations' scope (typically for trainers/admins).
-    
-    Returns:
-        List[Dict[str, Any]]: A list of dictionaries, each containing:
-                            - `participation`: ClassParticipationSchema object.
-                            - `session`: ClassSessionSchema object.
-                            - `gym_class`: ClassSchema object.
-    
-    Raises:
-        HTTPException 400: Member doesn't belong to this gym.
-        HTTPException 401: Invalid or missing token.
-        HTTPException 403: Token lacks required scope.
-        HTTPException 404: Gym not found.
-    """
-    # Verify the target member exists and belongs to the current gym
-    target_member_membership = await user_service.check_user_gym_membership_cached(
-        db=db, user_id=member_id, gym_id=current_gym.id, redis_client=redis_client
-    )
-    if not target_member_membership:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Member not found in this gym"
-        )
-    
-    # Convert date objects to datetime if provided
-    start_datetime = datetime.combine(start_date, datetime.min.time()) if start_date else None
-    end_datetime = datetime.combine(end_date, datetime.max.time()) if end_date else None
-    
-    # Service retrieves attendance history for the member
-    raw_results = await class_participation_service.get_member_attendance_history(
-        db, 
-        member_id=member_id, 
-        gym_id=current_gym.id,
-        start_date=start_datetime,
-        end_date=end_datetime,
-        skip=skip,
-        limit=limit, 
-        redis_client=redis_client
-    )
-    
-    # Serializar los resultados para evitar el error de Pydantic
-    serialized_results = []
-    for item in raw_results:
-        serialized_results.append({
-            "participation": ClassParticipationSchema.model_validate(item["participation"]),
-            "session": ClassSessionSchema.model_validate(item["session"]),
-            "gym_class": ClassSchema.model_validate(item["gym_class"])
-        })
-    
-    return serialized_results
-
-@router.get("/my-attendance-history", response_model=List[Dict[str, Any]])
-async def get_my_attendance_history_legacy(
-    start_date: Optional[date] = Query(None, description="Start date for attendance history (inclusive). Format: YYYY-MM-DD (e.g., 2025-01-15)"),
-    end_date: Optional[date] = Query(None, description="End date for attendance history (inclusive). Format: YYYY-MM-DD (e.g., 2025-08-15)"),
+@router.get("/member/{member_id}/history", response_model=List[ParticipationWithSessionInfo])
+async def get_member_attendance_history(
+    member_id: int = Path(..., description="ID of the member whose attendance history to retrieve"),
+    start_date: Optional[date] = Query(None, description="Start date for filtering (inclusive). Format: YYYY-MM-DD (e.g., 2025-01-15)"),
+    end_date: Optional[date] = Query(None, description="End date for filtering (inclusive). Format: YYYY-MM-DD (e.g., 2025-08-15)"),
     skip: int = Query(0, ge=0, description="Number of records to skip for pagination"),
-    limit: int = Query(100, ge=1, le=500, description="Maximum number of records to return (1-500)"),
+    limit: int = Query(20, ge=1, le=100, description="Maximum number of records to return (1-100)"),
     db: Session = Depends(get_db),
     current_gym: Gym = Depends(verify_gym_access),
-    user: Auth0User = Security(auth.get_user, scopes=["resource:read"]),
+    current_user: Auth0User = Security(auth.get_user, scopes=["resource:admin"]),
     redis_client: Redis = Depends(get_redis_client)
-) -> Any:
+):
     """
-    📊 **Get My Attendance History** (DEPRECATED - use /my-history instead)
+    👥 **Get Member Attendance History** (Admin Only)
     
-    **⚠️ DEPRECATED**: This endpoint is maintained for backward compatibility.
-    Please use `/my-history` for new implementations.
+    Retrieves the complete attendance history for a specific gym member.
+    This endpoint is designed for gym administrators and trainers to review
+    individual member participation patterns and attendance records.
     
-    Retrieves the authenticated user's complete history of class participations, including 
-    attended sessions, cancelled registrations, and no-shows. Results are ordered by 
-    session start time (most recent first).
+    ## Features
+    - ✅ Admin-only access with proper authorization
+    - ✅ Comprehensive participation data with session details
+    - ✅ Date range filtering with gym timezone support
+    - ✅ Modern structured response format
+    - ✅ Performance optimized with caching
     
     ## Query Parameters
+    
+    ### Path Parameters
+    - **member_id** (required): The internal user ID of the gym member
     
     ### Date Range Filtering
     - **start_date** (optional): Start date for filtering results (inclusive)
         - **Format**: `YYYY-MM-DD` (ISO 8601 date format)
         - **Examples**: `2025-01-15`, `2025-08-07`
-        - **Timezone**: Uses gym's local timezone for date comparisons
+        - **Timezone**: Interpreted as gym's local timezone
     
-    - **end_date** (optional): End date for filtering results (inclusive)  
+    - **end_date** (optional): End date for filtering results (inclusive)
         - **Format**: `YYYY-MM-DD` (ISO 8601 date format)
         - **Examples**: `2025-08-15`, `2025-12-31`
-        - **Timezone**: Uses gym's local timezone for date comparisons
+        - **Timezone**: Interpreted as gym's local timezone
     
     ### Pagination
     - **skip**: Number of records to skip (default: 0, min: 0)
-    - **limit**: Maximum records to return (default: 100, min: 1, max: 500)
+    - **limit**: Maximum records to return (default: 20, min: 1, max: 100)
     
     ## Response Format
     
-    Returns a list of dictionaries, each containing:
+    Returns structured participation data with comprehensive session information:
     
     ```json
     [
         {
             "participation": {
-                "id": 123,
+                "id": 456,
+                "session_id": 789,
+                "member_id": 123,
+                "gym_id": 4,
                 "status": "attended",
                 "registration_time": "2025-08-07T10:30:00Z",
                 "attendance_time": "2025-08-07T18:00:00Z",
@@ -721,15 +648,18 @@ async def get_my_attendance_history_legacy(
                 "cancellation_reason": null
             },
             "session": {
-                "id": 456,
+                "id": 789,
+                "class_id": 101,
+                "trainer_id": 202,
+                "gym_id": 4,
                 "start_time": "2025-08-07T18:00:00Z",
-                "end_time": "2025-08-07T19:00:00Z", 
+                "end_time": "2025-08-07T19:00:00Z",
                 "status": "completed",
                 "room": "Studio A",
                 "current_participants": 15
             },
-            "gym_class": {
-                "id": 789,
+            "class": {
+                "id": 101,
                 "name": "Yoga Flow",
                 "description": "Vinyasa-style yoga class",
                 "duration": 60,
@@ -740,112 +670,36 @@ async def get_my_attendance_history_legacy(
     ]
     ```
     
-    ## Participation Status Values
-    - `registered`: User is registered but class hasn't occurred yet
-    - `attended`: User attended the class session
-    - `cancelled`: User cancelled their registration
-    - `no_show`: User was registered but didn't attend
-    
-    ## Session Status Values  
-    - `scheduled`: Class is scheduled but hasn't started
-    - `in_progress`: Class is currently happening
-    - `completed`: Class has finished
-    - `cancelled`: Class was cancelled by gym staff
-    
     ## Authentication & Permissions
-    - **Required Scope**: `resource:read`
-    - **User Access**: Own data only (cannot view other users' history)
-    - **Gym Context**: Automatically filtered to current gym
+    - **Required Scope**: `resource:admin`
+    - **User Access**: Admin/trainer access to any gym member's data
+    - **Gym Context**: Automatically filtered to current gym membership
+    - **Member Verification**: Validates member belongs to current gym
     
     ## Error Responses
     - **401 Unauthorized**: Invalid or missing authentication token
-    - **403 Forbidden**: Token lacks required `resource:read` scope  
-    - **404 Not Found**: User not found in database
+    - **403 Forbidden**: Token lacks required `resource:admin` scope
+    - **404 Not Found**: Member not found or doesn't belong to current gym
     - **422 Validation Error**: Invalid date format or parameter values
+    
+    ## Use Cases
+    - **Member Progress Tracking**: Review individual attendance patterns
+    - **Performance Analytics**: Analyze member engagement over time
+    - **Attendance Reports**: Generate detailed attendance summaries
+    - **Member Support**: Investigate attendance-related member inquiries
     
     ## Usage Examples
     
     ```bash
-    # Get all attendance history
-    GET /api/v1/schedule/participation/my-attendance-history
+    # Get all attendance history for member ID 123
+    GET /api/v1/schedule/participation/member/123/history
     
-    # Get history for specific date range
-    GET /api/v1/schedule/participation/my-attendance-history?start_date=2025-01-01&end_date=2025-08-07
+    # Get January 2025 history for member
+    GET /api/v1/schedule/participation/member/123/history?start_date=2025-01-01&end_date=2025-01-31
     
-    # Get recent history with pagination
-    GET /api/v1/schedule/participation/my-attendance-history?skip=0&limit=20
+    # Get recent history with pagination  
+    GET /api/v1/schedule/participation/member/123/history?skip=0&limit=10
     ```
-    """
-    auth0_id = user.id
-    # Use cached version
-    db_user = await user_service.get_user_by_auth0_id_cached(db, auth0_id=auth0_id, redis_client=redis_client)
-    
-    if not db_user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found in database"
-        )
-    
-    # Convert date objects to datetime if provided
-    start_datetime = datetime.combine(start_date, datetime.min.time()) if start_date else None
-    end_datetime = datetime.combine(end_date, datetime.max.time()) if end_date else None
-    
-    # Service retrieves attendance history for the current user within the gym
-    raw_results = await class_participation_service.get_member_attendance_history(
-        db, 
-        member_id=db_user.id, 
-        gym_id=current_gym.id,
-        start_date=start_datetime,
-        end_date=end_datetime,
-        skip=skip,
-        limit=limit, 
-        redis_client=redis_client
-    )
-    
-    # Serializar los resultados para evitar el error de Pydantic
-    serialized_results = []
-    for item in raw_results:
-        serialized_results.append({
-            "participation": ClassParticipationSchema.model_validate(item["participation"]),
-            "session": ClassSessionSchema.model_validate(item["session"]),
-            "gym_class": ClassSchema.model_validate(item["gym_class"])
-        })
-    
-    return serialized_results
-
-@router.get("/member/{member_id}/history", response_model=List[ParticipationWithSessionInfo])
-async def get_member_attendance_history(
-    member_id: int,
-    start_date: Optional[date] = None,
-    end_date: Optional[date] = None,
-    skip: int = Query(0, ge=0),
-    limit: int = Query(20, ge=1, le=100),
-    db: Session = Depends(get_db),
-    current_gym: Gym = Depends(verify_gym_access),
-    current_user: Auth0User = Security(auth.get_user, scopes=["resource:admin"]),
-    redis_client: Redis = Depends(get_redis_client)
-):
-    """
-    Obtener el historial de asistencia de un miembro específico.
-    
-    Args:
-        member_id: ID del miembro
-        start_date: Fecha de inicio para filtrar (opcional)
-        end_date: Fecha de fin para filtrar (opcional)
-        skip: Número de registros a saltar para paginación
-        limit: Número máximo de registros a devolver
-        db: Sesión de base de datos
-        current_gym: Gimnasio actual
-        current_user: Usuario autenticado
-        redis_client: Cliente Redis
-    
-    Returns:
-        Lista de participaciones con información de la sesión
-        
-    Raises:
-        HTTPException 400: Si el miembro no pertenece al gimnasio actual
-        HTTPException 403: Si el usuario no tiene permisos suficientes
-        HTTPException 404: Si el miembro o gimnasio no se encuentran
     """
     # Verificar que el miembro pertenece al gimnasio actual
     member = db.query(Member).filter(Member.id == member_id, Member.gym_id == current_gym.id).first()
