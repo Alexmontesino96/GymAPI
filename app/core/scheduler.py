@@ -217,8 +217,8 @@ def mark_completed_sessions():
     Marca como completadas las sesiones cuya hora de finalización ya pasó.
     También actualiza sesiones a IN_PROGRESS cuando están dentro del horario.
     
-    Esta función ahora maneja correctamente las zonas horarias, comparando
-    tiempos UTC almacenados en la base de datos.
+    Esta función maneja tanto datos UTC como datos naive (hora local) para 
+    compatibilidad durante la migración.
     """
     logger.info("Running scheduled task: mark_completed_sessions")
     with SessionLocal() as db:
@@ -229,7 +229,6 @@ def mark_completed_sessions():
             current_utc = datetime.now(timezone.utc)
             
             # Query optimizada: Una sola consulta para obtener todas las sesiones activas
-            # Los tiempos ahora están en UTC, así que la comparación es directa
             sessions_to_update = db.query(ClassSession).filter(
                 ClassSession.status.in_([
                     ClassSessionStatus.SCHEDULED,
@@ -241,28 +240,43 @@ def mark_completed_sessions():
             completion_count = 0
             
             for session in sessions_to_update:
-                # Comparación directa UTC vs UTC (sin conversiones)
-                if session.status == ClassSessionStatus.SCHEDULED:
-                    if session.start_time <= current_utc < session.end_time:
-                        # Sesión debe estar IN_PROGRESS
-                        session.status = ClassSessionStatus.IN_PROGRESS
-                        db.add(session)
-                        progress_count += 1
-                        logger.debug(f"Session {session.id} marked as IN_PROGRESS")
-                    elif session.end_time <= current_utc:
-                        # Sesión ya terminó, directamente a COMPLETED
-                        session.status = ClassSessionStatus.COMPLETED
-                        db.add(session)
-                        completion_count += 1
-                        logger.info(f"Session {session.id} marked as COMPLETED")
-                
-                elif session.status == ClassSessionStatus.IN_PROGRESS:
-                    if session.end_time <= current_utc:
-                        # Sesión IN_PROGRESS que ya terminó
-                        session.status = ClassSessionStatus.COMPLETED
-                        db.add(session)
-                        completion_count += 1
-                        logger.info(f"Session {session.id} marked as COMPLETED")
+                try:
+                    # Manejar tanto datos UTC como naive para compatibilidad
+                    session_start = session.start_time
+                    session_end = session.end_time
+                    
+                    # Si los tiempos son naive (sin timezone), asumimos que son UTC
+                    if session_start.tzinfo is None:
+                        session_start = session_start.replace(tzinfo=timezone.utc)
+                    if session_end.tzinfo is None:
+                        session_end = session_end.replace(tzinfo=timezone.utc)
+                    
+                    # Ahora podemos comparar de manera segura
+                    if session.status == ClassSessionStatus.SCHEDULED:
+                        if session_start <= current_utc < session_end:
+                            # Sesión debe estar IN_PROGRESS
+                            session.status = ClassSessionStatus.IN_PROGRESS
+                            db.add(session)
+                            progress_count += 1
+                            logger.debug(f"Session {session.id} marked as IN_PROGRESS")
+                        elif session_end <= current_utc:
+                            # Sesión ya terminó, directamente a COMPLETED
+                            session.status = ClassSessionStatus.COMPLETED
+                            db.add(session)
+                            completion_count += 1
+                            logger.info(f"Session {session.id} marked as COMPLETED")
+                    
+                    elif session.status == ClassSessionStatus.IN_PROGRESS:
+                        if session_end <= current_utc:
+                            # Sesión IN_PROGRESS que ya terminó
+                            session.status = ClassSessionStatus.COMPLETED
+                            db.add(session)
+                            completion_count += 1
+                            logger.info(f"Session {session.id} marked as COMPLETED")
+                            
+                except Exception as session_error:
+                    logger.error(f"Error processing session {session.id}: {session_error}")
+                    continue
             
             # Confirmar cambios si hay actualizaciones
             if progress_count > 0 or completion_count > 0:
