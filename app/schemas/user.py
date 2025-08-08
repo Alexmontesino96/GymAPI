@@ -21,6 +21,7 @@ class UserBase(BaseModel):
     bio: Optional[str] = None
     goals: Optional[str] = None
     health_conditions: Optional[str] = None
+    color: Optional[str] = Field(None, pattern=r'^#[0-9A-Fa-f]{6}$', description="Color hexadecimal para el perfil del usuario (formato: #RRGGBB)")
     gym_role: Optional[GymRoleType] = None  # Añadir el rol del gimnasio
     qr_code: Optional[str] = None  # Código QR único para cada usuario
 
@@ -43,6 +44,9 @@ class UserProfileUpdate(BaseModel):
     birth_date: Optional[datetime] = None
     height: Optional[float] = Field(None, ge=0)
     weight: Optional[float] = Field(None, ge=0)
+    bio: Optional[str] = Field(None, max_length=500, description="Biografía del usuario")
+    goals: Optional[str] = Field(None, max_length=1000, description="Objetivos de fitness del usuario")
+    color: Optional[str] = Field(None, pattern=r'^#[0-9A-Fa-f]{6}$', description="Color hexadecimal para el perfil del usuario (formato: #RRGGBB)")
 
     class Config:
         from_attributes = True
@@ -141,6 +145,7 @@ class UserPublicProfile(BaseModel):
     picture: Optional[str] = None
     role: UserRole
     bio: Optional[str] = None
+    color: Optional[str] = None
     is_active: bool = True
 
     class Config:
@@ -162,6 +167,7 @@ class UserPublicProfileLight(BaseModel):
     picture: Optional[str] = None
     role: str  # Almacenamos el nombre del enum como string para evitar validación
     bio: Optional[str] = None
+    color: Optional[str] = None
     is_active: bool = True
     
     def to_public_profile(self) -> UserPublicProfile:
@@ -173,6 +179,7 @@ class UserPublicProfileLight(BaseModel):
             picture=self.picture,
             role=UserRole(self.role),  # Convertir string a enum
             bio=self.bio,
+            color=self.color,
             is_active=self.is_active
         )
     
@@ -186,6 +193,7 @@ class UserPublicProfileLight(BaseModel):
             picture=profile.picture,
             role=profile.role.value,  # Convertir enum a string
             bio=profile.bio,
+            color=profile.color,
             is_active=profile.is_active
         )
 
@@ -228,6 +236,7 @@ class UserProfile(BaseModel):
     role: UserRole
     bio: Optional[str] = None
     goals: Optional[str] = None
+    color: Optional[str] = None
     height: Optional[float] = None
     weight: Optional[float] = None
     birth_date: Optional[datetime] = None
