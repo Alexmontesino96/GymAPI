@@ -483,16 +483,39 @@ class UserStatsService:
         period_start: datetime,
         period_end: datetime
     ) -> FitnessMetrics:
-        """Computa métricas de fitness completas."""
+        """Computa métricas de fitness completas.
+        
+        NOTA TEMPORAL: Sistema de Asistencia Simplificado
+        ==================================================
+        Mientras se implementa el sistema de escaneo QR en el gimnasio,
+        asumimos que los usuarios con estado REGISTERED asistieron si:
+        - La sesión ya terminó (end_time < now)
+        - No cancelaron su participación
+        
+        Esto proporciona estadísticas más realistas hasta que se implemente
+        el proceso real de verificación de asistencia mediante QR.
+        
+        TODO: Remover esta lógica cuando se implemente:
+        - Escaneo de QR en entrada del gimnasio
+        - Actualización automática a estado ATTENDED
+        - Proceso de marcado de NO_SHOW para ausencias
+        """
         try:
             from app.models.schedule import ClassParticipation, ClassSession, Class, ClassParticipationStatus
             
-            # Query optimizada usando índices compuestos
-            # Contar clases asistidas y programadas en una sola query usando agregaciones
+            # SOLUCIÓN TEMPORAL: Asumimos asistencia para clases REGISTERED pasadas
+            # TODO: Reemplazar cuando se implemente escaneo QR en gimnasio
+            now = datetime.now()
+            
+            # Query mejorada con JOIN a ClassSession para verificar fechas
             class_counts = db.query(
                 func.count(
                     case(
-                        (ClassParticipation.status == ClassParticipationStatus.ATTENDED, 1), 
+                        # Caso 1: Explícitamente marcadas como ATTENDED
+                        (ClassParticipation.status == ClassParticipationStatus.ATTENDED, 1),
+                        # Caso 2: REGISTERED y la sesión ya terminó (asumimos asistencia)
+                        ((ClassParticipation.status == ClassParticipationStatus.REGISTERED) & 
+                         (ClassSession.end_time < now), 1),
                         else_=None
                     )
                 ).label('attended_classes'),
@@ -505,11 +528,13 @@ class UserStatsService:
                         else_=None
                     )
                 ).label('scheduled_classes')
+            ).join(
+                ClassSession, ClassParticipation.session_id == ClassSession.id
             ).filter(
                 ClassParticipation.member_id == user_id,
                 ClassParticipation.gym_id == gym_id,
-                ClassParticipation.created_at >= period_start,
-                ClassParticipation.created_at <= period_end
+                ClassSession.start_time >= period_start,  # Usar fecha de sesión en lugar de created_at
+                ClassSession.start_time <= period_end
             ).first()
             
             attended_classes = class_counts.attended_classes or 0
@@ -519,6 +544,7 @@ class UserStatsService:
             attendance_rate = (attended_classes / scheduled_classes * 100) if scheduled_classes > 0 else 0.0
             
             # Total de horas de entrenamiento (estimado por duración promedio de clases)
+            # TEMPORAL: Incluye REGISTERED pasadas como asistidas
             total_hours_result = db.query(
                 func.sum(Class.duration).label('total_minutes')
             ).join(
@@ -528,9 +554,11 @@ class UserStatsService:
             ).filter(
                 ClassParticipation.member_id == user_id,
                 ClassParticipation.gym_id == gym_id,
-                ClassParticipation.status == ClassParticipationStatus.ATTENDED,
-                ClassParticipation.created_at >= period_start,
-                ClassParticipation.created_at <= period_end
+                ((ClassParticipation.status == ClassParticipationStatus.ATTENDED) |
+                 ((ClassParticipation.status == ClassParticipationStatus.REGISTERED) & 
+                  (ClassSession.end_time < now))),
+                ClassSession.start_time >= period_start,
+                ClassSession.start_time <= period_end
             ).first()
             
             total_minutes = total_hours_result.total_minutes or 0
@@ -547,6 +575,7 @@ class UserStatsService:
             longest_streak = await self._calculate_longest_streak(db, user_id, gym_id, six_months_ago, period_end)
             
             # Tipos de clase favoritos
+            # TEMPORAL: Incluye REGISTERED pasadas como asistidas
             favorite_classes_result = db.query(
                 Class.name,
                 func.count(ClassParticipation.id).label('count')
@@ -559,9 +588,11 @@ class UserStatsService:
             ).filter(
                 ClassParticipation.member_id == user_id,
                 ClassParticipation.gym_id == gym_id,
-                ClassParticipation.status == ClassParticipationStatus.ATTENDED,
-                ClassParticipation.created_at >= period_start,
-                ClassParticipation.created_at <= period_end
+                ((ClassParticipation.status == ClassParticipationStatus.ATTENDED) |
+                 ((ClassParticipation.status == ClassParticipationStatus.REGISTERED) & 
+                  (ClassSession.end_time < now))),
+                ClassSession.start_time >= period_start,
+                ClassSession.start_time <= period_end
             ).group_by(
                 Class.name
             ).order_by(
@@ -571,6 +602,7 @@ class UserStatsService:
             favorite_class_types = [result.name for result in favorite_classes_result]
             
             # Horarios pico (simplificado - análisis básico)
+            # TEMPORAL: Incluye REGISTERED pasadas como asistidas
             peak_times_result = db.query(
                 func.extract('hour', ClassSession.start_time).label('hour'),
                 func.count(ClassParticipation.id).label('count')
@@ -579,9 +611,11 @@ class UserStatsService:
             ).filter(
                 ClassParticipation.member_id == user_id,
                 ClassParticipation.gym_id == gym_id,
-                ClassParticipation.status == ClassParticipationStatus.ATTENDED,
-                ClassParticipation.created_at >= period_start,
-                ClassParticipation.created_at <= period_end
+                ((ClassParticipation.status == ClassParticipationStatus.ATTENDED) |
+                 ((ClassParticipation.status == ClassParticipationStatus.REGISTERED) & 
+                  (ClassSession.end_time < now))),
+                ClassSession.start_time >= period_start,
+                ClassSession.start_time <= period_end
             ).group_by(
                 func.extract('hour', ClassSession.start_time)
             ).order_by(
