@@ -1,11 +1,12 @@
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Callable
 from sqlalchemy.orm import Session
 import time
 import logging
 import re
-from functools import lru_cache
+from functools import lru_cache, wraps
 from datetime import datetime, timedelta
 import hashlib
+import random
 
 from app.core.stream_client import stream_client
 from app.core.config import get_settings
@@ -19,10 +20,115 @@ logger = logging.getLogger("chat_service")
 
 # Cache en memoria para guardar tokens de usuario (5 minutos de expiración)
 user_token_cache = {}
-# Cache en memoria para guardar datos de canales (15 minutos de expiración)
+# Cache en memoria para guardar datos de canales (5 minutos de expiración)
 channel_cache = {}
 
+def stream_retry_with_backoff(max_retries: int = 3, base_delay: float = 1.0):
+    """
+    Decorador para reintentos con backoff exponencial para operaciones de Stream.
+    
+    Args:
+        max_retries: Número máximo de reintentos
+        base_delay: Delay base en segundos
+    """
+    def decorator(func: Callable):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            last_exception = None
+            
+            for attempt in range(max_retries + 1):  # +1 porque el primer intento no es un reintento
+                try:
+                    return func(*args, **kwargs)
+                except Exception as e:
+                    last_exception = e
+                    error_msg = str(e).lower()
+                    
+                    # Log del intento fallido
+                    logger.warning(f"Intento {attempt + 1}/{max_retries + 1} falló para {func.__name__}: {e}")
+                    
+                    # No reintentar en ciertos errores específicos
+                    if any(no_retry_error in error_msg for no_retry_error in [
+                        'channel already exists',
+                        'user already exists', 
+                        'invalid token',
+                        'authentication failed'
+                    ]):
+                        logger.info(f"Error no recuperable en {func.__name__}: {e}")
+                        break
+                    
+                    # Si no es el último intento, esperar antes del siguiente
+                    if attempt < max_retries:
+                        delay = base_delay * (2 ** attempt) + random.uniform(0.1, 0.5)  # Jitter
+                        logger.info(f"Esperando {delay:.2f}s antes del siguiente intento...")
+                        time.sleep(delay)
+            
+            # Si llegamos aquí, todos los reintentos fallaron
+            logger.error(f"Todos los reintentos fallaron para {func.__name__}: {last_exception}")
+            raise last_exception
+        
+        return wrapper
+    return decorator
+
 class ChatService:
+    @stream_retry_with_backoff(max_retries=2, base_delay=0.5)
+    def _query_stream_channel_with_retry(self, channel_type: str, channel_id: str, user_id: str) -> Dict[str, Any]:
+        """
+        Consulta un canal de Stream con reintentos automáticos.
+        
+        Args:
+            channel_type: Tipo del canal
+            channel_id: ID del canal
+            user_id: Stream ID del usuario para server-side auth
+            
+        Returns:
+            Dict con la respuesta del canal
+        """
+        channel = stream_client.channel(channel_type, channel_id)
+        response = channel.query(
+            user_id=user_id,
+            messages_limit=0,
+            watch=False,
+            presence=False
+        )
+        return response
+
+    def _validate_channel_consistency(self, db_room: ChatRoom, stream_response: Dict[str, Any]) -> bool:
+        """
+        Valida que los datos de la BD local sean consistentes con Stream.
+        
+        Args:
+            db_room: Sala de chat de la BD local
+            stream_response: Respuesta de Stream
+            
+        Returns:
+            bool: True si es consistente, False si hay discrepancias
+        """
+        try:
+            stream_channel = stream_response.get("channel", {})
+            
+            # Validar ID de canal
+            if stream_channel.get("id") != db_room.stream_channel_id:
+                logger.warning(f"Inconsistencia ID canal: BD={db_room.stream_channel_id}, Stream={stream_channel.get('id')}")
+                return False
+            
+            # Validar tipo de canal
+            if stream_channel.get("type") != db_room.stream_channel_type:
+                logger.warning(f"Inconsistencia tipo canal: BD={db_room.stream_channel_type}, Stream={stream_channel.get('type')}")
+                return False
+            
+            # Validar que el canal existe en Stream
+            if not stream_channel.get("created_at"):
+                logger.warning(f"Canal {db_room.stream_channel_id} no existe en Stream")
+                return False
+            
+            # Log de validación exitosa
+            logger.debug(f"Validación consistente para canal {db_room.stream_channel_id}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error durante validación de consistencia: {e}")
+            return False
+
     def get_user_token(self, user_id: int, user_data: Dict[str, Any], gym_id: int = None) -> str:
         """
         Genera un token para el usuario con cache para mejorar rendimiento.
@@ -286,12 +392,13 @@ class ChatService:
                     
                 logger.info(f"[DEBUG-CREATE] Canal creado - ID: {stream_channel_id}, Tipo: {stream_channel_type}")
                 
-                # PASO 3: Añadir miembros al canal si es necesario
-                if len(member_stream_ids) > 1:  # No añadir si solo está el creador
-                    non_creator_stream_ids = [m for m in member_stream_ids if m != creator_stream_id]
-                    if non_creator_stream_ids:
-                        logger.info(f"[DEBUG-CREATE] Añadiendo miembros adicionales: {non_creator_stream_ids}")
-                        channel.add_members(non_creator_stream_ids)
+                # PASO 3: Añadir TODOS los miembros al canal (incluyendo creator)
+                # CORECCIÓN: El creator debe ser miembro explícito del canal
+                if len(member_stream_ids) > 0:
+                    logger.info(f"[DEBUG-CREATE] Añadiendo todos los miembros al canal: {member_stream_ids}")
+                    # Agregar todos los miembros, incluyendo el creator
+                    # Stream Chat maneja automáticamente si el creator ya es miembro
+                    channel.add_members(member_stream_ids)
                 
                 # PASO 4: Guardar en la base de datos local con IDs internos
                 logger.info(f"[DEBUG-CREATE] Guardando sala en BD local: stream_channel_id={stream_channel_id}, event_id={room_data.event_id}")
@@ -472,10 +579,14 @@ class ChatService:
         # Verificar si hay datos en cache
         if cache_key in channel_cache:
             cached_data = channel_cache[cache_key]
-            # Si los datos son recientes (menos de 15 minutos)
-            if current_time - cached_data["timestamp"] < 900:  # 15 minutos
-                logger.info(f"Usando datos en cache para chat directo entre {user1_id} y {user2_id}")
+            # Si los datos son recientes (menos de 5 minutos para mayor consistencia)
+            if current_time - cached_data["timestamp"] < 300:  # 5 minutos
+                logger.info(f"Usando datos en cache para chat directo entre {user1_id} y {user2_id} (TTL: 5min)")
                 return cached_data["data"]
+            else:
+                # Datos expirados, limpiar cache
+                del channel_cache[cache_key]
+                logger.info(f"Cache expirado y limpiado para clave: {cache_key}")
         
         # Buscar chat existente usando IDs internos
         db_room = chat_repository.get_direct_chat(db, user1_id=user1_id, user2_id=user2_id)
@@ -483,38 +594,68 @@ class ChatService:
         if db_room:
             # Usar el canal existente
             try:
-                channel = stream_client.channel(db_room.stream_channel_type, db_room.stream_channel_id)
-                # Configurar opciones de consulta para mejorar rendimiento
-                response = channel.query(
-                    messages_limit=0,
-                    watch=False,
-                    presence=False
-                )
-                
-                logger.info(f"Chat directo existente encontrado: {db_room.id}")
-                
-                # Preparar datos de respuesta
-                result = {
-                    "id": db_room.id,
-                    "stream_channel_id": db_room.stream_channel_id,
-                    "stream_channel_type": db_room.stream_channel_type,
-                    "is_direct": True,
-                    "members": response.get("members", []),
-                    "created_at": db_room.created_at
-                }
-                
-                # Guardar en cache
-                channel_cache[cache_key] = {
-                    "data": result,
-                    "timestamp": current_time
-                }
-                
-                return result
+                # Obtener el primer usuario para usar como query user_id
+                user1 = db.query(User).filter(User.id == user1_id).first()
+                if not user1:
+                    logger.error(f"Usuario {user1_id} no encontrado para query de canal")
+                    # Eliminar la referencia obsoleta si no hay usuario válido
+                    db.delete(db_room)
+                    db.commit()
+                    # Invalidar caché
+                    if cache_key in channel_cache:
+                        del channel_cache[cache_key]
+                        logger.info(f"Cache invalidado para clave: {cache_key}")
+                    # Continuar para crear un nuevo canal
+                else:
+                    # Obtener stream_id del usuario
+                    query_stream_id = self._get_stream_id_for_user(user1)
+                    
+                    # CORECCIÓN: Usar método con reintentos automáticos
+                    response = self._query_stream_channel_with_retry(
+                        db_room.stream_channel_type, 
+                        db_room.stream_channel_id, 
+                        query_stream_id
+                    )
+                    
+                    # Validar consistencia entre BD y Stream
+                    if not self._validate_channel_consistency(db_room, response):
+                        logger.error(f"Inconsistencia detectada en canal {db_room.id}. Eliminando registro local.")
+                        db.delete(db_room)
+                        db.commit()
+                        # Invalidar caché
+                        if cache_key in channel_cache:
+                            del channel_cache[cache_key]
+                            logger.info(f"Cache invalidado por inconsistencia: {cache_key}")
+                        # Continuar para crear un nuevo canal
+                    else:
+                        logger.info(f"Chat directo existente validado: {db_room.id}, consultado por user_id={query_stream_id}")
+                        
+                        # Preparar datos de respuesta
+                        result = {
+                            "id": db_room.id,
+                            "stream_channel_id": db_room.stream_channel_id,
+                            "stream_channel_type": db_room.stream_channel_type,
+                            "is_direct": True,
+                            "members": response.get("members", []),
+                            "created_at": db_room.created_at
+                        }
+                        
+                        # Guardar en cache con TTL reducido
+                        channel_cache[cache_key] = {
+                            "data": result,
+                            "timestamp": current_time
+                        }
+                        
+                        return result
             except Exception as e:
                 logger.error(f"Error obteniendo canal existente: {e}")
                 # Eliminar la referencia obsoleta
                 db.delete(db_room)
                 db.commit()
+                # Invalidar caché
+                if cache_key in channel_cache:
+                    del channel_cache[cache_key]
+                    logger.info(f"Cache invalidado para clave: {cache_key} debido a error: {str(e)}")
                 # Continuar para crear un nuevo canal
         
         # Obtener los auth0_ids correspondientes (necesarios para Stream)
