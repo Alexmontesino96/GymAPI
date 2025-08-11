@@ -372,7 +372,7 @@ def init_scheduler():
 
 def delete_stream_channel(channel_type: str, channel_id: str) -> bool:
     """
-    Elimina un canal específico de Stream Chat.
+    Elimina un canal específico de Stream Chat completamente (mensajes + canal).
     
     Args:
         channel_type: Tipo del canal (ej: 'messaging')
@@ -384,8 +384,18 @@ def delete_stream_channel(channel_type: str, channel_id: str) -> bool:
     try:
         from app.core.stream_client import stream_client
         channel = stream_client.channel(channel_type, channel_id)
+        
+        # Paso 1: Truncar el canal para eliminar todos los mensajes
+        try:
+            channel.truncate()
+            logger.info(f"Stream channel {channel_type}:{channel_id} truncated (messages cleared)")
+        except Exception as truncate_error:
+            # Si truncate falla, continuar con delete (podría ser un canal vacío)
+            logger.warning(f"Could not truncate {channel_type}:{channel_id}: {truncate_error}")
+        
+        # Paso 2: Eliminar el canal
         channel.delete()
-        logger.info(f"Successfully deleted Stream channel {channel_type}:{channel_id}")
+        logger.info(f"Successfully deleted Stream channel {channel_type}:{channel_id} completely")
         return True
     except Exception as e:
         logger.error(f"Error deleting Stream channel {channel_type}:{channel_id}: {e}")
