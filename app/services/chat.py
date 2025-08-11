@@ -239,6 +239,142 @@ class ChatService:
         # Usamos el ID interno del usuario para generar el ID de Stream
         return get_stream_id_from_internal(user.id)
     
+    def _consolidate_user_in_stream(self, db: Session, user: User, gym_id: int) -> str:
+        """
+        Consolida un usuario en Stream Chat asegurando formato consistente.
+        
+        Este método:
+        1. Verifica si el usuario existe con formato legacy (auth0_id)
+        2. Si existe, migra sus membresías al nuevo formato (user_X)
+        3. Crea/actualiza el usuario con el formato correcto
+        4. Limpia el usuario legacy si es necesario
+        
+        Args:
+            db: Sesión de base de datos
+            user: Objeto de usuario de la BD
+            gym_id: ID del gimnasio para configurar teams
+            
+        Returns:
+            str: Stream ID consolidado en formato correcto (user_X)
+        """
+        try:
+            # Obtener IDs
+            new_stream_id = self._get_stream_id_for_user(user)  # Formato user_X
+            legacy_stream_id = user.auth0_id  # Formato legacy auth0|...
+            
+            logger.info(f"🔄 Consolidando usuario {user.id}: legacy='{legacy_stream_id}' → nuevo='{new_stream_id}'")
+            
+            # Obtener teams del usuario
+            from app.models.user_gym import UserGym
+            user_gyms = db.query(UserGym).filter(UserGym.user_id == user.id).all()
+            user_teams = [f"gym_{ug.gym_id}" for ug in user_gyms]
+            
+            # Preparar datos del nuevo usuario
+            new_user_data = {
+                "id": new_stream_id,
+                "name": self._get_display_name_for_user(user),
+                "email": user.email if user.email else None,
+                "user_id": str(user.id),  # Metadato para referencia
+                "internal_id": str(user.id)  # Metadato adicional
+            }
+            
+            if user_teams:
+                new_user_data["teams"] = user_teams
+            
+            # 1. Crear/actualizar usuario con formato nuevo
+            stream_client.update_user(new_user_data)
+            logger.info(f"✅ Usuario {new_stream_id} creado/actualizado en Stream")
+            
+            # 2. Si el usuario legacy existe, migrar sus membresías
+            if legacy_stream_id and legacy_stream_id != new_stream_id:
+                try:
+                    # Verificar si existe usuario legacy en Stream
+                    legacy_user_response = stream_client.query_users(
+                        filter_conditions={"id": legacy_stream_id},
+                        limit=1
+                    )
+                    
+                    legacy_users = legacy_user_response.get('users', [])
+                    
+                    if legacy_users:
+                        logger.info(f"🔍 Usuario legacy {legacy_stream_id} encontrado, iniciando migración...")
+                        
+                        # Obtener canales donde el usuario legacy es miembro
+                        channels_response = stream_client.query_channels(
+                            filter_conditions={"members": {"$in": [legacy_stream_id]}},
+                            limit=50  # Limitar para evitar timeouts
+                        )
+                        
+                        channels = channels_response.get('channels', [])
+                        logger.info(f"📺 Migrando {len(channels)} canales para usuario {legacy_stream_id}")
+                        
+                        migration_success_count = 0
+                        
+                        for channel_data in channels:
+                            try:
+                                channel_info = channel_data.get('channel', {})
+                                channel_type = channel_info.get('type')
+                                channel_id = channel_info.get('id')
+                                
+                                if channel_type and channel_id:
+                                    channel = stream_client.channel(channel_type, channel_id)
+                                    
+                                    # Agregar nuevo usuario
+                                    channel.add_members([new_stream_id])
+                                    
+                                    # Remover usuario legacy
+                                    channel.remove_members([legacy_stream_id])
+                                    
+                                    migration_success_count += 1
+                                    logger.debug(f"🔄 Canal {channel_id}: migrado {legacy_stream_id} → {new_stream_id}")
+                                    
+                            except Exception as channel_error:
+                                logger.warning(f"⚠️ Error migrando canal {channel_id}: {str(channel_error)}")
+                                # Continuar con otros canales
+                                continue
+                        
+                        logger.info(f"✅ Migración completada: {migration_success_count} canales migrados")
+                        
+                        # 3. Marcar usuario legacy para limpieza (opcional, comentado por seguridad)
+                        # try:
+                        #     stream_client.delete_user(legacy_stream_id, mark_messages_deleted=False)
+                        #     logger.info(f"🗑️ Usuario legacy {legacy_stream_id} eliminado")
+                        # except Exception as delete_error:
+                        #     logger.warning(f"⚠️ No se pudo eliminar usuario legacy: {str(delete_error)}")
+                        
+                    else:
+                        logger.debug(f"ℹ️ Usuario legacy {legacy_stream_id} no existe en Stream, solo crear nuevo")
+                        
+                except Exception as migration_error:
+                    logger.warning(f"⚠️ Error en migración de usuario legacy: {str(migration_error)}")
+                    # Continuar con el nuevo usuario creado
+            
+            return new_stream_id
+            
+        except Exception as e:
+            logger.error(f"❌ Error consolidando usuario {user.id}: {str(e)}", exc_info=True)
+            # Fallback al formato nuevo sin migración
+            return self._get_stream_id_for_user(user)
+    
+    def _get_display_name_for_user(self, user: User) -> str:
+        """
+        Obtiene un nombre para mostrar del usuario basado en los datos disponibles.
+        
+        Args:
+            user: Objeto de usuario de la BD
+            
+        Returns:
+            str: Nombre para mostrar
+        """
+        if user.first_name and user.last_name:
+            return f"{user.first_name} {user.last_name}"
+        elif user.first_name:
+            return user.first_name
+        elif user.email:
+            return user.email.split('@')[0]  # Parte antes del @
+        else:
+            return f"Usuario {user.id}"
+    
     def create_room(self, db: Session, creator_id: int, room_data: ChatRoomCreate, gym_id: int) -> Dict[str, Any]:
         """
         Crea un canal de chat en Stream y lo registra localmente.
@@ -280,29 +416,25 @@ class ChatService:
                         member_stream_id = self._get_stream_id_for_user(member)
                         member_stream_ids.append(member_stream_id)
                 
-                # Crear usuarios en Stream antes de crear el canal
+                # Crear usuarios en Stream antes de crear el canal con consolidación automática
                 logger.info(f"[DEBUG-CREATE] Asegurando usuarios en Stream: {member_stream_ids}")
+                consolidated_members = []
+                
                 for i, stream_id in enumerate(member_stream_ids):
                     try:
-                        # Obtener teams del usuario
-                        from app.models.user_gym import UserGym
-                        member_gyms = db.query(UserGym).filter(UserGym.user_id == member_users[i].id).all()
-                        member_teams = [f"gym_{ug.gym_id}" for ug in member_gyms]
+                        # Consolidar usuario para asegurar formato consistente
+                        consolidated_id = self._consolidate_user_in_stream(db, member_users[i], gym_id)
+                        consolidated_members.append(consolidated_id)
                         
-                        # Crear un objeto de usuario mínimo en Stream si no existe
-                        member_data = {
-                            "id": stream_id,
-                            "name": getattr(member_users[i], 'email', f"user_{member_users[i].id}"),
-                        }
+                        logger.info(f"[DEBUG-CREATE] Usuario consolidado {stream_id} → {consolidated_id} (ID interno: {member_users[i].id})")
                         
-                        if member_teams:
-                            member_data["teams"] = member_teams
-                            
-                        stream_client.update_user(member_data)
-                        logger.info(f"[DEBUG-CREATE] Usuario {stream_id} (ID interno: {member_users[i].id}) creado/actualizado en Stream")
                     except Exception as e:
-                        logger.error(f"[DEBUG-CREATE] Error creando usuario {stream_id} en Stream: {str(e)}")
-                        # Continuamos aunque haya error para intentar con los demás usuarios
+                        logger.error(f"[DEBUG-CREATE] Error consolidando usuario {stream_id} en Stream: {str(e)}")
+                        # Usar el stream_id original como fallback
+                        consolidated_members.append(stream_id)
+                
+                # Actualizar la lista de stream_ids con los consolidados
+                member_stream_ids = consolidated_members
                 
                 # Sanitizar nombre de sala para formato válido en Stream
                 safe_name = ""
@@ -436,6 +568,7 @@ class ChatService:
                         "stream_channel_id": stream_channel_id,
                         "stream_channel_type": stream_channel_type,
                         "name": db_room.name,
+                        "is_direct": db_room.is_direct,  # Añadir is_direct a la respuesta
                         "event_id": db_room.event_id,  # Añadir event_id a la respuesta
                         "members": self._convert_stream_members_to_internal(
                             channel_data.get("members", []), db

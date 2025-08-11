@@ -66,11 +66,19 @@ class TestDirectChatMembershipFix:
         mock_created_room.stream_channel_id = "direct_user_10_user_8"
         mock_created_room.stream_channel_type = "messaging"
         mock_created_room.created_at = "2025-08-11T00:00:00Z"
+        mock_created_room.is_direct = True  # Añadir is_direct al mock
+        mock_created_room.name = "Test Direct Chat"  # Añadir name al mock
+        mock_created_room.event_id = None  # Añadir event_id al mock
         mock_repo.create_room.return_value = mock_created_room
         mock_repo.get_room_by_event_id.return_value = mock_created_room
         
         # Crear el servicio y ejecutar
         chat_service = ChatService()
+        
+        # Mock del método de consolidación para evitar llamadas reales a Stream
+        def mock_consolidate_user(db, user, gym_id):
+            return f"user_{user.id}"
+        chat_service._consolidate_user_in_stream = mock_consolidate_user
         
         room_data = ChatRoomCreate(
             name="Test Direct Chat",

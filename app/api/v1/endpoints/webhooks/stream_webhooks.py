@@ -136,6 +136,7 @@ async def handle_new_message(
             return {"status": "success", "message": "System message processed"}
         
         # Intentar obtener ID interno usando formato user_X o buscar por auth0_id (legacy)
+        # También manejar migración automática si es necesario
         try:
             from app.core.stream_utils import is_internal_id_format, get_internal_id_from_stream, is_legacy_id_format
             
@@ -148,17 +149,27 @@ async def handle_new_message(
                 sender = db.query(User).filter(User.id == sender_internal_id).first()
                 if not sender:
                     logger.warning(f"Usuario con ID interno {sender_internal_id} no encontrado en la BD. Posible inconsistencia.")
-                    # Esto no debería ocurrir, pero si ocurre, registrarlo como éxito
-                    # ya que el mensaje ya está enviado en Stream
                     return {"status": "success", "message": "Message processed, user not found in DB"}
             elif is_legacy_id_format(stream_user_id):
-                # Formato legacy (auth0_id)
+                # Formato legacy (auth0_id) - intentar migración automática
                 sender = db.query(User).filter(User.auth0_id == stream_user_id).first()
                 if not sender:
-                    logger.warning(f"Usuario remitente no encontrado en la BD: {stream_user_id}")
-                    # Para mensajes normales, registramos éxito aunque no encontremos el usuario
+                    logger.warning(f"Usuario remitente legacy no encontrado en la BD: {stream_user_id}")
                     return {"status": "success", "message": "Message processed, legacy user not found"}
+                
                 sender_internal_id = sender.id
+                
+                # MIGRACIÓN AUTOMÁTICA: Migrar usuario legacy automáticamente
+                logger.info(f"🔄 Detectado usuario legacy {stream_user_id}, iniciando migración automática...")
+                
+                # Ejecutar migración en segundo plano para no bloquear el webhook
+                background_tasks.add_task(
+                    migrate_legacy_user_async,
+                    db,
+                    sender,
+                    stream_user_id,
+                    channel_id if 'channel_id' in locals() else None
+                )
             else:
                 logger.warning(f"Formato de ID de Stream desconocido: {stream_user_id}")
                 return {"status": "success", "message": "Message processed, unknown ID format"}
@@ -719,6 +730,58 @@ async def process_chat_commands_async(
         
     except Exception as e:
         logger.error(f"Error procesando comandos de chat: {str(e)}", exc_info=True)
+
+
+async def migrate_legacy_user_async(
+    db: Session,
+    user: User,
+    legacy_stream_id: str,
+    channel_id: str = None
+):
+    """
+    Migra un usuario legacy al nuevo formato en segundo plano.
+    
+    Esta función se ejecuta automáticamente cuando se detecta un usuario
+    con formato legacy en los webhooks de Stream.
+    """
+    try:
+        # Crear nueva sesión de DB para el hilo de background
+        from app.db.session import SessionLocal
+        async_db = SessionLocal()
+        
+        try:
+            logger.info(f"🔄 Iniciando migración automática de usuario legacy: {legacy_stream_id}")
+            
+            # Usar el servicio de chat para consolidar el usuario
+            new_stream_id = chat_service._consolidate_user_in_stream(async_db, user, None)
+            
+            logger.info(f"✅ Migración automática completada: {legacy_stream_id} → {new_stream_id}")
+            
+            # Si se proporcionó un canal específico, verificar que la migración funcionó
+            if channel_id:
+                try:
+                    # Verificar que el nuevo usuario puede acceder al canal
+                    channel = stream_client.channel("messaging", channel_id)
+                    response = channel.query(
+                        user_id=new_stream_id,
+                        messages_limit=0,
+                        watch=False,
+                        presence=False
+                    )
+                    
+                    if response and response.get("channel"):
+                        logger.info(f"✅ Verificación: usuario {new_stream_id} puede acceder a canal {channel_id}")
+                    else:
+                        logger.warning(f"⚠️ Verificación: usuario {new_stream_id} NO puede acceder a canal {channel_id}")
+                        
+                except Exception as verify_error:
+                    logger.warning(f"⚠️ Error verificando acceso al canal después de migración: {str(verify_error)}")
+            
+        finally:
+            async_db.close()
+            
+    except Exception as e:
+        logger.error(f"❌ Error en migración automática de usuario legacy: {str(e)}", exc_info=True)
 
 
 @router.post("/stream/channel-deleted", status_code=status.HTTP_200_OK)
