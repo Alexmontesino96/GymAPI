@@ -9,8 +9,9 @@ from app.services.notification_service import notification_service
 from app.repositories.notification_repository import notification_repository
 from app.repositories.schedule import class_repository, class_session_repository, class_participation_repository
 from app.repositories.event import EventRepository
-from app.models.event import EventStatus
+from app.models.event import Event, EventStatus
 from app.models.schedule import ClassSession, ClassSessionStatus
+from app.models.chat import ChatRoom, ChatRoomStatus
 from app.services.user_stats import user_stats_service
 from app.db.redis_client import get_redis_client
 
@@ -357,7 +358,113 @@ def init_scheduler():
     _scheduler.start()
     logger.info("Scheduler started with UTC timezone - includes session completion and user stats tasks")
     
+    # Limpieza de canales de eventos expirados cada 12 horas
+    # Elimina canales Stream de eventos que terminaron hace más de 48h
+    _scheduler.add_job(
+        cleanup_expired_event_channels,
+        trigger=CronTrigger(hour='*/12', minute=0),  # Cada 12 horas
+        id='event_channels_cleanup',
+        replace_existing=True
+    )
+    
     return _scheduler
+
+
+def delete_stream_channel(channel_type: str, channel_id: str) -> bool:
+    """
+    Elimina un canal específico de Stream Chat.
+    
+    Args:
+        channel_type: Tipo del canal (ej: 'messaging')
+        channel_id: ID del canal
+        
+    Returns:
+        True si se eliminó correctamente, False en caso contrario
+    """
+    try:
+        from app.core.stream_client import stream_client
+        channel = stream_client.channel(channel_type, channel_id)
+        channel.delete()
+        logger.info(f"Successfully deleted Stream channel {channel_type}:{channel_id}")
+        return True
+    except Exception as e:
+        logger.error(f"Error deleting Stream channel {channel_type}:{channel_id}: {e}")
+        return False
+
+
+def cleanup_expired_event_channels():
+    """
+    Elimina canales de Stream Chat para eventos que terminaron hace más de 48h.
+    
+    Esta tarea:
+    1. Busca eventos con end_time > 48h atrás
+    2. Encuentra sus chat_rooms asociadas con status ACTIVE
+    3. Elimina los canales de Stream Chat
+    4. Marca las chat_rooms como CLOSED
+    """
+    logger.info("Starting cleanup of expired event channels")
+    
+    db = SessionLocal()
+    try:
+        # Calcular fecha límite (48 horas atrás)
+        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=48)
+        
+        # Buscar eventos finalizados hace más de 48h con chats activos
+        expired_events = db.query(Event).join(ChatRoom).filter(
+            Event.end_time < cutoff_time,
+            ChatRoom.event_id == Event.id,
+            ChatRoom.status == ChatRoomStatus.ACTIVE
+        ).distinct().all()
+        
+        logger.info(f"Found {len(expired_events)} events with active chats to cleanup")
+        
+        channels_cleaned = 0
+        events_processed = 0
+        
+        for event in expired_events:
+            try:
+                # Obtener todas las chat_rooms del evento
+                chat_rooms = db.query(ChatRoom).filter(
+                    ChatRoom.event_id == event.id,
+                    ChatRoom.status == ChatRoomStatus.ACTIVE
+                ).all()
+                
+                event_channels_cleaned = 0
+                
+                for chat_room in chat_rooms:
+                    try:
+                        # Eliminar canal de Stream Chat
+                        success = delete_stream_channel(
+                            chat_room.stream_channel_type,
+                            chat_room.stream_channel_id
+                        )
+                        
+                        if success:
+                            # Marcar como cerrada en nuestra DB
+                            chat_room.status = ChatRoomStatus.CLOSED
+                            chat_room.updated_at = datetime.utcnow()
+                            channels_cleaned += 1
+                            event_channels_cleaned += 1
+                        
+                    except Exception as e:
+                        logger.error(f"Failed to cleanup channel {chat_room.stream_channel_id}: {e}")
+                
+                if event_channels_cleaned > 0:
+                    events_processed += 1
+                    logger.info(f"Cleaned {event_channels_cleaned} channels for event '{event.title}' (ID: {event.id})")
+                    
+            except Exception as e:
+                logger.error(f"Error processing event {event.id}: {e}")
+        
+        db.commit()
+        logger.info(f"Expired event channels cleanup completed. Events processed: {events_processed}, Channels cleaned: {channels_cleaned}")
+        
+    except Exception as e:
+        logger.error(f"Error in cleanup_expired_event_channels: {e}")
+        db.rollback()
+    finally:
+        db.close()
+
 
 # Función para obtener el scheduler (útil para pruebas y otros módulos)
 def get_scheduler():

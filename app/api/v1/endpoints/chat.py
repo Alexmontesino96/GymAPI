@@ -34,6 +34,8 @@ from app.schemas.chat import (
     StreamMessageSend
 )
 from app.models.user import User
+from app.models.chat import ChatRoom as ChatRoomModel, ChatRoomStatus
+from app.models.event import Event
 
 router = APIRouter()
 logger = logging.getLogger("chat_api") # Initialize logger at the module level
@@ -982,4 +984,159 @@ async def get_all_user_chat_rooms(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Error obteniendo salas de chat"
+        )
+
+
+@router.post("/admin/cleanup-expired-channels", response_model=Dict[str, Any])
+async def cleanup_expired_event_channels_endpoint(
+    hours: int = Query(48, description="Horas desde finalización del evento para considerar expirado"),
+    dry_run: bool = Query(False, description="Solo mostrar canales que se eliminarían sin eliminarlos"),
+    db: Session = Depends(get_db),
+    current_gym: GymSchema = Depends(verify_gym_admin_access),
+    current_user: Auth0User = Security(auth.get_user, scopes=["resource:admin"])
+):
+    """
+    Limpieza Manual de Canales de Eventos Expirados
+    
+    Permite a los administradores limpiar manualmente los canales de Stream Chat
+    para eventos que terminaron hace más del tiempo especificado.
+    
+    Este endpoint es útil para:
+    - Limpieza manual inmediata de canales viejos
+    - Pruebas con diferentes períodos de expiración  
+    - Verificar qué canales se eliminarían antes de ejecutar
+    
+    Args:
+        hours: Número de horas desde la finalización del evento (default: 48)
+        dry_run: Si es True, solo muestra los canales sin eliminarlos (default: False)
+        current_gym_id: ID del gimnasio actual (automático)
+        db: Sesión de base de datos (automático)
+    
+    Returns:
+        Dict con resumen de la operación incluyendo:
+        - success: Si la operación fue exitosa
+        - events_processed: Número de eventos procesados
+        - channels_cleaned: Número de canales eliminados
+        - dry_run: Si fue una simulación
+        - details: Lista detallada de acciones
+    
+    Raises:
+        HTTPException 403: Sin permisos de administrador
+        HTTPException 500: Error interno del servidor
+    """
+    try:
+        # Importar función del scheduler
+        from app.core.scheduler import delete_stream_channel
+        from datetime import datetime, timedelta, timezone
+        
+        gym_id = current_gym.id
+        logger.info(f"Starting manual cleanup of expired event channels for gym {gym_id}")
+        logger.info(f"Parameters: hours={hours}, dry_run={dry_run}")
+        
+        # Calcular fecha límite
+        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
+        
+        # Buscar eventos expirados con chats activos en este gimnasio
+        expired_events = db.query(Event).join(ChatRoomModel).filter(
+            Event.gym_id == gym_id,  # Filtrar por gimnasio
+            Event.end_time < cutoff_time,
+            ChatRoomModel.event_id == Event.id,
+            ChatRoomModel.status == ChatRoomStatus.ACTIVE
+        ).distinct().all()
+        
+        logger.info(f"Found {len(expired_events)} expired events with active chats in gym {gym_id}")
+        
+        channels_cleaned = 0
+        events_processed = 0
+        details = []
+        errors = []
+        
+        for event in expired_events:
+            try:
+                # Obtener todas las chat_rooms del evento
+                chat_rooms = db.query(ChatRoomModel).filter(
+                    ChatRoomModel.event_id == event.id,
+                    ChatRoomModel.status == ChatRoomStatus.ACTIVE
+                ).all()
+                
+                event_channels = []
+                event_channels_cleaned = 0
+                
+                for chat_room in chat_rooms:
+                    channel_info = {
+                        "channel_id": chat_room.stream_channel_id,
+                        "channel_type": chat_room.stream_channel_type,
+                        "room_name": chat_room.name
+                    }
+                    
+                    if not dry_run:
+                        try:
+                            # Eliminar canal de Stream Chat
+                            success = delete_stream_channel(
+                                chat_room.stream_channel_type,
+                                chat_room.stream_channel_id
+                            )
+                            
+                            if success:
+                                # Marcar como cerrada en nuestra DB
+                                chat_room.status = ChatRoomStatus.CLOSED
+                                chat_room.updated_at = datetime.utcnow()
+                                channels_cleaned += 1
+                                event_channels_cleaned += 1
+                                channel_info["status"] = "deleted"
+                            else:
+                                channel_info["status"] = "failed"
+                                errors.append(f"Failed to delete channel {chat_room.stream_channel_id}")
+                                
+                        except Exception as e:
+                            channel_info["status"] = "error"
+                            channel_info["error"] = str(e)
+                            errors.append(f"Error deleting channel {chat_room.stream_channel_id}: {e}")
+                    else:
+                        channel_info["status"] = "would_delete"
+                        channels_cleaned += 1
+                        event_channels_cleaned += 1
+                    
+                    event_channels.append(channel_info)
+                
+                if event_channels_cleaned > 0 or dry_run:
+                    events_processed += 1
+                    event_detail = {
+                        "event_id": event.id,
+                        "event_title": event.title,
+                        "end_time": event.end_time.isoformat(),
+                        "channels": event_channels,
+                        "channels_processed": len(event_channels)
+                    }
+                    details.append(event_detail)
+                    
+            except Exception as e:
+                error_msg = f"Error processing event {event.id}: {e}"
+                logger.error(error_msg)
+                errors.append(error_msg)
+        
+        # Commit cambios solo si no es dry_run
+        if not dry_run:
+            db.commit()
+            logger.info(f"Manual cleanup completed. Events processed: {events_processed}, Channels cleaned: {channels_cleaned}")
+        else:
+            logger.info(f"Dry run completed. Events would be processed: {events_processed}, Channels would be cleaned: {channels_cleaned}")
+        
+        return {
+            "success": True,
+            "events_processed": events_processed,
+            "channels_cleaned": channels_cleaned,
+            "dry_run": dry_run,
+            "hours_threshold": hours,
+            "gym_id": gym_id,
+            "details": details,
+            "errors": errors if errors else None
+        }
+        
+    except Exception as e:
+        logger.error(f"Error in manual cleanup endpoint: {e}")
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error durante la limpieza de canales: {str(e)}"
         ) 
