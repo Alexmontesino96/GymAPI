@@ -264,21 +264,51 @@ async def create_session(
                 detail="Trainer not found in this gym"
             )
 
+    # Logging de entrada - mostrar datos recibidos
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    logger.info(f"📅 CREATE SESSION - Gym: {current_gym.name} (ID: {current_gym.id})")
+    logger.info(f"   Timezone del gimnasio: {current_gym.timezone}")
+    logger.info(f"   Datos recibidos del frontend:")
+    logger.info(f"     start_time: {session_data.start_time}")
+    logger.info(f"     end_time: {session_data.end_time}")
+    logger.info(f"     start_time type: {type(session_data.start_time)}")
+    logger.info(f"     start_time tzinfo: {getattr(session_data.start_time, 'tzinfo', 'No tzinfo')}")
+
     # Service handles gym_id assignment, end_time calculation, and creation
     new_session = await class_session_service.create_session(
         db, session_data=session_data, gym_id=current_gym.id, created_by_id=created_by_id, redis_client=redis_client
     )
 
+    # Logging después de crear en DB
+    logger.info(f"   Datos guardados en DB:")
+    logger.info(f"     start_time: {new_session.start_time}")
+    logger.info(f"     end_time: {new_session.end_time}")
+    logger.info(f"     start_time type: {type(new_session.start_time)}")
+    logger.info(f"     start_time tzinfo: {getattr(new_session.start_time, 'tzinfo', 'No tzinfo')}")
+
     # Poblar campos timezone para la nueva sesión
     from app.services.schedule import populate_sessions_with_timezone
     sessions_with_tz = await populate_sessions_with_timezone([new_session], current_gym.id, db)
 
-    # Convertir a esquema ClassSession
+    # Logging de la respuesta final
     from app.schemas.schedule import ClassSession
     if sessions_with_tz:
-        return ClassSession.model_validate(sessions_with_tz[0])
+        final_response = ClassSession.model_validate(sessions_with_tz[0])
+        logger.info(f"   Respuesta final al frontend:")
+        logger.info(f"     start_time: {final_response.start_time}")
+        logger.info(f"     end_time: {final_response.end_time}")
+        logger.info(f"     timezone: {final_response.timezone}")
+        logger.info(f"     start_time_local: {final_response.start_time_local}")
+        logger.info(f"     end_time_local: {final_response.end_time_local}")
+        return final_response
     else:
-        return ClassSession.model_validate(new_session)
+        final_response = ClassSession.model_validate(new_session)
+        logger.info(f"   Respuesta final al frontend (sin timezone):")
+        logger.info(f"     start_time: {final_response.start_time}")
+        logger.info(f"     end_time: {final_response.end_time}")
+        return final_response
 
 
 @router.post("/sessions/recurring", response_model=List[ClassSession])
@@ -336,6 +366,21 @@ async def create_recurring_sessions(
         HTTPException 404: Gym, Class, or Trainer not found, or class/trainer doesn't belong to gym.
         HTTPException 422: Validation error in request body.
     """
+    # Logging de entrada para sesiones recurrentes
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    logger.info(f"📅 CREATE RECURRING SESSIONS - Gym: {current_gym.name} (ID: {current_gym.id})")
+    logger.info(f"   Timezone del gimnasio: {current_gym.timezone}")
+    logger.info(f"   Datos recibidos del frontend:")
+    logger.info(f"     base_session start_time: {base_session_data.start_time}")
+    logger.info(f"     base_session end_time: {base_session_data.end_time}")
+    logger.info(f"     start_date: {start_date}")
+    logger.info(f"     end_date: {end_date}")
+    logger.info(f"     days_of_week: {days_of_week}")
+    logger.info(f"     start_time type: {type(base_session_data.start_time)}")
+    logger.info(f"     start_time tzinfo: {getattr(base_session_data.start_time, 'tzinfo', 'No tzinfo')}")
+
     # Get current user's local ID
     auth0_id = user.id
     # Use cached version
@@ -343,7 +388,7 @@ async def create_recurring_sessions(
     created_by_id = db_user.id if db_user else None
 
     # Service handles validation of class/trainer, date logic, and creation
-    return await class_session_service.create_recurring_sessions(
+    created_sessions = await class_session_service.create_recurring_sessions(
         db,
         base_session_data=base_session_data,
         start_date=start_date,
@@ -353,6 +398,38 @@ async def create_recurring_sessions(
         gym_id=current_gym.id,
         redis_client=redis_client
     )
+
+    # Logging después de crear las sesiones
+    logger.info(f"   ✅ Creadas {len(created_sessions)} sesiones recurrentes")
+    if created_sessions:
+        first_session = created_sessions[0]
+        logger.info(f"   Ejemplo - Primera sesión guardada en DB:")
+        logger.info(f"     start_time: {first_session.start_time}")
+        logger.info(f"     end_time: {first_session.end_time}")
+        logger.info(f"     start_time type: {type(first_session.start_time)}")
+        logger.info(f"     start_time tzinfo: {getattr(first_session.start_time, 'tzinfo', 'No tzinfo')}")
+
+    # Poblar campos timezone para todas las sesiones
+    from app.services.schedule import populate_sessions_with_timezone
+    sessions_with_tz = await populate_sessions_with_timezone(created_sessions, current_gym.id, db)
+
+    # Logging de la respuesta final
+    from app.schemas.schedule import ClassSession
+    if sessions_with_tz:
+        final_sessions = [ClassSession.model_validate(session_dict) for session_dict in sessions_with_tz]
+        if final_sessions:
+            logger.info(f"   Respuesta final al frontend - Ejemplo primera sesión:")
+            first_response = final_sessions[0]
+            logger.info(f"     start_time: {first_response.start_time}")
+            logger.info(f"     end_time: {first_response.end_time}")
+            logger.info(f"     timezone: {first_response.timezone}")
+            logger.info(f"     start_time_local: {first_response.start_time_local}")
+            logger.info(f"     end_time_local: {first_response.end_time_local}")
+        return final_sessions
+    else:
+        final_sessions = [ClassSession.model_validate(session) for session in created_sessions]
+        logger.info(f"   Respuesta final al frontend (sin timezone): {len(final_sessions)} sesiones")
+        return final_sessions
 
 
 @router.put("/sessions/{session_id}", response_model=ClassSession)

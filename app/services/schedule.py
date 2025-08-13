@@ -1804,11 +1804,28 @@ class ClassSessionService:
         start_time_local = obj_in_data.get("start_time")
         end_time_local = obj_in_data.get("end_time")
         
+        logger.info(f"🔄 TIMEZONE CONVERSION in create_session:")
+        logger.info(f"   Gym timezone: {gym.timezone}")
+        logger.info(f"   start_time_local (antes): {start_time_local}")
+        logger.info(f"   end_time_local (antes): {end_time_local}")
+        logger.info(f"   start_time_local type: {type(start_time_local)}")
+        logger.info(f"   start_time_local tzinfo: {getattr(start_time_local, 'tzinfo', 'No tzinfo')}")
+        
         if start_time_local and end_time_local:
             # Convertir a UTC usando la timezone del gimnasio
             from app.core.timezone_utils import convert_gym_time_to_utc
-            obj_in_data["start_time"] = convert_gym_time_to_utc(start_time_local, gym.timezone)
-            obj_in_data["end_time"] = convert_gym_time_to_utc(end_time_local, gym.timezone)
+            start_time_utc = convert_gym_time_to_utc(start_time_local, gym.timezone)
+            end_time_utc = convert_gym_time_to_utc(end_time_local, gym.timezone)
+            
+            logger.info(f"   start_time_utc (después): {start_time_utc}")
+            logger.info(f"   end_time_utc (después): {end_time_utc}")
+            logger.info(f"   start_time_utc type: {type(start_time_utc)}")
+            logger.info(f"   start_time_utc tzinfo: {getattr(start_time_utc, 'tzinfo', 'No tzinfo')}")
+            
+            obj_in_data["start_time"] = start_time_utc
+            obj_in_data["end_time"] = end_time_utc
+        else:
+            logger.warning(f"   ⚠️ start_time o end_time faltantes, no se puede convertir timezone")
         
         # Agregar ID del creador si se proporciona
         if created_by_id:
@@ -1821,6 +1838,13 @@ class ClassSessionService:
         created_session = class_session_repository.create(
             db, obj_in=ClassSessionCreate(**obj_in_data)
         )
+        
+        logger.info(f"✅ SESSION CREATED in database:")
+        logger.info(f"   Session ID: {created_session.id}")
+        logger.info(f"   start_time stored: {created_session.start_time}")
+        logger.info(f"   end_time stored: {created_session.end_time}")
+        logger.info(f"   start_time type: {type(created_session.start_time)}")
+        logger.info(f"   start_time tzinfo: {getattr(created_session.start_time, 'tzinfo', 'No tzinfo')}")
     
         # Invalidar cachés relevantes (ej. listas de sesiones futuras, por fecha, por trainer, etc.)
         await self._invalidate_session_caches(redis_client, gym_id=gym_id, trainer_id=created_session.trainer_id, class_id=created_session.class_id)
