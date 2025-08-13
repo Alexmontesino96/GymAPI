@@ -436,16 +436,19 @@ async def get_my_upcoming_classes(
     raw_results = await class_participation_service.get_member_upcoming_classes(
         db, member_id=db_user.id, skip=skip, limit=limit, gym_id=current_gym.id, redis_client=redis_client
     )
-    
-    # Serializar los resultados para evitar el error de Pydantic
+    # Poblar timezone en sesiones
+    from app.services.schedule import populate_sessions_with_timezone
+    sessions = [item["session"] for item in raw_results]
+    sessions_with_tz = await populate_sessions_with_timezone(sessions, current_gym.id, db)
+
+    # Serializar resultados con sesiones enriquecidas
     serialized_results = []
-    for item in raw_results:
+    for i, item in enumerate(raw_results):
         serialized_results.append({
             "participation": ClassParticipationSchema.model_validate(item["participation"]),
-            "session": ClassSessionSchema.model_validate(item["session"]),
+            "session": ClassSessionSchema.model_validate(sessions_with_tz[i]),
             "gym_class": ClassSchema.model_validate(item["gym_class"])
         })
-    
     return serialized_results
 
 
@@ -510,10 +513,15 @@ async def get_my_upcoming_classes_simple(
         # Calcular capacidad efectiva
         effective_capacity = session.override_capacity if session.override_capacity else gym_class.max_capacity
         
+        # Calcular hora local
+        from app.core.timezone_utils import convert_utc_to_local
+        local_dt = convert_utc_to_local(session.start_time, current_gym.timezone)
+        
         simple_results.append({
             "session_id": session.id,
             "class_name": gym_class.name,
             "start_time": session.start_time,
+            "start_time_local": local_dt.replace(tzinfo=None),
             "participation_status": participation.status.value,  # Convertir enum a string
             "room": session.room,
             "current_participants": session.current_participants,
@@ -573,16 +581,19 @@ async def get_member_upcoming_classes(
     raw_results = await class_participation_service.get_member_upcoming_classes(
         db, member_id=member_id, skip=skip, limit=limit, gym_id=current_gym.id, redis_client=redis_client
     )
-    
-    # Serializar los resultados para evitar el error de Pydantic
+    # Poblar timezone en sesiones
+    from app.services.schedule import populate_sessions_with_timezone
+    sessions = [item["session"] for item in raw_results]
+    sessions_with_tz = await populate_sessions_with_timezone(sessions, current_gym.id, db)
+
+    # Serializar resultados con sesiones enriquecidas
     serialized_results = []
-    for item in raw_results:
+    for i, item in enumerate(raw_results):
         serialized_results.append({
             "participation": ClassParticipationSchema.model_validate(item["participation"]),
-            "session": ClassSessionSchema.model_validate(item["session"]),
+            "session": ClassSessionSchema.model_validate(sessions_with_tz[i]),
             "gym_class": ClassSchema.model_validate(item["gym_class"])
         })
-    
     return serialized_results
 
 
@@ -729,16 +740,18 @@ async def get_member_attendance_history(
     )
     
     # Formatear la respuesta usando la función importada
+    # Poblar timezone en sesiones del historial
+    from app.services.schedule import populate_sessions_with_timezone
+    sessions = [item["session"] for item in history]
+    sessions_with_tz = await populate_sessions_with_timezone(sessions, current_gym.id, db)
     result = []
-    for item in history:
+    for i, item in enumerate(history):
         participation = item["participation"]
-        session = item["session"]
         gym_class = item["gym_class"]
-        
+        # Usar sesión enriquecida
         result.append(
-            format_participation_with_session_info(participation, session, gym_class)
+            format_participation_with_session_info(participation, ClassSessionSchema.model_validate(sessions_with_tz[i]), gym_class)
         )
-    
     return result
 
 @router.get("/my-history", response_model=List[ParticipationWithSessionInfo])
@@ -873,16 +886,17 @@ async def get_my_attendance_history(
     )
     
     # Formatear la respuesta usando la función importada
+    # Poblar timezone en sesiones del historial
+    from app.services.schedule import populate_sessions_with_timezone
+    sessions = [item["session"] for item in history]
+    sessions_with_tz = await populate_sessions_with_timezone(sessions, current_gym.id, db)
     result = []
-    for item in history:
+    for i, item in enumerate(history):
         participation = item["participation"]
-        session = item["session"]
         gym_class = item["gym_class"]
-        
         result.append(
-            format_participation_with_session_info(participation, session, gym_class)
+            format_participation_with_session_info(participation, ClassSessionSchema.model_validate(sessions_with_tz[i]), gym_class)
         )
-    
     return result
 
 

@@ -2939,7 +2939,8 @@ class ClassParticipationService:
         """
         Consulta directa a BD para obtener clases próximas del usuario (método privado).
         """
-        now = datetime.utcnow()
+        from datetime import timezone
+        now = datetime.now(timezone.utc)
         
         # Get the member's upcoming registrations where start_time > now
         upcoming_participations = (

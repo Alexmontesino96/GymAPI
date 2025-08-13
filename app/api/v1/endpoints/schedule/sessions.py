@@ -572,10 +572,12 @@ async def get_sessions_by_date_range(
         gym_id=current_gym.id,
         redis_client=redis_client
     )
+    # Poblar campos timezone en bloque
+    from app.services.schedule import populate_sessions_with_timezone
+    sessions_with_tz = await populate_sessions_with_timezone(sessions, current_gym.id, db)
 
     results: List[SessionWithClass] = []
-    for sess in sessions:
-        # obtener clase asociada (puede venir de caché)
+    for i, sess in enumerate(sessions):
         try:
             class_obj = await class_service.get_class(
                 db,
@@ -586,7 +588,7 @@ async def get_sessions_by_date_range(
         except Exception:
             class_obj = None
 
-        session_schema = ClassSession.model_validate(sess)
+        session_schema = ClassSession.model_validate(sessions_with_tz[i])
         class_schema = Class.model_validate(class_obj) if class_obj else None
         results.append(SessionWithClass(session=session_schema, class_info=class_schema))
 
@@ -762,7 +764,7 @@ async def get_trainer_sessions(
             detail="Trainer not found in this gym"
         )
 
-    return await class_session_service.get_sessions_by_trainer(
+    base = await class_session_service.get_sessions_by_trainer(
         db,
         trainer_id=trainer_id,
         skip=skip,
@@ -771,6 +773,11 @@ async def get_trainer_sessions(
         gym_id=current_gym.id,
         redis_client=redis_client
     )
+    # Poblar timezone
+    from app.services.schedule import populate_sessions_with_timezone
+    sessions_with_tz = await populate_sessions_with_timezone(base, current_gym.id, db)
+    from app.schemas.schedule import ClassSession
+    return [ClassSession.model_validate(s) for s in sessions_with_tz]
 
 
 @router.get("/my-sessions", response_model=List[ClassSession])
