@@ -50,12 +50,52 @@ from app.schemas.schedule import ClassCategoryCustom as ClassCategoryCustomSchem
 from app.schemas.schedule import Class as ClassSchema # Añadir importación para Class
 from app.schemas.schedule import ClassSession as ClassSessionSchema # Añadir importación para ClassSession
 from app.schemas.schedule import ClassParticipation as ClassParticipationSchema # Añadir importación para ClassParticipation
-from app.core.timezone_utils import is_session_in_future, get_current_time_in_gym_timezone
+from app.core.timezone_utils import is_session_in_future, get_current_time_in_gym_timezone, populate_session_timezone_fields
 # --- Fin importaciones Caché --- 
 
 # --- Añadir logger ---
 logger = logging.getLogger(__name__)
 # --- Fin Logger ---
+
+async def populate_sessions_with_timezone(sessions: List[Any], gym_id: int, db: Session) -> List[dict]:
+    """
+    Puebla los campos timezone para una lista de sesiones.
+    
+    Args:
+        sessions: Lista de sesiones (modelos SQLAlchemy o esquemas Pydantic)
+        gym_id: ID del gimnasio
+        db: Sesión de base de datos
+        
+    Returns:
+        Lista de diccionarios con campos timezone poblados
+    """
+    if not sessions:
+        return []
+    
+    # Obtener timezone del gimnasio
+    from app.repositories.gym import gym_repository
+    gym = gym_repository.get(db, id=gym_id)
+    if not gym or not gym.timezone:
+        # Si no hay timezone definido, usar UTC como fallback
+        gym_timezone = "UTC"
+    else:
+        gym_timezone = gym.timezone
+    
+    result = []
+    for session in sessions:
+        # Convertir a diccionario si es un modelo SQLAlchemy
+        if hasattr(session, '__dict__'):
+            from app.schemas.schedule import ClassSession
+            session_dict = ClassSession.model_validate(session).model_dump()
+        else:
+            session_dict = session.model_dump() if hasattr(session, 'model_dump') else session
+        
+        # Poblar campos timezone
+        session_with_tz = populate_session_timezone_fields(session_dict, gym_timezone)
+        result.append(session_with_tz)
+    
+    return result
+
 
 class GymHoursService:
     # --- Añadir método helper para invalidación de caché --- 
@@ -1673,7 +1713,12 @@ class ClassSessionService:
         
         # Si no hay redis_client, usar versión sin caché
         if not redis_client:
-            return class_session_repository.get_with_availability(db, session_id=session_id)
+            raw = class_session_repository.get_with_availability(db, session_id=session_id)
+            if raw and "session" in raw:
+                session_with_tz = await populate_sessions_with_timezone([raw["session"]], gym_id, db)
+                if session_with_tz:
+                    raw["session"] = session_with_tz[0]
+            return raw
         
         cache_key = f"schedule:session:detail_with_availability:{session_id}"
         
@@ -1687,7 +1732,13 @@ class ClassSessionService:
             from app.schemas.schedule import ClassSession, Class
 
             try:
-                raw["session"] = ClassSession.model_validate(raw["session"]).model_dump()
+                # Poblar campos timezone para la sesión
+                session_with_tz = await populate_sessions_with_timezone([raw["session"]], gym_id, db)
+                if session_with_tz:
+                    raw["session"] = session_with_tz[0]
+                else:
+                    raw["session"] = ClassSession.model_validate(raw["session"]).model_dump()
+                
                 raw["class"] = Class.model_validate(raw["class"]).model_dump()
             except Exception as e:
                 logger.error(f"Error al convertir modelos a dict para caché: {e}")

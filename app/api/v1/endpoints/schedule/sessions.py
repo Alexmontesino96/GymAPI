@@ -50,9 +50,13 @@ async def get_upcoming_sessions(
         redis_client=redis_client
     )
 
+    # Poblar campos timezone para las sesiones
+    from app.services.schedule import populate_sessions_with_timezone
+    sessions_with_tz = await populate_sessions_with_timezone(upcoming, current_gym.id, db)
+
     # Para cada sesión, obtener la definición de la clase y empaquetar
     results: List[SessionWithClass] = []
-    for sess in upcoming:
+    for i, sess in enumerate(upcoming):
         try:
             class_obj = await class_service.get_class(
                 db,
@@ -63,7 +67,9 @@ async def get_upcoming_sessions(
         except Exception:
             class_obj = None
 
-        session_schema = ClassSession.model_validate(sess)
+        # Usar la sesión con timezone de nuestro array poblado
+        session_with_tz_dict = sessions_with_tz[i]
+        session_schema = ClassSession.model_validate(session_with_tz_dict)
         class_schema = Class.model_validate(class_obj) if class_obj else None
         results.append(SessionWithClass(session=session_schema, class_info=class_schema))
 
@@ -259,9 +265,20 @@ async def create_session(
             )
 
     # Service handles gym_id assignment, end_time calculation, and creation
-    return await class_session_service.create_session(
+    new_session = await class_session_service.create_session(
         db, session_data=session_data, gym_id=current_gym.id, created_by_id=created_by_id, redis_client=redis_client
     )
+
+    # Poblar campos timezone para la nueva sesión
+    from app.services.schedule import populate_sessions_with_timezone
+    sessions_with_tz = await populate_sessions_with_timezone([new_session], current_gym.id, db)
+
+    # Convertir a esquema ClassSession
+    from app.schemas.schedule import ClassSession
+    if sessions_with_tz:
+        return ClassSession.model_validate(sessions_with_tz[0])
+    else:
+        return ClassSession.model_validate(new_session)
 
 
 @router.post("/sessions/recurring", response_model=List[ClassSession])
@@ -730,7 +747,8 @@ async def get_my_sessions(
     # if not trainer_membership or trainer_membership.role != GymRoleType.TRAINER:
     #    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User is not a trainer in this gym")
 
-    return await class_session_service.get_sessions_by_trainer(
+    # Obtener sesiones del trainer
+    trainer_sessions = await class_session_service.get_sessions_by_trainer(
         db,
         trainer_id=db_user.id,
         skip=skip,
@@ -739,6 +757,14 @@ async def get_my_sessions(
         gym_id=current_gym.id,
         redis_client=redis_client
     )
+
+    # Poblar campos timezone para las sesiones
+    from app.services.schedule import populate_sessions_with_timezone
+    sessions_with_tz = await populate_sessions_with_timezone(trainer_sessions, current_gym.id, db)
+
+    # Convertir a esquemas ClassSession
+    from app.schemas.schedule import ClassSession
+    return [ClassSession.model_validate(session_dict) for session_dict in sessions_with_tz]
 
 
 @router.delete("/sessions/{session_id}", response_model=ClassSession)

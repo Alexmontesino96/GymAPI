@@ -363,9 +363,17 @@ class ClassSession(ClassSessionBase):
         """
         Los tiempos se almacenan en UTC en la BD.
         Este validator los convierte a hora local del gimnasio para la respuesta.
+        
+        Nota: Este validator se ejecuta para ambos campos, pero no puede 
+        determinar fácilmente cuál es cuál. La conversión se debe hacer 
+        manualmente en los servicios.
         """
-        # Por ahora retornamos None, se calculará en el servicio
-        return v
+        # Si ya tiene valor, devolverlo (para casos donde se establece manualmente)
+        if v is not None:
+            return v
+            
+        # Por ahora devolver None - la conversión se hace en servicios
+        return None
 
 
 class ClassSessionWithParticipations(ClassSession):

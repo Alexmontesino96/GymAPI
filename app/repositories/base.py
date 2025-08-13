@@ -81,7 +81,14 @@ class BaseRepository(Generic[ModelType, CreateSchemaType, UpdateSchemaType]):
         Returns:
             El objeto creado
         """
-        obj_in_data = jsonable_encoder(obj_in)
+        # Usar model_dump() en lugar de jsonable_encoder() para preservar datetime aware
+        if hasattr(obj_in, 'model_dump'):
+            obj_in_data = obj_in.model_dump()
+        elif hasattr(obj_in, '__dict__'):
+            obj_in_data = obj_in.__dict__.copy()
+        else:
+            # Fallback a jsonable_encoder solo si no hay otras opciones
+            obj_in_data = jsonable_encoder(obj_in)
         
         # Añadir gym_id si se proporciona y el modelo tiene ese campo
         if gym_id is not None and hasattr(self.model, "gym_id"):
