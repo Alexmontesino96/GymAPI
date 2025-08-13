@@ -454,6 +454,7 @@ class GymService:
             "phone": gym.phone,
             "email": gym.email,
             "description": gym.description,
+            "timezone": gym.timezone,  # AGREGAR el campo timezone que faltaba
             "is_active": gym.is_active,
             "created_at": gym.created_at,
             "updated_at": gym.updated_at,

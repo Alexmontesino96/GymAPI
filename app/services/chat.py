@@ -763,11 +763,12 @@ class ChatService:
                     else:
                         logger.info(f"Chat directo existente validado: {db_room.id}, consultado por user_id={query_stream_id}")
                         
-                        # Preparar datos de respuesta
+                        # Preparar datos de respuesta incluyendo el nombre
                         result = {
                             "id": db_room.id,
                             "stream_channel_id": db_room.stream_channel_id,
                             "stream_channel_type": db_room.stream_channel_type,
+                            "name": db_room.name,  # INCLUIR el nombre del chat room
                             "is_direct": True,
                             "members": response.get("members", []),
                             "created_at": db_room.created_at
@@ -815,7 +816,7 @@ class ChatService:
             
             user1_data = {
                 "id": safe_user1_id,
-                "name": safe_user1_id[:20],  # Limitar longitud del nombre
+                "name": self._get_display_name_for_user(user1),
             }
             if user1_teams:
                 user1_data["teams"] = user1_teams
@@ -830,7 +831,7 @@ class ChatService:
             
             user2_data = {
                 "id": safe_user2_id,
-                "name": safe_user2_id[:20],  # Limitar longitud del nombre
+                "name": self._get_display_name_for_user(user2),
             }
             if user2_teams:
                 user2_data["teams"] = user2_teams
@@ -849,8 +850,12 @@ class ChatService:
         short_user1_id = safe_user1_id[:15] if len(safe_user1_id) > 15 else safe_user1_id
         short_user2_id = safe_user2_id[:15] if len(safe_user2_id) > 15 else safe_user2_id
         
-        # Crear nombre corto para el chat
-        chat_name = f"Chat {short_user1_id}-{short_user2_id}"
+        # Generar nombre del chat usando nombres reales de usuario
+        user1_name = self._get_display_name_for_user(user1)
+        user2_name = self._get_display_name_for_user(user2)
+        chat_name = f"Chat {user1_name} - {user2_name}"
+        
+        logger.info(f"[DEBUG-DIRECT] Generando nombre de chat: '{chat_name}' para usuarios {user1_id} y {user2_id}")
         
         # Crear el objeto de datos con IDs internos
         room_data = ChatRoomCreate(
@@ -962,11 +967,12 @@ class ChatService:
                             logger.warning(f"[DEBUG] No se pudo añadir miembro al canal: {e}")
                             # Continuar aunque falle la adición del miembro
                     
-                    # Preparar respuesta
+                    # Preparar respuesta incluyendo el nombre
                     result = {
                         "id": db_room.id,
                         "stream_channel_id": db_room.stream_channel_id,
                         "stream_channel_type": db_room.stream_channel_type,
+                        "name": db_room.name,  # INCLUIR el nombre del chat room
                         "event_id": event_id,
                         "members": members,
                         "created_at": db_room.created_at
