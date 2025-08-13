@@ -1,45 +1,44 @@
 # Repository Guidelines
 
-## Project Structure & Module Organization
-- `app/api/v1/`: FastAPI routers (versioned endpoints)
-- `app/models/`: SQLAlchemy models; `app/schemas/`: Pydantic DTOs
-- `app/repositories/`: DB access; `app/services/`: business logic
-- `app/core/`: config, logging, scheduler; `app/middleware/`: cross‑cutting concerns
-- `app/db/`: DB helpers; `app/webhooks/` and `app/utils/`: integrations/utilities
-- Root: `main.py` (dev entry), `tests/` (pytest suite), `migrations/` + `alembic.ini`, `Dockerfile`, `docker-compose.yml`, `scripts/`
+## Overview
+Welcome! This guide explains how to work effectively in this repository. It covers structure, common commands, coding style, testing, and pull request expectations. Please keep changes focused, documented, and small whenever possible.
 
-## Build, Run, and Dev Commands
-- Install deps (Python 3.11):
-  - `python -m venv env && source env/bin/activate`
-  - `pip install -r requirements.txt`
-- Initialize DB:
-  - `python -m app.create_tables` (quick start) or `alembic upgrade head`
-- Run locally (auto-reload):
-  - `uvicorn main:app --reload` (serves at `http://localhost:8000/api/v1/docs`)
-- Docker (app + Postgres + Redis):
-  - `docker compose up --build`
+## Repository Structure
+- `app/`: FastAPI app modules (API, services, repositories, models, schemas).
+- `app/api/v1/`: Versioned routes and request/response schemas.
+- `app/core/`: Config, scheduling, and utilities (logging, timezones).
+- `app/repositories/`: Data access layer; keep DB logic isolated.
+- `alembic/`: Database migrations.
+- `tests/`: Unit and integration tests.
 
-## Coding Style & Naming Conventions
-- Follow PEP 8; 4‑space indentation; keep functions small and typed.
-- Naming: modules/files `snake_case`, classes `PascalCase`, functions/vars `snake_case`.
-- API: one router per domain under `app/api/v1/<domain>.py`; request/response models in `app/schemas/*`.
-- Place DB queries in `repositories/` and orchestrate logic in `services/`.
-- Prefer dependency injection via function params; avoid global state.
+## Common Commands
+- Run app: `uvicorn app.main:app --reload`
+- Lint: `ruff check .`  | Format: `ruff format .` (or `black .` if configured)
+- Type check: `mypy .`
+- Tests: `pytest -q`  | Single test: `pytest tests/test_x.py::TestCase::test_y`
+- Migrations: `alembic revision --autogenerate -m "msg" && alembic upgrade head`
 
-## Testing Guidelines
-- Framework: pytest. Structure mirrors app modules under `tests/`.
-- Run all tests: `pytest -v tests/` or `./tests.sh`
-- Example single test: `pytest tests/schedule/test_fixed_session.py -q`
-- Functional smoke with real token: `python tests/functional_test.py --token "<JWT>"`
-- Add tests for new endpoints/services; cover success + error paths.
+## Style Conventions
+- Python 3.10+; prefer type hints everywhere.
+- Time handling: store UTC in DB, convert at edges; always use timezone-aware `datetime`.
+- Naming: modules/symbols are snake_case; classes are PascalCase; constants UPPER_CASE.
+- Errors: raise domain-specific exceptions in services; return safe messages from API.
+- Keep functions small; avoid side effects in repositories.
 
-## Commit & Pull Request Guidelines
-- Conventional commits (Spanish), e.g.: `feat: …`, `fix: …`, `refactor: …` as seen in history.
-- PRs must include: clear description, linked issue, testing notes (pytest output or curl examples), and any DB migration steps (`alembic revision --autogenerate && alembic upgrade head`).
-- Ensure no secrets are committed and CI/tests pass locally.
+## Testing
+- Add tests with every behavior change; cover success, edge, and failure paths.
+- For time-sensitive code, freeze time with `freezegun` or helper fixtures.
+- Avoid network and real DB in unit tests; use factories and fakes.
 
-## Security & Configuration Tips
-- Copy `.env.example` to `.env`; set `DATABASE_URL`, `REDIS_URL`, Auth0, Stream, Stripe keys. Never commit secrets.
-- Use `DEBUG_MODE=True` only locally. Validate CORS and rate limiting in `app/main.py`.
-- Rotate tokens/keys when sharing logs; avoid printing full Bearer tokens.
+## Pull Requests
+- Include a clear summary, rationale, and screenshots/logs when relevant.
+- Checklist: updated tests, docs, and migrations; no linter/type errors.
+- Keep PRs under ~300 lines of diff when possible; split larger changes.
+- Reference related issues and add migration notes for deploys.
+
+## Security Tips (Optional)
+- Never log secrets; redact tokens and PII.
+- Validate and normalize all inputs at API boundaries.
+- Use least-privilege DB roles; prefer parameterized queries.
+- Review third-party dependencies regularly; pin versions and scan reports.
 

@@ -127,14 +127,21 @@ class BaseRepository(Generic[ModelType, CreateSchemaType, UpdateSchemaType]):
         if gym_id is not None and hasattr(db_obj, "gym_id") and db_obj.gym_id != gym_id:
             raise ValueError(f"El objeto con ID {db_obj.id} no pertenece al gimnasio {gym_id}")
             
-        obj_data = jsonable_encoder(db_obj)
+        # Construir datos de actualización sin jsonable_encoder para preservar datetimes aware
         if isinstance(obj_in, dict):
             update_data = obj_in
+        elif hasattr(obj_in, 'model_dump'):
+            update_data = obj_in.model_dump(exclude_unset=True)
+        elif hasattr(obj_in, '__dict__'):
+            update_data = {k: v for k, v in obj_in.__dict__.items() if v is not None}
         else:
-            update_data = jsonable_encoder(obj_in, exclude_unset=True)
-        for field in obj_data:
-            if field in update_data:
-                setattr(db_obj, field, update_data[field])
+            # Fallback mínimo (evitar convertir datetimes a strings)
+            update_data = obj_in
+
+        # Aplicar solo campos presentes en update_data
+        for field, value in update_data.items():
+            if hasattr(db_obj, field):
+                setattr(db_obj, field, value)
         db.add(db_obj)
         db.commit()
         db.refresh(db_obj)

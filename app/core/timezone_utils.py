@@ -40,6 +40,27 @@ def convert_gym_time_to_utc(naive_dt: datetime, gym_timezone: str) -> datetime:
     return gym_aware.astimezone(timezone.utc)
 
 
+def normalize_to_utc(dt: datetime, gym_timezone: str) -> datetime:
+    """
+    Normaliza un datetime a UTC manejando entradas naive o aware.
+
+    - Si `dt` es naive, se interpreta en la timezone del gimnasio y se convierte a UTC.
+    - Si `dt` es aware, se convierte directamente a UTC preservando la hora exacta.
+
+    Args:
+        dt: datetime a normalizar
+        gym_timezone: zona horaria del gimnasio
+
+    Returns:
+        datetime aware en UTC
+    """
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return convert_gym_time_to_utc(dt, gym_timezone)
+    return dt.astimezone(timezone.utc)
+
+
 def get_current_time_in_gym_timezone(gym_timezone: str) -> datetime:
     """
     Obtiene la hora actual en la zona horaria del gimnasio.
@@ -58,17 +79,15 @@ def get_current_time_in_gym_timezone(gym_timezone: str) -> datetime:
 def is_session_in_future(session_start_time: datetime, gym_timezone: str) -> bool:
     """
     Verifica si una sesión está en el futuro considerando la zona horaria del gimnasio.
-    
-    Args:
-        session_start_time: Hora de inicio de la sesión (datetime naive = hora local del gym)
-        gym_timezone: Zona horaria del gimnasio
-        
-    Returns:
-        True si la sesión está en el futuro
+
+    Acepta tanto datetimes naive (interpretados en la zona del gimnasio) como aware.
+    Si es aware, se convierte a la zona del gimnasio antes de comparar.
     """
     current_time_gym = get_current_time_in_gym_timezone(gym_timezone)
-    session_aware = convert_naive_to_gym_timezone(session_start_time, gym_timezone)
-    
+    if session_start_time.tzinfo is None:
+        session_aware = convert_naive_to_gym_timezone(session_start_time, gym_timezone)
+    else:
+        session_aware = convert_utc_to_local(session_start_time, gym_timezone)
     return session_aware > current_time_gym
 
 

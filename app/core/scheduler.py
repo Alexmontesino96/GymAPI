@@ -29,9 +29,10 @@ def send_class_reminders():
     with SessionLocal() as db:
         try:
             # Calcular ventana de tiempo para clases próximas
-            # (Clases que comienzan entre 1:45 y 2:15 horas desde ahora)
-            start_window = datetime.now() + timedelta(hours=1, minutes=45)
-            end_window = datetime.now() + timedelta(hours=2, minutes=15)
+            # (Clases que comienzan entre 1:45 y 2:15 horas desde ahora, en UTC)
+            now_utc = datetime.now(timezone.utc)
+            start_window = now_utc + timedelta(hours=1, minutes=45)
+            end_window = now_utc + timedelta(hours=2, minutes=15)
             
             # Obtener sesiones en ese rango
             upcoming_sessions = class_session_repository.get_by_date_range(
@@ -41,7 +42,7 @@ def send_class_reminders():
             logger.info(f"Found {len(upcoming_sessions)} upcoming sessions for reminders")
             
             for session in upcoming_sessions:
-                if session.status != "scheduled":
+                if session.status != ClassSessionStatus.SCHEDULED:
                     continue  # Ignorar sesiones canceladas
                 
                 # Obtener la clase
@@ -49,7 +50,7 @@ def send_class_reminders():
                 
                 # Obtener participantes
                 participants = class_participation_repository.get_by_session(db, session_id=session.id)
-                user_ids = [p.user_id for p in participants]
+                user_ids = [p.member_id for p in participants]
                 
                 if not user_ids:
                     continue

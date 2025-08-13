@@ -155,9 +155,11 @@ class GymHoursService:
             day: Día de la semana (0=Lunes, 6=Domingo)
             gym_id: ID del gimnasio
         """
-        # Wrapper que llama a la versión cacheada con redis_client=None
-        # Esto evita duplicar código y mantiene compatibilidad con código existente
-        return asyncio.run(self.get_gym_hours_by_day_cached(db, day, gym_id, redis_client=None))
+        # Implementación directa sin caché para evitar asyncio.run en contextos async
+        result = gym_hours_repository.get_by_day(db, day=day, gym_id=gym_id)
+        if not result:
+            result = gym_hours_repository.get_or_create_default(db, day=day, gym_id=gym_id)
+        return result
     
     async def get_gym_hours_by_day_cached(self, db: Session, day: int, gym_id: int, redis_client: Optional[Redis] = None) -> Any:
         """
@@ -215,8 +217,16 @@ class GymHoursService:
             db: Sesión de base de datos
             gym_id: ID del gimnasio
         """
-        # Wrapper que llama a la versión cacheada con redis_client=None
-        return asyncio.run(self.get_all_gym_hours_cached(db, gym_id, redis_client=None))
+        # Implementación directa sin caché para evitar asyncio.run en contextos async
+        result = gym_hours_repository.get_all_days(db, gym_id=gym_id)
+        if len(result) < 7:
+            existing_days = {hour.day_of_week for hour in result}
+            for day in range(7):
+                if day not in existing_days:
+                    new_day = gym_hours_repository.get_or_create_default(db, day=day, gym_id=gym_id)
+                    result.append(new_day)
+            result.sort(key=lambda x: x.day_of_week)
+        return result
     
     async def get_all_gym_hours_cached(self, db: Session, gym_id: int, redis_client: Optional[Redis] = None) -> List[Any]:
         """
@@ -364,8 +374,53 @@ class GymHoursService:
             date_value: Fecha a consultar
             gym_id: ID del gimnasio
         """
-        # Wrapper que llama a la versión cacheada con redis_client=None
-        return asyncio.run(self.get_hours_for_date_cached(db, date_value, gym_id, redis_client=None))
+        # Implementación directa sin caché para evitar asyncio.run en contextos async
+        special_hours = gym_special_hours_repository.get_by_date(db, date_value=date_value, gym_id=gym_id)
+        day_of_week = date_value.weekday()
+        regular_hours = gym_hours_repository.get_by_day(db, day=day_of_week, gym_id=gym_id)
+        if not regular_hours:
+            regular_hours = gym_hours_repository.get_or_create_default(db, day=day_of_week, gym_id=gym_id)
+
+        result = {
+            "date": date_value,
+            "day_of_week": day_of_week,
+            "regular_hours": {
+                "id": regular_hours.id,
+                "open_time": regular_hours.open_time,
+                "close_time": regular_hours.close_time,
+                "is_closed": regular_hours.is_closed
+            },
+            "special_hours": None,
+            "is_special": special_hours is not None
+        }
+
+        if special_hours:
+            result["special_hours"] = {
+                "id": special_hours.id,
+                "open_time": special_hours.open_time,
+                "close_time": special_hours.close_time,
+                "is_closed": special_hours.is_closed,
+                "description": special_hours.description
+            }
+
+        if special_hours:
+            result["effective_hours"] = {
+                "open_time": special_hours.open_time,
+                "close_time": special_hours.close_time,
+                "is_closed": special_hours.is_closed,
+                "source": "special",
+                "source_id": special_hours.id
+            }
+        else:
+            result["effective_hours"] = {
+                "open_time": regular_hours.open_time,
+                "close_time": regular_hours.close_time,
+                "is_closed": regular_hours.is_closed,
+                "source": "regular",
+                "source_id": regular_hours.id
+            }
+
+        return result
     
     async def get_hours_for_date_cached(self, db: Session, date_value: date, gym_id: int, redis_client: Optional[Redis] = None) -> Dict[str, Any]:
         """
@@ -527,8 +582,53 @@ class GymHoursService:
             date_value: Fecha a consultar
             gym_id: ID del gimnasio
         """
-        # Wrapper que llama a la versión cacheada con redis_client=None
-        return asyncio.run(self.get_hours_for_date_cached(db, date_value, gym_id, redis_client=None))
+        # Implementación directa sin caché para evitar asyncio.run en contextos async
+        special_hours = gym_special_hours_repository.get_by_date(db, date_value=date_value, gym_id=gym_id)
+        day_of_week = date_value.weekday()
+        regular_hours = gym_hours_repository.get_by_day(db, day=day_of_week, gym_id=gym_id)
+        if not regular_hours:
+            regular_hours = gym_hours_repository.get_or_create_default(db, day=day_of_week, gym_id=gym_id)
+
+        result = {
+            "date": date_value,
+            "day_of_week": day_of_week,
+            "regular_hours": {
+                "id": regular_hours.id,
+                "open_time": regular_hours.open_time,
+                "close_time": regular_hours.close_time,
+                "is_closed": regular_hours.is_closed
+            },
+            "special_hours": None,
+            "is_special": special_hours is not None
+        }
+
+        if special_hours:
+            result["special_hours"] = {
+                "id": special_hours.id,
+                "open_time": special_hours.open_time,
+                "close_time": special_hours.close_time,
+                "is_closed": special_hours.is_closed,
+                "description": special_hours.description
+            }
+
+        if special_hours:
+            result["effective_hours"] = {
+                "open_time": special_hours.open_time,
+                "close_time": special_hours.close_time,
+                "is_closed": special_hours.is_closed,
+                "source": "special",
+                "source_id": special_hours.id
+            }
+        else:
+            result["effective_hours"] = {
+                "open_time": regular_hours.open_time,
+                "close_time": regular_hours.close_time,
+                "is_closed": regular_hours.is_closed,
+                "source": "regular",
+                "source_id": regular_hours.id
+            }
+
+        return result
 
     # Implementación interna para la versión cacheada
     async def _get_hours_for_date_internal(self, db: Session, date_value: date, gym_id: int) -> Dict[str, Any]:
@@ -612,8 +712,9 @@ class GymHoursService:
         Returns:
             Lista de objetos GymSpecialHours creados o actualizados
         """
-        # Wrapper que llama a la versión cacheada con redis_client=None
-        return asyncio.run(self.apply_defaults_to_range_cached(db, start_date, end_date, gym_id, overwrite_existing, redis_client=None))
+        # Evitar asyncio.run: asegurar horarios semanales base y no crear días especiales
+        _ = self.get_all_gym_hours(db, gym_id)
+        return []
         
     async def apply_defaults_to_range_cached(
         self, db: Session, start_date: date, end_date: date, gym_id: int, 
@@ -664,8 +765,58 @@ class GymHoursService:
             end_date: Fecha de fin
             gym_id: ID del gimnasio
         """
-        # Wrapper que llama a la versión cacheada con redis_client=None
-        return asyncio.run(self.get_schedule_for_date_range_cached(db, start_date, end_date, gym_id, redis_client=None))
+        # Implementación directa sin caché para evitar asyncio.run en contextos async
+        if end_date < start_date:
+            raise ValueError("La fecha de fin no puede ser anterior a la fecha de inicio")
+        special_hours = gym_special_hours_repository.get_by_date_range(
+            db, start_date=start_date, end_date=end_date, gym_id=gym_id
+        )
+        special_hours_dict = {str(hour.date): hour for hour in special_hours}
+        weekly_hours = self.get_all_gym_hours(db, gym_id=gym_id)
+        weekly_hours_dict = {hour.day_of_week: hour for hour in weekly_hours}
+
+        result: List[Dict[str, Any]] = []
+        current_date = start_date
+        while current_date <= end_date:
+            day_of_week = current_date.weekday()
+            date_str = str(current_date)
+            if date_str in special_hours_dict:
+                sh = special_hours_dict[date_str]
+                entry = {
+                    "date": current_date,
+                    "day_of_week": day_of_week,
+                    "open_time": sh.open_time,
+                    "close_time": sh.close_time,
+                    "is_closed": sh.is_closed,
+                    "is_special": True,
+                    "description": sh.description,
+                    "source_id": sh.id
+                }
+            else:
+                wh = weekly_hours_dict.get(day_of_week)
+                if not wh:
+                    is_closed = day_of_week == 6
+                    open_time = None if is_closed else time(9, 0)
+                    close_time = None if is_closed else time(21, 0)
+                    source_id = None
+                else:
+                    is_closed = wh.is_closed
+                    open_time = wh.open_time
+                    close_time = wh.close_time
+                    source_id = wh.id
+                entry = {
+                    "date": current_date,
+                    "day_of_week": day_of_week,
+                    "open_time": open_time,
+                    "close_time": close_time,
+                    "is_closed": is_closed,
+                    "is_special": False,
+                    "description": None,
+                    "source_id": source_id
+                }
+            result.append(entry)
+            current_date += timedelta(days=1)
+        return result
         
     async def get_schedule_for_date_range_cached(
         self, db: Session, start_date: date, end_date: date, gym_id: int, redis_client: Optional[Redis] = None
@@ -1812,10 +1963,10 @@ class ClassSessionService:
         logger.info(f"   start_time_local tzinfo: {getattr(start_time_local, 'tzinfo', 'No tzinfo')}")
         
         if start_time_local and end_time_local:
-            # Convertir a UTC usando la timezone del gimnasio
-            from app.core.timezone_utils import convert_gym_time_to_utc
-            start_time_utc = convert_gym_time_to_utc(start_time_local, gym.timezone)
-            end_time_utc = convert_gym_time_to_utc(end_time_local, gym.timezone)
+            # Normalizar a UTC: soporta input naive (hora local gym) o aware
+            from app.core.timezone_utils import normalize_to_utc
+            start_time_utc = normalize_to_utc(start_time_local, gym.timezone)
+            end_time_utc = normalize_to_utc(end_time_local, gym.timezone)
             
             logger.info(f"   start_time_utc (después): {start_time_utc}")
             logger.info(f"   end_time_utc (después): {end_time_utc}")
@@ -2017,10 +2168,10 @@ class ClassSessionService:
                     new_end_datetime = new_start_datetime + timedelta(minutes=duration_minutes)
                     session_data["end_time"] = new_end_datetime
                 
-                # Convertir tiempos a UTC antes de crear la sesión
-                from app.core.timezone_utils import convert_gym_time_to_utc
-                session_data["start_time"] = convert_gym_time_to_utc(session_data["start_time"], gym.timezone)
-                session_data["end_time"] = convert_gym_time_to_utc(session_data["end_time"], gym.timezone)
+                # Convertir/normalizar tiempos a UTC antes de crear la sesión
+                from app.core.timezone_utils import normalize_to_utc
+                session_data["start_time"] = normalize_to_utc(session_data["start_time"], gym.timezone)
+                session_data["end_time"] = normalize_to_utc(session_data["end_time"], gym.timezone)
                 
                 # Crear la sesión
                 session = class_session_repository.create(
@@ -2065,13 +2216,13 @@ class ClassSessionService:
         # Preparar datos de actualización
         update_data = session_data.model_dump(exclude_unset=True)
         
-        # Si se están actualizando los tiempos, convertir a UTC
+        # Si se están actualizando los tiempos, normalizar a UTC
         if "start_time" in update_data or "end_time" in update_data:
-            from app.core.timezone_utils import convert_gym_time_to_utc
-            if "start_time" in update_data:
-                update_data["start_time"] = convert_gym_time_to_utc(update_data["start_time"], gym.timezone)
-            if "end_time" in update_data:
-                update_data["end_time"] = convert_gym_time_to_utc(update_data["end_time"], gym.timezone)
+            from app.core.timezone_utils import normalize_to_utc
+            if "start_time" in update_data and update_data["start_time"] is not None:
+                update_data["start_time"] = normalize_to_utc(update_data["start_time"], gym.timezone)
+            if "end_time" in update_data and update_data["end_time"] is not None:
+                update_data["end_time"] = normalize_to_utc(update_data["end_time"], gym.timezone)
         
         # Actualizar en BD
         updated_session = class_session_repository.update(
@@ -2440,16 +2591,24 @@ class ClassParticipationService:
                     detail="Ya estás registrado en esta clase"
                 )
         else:
-            # Crear nueva participación
+            # Crear nueva participación con manejo de carrera por constraint único
             participation_data = {
                 "session_id": session_id,
                 "member_id": member_id,
                 "status": ClassParticipationStatus.REGISTERED,
                 "gym_id": gym_id  # Asignar el gym_id
             }
-            participation_result = class_participation_repository.create(
-                db, obj_in=participation_data
-            )
+            from sqlalchemy.exc import IntegrityError
+            try:
+                participation_result = class_participation_repository.create(
+                    db, obj_in=participation_data
+                )
+            except IntegrityError:
+                # Otro proceso registró simultáneamente; recuperar el existente
+                db.rollback()
+                participation_result = class_participation_repository.get_by_session_and_member(
+                    db, session_id=session_id, member_id=member_id, gym_id=gym_id
+                )
         
         # Actualizar contador de participantes y validar resultado
         if participation_result:

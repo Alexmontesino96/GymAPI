@@ -389,6 +389,12 @@ class ClassSessionRepository(BaseRepository[ClassSession, ClassSessionCreate, Cl
             limit: Número máximo de registros a devolver (paginación)
             gym_id: ID del gimnasio para filtrar (opcional)
         """
+        # Asegurar datetimes aware en UTC para comparaciones coherentes
+        if start_date.tzinfo is None:
+            start_date = start_date.replace(tzinfo=timezone.utc)
+        if end_date.tzinfo is None:
+            end_date = end_date.replace(tzinfo=timezone.utc)
+
         query = db.query(ClassSession).filter(
             ClassSession.start_time >= start_date,
             ClassSession.start_time <= end_date
@@ -611,7 +617,7 @@ class ClassParticipationRepository(BaseRepository[ClassParticipation, ClassParti
         
         # Actualizar el estado y la hora de asistencia
         participation.status = ClassParticipationStatus.ATTENDED
-        participation.attendance_time = datetime.now()
+        participation.attendance_time = datetime.now(timezone.utc)
         
         db.commit()
         db.refresh(participation)
@@ -654,6 +660,11 @@ class ClassParticipationRepository(BaseRepository[ClassParticipation, ClassParti
         if session_ids:
             query = query.filter(ClassParticipation.session_id.in_(session_ids))
         else:
+            # Asegurar datetimes aware (UTC) para el filtro de fechas
+            if start_date.tzinfo is None:
+                start_date = start_date.replace(tzinfo=timezone.utc)
+            if end_date.tzinfo is None:
+                end_date = end_date.replace(tzinfo=timezone.utc)
             # Si no hay session_ids específicos, filtrar por rango de fechas
             # Necesitamos hacer un join mínimo con session solo para el filtro de fechas
             query = query.join(
@@ -679,7 +690,7 @@ class ClassParticipationRepository(BaseRepository[ClassParticipation, ClassParti
         
         # Actualizar el estado, razón y hora de cancelación
         participation.status = ClassParticipationStatus.CANCELLED
-        participation.cancellation_time = datetime.now()
+        participation.cancellation_time = datetime.now(timezone.utc)
         if reason:
             participation.cancellation_reason = reason
         
