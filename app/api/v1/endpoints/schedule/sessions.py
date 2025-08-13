@@ -22,6 +22,11 @@ async def get_upcoming_sessions(
 
     Retrieves a list of upcoming (scheduled and future) class sessions for the current gym.
 
+    Timezone
+    - start_time/end_time are stored in UTC.
+    - The response populates `session.timezone` (gym TZ) and `session.start_time_local`/`end_time_local` (gym local).
+    - Clients should render the local fields or convert from UTC using the provided timezone.
+
     Args:
         skip (int, optional): Number of records to skip for pagination. Defaults to 0.
         limit (int, optional): Maximum number of records to return. Defaults to 100.
@@ -90,6 +95,11 @@ async def get_upcoming_sessions_with_timezone(
     
     Retrieves a list of upcoming class sessions with timezone information
     and their associated class details. Same format as /date-range but with timezone info.
+
+    Timezone
+    - Adds `session.gym_timezone` and `session.time_info`.
+    - `session.time_info.local_time` is the gym-local start time; `utc_time` is the UTC instant.
+    - Also includes `session.start_time_local`/`end_time_local` for convenience.
     
     Args:
         skip (int): Records to skip for pagination
@@ -550,6 +560,10 @@ async def get_sessions_by_date_range(
         user (Auth0User, optional): Authenticated user dependency. Defaults to Security(auth.get_user, scopes=["resource:read"]).
         redis_client (Redis, optional): Redis client dependency. Defaults to Depends(get_redis_client).
 
+    Timezone
+    - `start_date`/`end_date` se interpretan en la zona horaria del gimnasio.
+    - La respuesta incluye `session.timezone` y `session.start_time_local`/`end_time_local`.
+
     Permissions:
         - Requires 'read:schedules' scope.
 
@@ -623,6 +637,10 @@ async def get_sessions_by_date_range_with_timezone(
         user: Usuario autenticado
         redis_client: Cliente Redis
         
+    Timezone
+    - Igual que /date-range, pero además añade `session.gym_timezone` y `session.time_info` con
+      las representaciones local/UTC de manera explícita.
+
     Returns:
         List[SessionWithClassAndTimezone]: Sesiones con clase e información de timezone
         
@@ -696,6 +714,9 @@ async def get_trainer_sessions(
 
     Retrieves class sessions assigned to a specific trainer within the current gym.
     Can optionally filter for only upcoming sessions.
+
+    Timezone
+    - Respuesta incluye `timezone` y `start_time_local`/`end_time_local` por sesión.
 
     Args:
         trainer_id (int): The ID of the trainer whose sessions are requested.
@@ -795,6 +816,9 @@ async def get_my_sessions(
 
     Retrieves the calling user's (who must be a trainer) class sessions within the current gym.
     Can optionally filter for only upcoming sessions.
+
+    Timezone
+    - Respuesta incluye campos locales (`timezone`, `start_time_local`, `end_time_local`).
 
     Args:
         upcoming_only (bool, optional): If true, only returns sessions starting from now. Defaults to True.

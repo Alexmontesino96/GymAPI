@@ -400,6 +400,10 @@ async def get_my_upcoming_classes(
 
     Retrieves a list of upcoming class sessions the currently authenticated user is registered for.
 
+    Timezone
+    - Cada item contiene `session` con `timezone` y `start_time_local`/`end_time_local` poblados.
+    - `start_time` permanece en UTC para interoperabilidad.
+
     Args:
         skip (int, optional): Pagination skip. Defaults to 0.
         limit (int, optional): Pagination limit. Defaults to 100.
@@ -478,11 +482,16 @@ async def get_my_upcoming_classes_simple(
     Permissions:
         - Requires 'resource:read' scope
 
+    Timezone
+    - Incluye tanto `start_time` (UTC) como `start_time_local` (hora local del gimnasio) para
+      facilitar la renderización en UI simple/móvil.
+
     Returns:
         List[Dict]: Lista simple con información básica:
         - session_id: ID de la sesión (para cancelar)
         - class_name: Nombre de la clase
-        - start_time: Fecha y hora de inicio
+        - start_time: Fecha y hora de inicio (UTC)
+        - start_time_local: Fecha y hora local del gimnasio
         - participation_status: Estado de participación
         - room: Sala (si existe)
         - current_participants: Participantes actuales
@@ -643,6 +652,11 @@ async def get_member_attendance_history(
     - **skip**: Number of records to skip (default: 0, min: 0)
     - **limit**: Maximum records to return (default: 20, min: 1, max: 100)
     
+    ## Timezone
+    - Los parámetros `start_date`/`end_date` se interpretan en la zona horaria del gimnasio.
+    - Las sesiones incluidas en la respuesta se devuelven con `start_time`/`end_time` en UTC
+      y campos locales `start_time_local`/`end_time_local` para fácil renderizado.
+
     ## Response Format
     
     Returns structured participation data with comprehensive session information:
@@ -795,6 +809,11 @@ async def get_my_attendance_history(
     - **skip**: Number of records to skip (default: 0, min: 0)
     - **limit**: Maximum records to return (default: 20, min: 1, max: 100)
     
+    ## Timezone
+    - Los parámetros `start_date`/`end_date` se interpretan en la zona horaria del gimnasio.
+    - Las sesiones incluidas en la respuesta se devuelven con `start_time`/`end_time` en UTC
+      y campos locales `start_time_local`/`end_time_local` para fácil renderizado.
+
     ## Response Format
     
     Returns a structured list with comprehensive information:

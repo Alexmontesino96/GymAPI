@@ -120,6 +120,13 @@ def format_session_time_with_timezone(session_start_time: datetime, gym_timezone
 def format_session_time_from_utc(session_start_time_utc: datetime, gym_timezone: str) -> dict:
     """
     Formatea tiempo partiendo de un datetime en UTC (aware o naive tratado como UTC).
+
+    Notas de uso
+    - Si el valor proviene de la BD como naive (legacy), se asume UTC.
+    - Devuelve:
+      - local_time: datetime naive en la zona del gimnasio (para UI)
+      - iso_with_timezone: ISO 8601 con offset de la zona del gimnasio
+      - utc_time: ISO 8601 en UTC (+00:00)
     """
     if session_start_time_utc.tzinfo is None:
         utc_aware = session_start_time_utc.replace(tzinfo=timezone.utc)
