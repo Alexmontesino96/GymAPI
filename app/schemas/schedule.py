@@ -564,7 +564,7 @@ def format_session_with_timezone(session, gym_timezone: str) -> ClassSessionWith
     Returns:
         ClassSessionWithTimezone: Sesión con información de timezone
     """
-    from app.core.timezone_utils import format_session_time_with_timezone
+    from app.core.timezone_utils import format_session_time_from_utc
     
     # Convertir a dict si es un modelo de SQLAlchemy
     if hasattr(session, '__dict__'):
@@ -572,8 +572,12 @@ def format_session_with_timezone(session, gym_timezone: str) -> ClassSessionWith
     else:
         session_dict = session.model_dump() if hasattr(session, 'model_dump') else session
     
-    # Generar información de tiempo con timezone
-    time_info = format_session_time_with_timezone(session_dict['start_time'], gym_timezone)
+    # Poblar campos timezone en el dict base
+    from app.core.timezone_utils import populate_session_timezone_fields
+    session_dict = populate_session_timezone_fields(session_dict, gym_timezone)
+
+    # Generar información adicional de tiempo partiendo de UTC almacenado
+    time_info = format_session_time_from_utc(session_dict['start_time'], gym_timezone)
     
     return ClassSessionWithTimezone(
         **session_dict,

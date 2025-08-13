@@ -94,21 +94,43 @@ def is_session_in_future(session_start_time: datetime, gym_timezone: str) -> boo
 def format_session_time_with_timezone(session_start_time: datetime, gym_timezone: str) -> dict:
     """
     Formatea la hora de una sesión incluyendo información de zona horaria.
-    
-    Args:
-        session_start_time: Hora de inicio de la sesión (datetime naive)
-        gym_timezone: Zona horaria del gimnasio
-        
-    Returns:
-        Diccionario con información formateada de la hora
+
+    Compatibilidad: acepta datetime naive (tratado como hora en timezone del gimnasio)
+    o aware (cualquier tz; se convertirá a la timezone del gimnasio).
     """
-    session_aware = convert_naive_to_gym_timezone(session_start_time, gym_timezone)
-    
+    if session_start_time.tzinfo is None:
+        # Interpretar como hora local del gimnasio (modo legacy)
+        session_aware_local = convert_naive_to_gym_timezone(session_start_time, gym_timezone)
+        session_aware_utc = session_aware_local.astimezone(timezone.utc)
+        local_display = session_start_time
+    else:
+        # Convertir a hora local del gimnasio desde cualquier tz
+        session_aware_local = convert_utc_to_local(session_start_time, gym_timezone)
+        session_aware_utc = session_start_time.astimezone(timezone.utc)
+        local_display = session_aware_local.replace(tzinfo=None)
+
     return {
-        "local_time": session_start_time,  # Hora naive (como se almacena)
+        "local_time": local_display,
         "gym_timezone": gym_timezone,
-        "iso_with_timezone": session_aware.isoformat(),
-        "utc_time": session_aware.astimezone(timezone.utc).isoformat()
+        "iso_with_timezone": session_aware_local.isoformat(),
+        "utc_time": session_aware_utc.isoformat()
+    }
+
+
+def format_session_time_from_utc(session_start_time_utc: datetime, gym_timezone: str) -> dict:
+    """
+    Formatea tiempo partiendo de un datetime en UTC (aware o naive tratado como UTC).
+    """
+    if session_start_time_utc.tzinfo is None:
+        utc_aware = session_start_time_utc.replace(tzinfo=timezone.utc)
+    else:
+        utc_aware = session_start_time_utc.astimezone(timezone.utc)
+    local_aware = convert_utc_to_local(utc_aware, gym_timezone)
+    return {
+        "local_time": local_aware.replace(tzinfo=None),
+        "gym_timezone": gym_timezone,
+        "iso_with_timezone": local_aware.isoformat(),
+        "utc_time": utc_aware.isoformat()
     }
 
 
