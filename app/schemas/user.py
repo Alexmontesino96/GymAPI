@@ -245,3 +245,15 @@ class UserProfile(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# Esquema básico para búsqueda de usuarios por email
+class UserBasicInfo(BaseModel):
+    """Esquema básico con información mínima para búsqueda de usuarios."""
+    id: int
+    email: EmailStr
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+
+    class Config:
+        from_attributes = True

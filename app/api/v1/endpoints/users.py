@@ -29,7 +29,7 @@ from app.models.user import User, UserRole
 from app.models.gym import Gym
 from app.models.user_gym import UserGym, GymRoleType
 from app.services.user import user_service
-from app.schemas.user import User as UserSchema, UserCreate, UserUpdate, UserRoleUpdate, UserProfileUpdate, UserSearchParams, EmailAvailabilityCheck, UserPublicProfile, Auth0EmailChangeRequest, UserSyncFromAuth0, GymUserSummary, UserProfile
+from app.schemas.user import User as UserSchema, UserCreate, UserUpdate, UserRoleUpdate, UserProfileUpdate, UserSearchParams, EmailAvailabilityCheck, UserPublicProfile, Auth0EmailChangeRequest, UserSyncFromAuth0, GymUserSummary, UserProfile, UserBasicInfo
 from app.services.auth0_mgmt import auth0_mgmt_service
 from app.core.tenant import verify_gym_access, verify_gym_admin_access, verify_gym_trainer_access, get_current_gym, GymSchema
 from app.core.auth0_fastapi import auth, get_current_user, Auth0User
@@ -614,6 +614,79 @@ async def read_public_user_profile(
 
 
 # === Endpoints de Gestión de Gimnasio (Admins de Gym / SuperAdmins) === #
+
+@router.get("/search-by-email", response_model=UserBasicInfo, tags=["Gym Management"])
+async def search_user_by_email(
+    email: EmailStr = Query(..., description="Email del usuario a buscar"),
+    db: Session = Depends(get_db),
+    current_user: Auth0User = Security(auth.get_user, scopes=["user:read"]),
+    current_gym: GymSchema = Depends(verify_gym_admin_access)
+) -> Any:
+    """
+    [ADMIN ONLY] Busca un usuario por email que NO pertenezca al gimnasio actual.
+    
+    Este endpoint permite a administradores buscar usuarios por email 
+    que existan en la plataforma pero que NO pertenezcan al gimnasio actual,
+    para poder añadirlos posteriormente usando su ID.
+    
+    Permissions:
+        - Requiere scope "user:read"
+        - Requiere ser ADMIN u OWNER del gimnasio actual, o SUPER_ADMIN
+        
+    Args:
+        email: Email del usuario a buscar
+        db: Sesión de base de datos
+        current_user: Usuario administrador autenticado
+        current_gym: Gimnasio actual verificado
+        
+    Returns:
+        UserBasicInfo: Información básica del usuario encontrado que NO está en el gimnasio
+        
+    Raises:
+        HTTPException: 404 si el usuario no existe o ya está en el gimnasio
+    """
+    logger = logging.getLogger("user_endpoint")
+    
+    try:
+        # Buscar usuario por email
+        target_user = user_service.get_user_by_email(db, email=email)
+        if not target_user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, 
+                detail="Usuario no encontrado en la plataforma"
+            )
+        
+        # Verificar que el usuario NO pertenece al gimnasio actual
+        from app.models.user_gym import UserGym
+        membership = db.query(UserGym).filter(
+            UserGym.user_id == target_user.id,
+            UserGym.gym_id == current_gym.id
+        ).first()
+        
+        if membership:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Usuario ya pertenece a este gimnasio"
+            )
+        
+        logger.info(f"Admin {current_user.id} búsqueda por email {email} en gym {current_gym.id} - Usuario disponible para añadir: {target_user.id}")
+        
+        # Crear respuesta con información básica
+        return UserBasicInfo(
+            id=target_user.id,
+            email=target_user.email,
+            first_name=target_user.first_name,
+            last_name=target_user.last_name
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error buscando usuario por email {email} para gym {current_gym.id}: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error interno al buscar usuario por email"
+        )
 
 @router.get("/gym-users", response_model=List[GymUserSummary], tags=["Gym Management"])
 async def read_gym_users(
