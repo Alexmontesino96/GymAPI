@@ -205,7 +205,72 @@ class UserService:
             
         # Si no se encuentra, crear nuevo usuario
         logger.info(f"Creando nuevo usuario local para Auth0 ID {auth0_id} con email {auth0_email}")
-        return user_repository.create_from_auth0(db, auth0_user=auth0_user)
+        new_user = user_repository.create_from_auth0(db, auth0_user=auth0_user)
+        
+        return new_user
+    
+    async def create_or_update_auth0_user_async(self, db: Session, auth0_user: Dict) -> UserModel:
+        """
+        Versión async de create_or_update_auth0_user que incluye generación de QR.
+        """
+        auth0_id = auth0_user.get("sub")
+        if not auth0_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Los datos de Auth0 no contienen un ID (sub)",
+            )
+        
+        auth0_email = auth0_user.get("email")
+        
+        user = self.get_user_by_auth0_id(db, auth0_id=auth0_id)
+        if user:
+            if auth0_email and auth0_email != user.email:
+                logger.info(f"Actualizando email del usuario {user.id} de '{user.email}' a '{auth0_email}' vía sync Auth0")
+                return user_repository.update(db, db_obj=user, obj_in={"email": auth0_email})
+            return user
+        
+        if auth0_email:
+            user = self.get_user_by_email(db, email=auth0_email)
+            if user:
+                # Encontrado por email, actualizar Auth0 ID si falta
+                if not user.auth0_id:
+                    logger.info(f"Asociando Auth0 ID {auth0_id} al usuario existente {user.id} encontrado por email {auth0_email}")
+                    updated_user = user_repository.update(db, db_obj=user, obj_in={"auth0_id": auth0_id})
+                    # Generar QR si no tiene
+                    if not updated_user.qr_code:
+                        try:
+                            from app.services.attendance import attendance_service
+                            qr_code = await attendance_service.generate_qr_code(updated_user.id)
+                            updated_user.qr_code = qr_code
+                            db.add(updated_user)
+                            db.commit()
+                            db.refresh(updated_user)
+                            logger.info(f"QR code generado para usuario existente {updated_user.id}: {qr_code}")
+                        except Exception as e:
+                            logger.error(f"Error generando QR para usuario existente {updated_user.id}: {e}")
+                    return updated_user
+                else:
+                    # Conflicto: usuario encontrado por email pero ya tiene otro Auth0 ID
+                    logger.error(f"Conflicto de sincronización Auth0: Email {auth0_email} ya está asociado al usuario {user.id} (Auth0 ID local: {user.auth0_id}), pero se intentó asociar con {auth0_id}")
+                    return user
+            
+        # Si no se encuentra, crear nuevo usuario
+        logger.info(f"Creando nuevo usuario local para Auth0 ID {auth0_id} con email {auth0_email}")
+        new_user = user_repository.create_from_auth0(db, auth0_user=auth0_user)
+        
+        # Generar código QR para el nuevo usuario
+        try:
+            from app.services.attendance import attendance_service
+            qr_code = await attendance_service.generate_qr_code(new_user.id)
+            new_user.qr_code = qr_code
+            db.add(new_user)
+            db.commit()
+            db.refresh(new_user)
+            logger.info(f"Usuario {new_user.id} creado desde Auth0 con QR code: {qr_code}")
+        except Exception as e:
+            logger.error(f"Error generando QR para nuevo usuario {new_user.id}: {e}")
+        
+        return new_user
 
     async def update_user(
         self, 

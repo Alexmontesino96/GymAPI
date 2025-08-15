@@ -148,8 +148,8 @@ async def webhook_user_created(
             logger.warning("User data not found in webhook")
             return {"message": "No user data found in notification"}
         
-        # Create or update the user in the local database
-        db_user = user_service.create_or_update_auth0_user(db, user_data)
+        # Create or update the user in the local database (with QR generation)
+        db_user = await user_service.create_or_update_auth0_user_async(db, user_data)
         
         logger.info("User synchronized by webhook", 
                    extra={"user_id": db_user.id, "email": db_user.email})

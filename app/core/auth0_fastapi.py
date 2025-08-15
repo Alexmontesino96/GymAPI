@@ -420,8 +420,8 @@ async def get_current_user(
             "email_verified": getattr(user, "email_verified", None)
         }
         
-        # Llama al servicio para crear o actualizar el usuario localmente
-        db_user = user_service.create_or_update_auth0_user(db, auth0_user_data)
+        # Llama al servicio para crear o actualizar el usuario localmente (con QR)
+        db_user = await user_service.create_or_update_auth0_user_async(db, auth0_user_data)
         
         # Opcional: Podríamos enriquecer el objeto 'user' (Auth0User)
         # con el ID interno de la BD si fuera necesario en los endpoints.

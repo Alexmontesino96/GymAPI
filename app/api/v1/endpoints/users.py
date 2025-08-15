@@ -55,7 +55,7 @@ async def get_user_profile(
     if not auth0_id:
         raise HTTPException(status_code=400, detail="Token inválido")
     user_data = {"sub": auth0_id, "email": getattr(user, "email", None)}
-    db_user = user_service.create_or_update_auth0_user(db, user_data)
+    db_user = await user_service.create_or_update_auth0_user_async(db, user_data)
     return db_user
 
 @router.put("/profile", response_model=UserSchema, tags=["Profile"])
@@ -646,6 +646,7 @@ async def search_user_by_email(
         HTTPException: 404 si el usuario no existe o ya está en el gimnasio
     """
     logger = logging.getLogger("user_endpoint")
+    logger.info(f"🔍 search-by-email endpoint llamado con email: {email}")
     
     try:
         # Buscar usuario por email
