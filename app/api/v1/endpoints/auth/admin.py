@@ -151,6 +151,16 @@ async def webhook_user_created(
         # Create or update the user in the local database (with QR generation)
         db_user = await user_service.create_or_update_auth0_user_async(db, user_data)
         
+        # Asignar rol MEMBER en Auth0 para usuarios nuevos
+        if event_type in ["user.created", "user_created"]:
+            try:
+                from app.services.auth0_sync import auth0_sync_service
+                await auth0_sync_service.update_highest_role_in_auth0(db, db_user.id)
+                logger.info(f"Rol Member asignado en Auth0 para usuario nuevo {db_user.id}")
+            except Exception as e:
+                logger.error(f"Error asignando rol en Auth0 para usuario {db_user.id}: {str(e)}")
+                # No fallar el webhook si la asignación de rol falla
+        
         logger.info("User synchronized by webhook", 
                    extra={"user_id": db_user.id, "email": db_user.email})
         
