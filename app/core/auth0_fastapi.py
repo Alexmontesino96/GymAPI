@@ -226,9 +226,25 @@ class Auth0:
                 logger.error(f"Token scope no es string, tipo: {type(token_scope_str)}")
                 raise Auth0UnauthorizedException(detail='Token "scope" field must be a string')
             
-            # Comprobar también en permissions (como array)
+            # Buscar permisos en custom claims del Action
             token_permissions = payload.get('permissions', [])
-            logger.info(f"Token permissions: {token_permissions}")
+            logger.info(f"Token permissions (campo estándar): {token_permissions}")
+            
+            # Si no hay permisos en campo estándar, buscar en custom claims del Action
+            if not token_permissions:
+                token_permissions = payload.get('https://gymapi/permissions', [])
+                logger.info(f"Token permissions (custom claim namespace): {token_permissions}")
+            
+            # Si aún no hay permisos, intentar extraer del campo personalizado sin namespace
+            if not token_permissions:
+                # Buscar otros posibles custom claims de permisos
+                for key in payload.keys():
+                    if 'permissions' in key.lower() and isinstance(payload[key], list):
+                        token_permissions = payload[key]
+                        logger.info(f"Token permissions encontrados en {key}: {token_permissions}")
+                        break
+            
+            logger.info(f"Token permissions finales: {token_permissions}")
             
             # Si la JWT contiene alguna información del usuario
             if isinstance(token_permissions, list):
@@ -311,6 +327,9 @@ class Auth0:
                 payload_with_data['name'] = name
             if picture:
                 payload_with_data['picture'] = picture
+            # Asegurar que los permisos estén en el payload
+            if token_permissions:
+                payload_with_data['permissions'] = token_permissions
             
             # Crear el objeto de usuario
             user = self.auth0_user_model(**payload_with_data)
@@ -324,6 +343,9 @@ class Auth0:
                 user.name = name
             if not hasattr(user, 'picture') or user.picture is None:
                 user.picture = picture
+            # Asegurar que los permisos estén asignados al objeto user
+            if not hasattr(user, 'permissions') or user.permissions is None:
+                user.permissions = token_permissions
 
             if self.email_auto_error and not user.email:
                 raise Auth0UnauthorizedException(detail=f'Missing email claim (check auth0 rule "Add email to access token")')
