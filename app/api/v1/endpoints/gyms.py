@@ -7,7 +7,8 @@ la gestión de miembros asociados a cada gimnasio.
 """
 
 from typing import Any, Dict, List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query, Security, Path, status, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Security, Path, status, Request, Body
+from pydantic import EmailStr
 from sqlalchemy.orm import Session
 from app.models.user import User, UserRole
 from app.models.gym import Gym
@@ -295,7 +296,7 @@ async def add_user_to_current_gym(
         # Actualizar caché de membresía específica
         membership_cache_key = f"user_gym_membership:{user_id}:{gym_id}"
         try:
-            await redis_client.set(membership_cache_key, user_gym.role.value, ex=settings.CACHE_TTL_USER_MEMBERSHIP)
+            await redis_client.set(membership_cache_key, user_gym.role.value, ex=get_settings().CACHE_TTL_USER_MEMBERSHIP)
             logging.info(f"Cache de membresía {membership_cache_key} actualizada a {user_gym.role.value}")
         except Exception as e:
             logging.error(f"Error al actualizar cache de membresía {membership_cache_key}: {e}")
@@ -308,6 +309,95 @@ async def add_user_to_current_gym(
     return {
         "message": "Usuario añadido al gimnasio correctamente",
         "user_id": user_id,
+        "gym_id": gym_id,
+        "role": user_gym.role.value,
+        "joined_at": user_gym.created_at
+    }
+
+
+@router.post("/users/by-email", status_code=status.HTTP_201_CREATED)
+async def add_user_to_current_gym_by_email(
+    *,
+    db: Session = Depends(get_db),
+    email: EmailStr = Body(..., title="Email del usuario a añadir"),
+    # Inyectar redis_client
+    redis_client: redis.Redis = Depends(get_redis_client), 
+    # Permite ADMIN/OWNER del gym actual (obtenido de X-Gym-ID) o SUPER_ADMIN
+    current_gym_verified: Gym = Depends(verify_admin_role), 
+) -> Any:
+    """
+    [ADMIN ONLY] Añadir un usuario al gimnasio actual por email.
+    
+    Este endpoint permite a administradores de un gimnasio añadir nuevos usuarios
+    al mismo utilizando su email. Por defecto, los usuarios añadidos son asignados como MEMBER.
+    
+    Permissions:
+        - Requiere ser ADMIN/OWNER del gimnasio actual (X-Gym-ID) o SUPER_ADMIN.
+        
+    Args:
+        db: Sesión de base de datos
+        email: Email del usuario a añadir
+        redis_client: Cliente de Redis inyectado
+        current_gym_verified: Gimnasio actual verificado.
+        
+    Returns:
+        dict: Información sobre la asociación
+        
+    Raises:
+        HTTPException: 403 si quien llama no es ADMIN/OWNER, 
+                       404 si el usuario no existe,
+                       400 si el usuario ya pertenece al gimnasio.
+    """
+    gym_id = current_gym_verified.id
+    
+    # La dependencia verify_admin_role ya verificó que el usuario tiene rol de admin en este gym.
+    
+    # Verificar que el usuario a añadir existe
+    target_user = user_service.get_user_by_email(db, email=email)
+    if not target_user:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado con ese email")
+    
+    user_id = target_user.id
+    
+    # Verificar si ya pertenece al gimnasio
+    existing_membership = gym_service.check_user_in_gym(db, user_id=user_id, gym_id=gym_id)
+    if existing_membership:
+        raise HTTPException(
+            status_code=400,
+            detail=f"El usuario ya pertenece al gimnasio con rol {existing_membership.role.value}"
+        )
+    
+    # Añadir usuario al gimnasio (ahora síncrono)
+    user_gym = gym_service.add_user_to_gym(db, gym_id=gym_id, user_id=user_id)
+    
+    # Actualizar el rol más alto en Auth0
+    from app.services.auth0_sync import auth0_sync_service
+    try:
+        await auth0_sync_service.update_highest_role_in_auth0(db, user_id)
+        logger.info(f"Rol más alto de usuario {user_id} actualizado en Auth0 después de añadirlo al gimnasio {gym_id}")
+    except Exception as e:
+        logger.error(f"Error actualizando rol en Auth0 para usuario {user_id}: {str(e)}")
+        # No falla la operación principal si la sincronización falla
+    
+    # Invalidar/Actualizar caché de membresía y roles (usando el redis_client inyectado)
+    if redis_client:
+        # Actualizar caché de membresía específica
+        membership_cache_key = f"user_gym_membership:{user_id}:{gym_id}"
+        try:
+            await redis_client.set(membership_cache_key, user_gym.role.value, ex=get_settings().CACHE_TTL_USER_MEMBERSHIP)
+            logging.info(f"Cache de membresía {membership_cache_key} actualizada a {user_gym.role.value}")
+        except Exception as e:
+            logging.error(f"Error al actualizar cache de membresía {membership_cache_key}: {e}")
+        
+        # Invalidar cachés de listados de participantes (rol global)
+        await user_service.invalidate_role_cache(redis_client, role=target_user.role, gym_id=gym_id)
+        # Invalidar caché de GymUserSummary (si existe)
+        await cache_service.delete_pattern(redis_client, f"gym:{gym_id}:users:*")
+    
+    return {
+        "message": "Usuario añadido al gimnasio correctamente",
+        "user_id": user_id,
+        "user_email": email,
         "gym_id": gym_id,
         "role": user_gym.role.value,
         "joined_at": user_gym.created_at
@@ -802,7 +892,7 @@ async def update_user_gym_role(
             await redis_client.set(
                 membership_cache_key, 
                 role_in.role.value, 
-                ex=settings.CACHE_TTL_USER_MEMBERSHIP
+                ex=get_settings().CACHE_TTL_USER_MEMBERSHIP
             )
             logging.info(f"Cache de membresía {membership_cache_key} actualizada a {role_in.role.value}")
         except Exception as e:
