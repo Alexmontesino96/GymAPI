@@ -2,24 +2,27 @@ import logging
 import sys
 import os
 from datetime import datetime
+from app.core.config import get_settings
 
 def setup_logging():
-    """Configura el logging básico para la aplicación."""
+    """Configura el logging básico para la aplicación, respetando DEBUG_MODE."""
+    settings = get_settings()
     # Obtener el logger raíz
     log = logging.getLogger()
-    log.setLevel(logging.DEBUG)  # Cambiar a DEBUG para ver todos los logs
+    level = logging.DEBUG if settings.DEBUG_MODE else logging.INFO
+    log.setLevel(level)
     
     # Asegurarse que existe el directorio de logs
     os.makedirs("logs", exist_ok=True)
     
     # Crear un handler para la consola (stdout)
     console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setLevel(logging.DEBUG)  # Mostrar todo en consola
+    console_handler.setLevel(level)
     
     # Crear un handler para archivo
     log_file = f"logs/app_{datetime.now().strftime('%Y%m%d')}.log"
     file_handler = logging.FileHandler(log_file)
-    file_handler.setLevel(logging.DEBUG)  # Guardar todo en archivo
+    file_handler.setLevel(level)
     
     # Crear un formateador más detallado
     formatter = logging.Formatter(
@@ -43,5 +46,6 @@ def setup_logging():
     logging.getLogger("uvicorn.access").setLevel(logging.INFO)
     
     # Log de confirmación
-    log.info("Configuración de logging detallado aplicada. Nivel DEBUG activado.")
-    log.debug("Logs de nivel DEBUG ahora son visibles.") 
+    log.info("Configuración de logging aplicada. Nivel %s.", logging.getLevelName(level))
+    if settings.DEBUG_MODE:
+        log.debug("Logs de nivel DEBUG habilitados (entorno de desarrollo).") 

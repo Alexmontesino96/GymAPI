@@ -103,20 +103,41 @@ async def log_requests(request: Request, call_next):
     print(f"DEBUG: log_requests middleware ejecutado para: {request.method} {request.url}") 
     # Cambiar a logger.info para mayor visibilidad estándar
     logger.info(f"Middleware: Recibida petición: {request.method} {request.url}")
-    logger.info(f"Middleware: Headers: {dict(request.headers)}")
+    # Sanitizar headers antes de loguear para evitar fuga de secretos
+    try:
+        headers_dict = dict(request.headers)
+        # Ocultar Authorization y otras cabeceras sensibles
+        auth_header = headers_dict.get("authorization") or headers_dict.get("Authorization")
+        if auth_header and isinstance(auth_header, str):
+            if auth_header.startswith("Bearer "):
+                token = auth_header[7:]
+                masked = f"Bearer ****{token[-6:]}" if len(token) > 6 else "Bearer ****"
+            else:
+                masked = "***masked***"
+            headers_dict["authorization"] = masked
+        # Enmascarar posibles secretos adicionales
+        for key in ["x-auth0-webhook-secret", "cookie"]:
+            if key in headers_dict:
+                headers_dict[key] = "***masked***"
+        logger.info(f"Middleware: Headers: {headers_dict}")
+    except Exception:
+        logger.info("Middleware: Headers: <no disponibles>")
     
     # 🔍 LOGGING ESPECÍFICO PARA TOKENS BEARER COMPLETOS
     auth_header = request.headers.get("authorization", "")
     if auth_header:
         if auth_header.startswith("Bearer "):
-            # Extraer el token completo
-            token = auth_header[7:]  # Remover "Bearer "
-            logger.info(f"🔑 TOKEN LENGTH: {len(token)} caracteres")
-            logger.info(f"🔑 TOKEN PREVIEW: {token[:20]}***")
+            token = auth_header[7:]
+            # Solo en DEBUG loguear longitud, siempre enmascarado
+            if settings_instance.DEBUG_MODE:
+                logger.debug(f"🔑 TOKEN LENGTH: {len(token)} caracteres")
+                logger.debug("🔑 TOKEN PREVIEW: ****%s", token[-6:] if len(token) > 6 else "")
         else:
-            logger.info(f"🔑 AUTH HEADER (no Bearer): {auth_header}")
+            if settings_instance.DEBUG_MODE:
+                logger.debug("🔑 AUTH HEADER presente (no Bearer)")
     else:
-        logger.info("🔑 NO AUTH HEADER presente")
+        if settings_instance.DEBUG_MODE:
+            logger.debug("🔑 NO AUTH HEADER presente")
     
     # El logger ya captura la IP, no es necesario extraerla aquí.
     
@@ -150,13 +171,13 @@ if settings_instance.DEBUG_MODE:  # Usar la instancia
     )
 
 # Lista de orígenes permitidos para CORS
-origins = ["*"]
+origins = settings_instance.BACKEND_CORS_ORIGINS or []
 
 # Configurar CORS para toda la aplicación
 # Asegurarse que este middleware esté DESPUÉS del de logging si quieres loguear la petición antes de CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins, # Usar la lista simplificada
+    allow_origins=origins, # Lista explícita desde settings
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

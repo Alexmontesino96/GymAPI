@@ -125,18 +125,26 @@ def get_rate_limit_for_endpoint(request: Request) -> str:
         return RATE_LIMITS["public"]
 
 def get_client_identifier(request: Request) -> str:
-    """Obtener identificador único del cliente para rate limiting"""
-    # Priorizar IP real del cliente
-    real_ip = request.headers.get("X-Real-IP")
-    if real_ip:
-        return real_ip
-    
-    # Usar X-Forwarded-For si está disponible
-    forwarded_for = request.headers.get("X-Forwarded-For")
-    if forwarded_for:
-        return forwarded_for.split(",")[0].strip()
-    
-    # Fallback a IP del cliente
+    """Obtener identificador único del cliente para rate limiting de forma segura.
+
+    - Por defecto usa la IP del socket (ASGI client).
+    - Si TRUST_PROXY_HEADERS=True, usa el primer IP de X-Forwarded-For (cliente original) cuando existe.
+    """
+    settings = get_settings()
+    try:
+        if settings.TRUST_PROXY_HEADERS:
+            # X-Forwarded-For: client, proxy1, proxy2 ... -> tomar el primero
+            fwd = request.headers.get("X-Forwarded-For") or request.headers.get("x-forwarded-for")
+            if fwd:
+                return fwd.split(",")[0].strip()
+            real_ip = request.headers.get("X-Real-IP") or request.headers.get("x-real-ip")
+            if real_ip:
+                return real_ip
+        # Fallback seguro: IP del cliente según ASGI/uvicorn
+        if request.client and request.client.host:
+            return request.client.host
+    except Exception:
+        pass
     return get_remote_address(request)
 
 # Configurar función de identificación personalizada

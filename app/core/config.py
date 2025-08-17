@@ -31,6 +31,8 @@ class Settings(BaseSettings):
     
     # Debug mode
     DEBUG_MODE: bool = os.getenv("DEBUG_MODE", "False").lower() in ("true", "1", "t")
+    # Trust proxy headers for client IP derivation (rate limiting, logs)
+    TRUST_PROXY_HEADERS: bool = os.getenv("TRUST_PROXY_HEADERS", "False").lower() in ("true", "1", "t")
     
     # CORS
     BACKEND_CORS_ORIGINS: List[AnyHttpUrl] = []
@@ -50,19 +52,19 @@ class Settings(BaseSettings):
     @field_validator("DATABASE_URL", mode="before")
     def ensure_proper_url_format(cls, v: Optional[str], info) -> str:
         """Asegura que DATABASE_URL esté en el formato correcto y use Heroku si está disponible."""
-        # Registrar el valor recibido
-        logger.info(f"DATABASE_URL recibido en validator: {v}")
+        # No loguear el valor completo por seguridad
+        logger.info("DATABASE_URL detectado en configuración")
         
         # Si hay una URL explícita, usarla
         if v:
             # Comprobar si es la URL antigua
             if 'db.ueijlkythlkqadxymzqd.supabase.co:5432' in v:
-                logger.warning(f"¡Detectada URL antigua de Supabase! Se recomienda usar el Transaction Pooler.")
+                logger.warning("Detectada URL antigua de Supabase. Se recomienda usar el Transaction Pooler.")
             
             # Asegurar formato postgresql://
             if v.startswith('postgres://'):
                 corrected = 'postgresql://' + v[len('postgres://'):]
-                logger.info(f"Corrigiendo formato de postgres:// a postgresql:// -> {corrected}")
+                logger.info("Corrigiendo formato de postgres:// a postgresql://")
                 return corrected
             return v
         
@@ -78,7 +80,7 @@ class Settings(BaseSettings):
         db_url = values.get("DATABASE_URL")
         
         # Registro explícito
-        logger.info(f"Configurando SQLALCHEMY_DATABASE_URI basado en DATABASE_URL: {db_url}")
+        logger.info("Configurando SQLALCHEMY_DATABASE_URI basado en DATABASE_URL")
         
         # SIEMPRE usar DATABASE_URL si está definido
         if db_url:
@@ -89,18 +91,18 @@ class Settings(BaseSettings):
                 return corrected_url
             elif not db_url.startswith('postgresql://'):
                 # Si no empieza con postgresql://, podría ser un formato inválido
-                logger.warning(f"DATABASE_URL tiene un formato inesperado: {db_url}")
+                logger.warning("DATABASE_URL tiene un formato inesperado")
                 # Intentar forzar el prefijo si parece una URL válida
                 if '@' in db_url and ':' in db_url and '/' in db_url:
                     corrected = f"postgresql://{db_url}"
-                    logger.info(f"Forzando prefijo postgresql:// -> {corrected}")
+                    logger.info("Forzando prefijo postgresql://")
                     return corrected
                 else:
                     # Si no se puede corregir, usar la URL de Heroku como fallback seguro
-                    logger.error(f"Formato de DATABASE_URL inválido. Usando Heroku DB URL de fallback.")
+                    logger.error("Formato de DATABASE_URL inválido. Usando Heroku DB URL de fallback.")
                     return values.get("HEROKU_DB_URL") # Usar la URL explícita de Heroku
             # Registro final de la URL que se usará
-            logger.info(f"USANDO URL final para SQLAlchemy: {db_url}")
+            logger.info("SQLAlchemy URI configurada desde DATABASE_URL")
             return db_url # Ya está en formato postgresql://
         
         # Si DATABASE_URL no está definida en .env, usar HEROKU_DB_URL
@@ -213,34 +215,32 @@ class Settings(BaseSettings):
     @field_validator("REDIS_URL", mode="before")
     def assemble_redis_connection(cls, v: Optional[str], info) -> Any:
         if isinstance(v, str):
-            # Log antes de strip
-            logger.info(f"REDIS_URL original en validator: '{v}'")
+            # No loguear valores exactos
+            logger.info("REDIS_URL detectada en configuración")
             
             # Eliminar comentarios (todo lo que sigue a #)
             if '#' in v:
                 v = v.split('#')[0]
-                logger.info(f"REDIS_URL después de eliminar comentarios: '{v}'")
+                logger.info("REDIS_URL: eliminados comentarios en configuración")
             
             # Eliminar espacios en blanco al principio y final
             v = v.strip()
-            logger.info(f"REDIS_URL después de strip en validator: '{v}'")
+            logger.info("REDIS_URL normalizada (strip aplicado)")
             
             # Verificar que REDIS_PORT y REDIS_HOST no tengan valores extraños
             values = info.data
             if 'REDIS_PORT' in values:
                 port_value = values.get('REDIS_PORT')
-                logger.info(f"REDIS_PORT en validator: '{port_value}' (tipo: {type(port_value)})")
                 if isinstance(port_value, str):
-                    logger.info(f"REDIS_PORT contiene espacios: {' ' in port_value}")
                     # Limpiar el puerto si es una cadena
                     values["REDIS_PORT"] = port_value.strip()
             
             # Si la URL es de un proveedor en la nube (rediss://) no usar componentes individuales
             if v.startswith('rediss://'):
-                logger.info(f"Usando URL segura de Redis directamente (rediss://): {v}")
+                logger.info("Usando URL segura de Redis directamente (rediss://)")
                 return v
             else:
-                logger.info(f"Usando REDIS_URL directamente: {v}")
+                logger.info("Usando REDIS_URL directamente")
                 return v
         
         values = info.data
@@ -251,11 +251,10 @@ class Settings(BaseSettings):
         
         # Asegurarse de que el puerto sea un entero
         if isinstance(port, str):
-            logger.info(f"REDIS_PORT antes de strip: '{port}', contiene espacios: {' ' in port}")
             port = int(port.strip())
             
         url = f"redis://{password_part}{host}:{port}/{db}"
-        logger.info(f"URL de Redis construida a partir de componentes: {url}")
+        logger.info("URL de Redis construida a partir de componentes")
         return url
 
     # Auth0 Management API
@@ -305,5 +304,5 @@ class Settings(BaseSettings):
 def get_settings() -> Settings:
     settings = Settings()
     # Logging final de la URL de la base de datos
-    logger.info(f"URL final de la base de datos (desde get_settings): {settings.SQLALCHEMY_DATABASE_URI}")
+    logger.info("Configuración cargada correctamente")
     return settings 

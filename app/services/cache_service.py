@@ -388,11 +388,13 @@ class CacheService:
             patterns.append(f"users:*:members:{user_id}")
             patterns.append(f"user_public_profile:{user_id}")
             patterns.append(f"user_gym_membership:{user_id}:*")
+            patterns.append(f"user_gym_membership_obj:{user_id}:*")
         else:
             # Invalidar todas las cachés de usuarios
             patterns.append("users:*")
             patterns.append("user_public_profile:*")
             patterns.append("user_gym_membership:*")
+            patterns.append("user_gym_membership_obj:*")
             
         for pattern in patterns:
             await CacheService.delete_pattern(redis_client, pattern)

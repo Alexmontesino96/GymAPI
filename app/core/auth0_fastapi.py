@@ -137,9 +137,15 @@ class Auth0:
 
         token = creds.credentials
         
-        # 🔍 LOGGING ESPECÍFICO PARA TOKENS BEARER COMPLETOS EN AUTH0
-        logger.info(f"🔐 AUTH0 VERIFICANDO TOKEN LENGTH: {len(token)} caracteres")
-        logger.info(f"🔐 TOKEN PREVIEW: {token[:20]}***")
+        # 🔍 LOGGING SEGURO (solo DEBUG y enmascarado)
+        try:
+            settings = get_settings()
+            if settings.DEBUG_MODE:
+                logger.debug(f"🔐 AUTH0 TOKEN LENGTH: {len(token)}")
+                suffix = token[-6:] if len(token) > 6 else ""
+                logger.debug(f"🔐 TOKEN PREVIEW: ****{suffix}")
+        except Exception:
+            pass
         
         payload: Dict = {}
         try:
