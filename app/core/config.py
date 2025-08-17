@@ -30,7 +30,7 @@ class Settings(BaseSettings):
     VERSION: str = "0.2.0"
     
     # Debug mode
-    DEBUG_MODE: bool = os.getenv("DEBUG_MODE", "False").lower() in ("true", "1", "t")
+    DEBUG_MODE: bool = os.getenv("DEBUG_MODE", "True").lower() in ("true", "1", "t")
     # Trust proxy headers for client IP derivation (rate limiting, logs)
     TRUST_PROXY_HEADERS: bool = os.getenv("TRUST_PROXY_HEADERS", "False").lower() in ("true", "1", "t")
     
