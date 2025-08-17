@@ -179,14 +179,14 @@ if settings_instance.DEBUG_MODE:  # Usar la instancia
     )
 
 # Lista de orígenes permitidos para CORS
-origins = settings_instance.BACKEND_CORS_ORIGINS or []
+origins = ["*"]
 
 # Configurar CORS para toda la aplicación
 # Asegurarse que este middleware esté DESPUÉS del de logging si quieres loguear la petición antes de CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins, # Lista explícita desde settings
-    allow_credentials=True,
+    allow_origins=origins, # Temporalmente abierto a todos los orígenes
+    allow_credentials=False, # Con wildcard no se permiten credenciales
     allow_methods=["*"],
     allow_headers=["*"],
     expose_headers=["*"],

@@ -46,80 +46,19 @@ def cleanup_expired_states():
 
 def check_rate_limit(client_ip: str) -> bool:
     """
-    Check if an IP has exceeded the request limit.
-    Returns True if the request is allowed, False if it should be blocked.
-    
-    Args:
-        client_ip: The IP address of the client
-        
-    Returns:
-        bool: Whether the request should be allowed
+    Temporalmente deshabilitado: siempre permite la solicitud.
     """
-    current_time = time.time()
-    
-    # Clean expired entries
-    expired_keys = [
-        key for key, data in rate_limit_storage.items()
-        if data["expires_at"] < current_time
-    ]
-    for key in expired_keys:
-        rate_limit_storage.pop(key, None)
-    
-    rate_limit_key = f"rate_limit:token:{client_ip}"
-    
-    # Check if IP already has a record
-    if rate_limit_key in rate_limit_storage:
-        data = rate_limit_storage[rate_limit_key]
-        count = data["count"]
-        
-        # If limit exceeded, block
-        if count >= RATE_LIMIT_MAX_REQUESTS:
-            return False
-        
-        # Increment counter
-        data["count"] += 1
-        return True
-    else:
-        # First attempt for this IP
-        rate_limit_storage[rate_limit_key] = {
-            "count": 1,
-            "expires_at": current_time + RATE_LIMIT_WINDOW
-        }
-        return True
+    return True
 
 def validate_redirect_uri(redirect_uri: str) -> bool:
     """
-    Validates that the redirect URL is in the list of allowed URLs
-    using a secure domain comparison.
-    
-    Args:
-        redirect_uri: The URI to validate
-        
-    Returns:
-        bool: Whether the URI is valid and allowed
+    Temporalmente deshabilitado: acepta cualquier redirect_uri bien formada.
     """
     if not redirect_uri:
         return False
-    
     from urllib.parse import urlparse
-    settings = get_settings()
-    
-    # Validate URL format
-    parsed_uri = urlparse(redirect_uri)
-    if not all([parsed_uri.scheme, parsed_uri.netloc]):
-        return False
-    
-    allowed_uris = settings.AUTH0_ALLOWED_REDIRECT_URIS
-    
-    # Extract domains and ports from allowed URIs
-    allowed_domains = []
-    for uri in allowed_uris:
-        parsed_allowed = urlparse(uri)
-        if parsed_allowed.netloc:
-            allowed_domains.append(parsed_allowed.netloc)
-    
-    # Verify exact match with allowed domains
-    return parsed_uri.netloc in allowed_domains
+    parsed = urlparse(redirect_uri)
+    return bool(parsed.scheme and parsed.netloc)
 
 def generate_state_param(redirect_uri: Optional[str] = None, is_api: bool = False) -> str:
     """
