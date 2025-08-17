@@ -1059,7 +1059,10 @@ class UserService:
                 }
             return None
         
-        cache_key = f"user_gym_membership:{user_id}:{gym_id}"
+        # Usar un prefijo distinto al de tenant.py para evitar colisiones de formato.
+        # tenant.py usa 'user_gym_membership:{user_id}:{gym_id}' para guardar solo el rol (string).
+        # Aquí almacenamos un objeto JSON con más campos.
+        cache_key = f"user_gym_membership_obj:{user_id}:{gym_id}"
         
         try:
             # Intentar obtener de caché primero
@@ -1069,36 +1072,44 @@ class UserService:
                 # Caché hit
                 register_cache_hit(cache_key)
                 logger.debug(f"Cache HIT para {cache_key}")
-                return json.loads(cached_data)
-            else:
-                # Caché miss
-                register_cache_miss(cache_key)
+                try:
+                    return json.loads(cached_data)
+                except Exception:
+                    # Si el contenido no es JSON válido, purgar y continuar como MISS
+                    logger.warning(f"Datos inválidos en caché para {cache_key}. Purging y reconsultando BD.")
+                    try:
+                        await redis_client.delete(cache_key)
+                    except Exception:
+                        pass
+
+            # Caché miss (o datos inválidos purgados)
+            register_cache_miss(cache_key)
+            
+            # Obtener de la BD
+            user_gym = gym_service.check_user_in_gym(db, user_id=user_id, gym_id=gym_id)
+            
+            if user_gym:
+                # Convertir a diccionario
+                membership = {
+                    "user_id": user_gym.user_id,
+                    "gym_id": user_gym.gym_id,
+                    "role": user_gym.role.value,
+                    "created_at": user_gym.created_at.isoformat() if user_gym.created_at else None
+                }
                 
-                # Obtener de la BD
-                user_gym = gym_service.check_user_in_gym(db, user_id=user_id, gym_id=gym_id)
+                # Guardar en caché
+                await redis_client.set(
+                    cache_key,
+                    json.dumps(membership),
+                    ex=300  # 5 minutos TTL
+                )
                 
-                if user_gym:
-                    # Convertir a diccionario
-                    membership = {
-                        "user_id": user_gym.user_id,
-                        "gym_id": user_gym.gym_id,
-                        "role": user_gym.role.value,
-                        "created_at": user_gym.created_at.isoformat() if user_gym.created_at else None
-                    }
-                    
-                    # Guardar en caché
-                    await redis_client.set(
-                        cache_key,
-                        json.dumps(membership),
-                        ex=300  # 5 minutos TTL
-                    )
-                    
-                    return membership
-                
-                # No existe la membresía
-                # Guardar caché negativa con TTL más corto
-                await redis_client.set(cache_key, "null", ex=60)  # 1 minuto TTL
-                return None
+                return membership
+            
+            # No existe la membresía
+            # Guardar caché negativa con TTL más corto
+            await redis_client.set(cache_key, "null", ex=60)  # 1 minuto TTL
+            return None
                 
         except Exception as e:
             logger.error(f"Error al verificar membresía cacheada user_id={user_id}, gym_id={gym_id}: {str(e)}", exc_info=True)

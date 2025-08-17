@@ -793,12 +793,12 @@ class UserStatsService:
                     db.query(ChatMember.room_id).join(
                         User, ChatMember.user_id == User.id
                     ).join(
-                        User.user_gyms
+                        User.gyms
                     ).filter(
-                        User.user_gyms.any(
+                        User.gyms.any(
                             and_(
-                                User.user_gyms.property.mapper.class_.gym_id == gym_id,
-                                User.user_gyms.property.mapper.class_.role.in_([
+                                User.gyms.property.mapper.class_.gym_id == gym_id,
+                                User.gyms.property.mapper.class_.role.in_([
                                     UserRole.TRAINER, UserRole.ADMIN
                                 ])
                             )

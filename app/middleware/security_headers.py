@@ -23,6 +23,7 @@ class SecurityHeadersMiddleware:
                 def set_header(name: str, value: str):
                     headers.append((name.encode("latin-1"), value.encode("latin-1")))
 
+                path = scope.get("path", "")
                 # Enforce HTTPS (only meaningful when served over TLS)
                 set_header("Strict-Transport-Security", "max-age=31536000; includeSubDomains; preload")
                 # Prevent clickjacking
@@ -31,13 +32,20 @@ class SecurityHeadersMiddleware:
                 set_header("X-Content-Type-Options", "nosniff")
                 # Limit referrer leakage
                 set_header("Referrer-Policy", "strict-origin-when-cross-origin")
-                # Conservative CSP for API responses
-                set_header(
-                    "Content-Security-Policy",
-                    "default-src 'none'; img-src https: data:; connect-src https:; frame-ancestors 'none'",
-                )
+                # CSP: usar una política más permisiva para Swagger/Redoc, estricta para el resto
+                if "/docs" in path or "/redoc" in path:
+                    # Permitir assets servidos por la propia app para Swagger UI
+                    set_header(
+                        "Content-Security-Policy",
+                        "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' https:; frame-ancestors 'self'",
+                    )
+                else:
+                    # Política estricta por defecto para endpoints de API
+                    set_header(
+                        "Content-Security-Policy",
+                        "default-src 'none'; img-src https: data:; connect-src https:; frame-ancestors 'none'",
+                    )
 
             await send(message)
 
         await self.app(scope, receive, send_wrapper)
-

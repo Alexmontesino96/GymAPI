@@ -405,10 +405,25 @@ class UserHealthService:
             
             # Calcular BMI si tenemos peso y altura
             if current_weight and current_height:
-                # BMI = peso(kg) / (altura(m))^2
-                height_m = current_height / 100
-                bmi = round(current_weight / (height_m ** 2), 1)
-                bmi_category = self._calculate_bmi_category(bmi)
+                # Validar rangos razonables (peso: 20-500kg, altura: 50-250cm)
+                if not (20 <= current_weight <= 500):
+                    logger.warning(f"Peso fuera de rango razonable para usuario {user_id}: {current_weight}kg")
+                    current_weight = None
+                elif not (50 <= current_height <= 250):
+                    logger.warning(f"Altura fuera de rango razonable para usuario {user_id}: {current_height}cm")
+                    current_height = None
+                else:
+                    # BMI = peso(kg) / (altura(m))^2
+                    height_m = current_height / 100
+                    calculated_bmi = round(current_weight / (height_m ** 2), 1)
+                    # Validar BMI resultante
+                    if 10 <= calculated_bmi <= 50:
+                        bmi = calculated_bmi
+                        bmi_category = self._calculate_bmi_category(bmi)
+                    else:
+                        logger.warning(f"BMI calculado fuera de rango razonable para usuario {user_id}: {calculated_bmi}")
+                        bmi = None
+                        bmi_category = None
             
             # Calcular cambio de peso en los últimos 30 días
             weight_change = self._calculate_weight_change(db, user_id, gym_id, days=30)
