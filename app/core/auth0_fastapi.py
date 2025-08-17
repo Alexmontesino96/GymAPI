@@ -101,13 +101,9 @@ class Auth0:
 
         # Volver a cargar JWKS al inicializar
         self.algorithms = ['RS256']
-        try:
-            r = urllib.request.urlopen(f'https://{domain}/.well-known/jwks.json')
-            self.jwks: JwksDict = json.loads(r.read())
-        except Exception as e:
-            logger.error(f"Failed to fetch JWKS from {domain}: {e}")
-            # Podríamos querer manejar esto más robustamente, p.ej. reintentar o fallar
-            self.jwks = {"keys": []}
+        self.jwks: JwksDict = {"keys": []}
+        self._jwks_last_refresh: float = 0.0
+        self._load_jwks(initial=True)
 
         authorization_url_qs = urllib.parse.urlencode({'audience': api_audience})
         authorization_url = f'https://{domain}/authorize?{authorization_url_qs}'
@@ -156,21 +152,18 @@ class Auth0:
 
             rsa_key = {}
             if not self.jwks or not self.jwks.get("keys"):
-                 raise Auth0UnauthenticatedException(detail='JWKS not loaded or invalid')
-                 
-            for key in self.jwks['keys']:
-                if key['kid'] == unverified_header['kid']:
-                    rsa_key = {
-                        'kty': key['kty'],
-                        'kid': key['kid'],
-                        'use': key['use'],
-                        'n': key['n'],
-                        'e': key['e']
-                    }
-                    break
+                # Intentar refrescar JWKS si no están cargadas
+                self._load_jwks()
             
+            # Buscar clave por kid
+            rsa_key = self._find_rsa_key(unverified_header['kid'])
             if not rsa_key:
-                 raise Auth0UnauthenticatedException(detail='Invalid kid header (wrong tenant or rotated public key)')
+                # Posible rotación de llaves: refrescar JWKS y reintentar una vez
+                logger.warning("KID no encontrado en JWKS actual. Intentando refrescar JWKS...")
+                self._load_jwks(force=True)
+                rsa_key = self._find_rsa_key(unverified_header['kid'])
+                if not rsa_key:
+                    raise Auth0UnauthenticatedException(detail='Invalid kid header (wrong tenant or rotated public key)')
 
             payload = jwt.decode(
                 token,
@@ -364,6 +357,42 @@ class Auth0:
                 raise Auth0UnauthorizedException(detail='Error parsing Auth0User')
             else:
                 return None
+
+    def _find_rsa_key(self, kid: str) -> Dict[str, str]:
+        """Find RSA key by kid in current JWKS."""
+        try:
+            for key in self.jwks.get('keys', []):
+                if key.get('kid') == kid:
+                    return {
+                        'kty': key['kty'],
+                        'kid': key['kid'],
+                        'use': key['use'],
+                        'n': key['n'],
+                        'e': key['e']
+                    }
+        except Exception:
+            pass
+        return {}
+
+    def _load_jwks(self, initial: bool = False, force: bool = False) -> None:
+        """Load or refresh JWKS with a small TTL and error handling."""
+        import time
+        now = time.time()
+        # Refresh at most every 10 minutes unless forced
+        if not force and not initial and (now - self._jwks_last_refresh) < 600:
+            return
+        try:
+            url = f'https://{self.domain}/.well-known/jwks.json'
+            with urllib.request.urlopen(url, timeout=5) as r:
+                self.jwks = json.loads(r.read())
+                self._jwks_last_refresh = now
+                logger.info('JWKS refreshed successfully')
+        except Exception as e:
+            # Keep previous JWKS if refresh fails
+            logger.error(f"Failed to fetch JWKS from {self.domain}: {e}")
+            if initial and not self.jwks.get('keys'):
+                # On first load, ensure structure
+                self.jwks = {"keys": []}
 
 
 def normalize_scopes(scopes: List[str]) -> List[str]:

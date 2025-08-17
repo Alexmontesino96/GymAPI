@@ -19,6 +19,7 @@ setup_logging()
 from app.api.v1.api import api_router
 from app.core.config import get_settings
 from app.middleware.timing import TimingMiddleware
+from app.middleware.security_headers import SecurityHeadersMiddleware
 from app.middleware.rate_limit import limiter, RateLimitMiddleware, custom_rate_limit_exceeded_handler
 from app.core.scheduler import init_scheduler
 from app.db.redis_client import initialize_redis_pool, close_redis_client
@@ -75,21 +76,25 @@ async def lifespan(app: FastAPI):
         logger.error(f"Lifespan: Error cerrando Redis connection pool: {e}", exc_info=True)
         print(f"Lifespan: Error al cerrar Redis connection pool: {e}")
 
+docs_url = f"{settings_instance.API_V1_STR}/docs" if settings_instance.DEBUG_MODE else None
+redoc_url = f"{settings_instance.API_V1_STR}/redoc" if settings_instance.DEBUG_MODE else None
+
+# Desactivar docs en producción
 app = FastAPI(
     title=settings_instance.PROJECT_NAME,
     description=settings_instance.PROJECT_DESCRIPTION, 
     version=settings_instance.VERSION,
     openapi_url=f"{settings_instance.API_V1_STR}/openapi.json",
-    docs_url=f"{settings_instance.API_V1_STR}/docs",
-    redoc_url=f"{settings_instance.API_V1_STR}/redoc",
+    docs_url=docs_url,
+    redoc_url=redoc_url,
     lifespan=lifespan,
-    swagger_ui_oauth2_redirect_url=f"{settings_instance.API_V1_STR}/docs/oauth2-redirect",
+    swagger_ui_oauth2_redirect_url=f"{settings_instance.API_V1_STR}/docs/oauth2-redirect" if settings_instance.DEBUG_MODE else None,
     swagger_ui_init_oauth={
         "usePkceWithAuthorizationCodeGrant": True,
         "clientId": settings_instance.AUTH0_CLIENT_ID,
         "appName": settings_instance.PROJECT_NAME,
         "scopes": "openid profile email read:users write:users delete:users read:trainer-members write:trainer-members delete:trainer-members",
-    }
+    } if settings_instance.DEBUG_MODE else None
 )
 
 # Configurar rate limiting
@@ -151,6 +156,9 @@ async def log_requests(request: Request, call_next):
 # Añadir middleware para medir el tiempo de respuesta
 # Asegurarse que este middleware esté DESPUÉS del de logging si quieres loguear antes de medir
 app.add_middleware(TimingMiddleware)
+
+# Añadir headers de seguridad para todas las respuestas HTTP
+app.add_middleware(SecurityHeadersMiddleware)
 
 # Añadir middleware de rate limiting
 app.add_middleware(RateLimitMiddleware)
