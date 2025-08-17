@@ -47,6 +47,7 @@ logger = logging.getLogger(__name__)
 
 @router.get("/profile", response_model=UserSchema, tags=["Profile"])
 async def get_user_profile(
+    request: Request,
     db: Session = Depends(get_db),
     user: Auth0User = Depends(get_current_user),
 ) -> Any:
@@ -56,7 +57,19 @@ async def get_user_profile(
         raise HTTPException(status_code=400, detail="Token inválido")
     user_data = {"sub": auth0_id, "email": getattr(user, "email", None)}
     db_user = await user_service.create_or_update_auth0_user_async(db, user_data)
-    return db_user
+
+    # Consistencia: si viene X-Gym-ID y el middleware pobló el rol del gym,
+    # incluirlo en la respuesta como gym_role.
+    try:
+        user_schema = UserSchema.model_validate(db_user)
+        role_in_gym = getattr(request.state, 'role_in_gym', None)
+        if role_in_gym:
+            from app.models.user_gym import GymRoleType
+            user_schema.gym_role = GymRoleType(role_in_gym)
+        return user_schema
+    except Exception:
+        # Fallback: devolver el modelo original si algo falla en la conversión
+        return db_user
 
 @router.put("/profile", response_model=UserSchema, tags=["Profile"])
 async def update_user_profile(
@@ -1162,5 +1175,4 @@ async def read_gym_participant_by_id(
         logger.warning(f"No se pudo asignar gym_role/role en la respuesta de usuario {user_id}: {e}")
 
     return user_data
-
 
