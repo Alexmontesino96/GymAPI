@@ -32,14 +32,8 @@ class SecurityHeadersMiddleware:
                 set_header("X-Content-Type-Options", "nosniff")
                 # Limit referrer leakage
                 set_header("Referrer-Policy", "strict-origin-when-cross-origin")
-                # CSP: usar una política más permisiva para Swagger/Redoc, estricta para el resto
-                if "/docs" in path or "/redoc" in path:
-                    # Permitir assets servidos por la propia app para Swagger UI
-                    set_header(
-                        "Content-Security-Policy",
-                        "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' https:; frame-ancestors 'self'",
-                    )
-                else:
+                # CSP: no enviar cabecera en /docs y /redoc para máxima compatibilidad
+                if not ("/docs" in path or "/redoc" in path):
                     # Política estricta por defecto para endpoints de API
                     set_header(
                         "Content-Security-Policy",
