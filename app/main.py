@@ -76,10 +76,9 @@ async def lifespan(app: FastAPI):
         logger.error(f"Lifespan: Error cerrando Redis connection pool: {e}", exc_info=True)
         print(f"Lifespan: Error al cerrar Redis connection pool: {e}")
 
-docs_url = f"{settings_instance.API_V1_STR}/docs" if settings_instance.DEBUG_MODE else None
-redoc_url = f"{settings_instance.API_V1_STR}/redoc" if settings_instance.DEBUG_MODE else None
-
-# Desactivar docs en producción
+# Habilitar docs siempre (independiente de DEBUG_MODE)
+docs_url = f"{settings_instance.API_V1_STR}/docs"
+redoc_url = f"{settings_instance.API_V1_STR}/redoc"
 app = FastAPI(
     title=settings_instance.PROJECT_NAME,
     description=settings_instance.PROJECT_DESCRIPTION, 
@@ -88,13 +87,13 @@ app = FastAPI(
     docs_url=docs_url,
     redoc_url=redoc_url,
     lifespan=lifespan,
-    swagger_ui_oauth2_redirect_url=f"{settings_instance.API_V1_STR}/docs/oauth2-redirect" if settings_instance.DEBUG_MODE else None,
+    swagger_ui_oauth2_redirect_url=f"{settings_instance.API_V1_STR}/docs/oauth2-redirect",
     swagger_ui_init_oauth={
         "usePkceWithAuthorizationCodeGrant": True,
         "clientId": settings_instance.AUTH0_CLIENT_ID,
         "appName": settings_instance.PROJECT_NAME,
         "scopes": "openid profile email read:users write:users delete:users read:trainer-members write:trainer-members delete:trainer-members",
-    } if settings_instance.DEBUG_MODE else None
+    }
 )
 
 # Configurar rate limiting
