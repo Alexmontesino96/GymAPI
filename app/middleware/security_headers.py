@@ -24,16 +24,16 @@ class SecurityHeadersMiddleware:
                     headers.append((name.encode("latin-1"), value.encode("latin-1")))
 
                 path = scope.get("path", "")
-                # Enforce HTTPS (only meaningful when served over TLS)
-                set_header("Strict-Transport-Security", "max-age=31536000; includeSubDomains; preload")
-                # Prevent clickjacking
-                set_header("X-Frame-Options", "DENY")
-                # Prevent MIME sniffing
-                set_header("X-Content-Type-Options", "nosniff")
-                # Limit referrer leakage
-                set_header("Referrer-Policy", "strict-origin-when-cross-origin")
-                # CSP: no enviar cabecera en /docs y /redoc para máxima compatibilidad
+                # No añadir NINGÚN header de seguridad en /docs y /redoc para máxima compatibilidad
                 if not ("/docs" in path or "/redoc" in path):
+                    # Enforce HTTPS (only meaningful when served over TLS)
+                    set_header("Strict-Transport-Security", "max-age=31536000; includeSubDomains; preload")
+                    # Prevent clickjacking
+                    set_header("X-Frame-Options", "DENY")
+                    # Prevent MIME sniffing
+                    set_header("X-Content-Type-Options", "nosniff")
+                    # Limit referrer leakage
+                    set_header("Referrer-Policy", "strict-origin-when-cross-origin")
                     # Política estricta por defecto para endpoints de API
                     set_header(
                         "Content-Security-Policy",
