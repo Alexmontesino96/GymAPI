@@ -162,6 +162,19 @@ async def create_event(
         # Si falla la consulta del rol, solo loggeamos el error sin interrumpir
         logger.error(f"Error verificando rol de entrenador para auto-registro (evento {event.id}): {e}", exc_info=True)
     
+    # Invalidar cachés relacionadas después de la creación
+    if redis_client:
+        try:
+            await event_service.invalidate_event_caches(
+                redis_client=redis_client,
+                event_id=event.id,
+                gym_id=gym_id,
+                creator_id=internal_user_id
+            )
+            logger.info(f"Cache invalidada después de crear evento {event.id}")
+        except Exception as e:
+            logger.error(f"Error invalidando cache después de creación: {e}", exc_info=True)
+    
     # --- Desacoplar operaciones lentas --- 
     # Enviar un único mensaje a SQS para procesar el evento (crear chat y programar finalización)
     try:
