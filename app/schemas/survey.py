@@ -6,7 +6,7 @@ This module defines Pydantic schemas for data validation in the survey system.
 
 from typing import Optional, List, Dict, Any, Union
 from datetime import datetime
-from pydantic import BaseModel, Field, validator, EmailStr
+from pydantic import BaseModel, Field, field_validator, EmailStr
 from enum import Enum
 
 from app.models.survey import SurveyStatus, QuestionType
@@ -73,14 +73,15 @@ class SurveyQuestionBase(BaseModel):
     # Metadata
     category: Optional[str] = Field(None, max_length=100)
 
-    @validator('min_value', 'max_value')
-    def validate_numeric_bounds(cls, v, values):
+    @field_validator('min_value', 'max_value')
+    @classmethod
+    def validate_numeric_bounds(cls, v, info):
         """Validar que min_value < max_value para tipos numéricos"""
-        if 'question_type' in values:
-            qt = values['question_type']
+        if info.data.get('question_type'):
+            qt = info.data['question_type']
             if qt in [QuestionType.NUMBER, QuestionType.SCALE, QuestionType.NPS]:
-                if v is not None and values.get('min_value') is not None and values.get('max_value') is not None:
-                    if values['min_value'] >= values['max_value']:
+                if v is not None and info.data.get('min_value') is not None and info.data.get('max_value') is not None:
+                    if info.data['min_value'] >= info.data['max_value']:
                         raise ValueError('min_value debe ser menor que max_value')
         return v
 
@@ -89,11 +90,12 @@ class SurveyQuestionCreate(SurveyQuestionBase):
     """Schema para crear pregunta con opciones"""
     choices: Optional[List[QuestionChoiceCreate]] = []
 
-    @validator('choices')
-    def validate_choices(cls, v, values):
+    @field_validator('choices')
+    @classmethod
+    def validate_choices(cls, v, info):
         """Validar que las preguntas de selección tengan opciones"""
-        if 'question_type' in values:
-            qt = values['question_type']
+        if info.data.get('question_type'):
+            qt = info.data['question_type']
             if qt in [QuestionType.RADIO, QuestionType.CHECKBOX, QuestionType.SELECT]:
                 if not v or len(v) < 2:
                     raise ValueError(f'Las preguntas de tipo {qt} deben tener al menos 2 opciones')
@@ -148,11 +150,12 @@ class SurveyBase(BaseModel):
     tags: Optional[List[str]] = []
     target_audience: Optional[str] = Field(None, max_length=100)
 
-    @validator('end_date')
-    def validate_dates(cls, v, values):
+    @field_validator('end_date')
+    @classmethod
+    def validate_dates(cls, v, info):
         """Validar que end_date > start_date"""
-        if v and 'start_date' in values and values['start_date']:
-            if v <= values['start_date']:
+        if v and info.data.get('start_date'):
+            if v <= info.data['start_date']:
                 raise ValueError('La fecha de fin debe ser posterior a la fecha de inicio')
         return v
 
@@ -227,8 +230,9 @@ class AnswerBase(BaseModel):
 class AnswerCreate(AnswerBase):
     """Schema para crear respuesta"""
     
-    @validator('text_answer', 'choice_id', 'choice_ids', 'number_answer', 'date_answer', 'boolean_answer')
-    def validate_answer_type(cls, v, values, field):
+    @field_validator('text_answer', 'choice_id', 'choice_ids', 'number_answer', 'date_answer', 'boolean_answer')
+    @classmethod
+    def validate_answer_type(cls, v, info):
         """Validar que el tipo de respuesta coincida con el tipo de pregunta"""
         # Esta validación se hace en el servicio con acceso a la pregunta
         return v
@@ -257,7 +261,8 @@ class ResponseCreate(ResponseBase):
     """Schema para crear respuesta completa con answers"""
     answers: List[AnswerCreate]
     
-    @validator('answers')
+    @field_validator('answers')
+    @classmethod
     def validate_answers(cls, v):
         """Validar que haya al menos una respuesta"""
         if not v:
