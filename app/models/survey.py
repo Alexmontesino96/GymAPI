@@ -48,7 +48,7 @@ class Survey(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     gym_id = Column(Integer, ForeignKey("gyms.id"), nullable=False, index=True)
-    creator_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    creator_id = Column(Integer, ForeignKey("user.id"), nullable=False)
     
     title = Column(String(200), nullable=False)
     description = Column(Text)
@@ -165,7 +165,7 @@ class SurveyResponse(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     survey_id = Column(Integer, ForeignKey("surveys.id"), nullable=False, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), index=True)  # Nullable para respuestas anónimas
+    user_id = Column(Integer, ForeignKey("user.id"), index=True)  # Nullable para respuestas anónimas
     gym_id = Column(Integer, ForeignKey("gyms.id"), nullable=False, index=True)
     
     # Metadata de la respuesta
