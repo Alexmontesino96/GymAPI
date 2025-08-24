@@ -34,7 +34,14 @@ from app.schemas.survey import (
 )
 from app.repositories.survey import survey_repository
 from app.services.cache_service import CacheService
-from app.services.notification import notification_service
+
+# Importación opcional del servicio de notificaciones
+try:
+    from app.services.notification_service import notification_service
+    NOTIFICATIONS_AVAILABLE = True
+except ImportError:
+    notification_service = None
+    NOTIFICATIONS_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -670,21 +677,24 @@ class SurveyService:
         
         user_gyms = query.all()
         
-        # Send notifications
-        for user_gym in user_gyms:
-            try:
-                await notification_service.send_notification(
-                    user_id=user_gym.user_id,
-                    title="Nueva encuesta disponible",
-                    body=f"{survey.title} - Tu opinión es importante",
-                    data={
-                        "type": "new_survey",
-                        "survey_id": survey.id,
-                        "gym_id": gym_id
-                    }
-                )
-            except Exception as e:
-                logger.error(f"Error sending notification to user {user_gym.user_id}: {e}")
+        # Send notifications if service is available
+        if NOTIFICATIONS_AVAILABLE and notification_service:
+            for user_gym in user_gyms:
+                try:
+                    await notification_service.send_notification(
+                        user_id=user_gym.user_id,
+                        title="Nueva encuesta disponible",
+                        body=f"{survey.title} - Tu opinión es importante",
+                        data={
+                            "type": "new_survey",
+                            "survey_id": survey.id,
+                            "gym_id": gym_id
+                        }
+                    )
+                except Exception as e:
+                    logger.error(f"Error sending notification to user {user_gym.user_id}: {e}")
+        else:
+            logger.debug("Notification service not available, skipping notifications")
 
 
 # Singleton instance
