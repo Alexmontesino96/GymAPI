@@ -49,6 +49,10 @@ class User(Base):
     # Relaciones para Stripe
     stripe_profiles = relationship("UserGymStripeProfile", back_populates="user")
     
+    # Relaciones para encuestas
+    created_surveys = relationship("Survey", back_populates="creator")
+    survey_responses = relationship("SurveyResponse", back_populates="user")
+    
     # Relaciones para eventos
     created_events = relationship("Event", back_populates="creator")
     event_participations = relationship("EventParticipation", back_populates="member")

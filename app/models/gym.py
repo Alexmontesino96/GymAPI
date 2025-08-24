@@ -59,3 +59,8 @@ class Gym(Base):
     
     # Relación con planes nutricionales
     nutrition_plans = relationship("NutritionPlan", back_populates="gym")
+    
+    # Relación con encuestas
+    surveys = relationship("Survey", back_populates="gym")
+    survey_responses = relationship("SurveyResponse", back_populates="gym")
+    survey_templates = relationship("SurveyTemplate", back_populates="gym")

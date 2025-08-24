@@ -48,6 +48,9 @@ class Event(Base):
     # Relación con las salas de chat
     chat_rooms = relationship("ChatRoom", back_populates="event", cascade="all, delete-orphan")
     
+    # Relación con respuestas de encuestas (para feedback post-evento)
+    survey_responses = relationship("SurveyResponse", back_populates="event")
+    
     # Contador de intentos fallidos de completar el evento
     completion_attempts = Column(Integer, default=0, nullable=False, 
                                 comment="Número de intentos fallidos de marcar el evento como completado")

@@ -19,4 +19,8 @@ from app.models.nutrition import (
 from app.models.health import (
     UserHealthRecord, UserGoal, UserAchievement, UserHealthSnapshot,
     MeasurementType, GoalType, GoalStatus, AchievementType
+)
+from app.models.survey import (
+    Survey, SurveyQuestion, QuestionChoice, SurveyResponse, SurveyAnswer, SurveyTemplate,
+    SurveyStatus, QuestionType
 ) 
