@@ -9,12 +9,19 @@ from typing import List, Optional, Dict, Any, Tuple
 from datetime import datetime, timedelta
 from collections import defaultdict
 import json
-import pandas as pd
 from io import BytesIO
 from sqlalchemy.orm import Session
 from sqlalchemy import func, and_, or_
 from redis.asyncio import Redis
 import logging
+
+# Importación opcional de pandas para exportación
+try:
+    import pandas as pd
+    PANDAS_AVAILABLE = True
+except ImportError:
+    PANDAS_AVAILABLE = False
+    pd = None
 
 from app.models.survey import (
     Survey, SurveyQuestion, QuestionChoice, SurveyResponse, 
@@ -452,6 +459,12 @@ class SurveyService:
         format: str = "csv"
     ) -> BytesIO:
         """Export survey results to CSV or Excel"""
+        if not PANDAS_AVAILABLE:
+            raise ImportError(
+                "La exportación de datos requiere pandas. "
+                "Por favor instale pandas con: pip install pandas openpyxl"
+            )
+        
         survey = survey_repository.get_survey(db, survey_id, gym_id)
         if not survey:
             return None
@@ -541,8 +554,10 @@ class SurveyService:
         else:
             return ""
     
-    def _create_statistics_dataframe(self, stats: SurveyStatistics) -> pd.DataFrame:
+    def _create_statistics_dataframe(self, stats: SurveyStatistics):
         """Create a DataFrame with survey statistics"""
+        if not PANDAS_AVAILABLE:
+            return None
         data = []
         
         # Summary row
