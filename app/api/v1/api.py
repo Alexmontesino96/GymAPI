@@ -7,6 +7,7 @@ from app.api.v1.endpoints.webhooks.stream_webhooks import router as stream_webho
 from app.api.v1.endpoints.nutrition import router as nutrition_router
 from app.api.v1.endpoints.stripe_connect import router as stripe_connect_router
 from app.api.v1.endpoints.user_dashboard import router as user_dashboard_router
+from app.api.v1.endpoints.surveys import router as surveys_router
 
 # Import modular packages directly
 from app.api.v1.endpoints.auth import router as auth_router
@@ -65,3 +66,6 @@ api_router.include_router(nutrition_router, prefix="/nutrition", tags=["nutritio
 
 # Stripe Connect module
 api_router.include_router(stripe_connect_router, prefix="/stripe-connect", tags=["stripe-connect"])
+
+# Surveys module
+api_router.include_router(surveys_router, prefix="/surveys", tags=["surveys"])
