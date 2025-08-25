@@ -80,7 +80,7 @@ class Survey(Base):
     
     # Relationships
     gym = relationship("Gym", back_populates="surveys")
-    creator = relationship("User", back_populates="created_surveys")
+    creator = relationship("User", foreign_keys=[creator_id], back_populates="created_surveys")
     questions = relationship("SurveyQuestion", back_populates="survey", order_by="SurveyQuestion.order", cascade="all, delete-orphan")
     responses = relationship("SurveyResponse", back_populates="survey", cascade="all, delete-orphan")
 
@@ -186,7 +186,7 @@ class SurveyResponse(Base):
     
     # Relationships
     survey = relationship("Survey", back_populates="responses")
-    user = relationship("User", back_populates="survey_responses")
+    user = relationship("User", foreign_keys=[user_id], back_populates="survey_responses")
     gym = relationship("Gym", back_populates="survey_responses")
     event = relationship("Event", back_populates="survey_responses")
     answers = relationship("SurveyAnswer", back_populates="response", cascade="all, delete-orphan")
