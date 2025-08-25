@@ -128,7 +128,11 @@ class SurveyQuestion(Base):
     
     # Relationships
     survey = relationship("Survey", back_populates="questions")
-    choices = relationship("QuestionChoice", back_populates="question", order_by="QuestionChoice.order", cascade="all, delete-orphan")
+    choices = relationship("QuestionChoice", 
+                         foreign_keys="[QuestionChoice.question_id]",
+                         back_populates="question", 
+                         order_by="QuestionChoice.order", 
+                         cascade="all, delete-orphan")
     answers = relationship("SurveyAnswer", back_populates="question", cascade="all, delete-orphan")
     depends_on = relationship("SurveyQuestion", remote_side=[id])
 
