@@ -2,12 +2,29 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Quick Start
+```bash
+# Configuración inicial
+cp .env.example .env           # Configurar variables de entorno
+source env/bin/activate        # Activar entorno virtual
+pip install -r requirements.txt # Instalar dependencias
+
+# Desarrollo local con Docker (DB y Redis)
+docker-compose up -d           # Levantar servicios
+alembic upgrade head           # Aplicar migraciones
+python app_wrapper.py          # Iniciar servidor (auto-verifica dependencias)
+
+# Testing
+pytest -v tests/               # Ejecutar todos los tests
+```
+
 ## Comandos de Desarrollo
 
 ### Servidor de Desarrollo
 ```bash
 python app_wrapper.py              # Punto de entrada recomendado con verificación de dependencias
 python -m uvicorn main:app --reload # Alternativa directa
+uvicorn app.main:app --reload --port 8000  # Desde el directorio raíz
 ```
 
 ### Testing
@@ -16,6 +33,7 @@ pytest -v tests/                   # Ejecutar todos los tests con verbose
 ./tests.sh                         # Script de tests personalizado
 pytest tests/api/test_*.py -v      # Tests específicos de API
 pytest -k "test_name" -v           # Test individual por nombre
+pytest --cov=app tests/            # Con coverage report
 ```
 
 ### Base de Datos
@@ -23,11 +41,16 @@ pytest -k "test_name" -v           # Test individual por nombre
 alembic revision --autogenerate -m "descripción"  # Nueva migración
 alembic upgrade head                               # Aplicar migraciones
 alembic downgrade -1                              # Revertir migración
+alembic history                                    # Ver historial de migraciones
+alembic current                                    # Ver migración actual
 ```
 
 ### Docker
 ```bash
 docker-compose up                   # Levantar PostgreSQL y Redis locales
+docker-compose up -d                # En background
+docker-compose down                 # Detener servicios
+docker-compose logs -f web          # Ver logs del servicio web
 ```
 
 ## Arquitectura del Proyecto
@@ -65,10 +88,18 @@ Roles jerárquicos: **Miembro** < **Entrenador** < **Administrador** < **Super A
 
 ## Configuración Crítica
 
+### Configuración Inicial
+1. Copiar `.env.example` a `.env` y configurar todas las variables
+2. Activar entorno virtual: `source env/bin/activate` (Linux/Mac) o `env\Scripts\activate` (Windows)
+3. Instalar dependencias: `pip install -r requirements.txt`
+4. Aplicar migraciones: `alembic upgrade head`
+5. Verificar instalación: `python app_wrapper.py` (auto-instala dependencias faltantes)
+
 ### Variables de Entorno
-- Todas las claves de API están externalizadas
-- Archivo `.env.test` separado para testing
+- Todas las claves de API están externalizadas en `.env`
+- Archivo `.env.test` separado para testing con tokens de Auth0 reales
 - Configuración específica por entorno (desarrollo/producción)
+- El archivo `app_wrapper.py` valida automáticamente dependencias críticas
 
 ### Testing con Tokens Reales
 Los tests funcionales usan tokens de Auth0 reales definidos en `.env.test`. Renovar periódicamente para evitar expiración.
@@ -137,6 +168,24 @@ pytest -v
 - Validación cross-gym automática en servicios y repositorios
 - Cache segmentado por gimnasio usando prefijos `gym:{gym_id}:`
 
+## Documentación de API
+
+### Endpoints de Documentación
+- **Swagger UI**: http://localhost:8000/docs - Interfaz interactiva para probar endpoints
+- **ReDoc**: http://localhost:8000/redoc - Documentación alternativa más detallada
+- **OpenAPI Schema**: http://localhost:8000/openapi.json - Especificación JSON de la API
+
+### Endpoints Principales por Módulo
+- `/api/v1/auth/` - Autenticación y gestión de permisos
+- `/api/v1/users/` - Gestión de usuarios y perfiles
+- `/api/v1/events/` - Eventos del gimnasio y participaciones
+- `/api/v1/schedule/` - Horarios de clases y reservas
+- `/api/v1/chat/` - Sistema de chat con Stream
+- `/api/v1/billing/` - Facturación y suscripciones con Stripe
+- `/api/v1/nutrition/` - Módulo de nutrición con IA
+- `/api/v1/surveys/` - Sistema de encuestas y feedback
+- `/api/v1/metrics/` - Métricas y estadísticas del gimnasio
+
 ## Patrones de Implementación Críticos
 
 ### Factory Pattern para Módulos
@@ -197,3 +246,23 @@ Ubicados en `scripts/` para operaciones administrativas:
 - `migrate_*.py` - Migraciones de datos específicas  
 - `test_*.py` - Scripts de verificación de servicios
 - `security_audit.py` - Auditoría de seguridad
+- `apply_migrations_prod.py` - Aplicar migraciones en producción
+- `check_stream_status.py` - Verificar estado de Stream Chat
+- `check_database_schema.py` - Validar esquema de base de datos
+
+## Troubleshooting Común
+
+### Problemas de Conexión a Base de Datos
+- Verificar que PostgreSQL esté corriendo: `docker-compose ps`
+- Verificar `DATABASE_URL` en `.env`
+- Para Supabase usar el Transaction Pooler URL (puerto 6543)
+
+### Problemas con Redis
+- Verificar que Redis esté corriendo: `docker-compose ps redis`
+- Verificar `REDIS_URL` en `.env`
+- El sistema tiene fallback si Redis no está disponible
+
+### Problemas de Importación
+- Usar `python app_wrapper.py` que auto-instala dependencias faltantes
+- Verificar entorno virtual activo: `which python`
+- Reinstalar dependencias: `pip install -r requirements.txt --force-reinstall`
