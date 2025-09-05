@@ -90,10 +90,14 @@ class SurveyRepository:
         # Crear opciones si es pregunta de selección
         if question_data.choices:
             for idx, choice_data in enumerate(question_data.choices):
+                choice_dict = choice_data.dict()
+                # Usar el order del choice_data si existe, sino usar idx
+                if 'order' not in choice_dict or choice_dict['order'] is None:
+                    choice_dict['order'] = idx
+                    
                 choice = QuestionChoice(
                     question_id=question.id,
-                    **choice_data.dict(),
-                    order=idx
+                    **choice_dict
                 )
                 db.add(choice)
         

@@ -152,6 +152,107 @@ async def get_my_survey_responses(
     return responses
 
 
+# ============= Template Endpoints (must be before /{survey_id}) =============
+
+@router.get("/templates", response_model=List[TemplateSchema])
+async def get_survey_templates(
+    *,
+    db: Session = Depends(get_db),
+    category: Optional[str] = Query(None),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=100),
+    current_gym: GymSchema = Depends(verify_gym_access),
+    current_user: Auth0User = Security(auth.get_user, scopes=["resource:read"])
+) -> List[TemplateSchema]:
+    """
+    Get available survey templates.
+    
+    Returns public templates and gym-specific templates.
+    
+    Args:
+        category: Optional filter by template category
+        skip: Number of records to skip
+        limit: Maximum number of records to return
+        
+    Returns:
+        List of available templates
+    """
+    templates = survey_repository.get_templates(
+        db=db,
+        gym_id=current_gym.id,
+        category=category,
+        skip=skip,
+        limit=limit
+    )
+    
+    return templates
+
+
+@router.post("/from-template", response_model=SurveySchema, status_code=status.HTTP_201_CREATED)
+async def create_survey_from_template(
+    *,
+    db: Session = Depends(get_db),
+    template_data: CreateFromTemplate,
+    current_gym: GymSchema = Depends(verify_gym_access),
+    current_user: Auth0User = Security(auth.get_user, scopes=["resource:write"]),
+    redis_client: Redis = Depends(get_redis_client)
+) -> SurveySchema:
+    """
+    Create a new survey from a template.
+    
+    Uses a predefined template to quickly create a new survey.
+    
+    Permissions:
+        - Requires 'resource:write' scope (trainers and admins)
+        
+    Args:
+        template_data: Template ID and customization options
+        
+    Returns:
+        Created survey
+    """
+    # Check if user is trainer or admin
+    user_permissions = getattr(current_user, "permissions", []) or []
+    is_admin = "resource:admin" in user_permissions
+    is_trainer = "resource:write" in user_permissions
+    
+    if not (is_admin or is_trainer):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only trainers and administrators can create surveys"
+        )
+    
+    # Get internal user ID
+    auth0_id = current_user.id
+    user = db.query(User).filter(User.auth0_id == auth0_id).first()
+    
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User profile not found"
+        )
+    
+    survey = survey_repository.create_survey_from_template(
+        db=db,
+        template_id=template_data.template_id,
+        title=template_data.title,
+        description=template_data.description,
+        creator_id=user.id,
+        gym_id=current_gym.id
+    )
+    
+    # Invalidate cache
+    if redis_client:
+        await survey_service._invalidate_survey_caches(
+            redis_client,
+            gym_id=current_gym.id
+        )
+    
+    return survey
+
+
+# ============= Survey Details Endpoint (with path parameter) =============
+
 @router.get("/{survey_id}", response_model=SurveyWithQuestions)
 async def get_survey_details(
     *,
@@ -743,102 +844,3 @@ async def export_survey_results(
             "Content-Disposition": f"attachment; filename={filename}"
         }
     )
-
-
-# ============= Template Endpoints =============
-
-@router.get("/templates", response_model=List[TemplateSchema])
-async def get_survey_templates(
-    *,
-    db: Session = Depends(get_db),
-    category: Optional[str] = Query(None),
-    skip: int = Query(0, ge=0),
-    limit: int = Query(100, ge=1, le=100),
-    current_gym: GymSchema = Depends(verify_gym_access),
-    current_user: Auth0User = Security(auth.get_user, scopes=["resource:read"])
-) -> List[TemplateSchema]:
-    """
-    Get available survey templates.
-    
-    Returns public templates and gym-specific templates.
-    
-    Args:
-        category: Optional filter by template category
-        skip: Number of records to skip
-        limit: Maximum number of records to return
-        
-    Returns:
-        List of available templates
-    """
-    templates = survey_repository.get_templates(
-        db=db,
-        gym_id=current_gym.id,
-        category=category,
-        skip=skip,
-        limit=limit
-    )
-    
-    return templates
-
-
-@router.post("/from-template", response_model=SurveySchema, status_code=status.HTTP_201_CREATED)
-async def create_survey_from_template(
-    *,
-    db: Session = Depends(get_db),
-    template_data: CreateFromTemplate,
-    current_gym: GymSchema = Depends(verify_gym_access),
-    current_user: Auth0User = Security(auth.get_user, scopes=["resource:write"]),
-    redis_client: Redis = Depends(get_redis_client)
-) -> SurveySchema:
-    """
-    Create a new survey from a template.
-    
-    Uses a predefined template to quickly create a new survey.
-    
-    Permissions:
-        - Requires 'resource:write' scope (trainers and admins)
-        
-    Args:
-        template_data: Template ID and customization options
-        
-    Returns:
-        Created survey
-    """
-    # Check if user is trainer or admin
-    user_permissions = getattr(current_user, "permissions", []) or []
-    is_admin = "resource:admin" in user_permissions
-    is_trainer = "resource:write" in user_permissions
-    
-    if not (is_admin or is_trainer):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only trainers and administrators can create surveys"
-        )
-    
-    # Get internal user ID
-    auth0_id = current_user.id
-    user = db.query(User).filter(User.auth0_id == auth0_id).first()
-    
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User profile not found"
-        )
-    
-    survey = survey_repository.create_survey_from_template(
-        db=db,
-        template_id=template_data.template_id,
-        title=template_data.title,
-        description=template_data.description,
-        creator_id=user.id,
-        gym_id=current_gym.id
-    )
-    
-    # Invalidate cache
-    if redis_client:
-        await survey_service._invalidate_survey_caches(
-            redis_client,
-            gym_id=current_gym.id
-        )
-    
-    return survey
