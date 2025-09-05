@@ -251,6 +251,49 @@ async def create_survey_from_template(
     return survey
 
 
+@router.get("/my-surveys", response_model=List[SurveySchema])
+async def get_my_created_surveys(
+    *,
+    db: Session = Depends(get_db),
+    status_filter: Optional[SurveyStatus] = Query(None),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=100),
+    current_gym: GymSchema = Depends(verify_gym_access),
+    current_user: Auth0User = Security(auth.get_user, scopes=["resource:read"]),
+    redis_client: Redis = Depends(get_redis_client)
+) -> List[SurveySchema]:
+    """
+    Get surveys created by the current user.
+    
+    Returns all surveys created by the authenticated user,
+    optionally filtered by status.
+    
+    Args:
+        status_filter: Optional filter by survey status
+        skip: Number of records to skip
+        limit: Maximum number of records to return
+        
+    Returns:
+        List of surveys created by the user
+    """
+    # Get internal user ID
+    auth0_id = current_user.id
+    user = db.query(User).filter(User.auth0_id == auth0_id).first()
+    
+    if not user:
+        return []
+    
+    surveys = await survey_service.get_my_surveys(
+        db=db,
+        creator_id=user.id,
+        gym_id=current_gym.id,
+        status_filter=status_filter,
+        redis_client=redis_client
+    )
+    
+    return surveys[skip:skip + limit]
+
+
 # ============= Survey Details Endpoint (with path parameter) =============
 
 @router.get("/{survey_id}", response_model=SurveyWithQuestions)
@@ -363,49 +406,6 @@ async def create_survey(
     )
     
     return survey
-
-
-@router.get("/my-surveys", response_model=List[SurveySchema])
-async def get_my_created_surveys(
-    *,
-    db: Session = Depends(get_db),
-    status_filter: Optional[SurveyStatus] = Query(None),
-    skip: int = Query(0, ge=0),
-    limit: int = Query(100, ge=1, le=100),
-    current_gym: GymSchema = Depends(verify_gym_access),
-    current_user: Auth0User = Security(auth.get_user, scopes=["resource:read"]),
-    redis_client: Redis = Depends(get_redis_client)
-) -> List[SurveySchema]:
-    """
-    Get surveys created by the current user.
-    
-    Returns all surveys created by the authenticated user,
-    optionally filtered by status.
-    
-    Args:
-        status_filter: Optional filter by survey status
-        skip: Number of records to skip
-        limit: Maximum number of records to return
-        
-    Returns:
-        List of surveys created by the user
-    """
-    # Get internal user ID
-    auth0_id = current_user.id
-    user = db.query(User).filter(User.auth0_id == auth0_id).first()
-    
-    if not user:
-        return []
-    
-    surveys = await survey_service.get_my_surveys(
-        db=db,
-        creator_id=user.id,
-        gym_id=current_gym.id,
-        status_filter=status_filter,
-        redis_client=redis_client
-    )
-    
-    return surveys[skip:skip + limit]
 
 
 @router.put("/{survey_id}", response_model=SurveySchema)
