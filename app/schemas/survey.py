@@ -191,6 +191,7 @@ class Survey(SurveyBase):
     published_at: Optional[datetime]
     created_at: datetime
     updated_at: Optional[datetime]
+    response_count: Optional[int] = 0
 
     class Config:
         from_attributes = True

@@ -156,6 +156,58 @@ class SurveyRepository:
         
         return query.offset(skip).limit(limit).all()
     
+    def get_surveys_with_response_count(
+        self,
+        db: Session,
+        gym_id: int,
+        skip: int = 0,
+        limit: int = 100,
+        status_filter: Optional[SurveyStatus] = None,
+        search: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Obtener encuestas del gimnasio con conteo de respuestas optimizado.
+        Usa una sola query SQL con agregación para evitar N+1 queries.
+        """
+        # Query base con JOIN y COUNT
+        query = db.query(
+            Survey,
+            func.count(SurveyResponse.id).label('response_count')
+        ).outerjoin(
+            SurveyResponse,
+            Survey.id == SurveyResponse.survey_id
+        ).filter(
+            Survey.gym_id == gym_id
+        ).group_by(Survey.id)
+        
+        # Aplicar filtros
+        if status_filter:
+            query = query.filter(Survey.status == status_filter)
+        
+        if search:
+            search_pattern = f"%{search}%"
+            query = query.filter(
+                or_(
+                    Survey.title.ilike(search_pattern),
+                    Survey.description.ilike(search_pattern)
+                )
+            )
+        
+        # Ordenar por fecha de creación descendente
+        query = query.order_by(desc(Survey.created_at))
+        
+        # Aplicar paginación
+        results = query.offset(skip).limit(limit).all()
+        
+        # Convertir resultados a formato esperado
+        surveys_with_count = []
+        for survey, count in results:
+            survey_dict = survey.__dict__.copy()
+            survey_dict['response_count'] = count
+            surveys_with_count.append(survey_dict)
+        
+        return surveys_with_count
+    
     def get_active_surveys(
         self,
         db: Session,

@@ -252,7 +252,7 @@ async def create_survey_from_template(
 
 
 @router.get("/my-surveys", response_model=List[SurveySchema])
-async def get_my_created_surveys(
+async def get_gym_surveys(
     *,
     db: Session = Depends(get_db),
     status_filter: Optional[SurveyStatus] = Query(None),
@@ -263,9 +263,9 @@ async def get_my_created_surveys(
     redis_client: Redis = Depends(get_redis_client)
 ) -> List[SurveySchema]:
     """
-    Get surveys created by the current user.
+    Get all surveys created for the current gym with response counts.
     
-    Returns all surveys created by the authenticated user,
+    Returns all surveys created in the gym with the count of responses for each,
     optionally filtered by status.
     
     Args:
@@ -274,24 +274,27 @@ async def get_my_created_surveys(
         limit: Maximum number of records to return
         
     Returns:
-        List of surveys created by the user
+        List of gym surveys with response counts
     """
-    # Get internal user ID
-    auth0_id = current_user.id
-    user = db.query(User).filter(User.auth0_id == auth0_id).first()
-    
-    if not user:
-        return []
-    
-    surveys = await survey_service.get_my_surveys(
+    # Obtener encuestas con conteo de respuestas optimizado
+    surveys_with_count = survey_repository.get_surveys_with_response_count(
         db=db,
-        creator_id=user.id,
         gym_id=current_gym.id,
-        status_filter=status_filter,
-        redis_client=redis_client
+        skip=skip,
+        limit=limit,
+        status_filter=status_filter
     )
     
-    return surveys[skip:skip + limit]
+    # Convertir a schemas
+    result = []
+    for survey_data in surveys_with_count:
+        # Limpiar el diccionario de atributos SQLAlchemy internos
+        if '_sa_instance_state' in survey_data:
+            del survey_data['_sa_instance_state']
+        
+        result.append(SurveySchema(**survey_data))
+    
+    return result
 
 
 # ============= Survey Details Endpoint (with path parameter) =============
