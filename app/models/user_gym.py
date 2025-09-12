@@ -42,6 +42,12 @@ class UserGym(Base):
     last_payment_at = Column(DateTime, nullable=True)
     notes = Column(String(500), nullable=True)  # Notas administrativas
     
+    # --- Campos de tracking de uso de app ---
+    last_app_access = Column(DateTime, nullable=True, index=True)
+    total_app_opens = Column(Integer, default=0, nullable=False)
+    monthly_app_opens = Column(Integer, default=0, nullable=False)
+    monthly_reset_date = Column(DateTime, nullable=True)
+    
     # Relaciones
     user = relationship("User", back_populates="gyms")
     gym = relationship("Gym", back_populates="users")

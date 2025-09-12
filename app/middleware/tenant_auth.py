@@ -18,6 +18,7 @@ import json
 import logging
 import time
 from typing import Optional, Dict, Any, Tuple
+from datetime import datetime
 from sqlalchemy.orm import Session
 from functools import lru_cache
 
@@ -185,6 +186,20 @@ class TenantAuthMiddleware(BaseHTTPMiddleware):
                         # Permitir continuar o devolver error? Depende del caso de uso.
                         # Por ahora, permitimos continuar pero sin usuario en state.
                         pass
+                
+                # Trackear acceso a la app si tenemos usuario y gimnasio
+                if request.state.user and request.state.gym:
+                    try:
+                        await self._track_app_access(
+                            db, 
+                            request.state.user.id, 
+                            request.state.gym.id,
+                            redis_client
+                        )
+                    except Exception as e:
+                        # No fallar la request por error de tracking
+                        logger.error(f"Error tracking app access: {e}")
+                        
         # 5. Ejecutar el resto de la request
         try:
             response = await call_next(request)
@@ -202,6 +217,68 @@ class TenantAuthMiddleware(BaseHTTPMiddleware):
         
         # 7. Devolver la respuesta
         return response
+    
+    async def _track_app_access(
+        self, 
+        db: Session, 
+        user_id: int, 
+        gym_id: int,
+        redis_client: Optional[Any] = None
+    ):
+        """
+        Trackear acceso del usuario a la app (rate limited).
+        
+        Args:
+            db: Sesión de base de datos
+            user_id: ID del usuario
+            gym_id: ID del gimnasio
+            redis_client: Cliente de Redis opcional
+        """
+        try:
+            # Rate limiting con Redis - máx 1 registro cada 5 minutos
+            cache_key = f"app_access:{gym_id}:{user_id}"
+            
+            if redis_client:
+                try:
+                    exists = await redis_client.exists(cache_key)
+                    if exists:
+                        return  # Ya registrado recientemente
+                except Exception as e:
+                    logger.debug(f"Redis not available for rate limiting: {e}")
+            
+            # Actualizar UserGym con tracking de acceso
+            user_gym = db.query(UserGym).filter(
+                UserGym.user_id == user_id,
+                UserGym.gym_id == gym_id
+            ).first()
+            
+            if user_gym:
+                now = datetime.utcnow()
+                user_gym.last_app_access = now
+                user_gym.total_app_opens = (user_gym.total_app_opens or 0) + 1
+                
+                # Reset mensual si cambió el mes
+                if not user_gym.monthly_reset_date or \
+                   user_gym.monthly_reset_date.month != now.month or \
+                   user_gym.monthly_reset_date.year != now.year:
+                    user_gym.monthly_app_opens = 1
+                    user_gym.monthly_reset_date = now
+                else:
+                    user_gym.monthly_app_opens = (user_gym.monthly_app_opens or 0) + 1
+                
+                db.commit()
+                logger.debug(f"App access tracked for user {user_id} in gym {gym_id}")
+                
+                # Cachear por 5 minutos para evitar spam
+                if redis_client:
+                    try:
+                        await redis_client.setex(cache_key, 300, "1")
+                    except Exception as e:
+                        logger.debug(f"Could not set Redis cache for rate limiting: {e}")
+                        
+        except Exception as e:
+            logger.error(f"Error tracking app access: {e}")
+            # No propagar el error - el tracking no debe afectar la funcionalidad
     
     async def get_combined_auth_data(self, auth0_id: str, gym_id: int, db: Session, redis_client: redis.Redis, user_cached: Optional[UserSchema] = None) -> Optional[Dict[str, Any]]:
         """

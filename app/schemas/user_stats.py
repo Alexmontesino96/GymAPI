@@ -101,6 +101,16 @@ class SocialMetrics(BaseModel):
         return v
 
 
+class AppUsageMetrics(BaseModel):
+    """Métricas de uso de la aplicación."""
+    last_access: Optional[datetime] = Field(None, description="Último acceso")
+    total_sessions: int = Field(0, ge=0, description="Total de sesiones")
+    sessions_this_month: int = Field(0, ge=0, description="Sesiones este mes")
+    avg_sessions_per_week: float = Field(0, ge=0, description="Promedio semanal")
+    consecutive_days: int = Field(0, ge=0, description="Días consecutivos de uso")
+    is_active_today: bool = Field(False, description="Accedió hoy")
+
+
 class GoalProgress(BaseModel):
     """Progreso de un objetivo específico."""
     goal_id: int = Field(..., description="ID del objetivo")
@@ -199,6 +209,7 @@ class ComprehensiveUserStats(BaseModel):
     social_metrics: SocialMetrics = Field(..., description="Métricas sociales")
     health_metrics: HealthMetrics = Field(..., description="Métricas de salud")
     membership_utilization: MembershipUtilization = Field(..., description="Utilización de membresía")
+    app_usage: Optional[AppUsageMetrics] = Field(None, description="Métricas de uso de app")
     achievements: List[Achievement] = Field(default_factory=list, description="Logros obtenidos")
     trends: TrendAnalysis = Field(..., description="Análisis de tendencias")
     recommendations: List[str] = Field(default_factory=list, description="Recomendaciones personalizadas")

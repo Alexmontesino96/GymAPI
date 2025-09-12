@@ -269,6 +269,11 @@ class UserStatsService:
                 recommendations = await self._generate_recommendations(
                     fitness_metrics, events_metrics, social_metrics, health_metrics
                 )
+                
+                # Compute app usage metrics
+                app_usage = await self._compute_app_usage_metrics(
+                    db, user_id, gym_id, period_start, period_end
+                )
             
             return ComprehensiveUserStats(
                 user_id=user_id,
@@ -280,6 +285,7 @@ class UserStatsService:
                 social_metrics=social_metrics,
                 health_metrics=health_metrics,
                 membership_utilization=membership_util,
+                app_usage=app_usage,
                 achievements=achievements,
                 trends=trends,
                 recommendations=recommendations
@@ -862,6 +868,71 @@ class UserStatsService:
         except Exception as e:
             logger.error(f"Error computing health metrics: {e}")
             raise
+    
+    async def _compute_app_usage_metrics(
+        self,
+        db: Session,
+        user_id: int,
+        gym_id: int,
+        period_start: datetime,
+        period_end: datetime
+    ) -> "AppUsageMetrics":
+        """
+        Calcular métricas de uso de la aplicación.
+        
+        Args:
+            db: Sesión de base de datos
+            user_id: ID del usuario
+            gym_id: ID del gimnasio
+            period_start: Inicio del período
+            period_end: Fin del período
+            
+        Returns:
+            AppUsageMetrics con estadísticas de uso
+        """
+        from app.models.user_gym import UserGym
+        from app.schemas.user_stats import AppUsageMetrics
+        
+        try:
+            user_gym = db.query(UserGym).filter(
+                UserGym.user_id == user_id,
+                UserGym.gym_id == gym_id
+            ).first()
+            
+            if not user_gym:
+                return AppUsageMetrics()
+            
+            # Calcular días consecutivos de uso
+            consecutive_days = 0
+            if user_gym.last_app_access:
+                days_since_last = (datetime.utcnow() - user_gym.last_app_access).days
+                if days_since_last == 0:
+                    consecutive_days = 1  # Accedió hoy
+                elif days_since_last == 1:
+                    # Podría tener racha, simplificado por ahora
+                    consecutive_days = 1
+            
+            # Calcular promedio semanal
+            weeks_since_joined = max(1, (datetime.utcnow() - user_gym.created_at).days // 7)
+            avg_per_week = (user_gym.total_app_opens or 0) / weeks_since_joined
+            
+            # Verificar si accedió hoy
+            is_active_today = False
+            if user_gym.last_app_access:
+                is_active_today = user_gym.last_app_access.date() == datetime.utcnow().date()
+            
+            return AppUsageMetrics(
+                last_access=user_gym.last_app_access,
+                total_sessions=user_gym.total_app_opens or 0,
+                sessions_this_month=user_gym.monthly_app_opens or 0,
+                avg_sessions_per_week=round(avg_per_week, 1),
+                consecutive_days=consecutive_days,
+                is_active_today=is_active_today
+            )
+            
+        except Exception as e:
+            logger.error(f"Error computing app usage metrics for user {user_id}: {e}")
+            return AppUsageMetrics()
     
     async def _compute_membership_utilization(
         self,
