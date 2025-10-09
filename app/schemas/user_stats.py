@@ -192,8 +192,9 @@ class DashboardSummary(BaseModel):
     next_class: Optional[str] = Field(None, description="Próxima clase programada")
     recent_achievement: Optional[Achievement] = Field(None, description="Logro más reciente")
     membership_status: str = Field(..., description="Estado de membresía")
+    last_attendance_date: Optional[datetime] = Field(None, description="Fecha y hora de la última asistencia")
     quick_stats: Dict[str, Union[int, float, str]] = Field(
-        default_factory=dict, 
+        default_factory=dict,
         description="Estadísticas rápidas clave"
     )
 

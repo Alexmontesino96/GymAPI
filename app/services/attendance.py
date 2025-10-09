@@ -130,7 +130,21 @@ class AttendanceService:
                     "attendance_time": now
                 }
             )
-            
+
+            # Invalidar caché de last_attendance_date después de actualizar asistencia
+            if redis_client:
+                try:
+                    cache_key = f"last_attendance:{user_id}:{gym_id}"
+                    await redis_client.delete(cache_key)
+                    # También invalidar caché del dashboard summary
+                    dashboard_cache_key = f"dashboard_summary:{user_id}:{gym_id}"
+                    await redis_client.delete(dashboard_cache_key)
+                except Exception as e:
+                    # No fallar el check-in si la invalidación de caché falla
+                    import logging
+                    logger = logging.getLogger(__name__)
+                    logger.warning(f"Error invalidando caché después de check-in: {e}")
+
             return {
                 "success": True,
                 "message": "Check-in realizado correctamente",
@@ -154,7 +168,21 @@ class AttendanceService:
                 db,
                 obj_in=participation_data
             )
-            
+
+            # Invalidar caché de last_attendance_date después de crear nueva asistencia
+            if redis_client:
+                try:
+                    cache_key = f"last_attendance:{user_id}:{gym_id}"
+                    await redis_client.delete(cache_key)
+                    # También invalidar caché del dashboard summary
+                    dashboard_cache_key = f"dashboard_summary:{user_id}:{gym_id}"
+                    await redis_client.delete(dashboard_cache_key)
+                except Exception as e:
+                    # No fallar el check-in si la invalidación de caché falla
+                    import logging
+                    logger = logging.getLogger(__name__)
+                    logger.warning(f"Error invalidando caché después de check-in: {e}")
+
             return {
                 "success": True,
                 "message": "Check-in realizado correctamente",

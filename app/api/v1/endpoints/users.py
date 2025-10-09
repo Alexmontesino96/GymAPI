@@ -38,6 +38,7 @@ from app.core.config import get_settings
 from app.db.redis_client import get_redis_client, redis
 from app.services.cache_service import cache_service
 from app.services.gym import gym_service
+from app.services.user_stats import user_stats_service
 from app.core.security import verify_auth0_webhook_secret
 from app.middleware.rate_limit import limiter
 
@@ -171,24 +172,24 @@ async def get_my_profile(
 ) -> Any:
     """
     Obtiene el perfil detallado del usuario autenticado sin incluir información sensible.
-    
+
     Este endpoint devuelve información detallada del perfil del usuario actual,
     pero excluye datos sensibles como email y número de teléfono. Incluye información
     como nombre, foto de perfil, biografía, metas, altura, peso y fecha de nacimiento.
     """
     logger = logging.getLogger("user_endpoint")
-    
+
     # Obtener ID de Auth0
     auth0_id = current_user.id
     if not auth0_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Token inválido")
-    
+
     try:
         # Obtener usuario desde la BD
         db_user = user_service.get_user_by_auth0_id(db, auth0_id=auth0_id)
         if not db_user:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario no encontrado")
-        
+
         # Crear y devolver objeto UserProfile
         user_profile = UserProfile(
             id=db_user.id,
@@ -204,7 +205,7 @@ async def get_my_profile(
             is_active=db_user.is_active,
             created_at=db_user.created_at
         )
-        
+
         return user_profile
     except HTTPException as e:
         # Re-lanzar excepciones HTTP
@@ -214,6 +215,72 @@ async def get_my_profile(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Error interno al obtener perfil de usuario"
+        )
+
+@router.get("/last-attendance", response_model=Dict[str, Any], tags=["Profile"])
+async def get_last_attendance(
+    db: Session = Depends(get_db),
+    current_user: Auth0User = Security(auth.get_user, scopes=["resource:read"]),
+    current_gym: GymSchema = Depends(verify_gym_access),
+    redis_client: redis.Redis = Depends(get_redis_client)
+) -> Any:
+    """
+    Obtiene la fecha de la última asistencia del usuario autenticado.
+
+    Este endpoint devuelve la fecha y hora de la última vez que el usuario
+    hizo check-in en el gimnasio actual.
+
+    **Características:**
+    - ⚡ Optimizado con caché (TTL: 10 minutos)
+    - 🔒 Multi-tenant: Solo asistencias del gimnasio actual
+    - 📊 Datos desde ClassParticipation con status ATTENDED
+
+    **Permissions:**
+    - Requiere scope 'resource:read' (usuarios autenticados)
+    - Requiere pertenecer al gimnasio actual
+
+    **Returns:**
+    - JSON con last_attendance_date, user_id, gym_id
+    - last_attendance_date será null si no hay asistencias previas
+    """
+    logger_endpoint = logging.getLogger("user_endpoint")
+
+    # Obtener ID de Auth0
+    auth0_id = current_user.id
+    if not auth0_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Token inválido")
+
+    try:
+        # Obtener usuario desde la BD
+        db_user = user_service.get_user_by_auth0_id(db, auth0_id=auth0_id)
+        if not db_user:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario no encontrado")
+
+        # Obtener última fecha de asistencia
+        last_attendance_date = await user_stats_service.get_last_attendance_date(
+            db=db,
+            user_id=db_user.id,
+            gym_id=current_gym.id,
+            redis_client=redis_client
+        )
+
+        logger_endpoint.info(f"Last attendance retrieved for user {db_user.id}, gym {current_gym.id}")
+
+        return {
+            "user_id": db_user.id,
+            "gym_id": current_gym.id,
+            "last_attendance_date": last_attendance_date.isoformat() if last_attendance_date else None,
+            "has_attendance": last_attendance_date is not None
+        }
+
+    except HTTPException as e:
+        # Re-lanzar excepciones HTTP
+        raise e
+    except Exception as e:
+        logger_endpoint.error(f"Error obteniendo última asistencia: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error interno al obtener última asistencia"
         )
 
 @router.get("/profile/{user_id}", response_model=UserProfile, tags=["Profile"])

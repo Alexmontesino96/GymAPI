@@ -10,7 +10,7 @@ import logging
 from typing import Optional, Dict, List, Any, Union
 from datetime import datetime, timedelta, date
 from sqlalchemy.orm import Session
-from sqlalchemy import func, case
+from sqlalchemy import func, case, and_
 from redis.asyncio import Redis
 
 from app.schemas.user_stats import (
@@ -191,7 +191,10 @@ class UserStatsService:
                 
                 # Logro más reciente usando health service
                 recent_achievement = health_service.get_recent_achievement(db, user_id, gym_id)
-            
+
+                # Última fecha de asistencia
+                last_attendance_date = await self.get_last_attendance_date(db, user_id, gym_id, None)
+
             return DashboardSummary(
                 user_id=user_id,
                 current_streak=current_streak,
@@ -200,6 +203,7 @@ class UserStatsService:
                 next_class=next_class,
                 recent_achievement=recent_achievement,
                 membership_status=membership_status,
+                last_attendance_date=last_attendance_date,
                 quick_stats=await self._calculate_quick_stats(db, user_id, gym_id, weekly_workouts)
             )
             
@@ -214,6 +218,7 @@ class UserStatsService:
                 next_class=None,
                 recent_achievement=None,
                 membership_status="unknown",
+                last_attendance_date=None,
                 quick_stats={}
             )
     
@@ -1161,10 +1166,76 @@ class UserStatsService:
         
         return recommendations
     
+    async def get_last_attendance_date(
+        self,
+        db: Session,
+        user_id: int,
+        gym_id: int,
+        redis_client: Optional[Redis] = None
+    ) -> Optional[datetime]:
+        """
+        Obtiene la fecha de la última asistencia del usuario.
+
+        Args:
+            db: Sesión de base de datos
+            user_id: ID del usuario
+            gym_id: ID del gimnasio
+            redis_client: Cliente Redis para cache
+
+        Returns:
+            datetime: Fecha y hora de la última asistencia, o None si no hay asistencias
+        """
+        cache_key = f"last_attendance:{user_id}:{gym_id}"
+
+        if redis_client:
+            try:
+                # Intentar obtener desde cache
+                cached_date_str = await redis_client.get(cache_key)
+                if cached_date_str:
+                    register_cache_hit(cache_key)
+                    # Convertir string a datetime
+                    return datetime.fromisoformat(cached_date_str.decode('utf-8'))
+            except Exception as e:
+                logger.error(f"Error accessing cache for last attendance: {e}")
+                register_cache_miss(cache_key)
+
+        # Query a base de datos
+        try:
+            from app.models.schedule import ClassParticipation, ClassParticipationStatus
+
+            # Obtener la participación más reciente con asistencia confirmada
+            last_participation = db.query(ClassParticipation).filter(
+                ClassParticipation.member_id == user_id,
+                ClassParticipation.gym_id == gym_id,
+                ClassParticipation.status == ClassParticipationStatus.ATTENDED,
+                ClassParticipation.attendance_time.isnot(None)
+            ).order_by(
+                ClassParticipation.attendance_time.desc()
+            ).first()
+
+            last_attendance = last_participation.attendance_time if last_participation else None
+
+            # Guardar en cache si hay resultado (TTL: 10 minutos)
+            if redis_client and last_attendance:
+                try:
+                    await redis_client.set(
+                        cache_key,
+                        last_attendance.isoformat(),
+                        ex=600  # 10 minutos
+                    )
+                except Exception as e:
+                    logger.error(f"Error setting cache for last attendance: {e}")
+
+            return last_attendance
+
+        except Exception as e:
+            logger.error(f"Error getting last attendance for user {user_id}: {e}", exc_info=True)
+            return None
+
     def _calculate_period_dates(self, period: PeriodType) -> tuple[datetime, datetime]:
         """Calcula fechas de inicio y fin para el período especificado."""
         now = datetime.now()
-        
+
         if period == PeriodType.week:
             start = now - timedelta(days=7)
             end = now
@@ -1183,7 +1254,7 @@ class UserStatsService:
             # Default a mes
             start = now.replace(day=1)
             end = now
-        
+
         return start, end
 
     async def _calculate_quick_stats(
