@@ -8,6 +8,7 @@ from app.api.v1.endpoints.nutrition import router as nutrition_router
 from app.api.v1.endpoints.stripe_connect import router as stripe_connect_router
 from app.api.v1.endpoints.user_dashboard import router as user_dashboard_router
 from app.api.v1.endpoints.surveys import router as surveys_router
+from app.api.v1.endpoints.context import router as context_router
 
 # Import modular packages directly
 from app.api.v1.endpoints.auth import router as auth_router
@@ -69,3 +70,6 @@ api_router.include_router(stripe_connect_router, prefix="/stripe-connect", tags=
 
 # Surveys module
 api_router.include_router(surveys_router, prefix="/surveys", tags=["surveys"])
+
+# Context module (workspace info for adaptive UI)
+api_router.include_router(context_router, prefix="/context", tags=["context"])

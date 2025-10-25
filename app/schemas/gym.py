@@ -1,8 +1,14 @@
 from typing import Optional, List, Dict, Any
 from datetime import datetime, time
 from pydantic import BaseModel, EmailStr, HttpUrl, Field, validator
+from enum import Enum
 from app.models.user_gym import GymRoleType # Importar Enum
 import pytz
+
+class GymType(str, Enum):
+    """Tipos de gimnasio soportados"""
+    gym = "gym"
+    personal_trainer = "personal_trainer"
 
 class GymBase(BaseModel):
     """Esquema base para gimnasios (tenants)"""
@@ -14,6 +20,12 @@ class GymBase(BaseModel):
     email: Optional[EmailStr] = Field(None, title="Email de contacto del gimnasio")
     description: Optional[str] = Field(None, title="Descripción del gimnasio", max_length=500)
     timezone: str = Field('UTC', title="Zona horaria del gimnasio", max_length=50, description="Timezone en formato pytz (ej: 'America/Mexico_City')")
+
+    # Nuevos campos para soporte de entrenadores
+    type: GymType = Field(GymType.gym, title="Tipo de gimnasio", description="gym para gimnasio tradicional, personal_trainer para entrenador individual")
+    trainer_specialties: Optional[List[str]] = Field(None, title="Especialidades del entrenador", description="Solo para type=personal_trainer")
+    trainer_certifications: Optional[List[Dict[str, Any]]] = Field(None, title="Certificaciones del entrenador", description="Lista de certificaciones con nombre y año")
+    max_clients: Optional[int] = Field(None, title="Máximo de clientes", description="Límite de clientes simultáneos para entrenadores")
     
     @validator('subdomain')
     def validate_subdomain(cls, v):
@@ -58,7 +70,30 @@ class Gym(GymBase):
     is_active: bool
     created_at: datetime
     updated_at: datetime
-    
+
+    # Propiedades helper computadas
+    @property
+    def is_personal_trainer(self) -> bool:
+        """Verifica si es un espacio de entrenador personal"""
+        return self.type == GymType.personal_trainer
+
+    @property
+    def is_traditional_gym(self) -> bool:
+        """Verifica si es un gimnasio tradicional"""
+        return self.type == GymType.gym
+
+    @property
+    def display_name(self) -> str:
+        """Retorna nombre formateado según el tipo"""
+        if self.is_personal_trainer and self.name.startswith("Entrenamiento Personal "):
+            return self.name.replace("Entrenamiento Personal ", "")
+        return self.name
+
+    @property
+    def entity_type_label(self) -> str:
+        """Label contextual para UI"""
+        return "Espacio de Trabajo" if self.is_personal_trainer else "Gimnasio"
+
     class Config:
         from_attributes = True
 
