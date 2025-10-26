@@ -337,6 +337,11 @@ class GymService:
                 "phone": gym.phone,
                 "email": gym.email, # Email del gimnasio
                 "description": gym.description,
+                "timezone": gym.timezone,
+                "type": gym.type,  # IMPORTANTE: incluir el tipo de workspace
+                "trainer_specialties": gym.trainer_specialties,
+                "trainer_certifications": gym.trainer_certifications,
+                "max_clients": gym.max_clients,
                 "is_active": gym.is_active,
                 "created_at": gym.created_at,
                 "updated_at": gym.updated_at,
@@ -345,7 +350,7 @@ class GymService:
                 "user_role_in_gym": user_gym.role # Rol del usuario en ESTE gimnasio
             }
             result.append(gym_membership_dict)
-            
+
         return result
     
     def get_gym_users(
