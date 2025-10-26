@@ -127,6 +127,7 @@ Esta documentación está organizada por categorías para facilitar la navegaci�
 
 **Documentación**:
 - 📄 [Resumen Completo](../TRAINER_IMPLEMENTATION_COMPLETE.md) - Estado de implementación
+- 🆚 [Trainers vs Gyms](trainers/TRAINERS_VS_GYMS.md) - **⭐ NUEVO** - Diferencias y guía completa (~500 líneas)
 - 📖 [API Documentation](TRAINER_API_DOCUMENTATION.md) - Referencia de endpoints (~1150 líneas)
 - 🎨 [Integration Guide](TRAINER_INTEGRATION_GUIDE.md) - Guía para frontend (~800 líneas)
 - 💻 [Ejemplos de Código](../examples/) - Código reutilizable (TypeScript/React)
