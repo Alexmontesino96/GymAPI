@@ -312,6 +312,9 @@ async def get_workspace_context(
         # Obtener rol del usuario en este gimnasio
         user_role = getattr(request.state, 'role_in_gym', GymRoleType.MEMBER)
 
+        # Convertir enum a string si es necesario
+        role_str = user_role.value if hasattr(user_role, 'value') else str(user_role) if user_role else 'MEMBER'
+
         # Construir contexto
         terminology = get_terminology(current_gym.type)
         features = get_enabled_features(current_gym.type, user_role)
@@ -350,8 +353,8 @@ async def get_workspace_context(
             "email": internal_user.email,
             "name": f"{internal_user.first_name} {internal_user.last_name}",
             "photo_url": internal_user.picture,  # El modelo User usa 'picture' no 'photo_url'
-            "role": user_role,
-            "role_label": terminology.get(user_role.lower(), user_role),
+            "role": role_str,
+            "role_label": terminology.get(role_str.lower(), role_str),
             "permissions": get_user_permissions(user_role)
         }
 
