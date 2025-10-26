@@ -38,6 +38,7 @@ try:
         pool_size=5,
         max_overflow=10,
         pool_timeout=30,
+        pool_recycle=280,  # Reciclar conexiones cada 4m40s (antes del timeout de pgbouncer ~5min)
         connect_args={"connect_timeout": 10} # Timeout de conexión explícito
     )
 
