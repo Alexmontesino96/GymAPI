@@ -78,7 +78,7 @@ class TrainerSetupService:
                 existing_workspace = self.db.query(UserGym).join(Gym).filter(
                     UserGym.user_id == existing_user.id,
                     UserGym.role == GymRoleType.OWNER,
-                    Gym.type == GymType.PERSONAL_TRAINER
+                    Gym.type == GymType.personal_trainer
                 ).first()
 
                 if existing_workspace:
@@ -195,7 +195,7 @@ class TrainerSetupService:
 
         gym = Gym(
             name=gym_name,
-            type=GymType.PERSONAL_TRAINER,
+            type=GymType.personal_trainer,
             subdomain=subdomain,
             email=email,
             phone=phone,

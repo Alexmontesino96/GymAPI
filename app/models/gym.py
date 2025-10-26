@@ -8,8 +8,8 @@ from app.db.base_class import Base
 
 class GymType(str, PyEnum):
     """Tipos de gimnasio soportados"""
-    GYM = "gym"
-    PERSONAL_TRAINER = "personal_trainer"
+    gym = "gym"
+    personal_trainer = "personal_trainer"
 
 # Imports condicionales para evitar referencias circulares
 if TYPE_CHECKING:
@@ -40,7 +40,7 @@ class Gym(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     # Nuevos campos para soporte de entrenadores personales
-    type = Column(SQLEnum(GymType, name="gym_type_enum"), nullable=False, default=GymType.GYM, index=True)
+    type = Column(SQLEnum(GymType, name="gym_type_enum"), nullable=False, default=GymType.gym, index=True)
     trainer_specialties = Column(JSON, nullable=True)  # ["Fuerza", "CrossFit", "Yoga"]
     trainer_certifications = Column(JSON, nullable=True)  # [{"name": "NASM-CPT", "year": 2020}]
     max_clients = Column(Integer, nullable=True)  # Límite de clientes activos para entrenadores
@@ -81,12 +81,12 @@ class Gym(Base):
     @property
     def is_personal_trainer(self) -> bool:
         """Verifica si es un espacio de entrenador personal"""
-        return self.type == GymType.PERSONAL_TRAINER
+        return self.type == GymType.personal_trainer
 
     @property
     def is_traditional_gym(self) -> bool:
         """Verifica si es un gimnasio tradicional"""
-        return self.type == GymType.GYM
+        return self.type == GymType.gym
 
     @property
     def display_name(self) -> str:

@@ -223,7 +223,7 @@ async def check_email_availability(
         has_workspace = db.query(UserGym).join(Gym).filter(
             UserGym.user_id == user.id,
             UserGym.role == "OWNER",
-            Gym.type == GymType.PERSONAL_TRAINER
+            Gym.type == GymType.personal_trainer
         ).first() is not None
 
         return {

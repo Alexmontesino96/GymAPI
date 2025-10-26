@@ -119,7 +119,7 @@ class TrainerSetup:
 
             gym = Gym(
                 name=gym_name,
-                type=GymType.PERSONAL_TRAINER,
+                type=GymType.personal_trainer,
                 subdomain=subdomain,
                 email=email,
                 phone=phone,
