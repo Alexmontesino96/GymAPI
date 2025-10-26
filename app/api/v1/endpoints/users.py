@@ -100,18 +100,38 @@ async def update_user_profile(
 
 @router.post("/profile/image", response_model=UserSchema, tags=["Profile"])
 async def upload_profile_image(
-    file: UploadFile = File(...),
+    file: Optional[UploadFile] = File(None),
+    image: Optional[UploadFile] = File(None),
+    photo: Optional[UploadFile] = File(None),
+    picture: Optional[UploadFile] = File(None),
     db: Session = Depends(get_db),
     user: Auth0User = Depends(get_current_user),
 ) -> Any:
-    """Sube o actualiza la imagen de perfil del usuario autenticado."""
+    """
+    Sube o actualiza la imagen de perfil del usuario autenticado.
+
+    Acepta el archivo en cualquiera de estos nombres de campo:
+    - file
+    - image
+    - photo
+    - picture
+    """
+    # Obtener el primer archivo disponible
+    upload_file = file or image or photo or picture
+
+    if not upload_file:
+        raise HTTPException(
+            status_code=400,
+            detail="Debe proporcionar un archivo de imagen (campo: file, image, photo o picture)"
+        )
+
     auth0_id = user.id
     if not auth0_id:
         raise HTTPException(status_code=400, detail="Token inválido")
-    content_type = file.content_type or ""
+    content_type = upload_file.content_type or ""
     if not content_type.startswith("image/"):
         raise HTTPException(status_code=400, detail="El archivo debe ser una imagen")
-    updated_user = await user_service.update_user_profile_image(db, auth0_id, file)
+    updated_user = await user_service.update_user_profile_image(db, auth0_id, upload_file)
     # <<< Invalidar caché de perfil público >>>
     # Necesitamos el user_id local e inyectar redis_client
     if updated_user:
