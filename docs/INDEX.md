@@ -113,6 +113,40 @@ Esta documentación está organizada por categorías para facilitar la navegaci�
 
 ## 🚀 Nuevas Características
 
+### Sistema de Entrenadores Personales (Enero 2024) ⭐
+**NUEVO** - Sistema completo para entrenadores personales individuales:
+- Workspaces dedicados tipo `personal_trainer`
+- UI adaptativa según tipo de workspace
+- 5 endpoints nuevos de API
+- Registro de trainers con validación en tiempo real
+- Terminología dinámica ("clientes" vs "miembros")
+- Features condicionales según tipo
+- Branding personalizado
+- Ejemplos de código completos (React, Vue, Flutter)
+- Documentación completa de integración
+
+**Documentación**:
+- 📄 [Resumen Completo](../TRAINER_IMPLEMENTATION_COMPLETE.md) - Estado de implementación
+- 📖 [API Documentation](TRAINER_API_DOCUMENTATION.md) - Referencia de endpoints (~1150 líneas)
+- 🎨 [Integration Guide](TRAINER_INTEGRATION_GUIDE.md) - Guía para frontend (~800 líneas)
+- 💻 [Ejemplos de Código](../examples/) - Código reutilizable (TypeScript/React)
+- 📋 [Implementation Summary](../IMPLEMENTATION_SUMMARY.md) - Resumen técnico
+
+**Scripts**:
+- `scripts/setup_trainer.py` - Registrar trainer desde CLI
+- `scripts/apply_trainer_migration.py` - Aplicar/revertir migración
+
+**Endpoints**:
+```
+POST   /api/v1/auth/register-trainer
+GET    /api/v1/auth/trainer/check-email/{email}
+GET    /api/v1/auth/trainer/validate-subdomain/{subdomain}
+GET    /api/v1/context/workspace
+GET    /api/v1/context/workspace/stats
+```
+
+---
+
 ### Sistema de Encuestas (Agosto 2025)
 El nuevo sistema de encuestas permite:
 - 13 tipos diferentes de preguntas
@@ -133,6 +167,9 @@ Estos archivos permanecen en la raíz del proyecto por su importancia:
 - [`CLAUDE.md`](/CLAUDE.md) - Instrucciones para Claude AI
 - [`scripts/README.md`](/scripts/README.md) - Documentación de scripts
 - [`tests/README.md`](/tests/README.md) - Documentación de tests
+- [`TRAINER_IMPLEMENTATION_COMPLETE.md`](/TRAINER_IMPLEMENTATION_COMPLETE.md) - ⭐ **NUEVO** - Implementación de trainers
+- [`IMPLEMENTATION_SUMMARY.md`](/IMPLEMENTATION_SUMMARY.md) - Resumen de implementación de trainers
+- [`examples/`](/examples/) - Ejemplos de código reutilizable
 
 ---
 
