@@ -40,7 +40,7 @@ class Gym(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     # Nuevos campos para soporte de entrenadores personales
-    type = Column(SQLEnum(GymType), nullable=False, default=GymType.GYM, index=True)
+    type = Column(SQLEnum(GymType, name="gym_type_enum"), nullable=False, default=GymType.GYM, index=True)
     trainer_specialties = Column(JSON, nullable=True)  # ["Fuerza", "CrossFit", "Yoga"]
     trainer_certifications = Column(JSON, nullable=True)  # [{"name": "NASM-CPT", "year": 2020}]
     max_clients = Column(Integer, nullable=True)  # Límite de clientes activos para entrenadores
