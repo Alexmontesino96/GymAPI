@@ -1,6 +1,6 @@
 from typing import Optional, List, Dict, Any
 from datetime import datetime, time
-from pydantic import BaseModel, EmailStr, HttpUrl, Field, validator
+from pydantic import BaseModel, EmailStr, HttpUrl, Field, validator, field_serializer
 from enum import Enum
 from app.models.user_gym import GymRoleType # Importar Enum
 import pytz
@@ -39,6 +39,11 @@ class GymBase(BaseModel):
             raise ValueError(f"Zona horaria inválida: {v}. Debe ser una zona horaria válida de pytz.")
         return v
 
+    @field_serializer('logo_url')
+    def serialize_logo_url(self, logo_url: Optional[HttpUrl]) -> Optional[str]:
+        """Convierte HttpUrl a string para compatibilidad con PostgreSQL"""
+        return str(logo_url) if logo_url else None
+
 class GymCreate(GymBase):
     """Esquema para crear un nuevo gimnasio"""
     is_active: bool = Field(True, title="Estado del gimnasio")
@@ -59,6 +64,11 @@ class GymUpdate(BaseModel):
         if v is not None and v not in pytz.all_timezones:
             raise ValueError(f"Zona horaria inválida: {v}. Debe ser una zona horaria válida de pytz.")
         return v
+
+    @field_serializer('logo_url')
+    def serialize_logo_url(self, logo_url: Optional[HttpUrl]) -> Optional[str]:
+        """Convierte HttpUrl a string para compatibilidad con PostgreSQL"""
+        return str(logo_url) if logo_url else None
 
 class GymStatusUpdate(BaseModel):
     """Esquema para actualizar solo el estado de un gimnasio"""
@@ -144,6 +154,11 @@ class GymPublicSchema(BaseModel):
     timezone: str  # Incluir timezone en respuestas públicas
     is_active: bool
 
+    @field_serializer('logo_url')
+    def serialize_logo_url(self, logo_url: Optional[HttpUrl]) -> Optional[str]:
+        """Convierte HttpUrl a string para compatibilidad con PostgreSQL"""
+        return str(logo_url) if logo_url else None
+
     class Config:
         from_attributes = True
 
@@ -203,11 +218,16 @@ class GymDetailedPublicSchema(BaseModel):
     description: Optional[str] = None
     timezone: str
     is_active: bool
-    
+
     # Información detallada adicional
     gym_hours: List[GymHoursPublic] = []
     membership_plans: List[MembershipPlanPublic] = []
     modules: List[GymModulePublic] = []
-    
+
+    @field_serializer('logo_url')
+    def serialize_logo_url(self, logo_url: Optional[HttpUrl]) -> Optional[str]:
+        """Convierte HttpUrl a string para compatibilidad con PostgreSQL"""
+        return str(logo_url) if logo_url else None
+
     class Config:
         from_attributes = True
