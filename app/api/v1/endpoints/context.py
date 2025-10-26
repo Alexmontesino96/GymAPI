@@ -349,7 +349,7 @@ async def get_workspace_context(
             "id": internal_user.id,
             "email": internal_user.email,
             "name": f"{internal_user.first_name} {internal_user.last_name}",
-            "photo_url": internal_user.photo_url,
+            "photo_url": internal_user.picture,  # El modelo User usa 'picture' no 'photo_url'
             "role": user_role,
             "role_label": terminology.get(user_role.lower(), user_role),
             "permissions": get_user_permissions(user_role)
