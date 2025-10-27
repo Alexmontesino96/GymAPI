@@ -523,7 +523,32 @@ class StripeService:
             payment_intent = event['data']['object']
             logger.error(f"Payment intent falló: {payment_intent['id']}")
             await self._handle_payment_intent_failed(payment_intent)
-            
+
+        # === EVENTOS DE MONETIZACIÓN DE EVENTOS ===
+        elif event_type == 'payment_intent.succeeded':
+            # Payment Intent exitoso (para eventos de pago)
+            payment_intent = event['data']['object']
+            logger.info(f"Payment intent exitoso: {payment_intent['id']}")
+            await self._handle_event_payment_succeeded(payment_intent)
+
+        elif event_type == 'payment_intent.canceled':
+            # Payment Intent cancelado
+            payment_intent = event['data']['object']
+            logger.info(f"Payment intent cancelado: {payment_intent['id']}")
+            await self._handle_event_payment_canceled(payment_intent)
+
+        elif event_type == 'charge.refunded':
+            # Reembolso procesado
+            charge = event['data']['object']
+            logger.info(f"Reembolso procesado: {charge['id']}")
+            await self._handle_event_refund_processed(charge)
+
+        elif event_type == 'payment_intent.requires_payment_method':
+            # Payment Intent requiere método de pago (falló el actual)
+            payment_intent = event['data']['object']
+            logger.warning(f"Payment intent requiere nuevo método de pago: {payment_intent['id']}")
+            await self._handle_event_payment_requires_method(payment_intent)
+
         else:
             logger.warning(f"Evento no manejado: {event_type}")
 
@@ -969,6 +994,195 @@ class StripeService:
         except Exception as e:
             logger.error(f"Error manejando fallo de payment intent: {str(e)}")
             await self._alert_webhook_failure('payment_intent_failed', payment_intent_id, str(e))
+
+    # === HANDLERS PARA MONETIZACIÓN DE EVENTOS ===
+
+    async def _handle_event_payment_succeeded(self, payment_intent: Dict[str, Any]) -> None:
+        """
+        Manejar pago exitoso de evento - actualizar estado de participación.
+
+        Este handler se ejecuta cuando un Payment Intent para un evento se completa exitosamente.
+        """
+        try:
+            from app.db.session import SessionLocal
+            from app.models.event import EventParticipation, PaymentStatusType
+            from datetime import datetime
+
+            payment_intent_id = payment_intent['id']
+            metadata = payment_intent.get('metadata', {})
+
+            # Extraer información del metadata
+            event_id = metadata.get('event_id')
+            user_id = metadata.get('user_id')
+            gym_id = metadata.get('gym_id')
+
+            if not all([event_id, user_id]):
+                logger.warning(f"Metadata incompleta en payment intent {payment_intent_id}")
+                return
+
+            db = SessionLocal()
+            try:
+                # Buscar la participación por payment intent ID
+                participation = db.query(EventParticipation).filter(
+                    EventParticipation.stripe_payment_intent_id == payment_intent_id
+                ).first()
+
+                if not participation:
+                    logger.error(f"No se encontró participación para payment intent {payment_intent_id}")
+                    return
+
+                # Actualizar estado de pago
+                participation.payment_status = PaymentStatusType.PAID
+                participation.amount_paid_cents = payment_intent['amount']
+                participation.payment_date = datetime.utcnow()
+
+                db.commit()
+                logger.info(
+                    f"Pago de evento confirmado automáticamente via webhook: "
+                    f"Participación {participation.id}, Evento {event_id}"
+                )
+
+                # TODO: Enviar notificación de confirmación al usuario
+
+            finally:
+                db.close()
+
+        except Exception as e:
+            logger.error(f"Error manejando pago exitoso de evento: {str(e)}")
+            await self._alert_webhook_failure('event_payment_succeeded', payment_intent_id, str(e))
+
+    async def _handle_event_payment_canceled(self, payment_intent: Dict[str, Any]) -> None:
+        """
+        Manejar cancelación de Payment Intent de evento.
+
+        Si el usuario cancela el pago o expira, actualizar el estado.
+        """
+        try:
+            from app.db.session import SessionLocal
+            from app.models.event import EventParticipation, PaymentStatusType
+
+            payment_intent_id = payment_intent['id']
+
+            db = SessionLocal()
+            try:
+                # Buscar la participación
+                participation = db.query(EventParticipation).filter(
+                    EventParticipation.stripe_payment_intent_id == payment_intent_id
+                ).first()
+
+                if not participation:
+                    logger.warning(f"No se encontró participación para payment intent cancelado {payment_intent_id}")
+                    return
+
+                # Si aún estaba pendiente, marcar como expirado
+                if participation.payment_status == PaymentStatusType.PENDING:
+                    participation.payment_status = PaymentStatusType.EXPIRED
+                    db.commit()
+
+                    logger.info(f"Payment intent cancelado/expirado para participación {participation.id}")
+
+                    # TODO: Liberar el lugar y promover a alguien de lista de espera
+
+            finally:
+                db.close()
+
+        except Exception as e:
+            logger.error(f"Error manejando cancelación de payment intent: {str(e)}")
+
+    async def _handle_event_refund_processed(self, charge: Dict[str, Any]) -> None:
+        """
+        Manejar reembolso procesado - actualizar estado de participación.
+
+        Se ejecuta cuando Stripe procesa exitosamente un reembolso.
+        """
+        try:
+            from app.db.session import SessionLocal
+            from app.models.event import EventParticipation, PaymentStatusType
+            from datetime import datetime
+
+            charge_id = charge['id']
+            refunded = charge.get('refunded', False)
+            amount_refunded = charge.get('amount_refunded', 0)
+
+            if not refunded or amount_refunded == 0:
+                return
+
+            # Obtener el payment intent asociado
+            payment_intent_id = charge.get('payment_intent')
+            if not payment_intent_id:
+                logger.warning(f"Charge {charge_id} sin payment_intent asociado")
+                return
+
+            db = SessionLocal()
+            try:
+                # Buscar la participación
+                participation = db.query(EventParticipation).filter(
+                    EventParticipation.stripe_payment_intent_id == payment_intent_id
+                ).first()
+
+                if not participation:
+                    logger.warning(f"No se encontró participación para charge refunded {charge_id}")
+                    return
+
+                # Actualizar estado de reembolso
+                participation.payment_status = PaymentStatusType.REFUNDED
+                participation.refund_date = datetime.utcnow()
+                participation.refund_amount_cents = amount_refunded
+
+                db.commit()
+                logger.info(
+                    f"Reembolso sincronizado via webhook: "
+                    f"Participación {participation.id}, Monto {amount_refunded} centavos"
+                )
+
+                # TODO: Enviar notificación de reembolso al usuario
+
+            finally:
+                db.close()
+
+        except Exception as e:
+            logger.error(f"Error manejando reembolso de evento: {str(e)}")
+
+    async def _handle_event_payment_requires_method(self, payment_intent: Dict[str, Any]) -> None:
+        """
+        Manejar cuando un Payment Intent requiere un nuevo método de pago.
+
+        Esto ocurre cuando el método de pago actual falla.
+        """
+        try:
+            from app.db.session import SessionLocal
+            from app.models.event import EventParticipation
+
+            payment_intent_id = payment_intent['id']
+            last_payment_error = payment_intent.get('last_payment_error', {})
+
+            db = SessionLocal()
+            try:
+                # Buscar la participación
+                participation = db.query(EventParticipation).filter(
+                    EventParticipation.stripe_payment_intent_id == payment_intent_id
+                ).first()
+
+                if not participation:
+                    return
+
+                # Obtener información del error
+                error_message = last_payment_error.get('message', 'Método de pago rechazado')
+                decline_code = last_payment_error.get('decline_code')
+
+                logger.warning(
+                    f"Payment intent {payment_intent_id} requiere nuevo método de pago. "
+                    f"Error: {error_message}, Code: {decline_code}"
+                )
+
+                # TODO: Notificar al usuario que debe actualizar su método de pago
+                # TODO: Dar un plazo adicional antes de liberar el lugar
+
+            finally:
+                db.close()
+
+        except Exception as e:
+            logger.error(f"Error manejando payment_requires_method: {str(e)}")
 
     async def cancel_subscription(self, subscription_id: str) -> bool:
         """Cancelar una suscripción en Stripe"""

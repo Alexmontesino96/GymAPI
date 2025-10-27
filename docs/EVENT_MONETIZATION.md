@@ -374,9 +374,39 @@ WHERE e.is_paid = true
 GROUP BY e.id, e.title;
 ```
 
+## ✅ Webhooks de Stripe Integrados
+
+El sistema ahora incluye **sincronización automática completa** con Stripe a través de webhooks. Los siguientes eventos son procesados automáticamente:
+
+### Eventos de Pago de Eventos
+
+| Evento | Acción Automática | Estado Actualizado |
+|--------|------------------|-------------------|
+| `payment_intent.succeeded` | Confirma el pago del evento | `PAID` |
+| `payment_intent.canceled` | Marca participación como expirada | `EXPIRED` |
+| `charge.refunded` | Sincroniza reembolsos procesados | `REFUNDED` |
+| `payment_intent.requires_payment_method` | Registra fallo de método de pago | Log de warning |
+
+### Configuración de Webhooks en Stripe Dashboard
+
+1. **URL del Endpoint**: `https://tu-dominio.com/api/v1/memberships/webhooks/stripe`
+2. **Eventos a Activar**:
+   - `payment_intent.succeeded`
+   - `payment_intent.canceled`
+   - `charge.refunded`
+   - `payment_intent.requires_payment_method`
+3. **Signing Secret**: Copiar a `STRIPE_WEBHOOK_SECRET` en `.env`
+
+### Script de Prueba
+
+```bash
+# Probar los webhooks localmente
+python scripts/test_event_payment_webhooks.py
+```
+
 ## 🚧 Próximas Mejoras Planificadas
 
-1. **Webhooks de Stripe**: Sincronización automática de estados
+1. ~~**Webhooks de Stripe**: Sincronización automática de estados~~ ✅ **COMPLETADO**
 2. **Descuentos y Cupones**: Sistema de códigos promocionales
 3. **Planes de Pago**: Dividir pagos en cuotas
 4. **Facturación Automática**: Generación de facturas PDF
