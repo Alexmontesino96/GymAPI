@@ -445,6 +445,14 @@ class EventRepository:
 
     def _promote_from_waiting_list(self, db: Session, event_id: int) -> Optional[EventParticipation]:
         """Promover al primer miembro en lista de espera a registrado."""
+        from app.models.event import Event, PaymentStatusType
+        from datetime import datetime, timedelta
+
+        # Obtener el evento para verificar si es de pago
+        event = db.query(Event).filter(Event.id == event_id).first()
+        if not event:
+            return None
+
         # Obtener primer miembro en lista de espera (orden por fecha de registro)
         waiting = (
             db.query(EventParticipation)
@@ -455,14 +463,30 @@ class EventRepository:
             .order_by(EventParticipation.registered_at)
             .first()
         )
-        
+
         if waiting:
             waiting.status = EventParticipationStatus.REGISTERED
+
+            # Si el evento es de pago, establecer fecha límite para pagar
+            if event.is_paid and event.price_cents:
+                waiting.payment_status = PaymentStatusType.PENDING
+                # Dar 24 horas para completar el pago
+                waiting.payment_expiry = datetime.utcnow() + timedelta(hours=24)
+
+                # TODO: Aquí se debería enviar una notificación al usuario
+                # informándole que tiene un lugar disponible y debe pagar
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.info(
+                    f"Usuario {waiting.member_id} promovido de lista de espera "
+                    f"para evento de pago {event_id}. Fecha límite de pago: {waiting.payment_expiry}"
+                )
+
             db.add(waiting)
             db.commit()
             db.refresh(waiting)
             return waiting
-        
+
         return None
 
 
@@ -711,6 +735,14 @@ class EventParticipationRepository:
     
     def _promote_from_waiting_list(self, db: Session, event_id: int) -> Optional[EventParticipation]:
         """Promover al primer miembro en lista de espera a registrado."""
+        from app.models.event import Event, PaymentStatusType
+        from datetime import datetime, timedelta
+
+        # Obtener el evento para verificar si es de pago
+        event = db.query(Event).filter(Event.id == event_id).first()
+        if not event:
+            return None
+
         # Obtener primer miembro en lista de espera (orden por fecha de registro)
         waiting = (
             db.query(EventParticipation)
@@ -721,14 +753,30 @@ class EventParticipationRepository:
             .order_by(EventParticipation.registered_at)
             .first()
         )
-        
+
         if waiting:
             waiting.status = EventParticipationStatus.REGISTERED
+
+            # Si el evento es de pago, establecer fecha límite para pagar
+            if event.is_paid and event.price_cents:
+                waiting.payment_status = PaymentStatusType.PENDING
+                # Dar 24 horas para completar el pago
+                waiting.payment_expiry = datetime.utcnow() + timedelta(hours=24)
+
+                # TODO: Aquí se debería enviar una notificación al usuario
+                # informándole que tiene un lugar disponible y debe pagar
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.info(
+                    f"Usuario {waiting.member_id} promovido de lista de espera "
+                    f"para evento de pago {event_id}. Fecha límite de pago: {waiting.payment_expiry}"
+                )
+
             db.add(waiting)
             db.commit()
             db.refresh(waiting)
             return waiting
-        
+
         return None
 
     def fill_vacancies_from_waiting_list(self, db: Session, event_id: int) -> List[EventParticipation]:

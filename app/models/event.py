@@ -15,6 +15,23 @@ class EventStatus(str, enum.Enum):
     COMPLETED = "COMPLETED"  # Evento completado
 
 
+class RefundPolicyType(str, enum.Enum):
+    """Política de reembolso para eventos de pago."""
+    NO_REFUND = "NO_REFUND"          # Sin reembolso
+    FULL_REFUND = "FULL_REFUND"      # Reembolso completo
+    PARTIAL_REFUND = "PARTIAL_REFUND"  # Reembolso parcial
+    CREDIT = "CREDIT"                 # Crédito para otros eventos
+
+
+class PaymentStatusType(str, enum.Enum):
+    """Estado del pago de una participación."""
+    PENDING = "PENDING"    # Pago pendiente
+    PAID = "PAID"          # Pagado
+    REFUNDED = "REFUNDED"  # Reembolsado
+    CREDITED = "CREDITED"  # Crédito otorgado
+    EXPIRED = "EXPIRED"    # Expiró el tiempo para pagar (lista de espera)
+
+
 class Event(Base):
     """Modelo para eventos."""
     __tablename__ = "events"
@@ -30,7 +47,19 @@ class Event(Base):
     location = Column(String(100), nullable=True)
     max_participants = Column(Integer, nullable=False, default=0)  # 0 = sin límite
     status = Column(Enum(EventStatus), default=EventStatus.SCHEDULED, index=True)
-    
+
+    # Campos de monetización
+    is_paid = Column(Boolean, default=False, nullable=False, index=True)
+    price_cents = Column(Integer, nullable=True)  # Precio en centavos (ej: 2999 = €29.99)
+    currency = Column(String(3), default="EUR", nullable=True)
+    refund_policy = Column(Enum(RefundPolicyType), nullable=True)
+    refund_deadline_hours = Column(Integer, default=24, nullable=True)  # Horas antes del evento para reembolso
+    partial_refund_percentage = Column(Integer, default=50, nullable=True)  # % de reembolso parcial
+
+    # Integración con Stripe (se poblará cuando se cree el producto)
+    stripe_product_id = Column(String(255), nullable=True, index=True)
+    stripe_price_id = Column(String(255), nullable=True, index=True)
+
     # Relación con el creador del evento (entrenador o admin)
     creator_id = Column(Integer, ForeignKey("user.id"), nullable=False, index=True)
     creator = relationship("User", back_populates="created_events")
@@ -102,7 +131,16 @@ class EventParticipation(Base):
     
     # Asistencia al evento
     attended = Column(Boolean, default=False)
-    
+
+    # Campos de pago
+    payment_status = Column(Enum(PaymentStatusType), default=PaymentStatusType.PENDING, nullable=True, index=True)
+    stripe_payment_intent_id = Column(String(255), nullable=True, index=True)
+    amount_paid_cents = Column(Integer, nullable=True)  # Monto pagado en centavos
+    payment_date = Column(DateTime(timezone=True), nullable=True)
+    refund_date = Column(DateTime(timezone=True), nullable=True)
+    refund_amount_cents = Column(Integer, nullable=True)  # Monto reembolsado
+    payment_expiry = Column(DateTime(timezone=True), nullable=True)  # Fecha límite para pagar (lista de espera)
+
     registered_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     

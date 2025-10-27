@@ -3,7 +3,7 @@ from datetime import datetime
 from pydantic import BaseModel, Field, field_validator, ValidationError
 import pytz
 
-from app.models.event import EventStatus, EventParticipationStatus
+from app.models.event import EventStatus, EventParticipationStatus, RefundPolicyType, PaymentStatusType
 
 
 # Base schemas for Event
@@ -15,6 +15,14 @@ class EventBase(BaseModel):
     location: Optional[str] = Field(None, max_length=100)
     max_participants: int = Field(0, description="0 significa sin límite de participantes")
     status: EventStatus = EventStatus.SCHEDULED
+
+    # Campos de monetización
+    is_paid: bool = Field(False, description="Si el evento requiere pago")
+    price_cents: Optional[int] = Field(None, description="Precio en centavos (ej: 2999 = €29.99)")
+    currency: Optional[str] = Field("EUR", max_length=3, description="Código de moneda ISO")
+    refund_policy: Optional[RefundPolicyType] = Field(None, description="Política de reembolso del evento")
+    refund_deadline_hours: Optional[int] = Field(24, description="Horas antes del evento para solicitar reembolso")
+    partial_refund_percentage: Optional[int] = Field(50, ge=0, le=100, description="Porcentaje de reembolso parcial")
 
 
 # Esquema para usar en CREATE con validadores estrictos
@@ -38,13 +46,33 @@ class EventCreateBase(EventBase):
         now = datetime.now(tz=pytz.UTC)
         if v <= now:
             raise ValueError("La fecha de finalización debe ser posterior a la hora actual")
-            
+
         # Verificar que end_time sea posterior a start_time si start_time está presente
         values = info.data
         if 'start_time' in values and values['start_time'] is not None:
             if v <= values['start_time']:
                 raise ValueError("La fecha de finalización debe ser posterior a la fecha de inicio")
-                
+
+        return v
+
+    @field_validator('price_cents')
+    @classmethod
+    def validate_price(cls, v, info):
+        values = info.data
+        if values.get('is_paid') and (v is None or v <= 0):
+            raise ValueError("El precio debe ser mayor a 0 para eventos de pago")
+        if not values.get('is_paid') and v is not None and v > 0:
+            raise ValueError("No se puede establecer precio para eventos gratuitos")
+        return v
+
+    @field_validator('refund_policy')
+    @classmethod
+    def validate_refund_policy(cls, v, info):
+        values = info.data
+        if values.get('is_paid') and v is None:
+            raise ValueError("Debe especificar una política de reembolso para eventos de pago")
+        if not values.get('is_paid') and v is not None:
+            raise ValueError("No se puede establecer política de reembolso para eventos gratuitos")
         return v
 
 
@@ -68,6 +96,14 @@ class EventUpdate(BaseModel):
     location: Optional[str] = Field(None, max_length=100)
     max_participants: Optional[int] = None
     status: Optional[EventStatus] = None
+
+    # Campos de monetización (se pueden actualizar)
+    is_paid: Optional[bool] = None
+    price_cents: Optional[int] = None
+    currency: Optional[str] = Field(None, max_length=3)
+    refund_policy: Optional[RefundPolicyType] = None
+    refund_deadline_hours: Optional[int] = None
+    partial_refund_percentage: Optional[int] = Field(None, ge=0, le=100)
     
     @field_validator('start_time')
     @classmethod
@@ -104,6 +140,11 @@ class EventParticipationBase(BaseModel):
     status: EventParticipationStatus = EventParticipationStatus.REGISTERED
     attended: bool = False
 
+    # Campos de pago
+    payment_status: Optional[PaymentStatusType] = None
+    amount_paid_cents: Optional[int] = None
+    payment_date: Optional[datetime] = None
+
 
 class EventParticipationCreate(BaseModel):
     """Esquema para crear una participación en un evento."""
@@ -132,6 +173,12 @@ class EventParticipation(EventParticipationBase):
     registered_at: datetime
     updated_at: datetime
 
+    # Campos adicionales de pago (solo lectura)
+    stripe_payment_intent_id: Optional[str] = None
+    refund_date: Optional[datetime] = None
+    refund_amount_cents: Optional[int] = None
+    payment_expiry: Optional[datetime] = None
+
     class Config:
         from_attributes = True
 
@@ -150,6 +197,10 @@ class Event(EventBase):
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     participants_count: Optional[int] = 0
+
+    # Campos de Stripe (solo lectura)
+    stripe_product_id: Optional[str] = None
+    stripe_price_id: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -193,4 +244,23 @@ class EventWorkerResponse(BaseModel):
     
     class Config:
         from_attributes = True
-        populate_by_name = True # Permite usar el alias en la creación 
+        populate_by_name = True # Permite usar el alias en la creación
+
+
+# Schema para respuesta de registro con información de pago
+class EventParticipationWithPayment(EventParticipation):
+    """Esquema de participación con información de pago si aplica."""
+    # Payment Intent info para eventos de pago
+    payment_required: Optional[bool] = Field(False, description="Si se requiere pago para completar el registro")
+    payment_client_secret: Optional[str] = Field(None, description="Client secret del Payment Intent de Stripe")
+    payment_amount: Optional[int] = Field(None, description="Monto a pagar en centavos")
+    payment_currency: Optional[str] = Field(None, description="Moneda del pago")
+    payment_deadline: Optional[datetime] = Field(None, description="Fecha límite para realizar el pago (solo lista de espera)")
+
+    class Config:
+        from_attributes = True
+
+
+# Alias para Event usado en endpoints
+EventSchema = Event
+EventParticipationSchema = EventParticipation 

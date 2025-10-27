@@ -14,7 +14,7 @@ organized by the gym. The module provides endpoints for:
 All endpoints are protected with appropriate permission scopes.
 """
 
-from typing import List, Optional, Any
+from typing import List, Optional, Any, Dict
 from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Query, Body, Path, status, Security, BackgroundTasks, Request
 from sqlalchemy.orm import Session
@@ -27,18 +27,19 @@ from app.core.tenant import verify_gym_access, get_current_gym, GymSchema
 from app.core.tenant_cache import verify_gym_access_cached
 from app.models.gym import Gym
 from app.schemas.event import (
-    Event as EventSchema, 
-    EventCreate, 
-    EventUpdate, 
+    Event as EventSchema,
+    EventCreate,
+    EventUpdate,
     EventDetail,
-    EventParticipation as EventParticipationSchema, 
-    EventParticipationCreate, 
+    EventParticipation as EventParticipationSchema,
+    EventParticipationCreate,
     EventParticipationUpdate,
     EventWithParticipantCount,
     EventParticipationWithEvent,
-    EventBulkParticipationCreate
+    EventBulkParticipationCreate,
+    EventParticipationWithPayment
 )
-from app.models.event import EventStatus, EventParticipationStatus, Event, EventParticipation
+from app.models.event import EventStatus, EventParticipationStatus, Event, EventParticipation, RefundPolicyType, PaymentStatusType
 from app.models.user import UserRole, User
 from app.repositories.event import event_repository, event_participation_repository
 from fastapi.responses import JSONResponse
@@ -47,6 +48,7 @@ import logging
 import time
 from app.services.event import event_service
 from app.services.chat import chat_service
+from app.services.event_payment_service import event_payment_service
 from app.core.config import get_settings
 from app.services import sqs_service, queue_service
 
@@ -802,7 +804,7 @@ async def admin_delete_event(
 
 
 # Event Participation Endpoints
-@router.post("/participation", response_model=EventParticipationSchema, status_code=status.HTTP_201_CREATED)
+@router.post("/participation", response_model=EventParticipationWithPayment, status_code=status.HTTP_201_CREATED)
 async def register_for_event(
     *,
     request: Request,
@@ -811,7 +813,7 @@ async def register_for_event(
     current_gym: GymSchema = Depends(verify_gym_access),  # Usar GymSchema
     current_user: Auth0User = Security(auth.get_user, scopes=["resource:write"]),
     redis_client: Redis = Depends(get_redis_client)
-) -> EventParticipationSchema:
+) -> EventParticipationWithPayment:
     """
     Registrar el usuario actual como participante de un evento.
     
@@ -911,7 +913,67 @@ async def register_for_event(
             status_code=400,
             detail="Error al registrarse para el evento"
         )
-    
+
+    # Preparar respuesta con información de pago si aplica
+    response_data = participation.__dict__.copy()
+    response_data['payment_required'] = False
+    response_data['payment_client_secret'] = None
+    response_data['payment_amount'] = None
+    response_data['payment_currency'] = None
+    response_data['payment_deadline'] = None
+
+    # Verificar si el evento requiere pago y procesar
+    if event.is_paid and event.price_cents:
+        # Verificar que Stripe esté habilitado para el gimnasio
+        stripe_enabled = await event_payment_service.verify_stripe_enabled(db, current_gym.id)
+        if not stripe_enabled:
+            # Si Stripe no está habilitado, cancelar el registro
+            db.delete(participation)
+            db.commit()
+            raise HTTPException(
+                status_code=400,
+                detail="El evento requiere pago pero el sistema de pagos no está configurado para este gimnasio"
+            )
+
+        # Solo crear Payment Intent si el usuario está REGISTERED (no para WAITING_LIST)
+        if participation.status == EventParticipationStatus.REGISTERED:
+            try:
+                # Crear Payment Intent para el evento
+                payment_info = await event_payment_service.create_payment_intent_for_event(
+                    db=db,
+                    event=event,
+                    user=user,
+                    gym_id=current_gym.id
+                )
+
+                # Actualizar participación con información del Payment Intent
+                participation.payment_status = PaymentStatusType.PENDING
+                participation.stripe_payment_intent_id = payment_info["payment_intent_id"]
+                db.commit()
+                db.refresh(participation)
+
+                # Agregar información de pago a la respuesta
+                response_data['payment_required'] = True
+                response_data['payment_client_secret'] = payment_info["client_secret"]
+                response_data['payment_amount'] = payment_info["amount"]
+                response_data['payment_currency'] = payment_info["currency"]
+
+                logger.info(f"Payment Intent creado para participación {participation.id} en evento {event.id}")
+            except Exception as e:
+                # Si hay error creando el Payment Intent, cancelar el registro
+                db.delete(participation)
+                db.commit()
+                logger.error(f"Error creando Payment Intent para evento {event.id}: {e}")
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Error procesando el pago: {str(e)}"
+                )
+        elif participation.status == EventParticipationStatus.WAITING_LIST:
+            # Para lista de espera, solo marcar como pendiente pero no crear Payment Intent aún
+            participation.payment_status = PaymentStatusType.PENDING
+            db.commit()
+            logger.info(f"Usuario {user.id} en lista de espera para evento de pago {event.id}")
+
     # Añadir usuario al canal de Stream Chat del evento
     try:
         event_room = chat_service.get_event_room(db, event_id=participation_in.event_id)
@@ -922,7 +984,7 @@ async def register_for_event(
             logger.warning(f"No se encontró canal de chat para evento {participation_in.event_id}")
     except Exception as e:
         logger.error(f"Error añadiendo usuario al canal de chat del evento: {e}", exc_info=True)
-    
+
     # Invalidar cachés relacionadas
     if redis_client:
         try:
@@ -933,11 +995,188 @@ async def register_for_event(
             logger.info(f"Cachés del evento {participation_in.event_id} invalidadas después del registro")
         except Exception as e:
             logger.error(f"Error invalidando cachés: {e}", exc_info=True)
-    
+
     process_time = (time.time() - start_time) * 1000
     logger.info(f"Registro para evento completado en {process_time:.2f}ms")
-    
-    return participation
+
+    # Crear objeto de respuesta con información de pago
+    result = EventParticipationWithPayment(**response_data)
+    return result
+
+
+@router.post("/participation/{participation_id}/confirm-payment", response_model=EventParticipationSchema)
+async def confirm_event_payment(
+    *,
+    participation_id: int = Path(..., description="ID de la participación"),
+    payment_intent_id: str = Body(..., embed=True, description="ID del Payment Intent de Stripe"),
+    db: Session = Depends(get_db),
+    current_gym: GymSchema = Depends(verify_gym_access),
+    current_user: Auth0User = Security(auth.get_user, scopes=["resource:write"]),
+    redis_client: Redis = Depends(get_redis_client)
+) -> EventParticipationSchema:
+    """
+    Confirmar el pago exitoso de un evento.
+
+    Este endpoint debe ser llamado después de que el frontend procese exitosamente
+    el pago con Stripe. Actualiza el estado del pago en la participación.
+
+    Args:
+        participation_id: ID de la participación
+        payment_intent_id: ID del Payment Intent de Stripe que fue pagado exitosamente
+
+    Returns:
+        EventParticipation actualizada con estado de pago confirmado
+    """
+    # Obtener el usuario actual
+    user = db.query(User).filter(User.auth0_id == current_user.id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+
+    # Obtener la participación
+    participation = db.query(EventParticipation).filter(
+        EventParticipation.id == participation_id,
+        EventParticipation.member_id == user.id
+    ).first()
+
+    if not participation:
+        raise HTTPException(
+            status_code=404,
+            detail="Participación no encontrada o no pertenece al usuario"
+        )
+
+    # Verificar que la participación pertenece al gimnasio actual
+    event = db.query(Event).filter(Event.id == participation.event_id).first()
+    if not event or event.gym_id != current_gym.id:
+        raise HTTPException(
+            status_code=403,
+            detail="La participación no pertenece al gimnasio actual"
+        )
+
+    # Verificar que el evento requiere pago
+    if not event.is_paid:
+        raise HTTPException(
+            status_code=400,
+            detail="Este evento no requiere pago"
+        )
+
+    # Verificar que el pago está pendiente
+    if participation.payment_status == PaymentStatusType.PAID:
+        raise HTTPException(
+            status_code=400,
+            detail="El pago ya fue confirmado anteriormente"
+        )
+
+    try:
+        # Confirmar el pago usando el servicio
+        updated_participation = await event_payment_service.confirm_event_payment(
+            db=db,
+            participation=participation,
+            payment_intent_id=payment_intent_id
+        )
+
+        # Invalidar cachés del evento
+        if redis_client:
+            try:
+                await event_service.invalidate_event_caches(
+                    redis_client=redis_client,
+                    event_id=event.id
+                )
+            except Exception as e:
+                logger.error(f"Error invalidando cachés: {e}")
+
+        logger.info(f"Pago confirmado para participación {participation_id}")
+        return updated_participation
+
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error confirmando pago: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail="Error procesando confirmación de pago"
+        )
+
+
+@router.post("/participation/{participation_id}/payment-intent", response_model=Dict[str, Any])
+async def get_payment_intent_for_waitlist(
+    *,
+    participation_id: int = Path(..., description="ID de la participación"),
+    db: Session = Depends(get_db),
+    current_gym: GymSchema = Depends(verify_gym_access),
+    current_user: Auth0User = Security(auth.get_user, scopes=["resource:write"]),
+    redis_client: Redis = Depends(get_redis_client)
+) -> Dict[str, Any]:
+    """
+    Obtener Payment Intent para usuario promovido de lista de espera.
+
+    Este endpoint permite a usuarios que han sido promovidos de la lista de espera
+    obtener su Payment Intent para completar el pago del evento.
+
+    Returns:
+        Información del Payment Intent incluyendo client_secret, monto y fecha límite
+    """
+    # Obtener el usuario actual
+    user = db.query(User).filter(User.auth0_id == current_user.id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+
+    # Obtener la participación
+    participation = db.query(EventParticipation).filter(
+        EventParticipation.id == participation_id,
+        EventParticipation.member_id == user.id,
+        EventParticipation.status == EventParticipationStatus.REGISTERED
+    ).first()
+
+    if not participation:
+        raise HTTPException(
+            status_code=404,
+            detail="Participación no encontrada o no está registrada"
+        )
+
+    # Verificar que el evento pertenece al gimnasio actual y es de pago
+    event = db.query(Event).filter(Event.id == participation.event_id).first()
+    if not event or event.gym_id != current_gym.id:
+        raise HTTPException(
+            status_code=403,
+            detail="La participación no pertenece al gimnasio actual"
+        )
+
+    if not event.is_paid:
+        raise HTTPException(
+            status_code=400,
+            detail="Este evento no requiere pago"
+        )
+
+    # Verificar que el pago está pendiente y el usuario tiene tiempo para pagar
+    if participation.payment_status != PaymentStatusType.PENDING:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Estado de pago no es pendiente: {participation.payment_status}"
+        )
+
+    if participation.payment_expiry and participation.payment_expiry < datetime.now(timezone.utc):
+        raise HTTPException(
+            status_code=400,
+            detail="El plazo para realizar el pago ha expirado"
+        )
+
+    try:
+        # Manejar oportunidad de pago para lista de espera
+        payment_info = await event_payment_service.handle_waitlist_payment_opportunity(
+            db=db,
+            participation=participation,
+            event=event
+        )
+
+        logger.info(f"Payment Intent creado para usuario de lista de espera: participación {participation_id}")
+        return payment_info
+
+    except Exception as e:
+        logger.error(f"Error creando Payment Intent para lista de espera: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error procesando pago: {str(e)}"
+        )
 
 
 @router.get("/participation/me", response_model=List[EventParticipationWithEvent])
@@ -1186,16 +1425,44 @@ async def cancel_participation(
             status_code=403,
             detail="El evento no pertenece al gimnasio actual"
         )
-    
+
+    # Obtener la participación antes de cancelar
+    participation = event_participation_repository.get_participation_by_member_and_event(
+        db, member_id=user.id, event_id=event_id
+    )
+
+    if not participation or participation.status == EventParticipationStatus.CANCELLED:
+        raise HTTPException(
+            status_code=404,
+            detail="No se encontró participación activa para este evento"
+        )
+
+    # Procesar reembolso si el evento es de pago y el usuario ya pagó
+    refund_info = None
+    if event.is_paid and participation.payment_status == PaymentStatusType.PAID:
+        try:
+            logger.info(f"Procesando reembolso para participación {participation.id} en evento de pago {event.id}")
+            refund_info = await event_payment_service.process_event_refund(
+                db=db,
+                participation=participation,
+                event=event,
+                reason="Cancelación por usuario"
+            )
+            logger.info(f"Reembolso procesado: {refund_info}")
+        except Exception as e:
+            logger.error(f"Error procesando reembolso: {e}")
+            # Continuar con la cancelación aunque el reembolso falle
+            # El admin puede procesar el reembolso manualmente después
+
     # Cancelar participación
     result = event_participation_repository.cancel_participation(
         db, member_id=user.id, event_id=event_id
     )
-    
+
     if not result:
         raise HTTPException(
             status_code=404,
-            detail="No se encontró participación para este evento"
+            detail="Error al cancelar la participación"
         )
     
     # Invalidar cachés relacionadas
@@ -1386,4 +1653,207 @@ async def bulk_register_for_event(
     if redis_client and created_participations:
         await event_service.invalidate_event_caches(redis_client, event_id=payload.event_id)
 
-    return created_participations 
+    return created_participations
+
+
+# ============= Administrative Payment Endpoints =============
+
+@router.get("/admin/payments/events", response_model=List[EventSchema])
+async def get_paid_events(
+    *,
+    db: Session = Depends(get_db),
+    current_gym: GymSchema = Depends(verify_gym_access),
+    current_user: Auth0User = Security(auth.get_user, scopes=["resource:admin"]),
+    only_active: bool = Query(True, description="Filtrar solo eventos activos")
+) -> List[EventSchema]:
+    """
+    Obtener todos los eventos de pago del gimnasio.
+
+    Este endpoint permite a los administradores ver todos los eventos
+    que requieren pago, con su información de precios y políticas.
+
+    Permissions:
+        - Requires 'resource:admin' scope (admin only)
+    """
+    query = db.query(Event).filter(
+        Event.gym_id == current_gym.id,
+        Event.is_paid == True
+    )
+
+    if only_active:
+        query = query.filter(Event.status != EventStatus.CANCELLED)
+
+    events = query.order_by(Event.start_time.desc()).all()
+
+    logger.info(f"Admin {current_user.id} consultó {len(events)} eventos de pago")
+    return events
+
+
+@router.get("/admin/events/{event_id}/payments", response_model=List[EventParticipationSchema])
+async def get_event_payment_status(
+    *,
+    event_id: int = Path(..., description="ID del evento"),
+    db: Session = Depends(get_db),
+    current_gym: GymSchema = Depends(verify_gym_access),
+    current_user: Auth0User = Security(auth.get_user, scopes=["resource:admin"]),
+    payment_status: Optional[PaymentStatusType] = Query(None, description="Filtrar por estado de pago")
+) -> List[EventParticipationSchema]:
+    """
+    Obtener el estado de pagos de todos los participantes de un evento.
+
+    Este endpoint permite a los administradores ver quién ha pagado,
+    quién tiene pagos pendientes, y quién ha sido reembolsado.
+
+    Permissions:
+        - Requires 'resource:admin' scope (admin only)
+    """
+    # Verificar que el evento existe y pertenece al gimnasio
+    event = db.query(Event).filter(
+        Event.id == event_id,
+        Event.gym_id == current_gym.id
+    ).first()
+
+    if not event:
+        raise HTTPException(
+            status_code=404,
+            detail="Evento no encontrado o no pertenece al gimnasio"
+        )
+
+    if not event.is_paid:
+        raise HTTPException(
+            status_code=400,
+            detail="Este evento no requiere pago"
+        )
+
+    # Obtener participaciones con filtro opcional
+    query = db.query(EventParticipation).filter(
+        EventParticipation.event_id == event_id
+    )
+
+    if payment_status:
+        query = query.filter(EventParticipation.payment_status == payment_status)
+
+    participations = query.all()
+
+    logger.info(f"Admin {current_user.id} consultó pagos del evento {event_id}: {len(participations)} participaciones")
+    return participations
+
+
+@router.post("/admin/participation/{participation_id}/refund", response_model=Dict[str, Any])
+async def admin_process_refund(
+    *,
+    participation_id: int = Path(..., description="ID de la participación"),
+    reason: str = Body(..., embed=True, description="Razón del reembolso"),
+    db: Session = Depends(get_db),
+    current_gym: GymSchema = Depends(verify_gym_access),
+    current_user: Auth0User = Security(auth.get_user, scopes=["resource:admin"])
+) -> Dict[str, Any]:
+    """
+    Procesar manualmente un reembolso para una participación.
+
+    Este endpoint permite a los administradores procesar reembolsos
+    de forma manual, incluso fuera de las políticas normales del evento.
+
+    Permissions:
+        - Requires 'resource:admin' scope (admin only)
+    """
+    # Obtener la participación
+    participation = db.query(EventParticipation).filter(
+        EventParticipation.id == participation_id
+    ).first()
+
+    if not participation:
+        raise HTTPException(
+            status_code=404,
+            detail="Participación no encontrada"
+        )
+
+    # Verificar que el evento pertenece al gimnasio
+    event = db.query(Event).filter(Event.id == participation.event_id).first()
+    if not event or event.gym_id != current_gym.id:
+        raise HTTPException(
+            status_code=403,
+            detail="La participación no pertenece al gimnasio actual"
+        )
+
+    # Verificar que el pago fue realizado
+    if participation.payment_status != PaymentStatusType.PAID:
+        raise HTTPException(
+            status_code=400,
+            detail=f"No se puede reembolsar. Estado actual: {participation.payment_status}"
+        )
+
+    try:
+        refund_info = await event_payment_service.process_event_refund(
+            db=db,
+            participation=participation,
+            event=event,
+            reason=f"Admin refund: {reason}"
+        )
+
+        logger.info(f"Admin {current_user.id} procesó reembolso para participación {participation_id}")
+        return refund_info
+
+    except Exception as e:
+        logger.error(f"Error procesando reembolso administrativo: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error procesando reembolso: {str(e)}"
+        )
+
+
+@router.put("/admin/participation/{participation_id}/payment-status", response_model=EventParticipationSchema)
+async def admin_update_payment_status(
+    *,
+    participation_id: int = Path(..., description="ID de la participación"),
+    new_status: PaymentStatusType = Body(..., embed=True, description="Nuevo estado de pago"),
+    db: Session = Depends(get_db),
+    current_gym: GymSchema = Depends(verify_gym_access),
+    current_user: Auth0User = Security(auth.get_user, scopes=["resource:admin"])
+) -> EventParticipationSchema:
+    """
+    Actualizar manualmente el estado de pago de una participación.
+
+    Este endpoint permite a los administradores cambiar el estado de pago
+    en casos especiales (ej: pago en efectivo, cortesías, etc).
+
+    Permissions:
+        - Requires 'resource:admin' scope (admin only)
+    """
+    # Obtener la participación
+    participation = db.query(EventParticipation).filter(
+        EventParticipation.id == participation_id
+    ).first()
+
+    if not participation:
+        raise HTTPException(
+            status_code=404,
+            detail="Participación no encontrada"
+        )
+
+    # Verificar que el evento pertenece al gimnasio
+    event = db.query(Event).filter(Event.id == participation.event_id).first()
+    if not event or event.gym_id != current_gym.id:
+        raise HTTPException(
+            status_code=403,
+            detail="La participación no pertenece al gimnasio actual"
+        )
+
+    # Actualizar estado de pago
+    old_status = participation.payment_status
+    participation.payment_status = new_status
+
+    # Si se marca como pagado, actualizar fecha de pago
+    if new_status == PaymentStatusType.PAID and old_status != PaymentStatusType.PAID:
+        participation.payment_date = datetime.now(timezone.utc)
+        participation.amount_paid_cents = event.price_cents
+
+    db.commit()
+    db.refresh(participation)
+
+    logger.info(
+        f"Admin {current_user.id} cambió estado de pago de participación {participation_id} "
+        f"de {old_status} a {new_status}"
+    )
+
+    return participation 
