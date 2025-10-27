@@ -915,12 +915,29 @@ async def register_for_event(
         )
 
     # Preparar respuesta con información de pago si aplica
-    response_data = participation.__dict__.copy()
-    response_data['payment_required'] = False
-    response_data['payment_client_secret'] = None
-    response_data['payment_amount'] = None
-    response_data['payment_currency'] = None
-    response_data['payment_deadline'] = None
+    response_data = {
+        'id': participation.id,
+        'event_id': participation.event_id,
+        'member_id': participation.member_id,
+        'gym_id': participation.gym_id,
+        'status': participation.status,
+        'attended': participation.attended,
+        'payment_status': participation.payment_status,
+        'stripe_payment_intent_id': participation.stripe_payment_intent_id,
+        'amount_paid_cents': participation.amount_paid_cents,
+        'payment_date': participation.payment_date,
+        'refund_date': participation.refund_date,
+        'refund_amount_cents': participation.refund_amount_cents,
+        'payment_expiry': participation.payment_expiry,
+        'registered_at': participation.registered_at,
+        'updated_at': participation.updated_at,
+        # Campos adicionales para pago
+        'payment_required': False,
+        'payment_client_secret': None,
+        'payment_amount': None,
+        'payment_currency': None,
+        'payment_deadline': None
+    }
 
     # Verificar si el evento requiere pago y procesar
     if event.is_paid and event.price_cents:
