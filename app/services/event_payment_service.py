@@ -107,6 +107,11 @@ class EventPaymentService:
                 GymStripeAccount.gym_id == gym_id
             ).first()
 
+            logger.info(
+                f"[Stripe Account] Usando cuenta de Stripe Connect del gym {gym_id}: "
+                f"{stripe_account.stripe_account_id}"
+            )
+
             # Buscar o crear customer de Stripe para el usuario
             stripe_profile = await self._get_or_create_stripe_customer(
                 db, user, gym_id, stripe_account.stripe_account_id
@@ -179,6 +184,11 @@ class EventPaymentService:
 
             if not stripe_account:
                 raise ValueError("Cuenta de Stripe no configurada")
+
+            logger.info(
+                f"[Stripe Account] Verificando Payment Intent para gym {gym_id} "
+                f"con cuenta: {stripe_account.stripe_account_id}"
+            )
 
             # Verificar si ya existe un Payment Intent
             if participation.stripe_payment_intent_id:
