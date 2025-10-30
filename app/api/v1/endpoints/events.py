@@ -41,7 +41,9 @@ from app.schemas.event import (
 )
 from app.models.event import EventStatus, EventParticipationStatus, Event, EventParticipation, RefundPolicyType, PaymentStatusType
 from app.models.user import UserRole, User
+from app.models.stripe_profile import GymStripeAccount
 from app.repositories.event import event_repository, event_participation_repository
+import stripe
 from fastapi.responses import JSONResponse
 from fastapi.encoders import jsonable_encoder
 import logging
@@ -868,6 +870,50 @@ async def register_for_event(
             )
         elif existing.status == EventParticipationStatus.CANCELLED:
             # Si el usuario canceló previamente, reactivar la participación
+            logger.info(
+                f"[Reactivación] Reactivando participación cancelada {existing.id} "
+                f"para usuario {user.id} en evento {event.id}"
+            )
+
+            # Limpiar Payment Intent antiguo si existe
+            if existing.stripe_payment_intent_id:
+                logger.info(
+                    f"[Reactivación] Cancelando Payment Intent antiguo: {existing.stripe_payment_intent_id}"
+                )
+                try:
+                    stripe_account = db.query(GymStripeAccount).filter(
+                        GymStripeAccount.gym_id == event.gym_id
+                    ).first()
+
+                    if stripe_account:
+                        # Cancelar Payment Intent en Stripe
+                        stripe.PaymentIntent.cancel(
+                            existing.stripe_payment_intent_id,
+                            stripe_account=stripe_account.stripe_account_id
+                        )
+                        logger.info(
+                            f"[Reactivación] Payment Intent {existing.stripe_payment_intent_id} cancelado en Stripe"
+                        )
+                except stripe.error.InvalidRequestError:
+                    # Payment Intent ya fue cancelado o no existe
+                    logger.info(
+                        f"[Reactivación] Payment Intent {existing.stripe_payment_intent_id} "
+                        f"ya no existe o fue cancelado"
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"[Reactivación] Error cancelando Payment Intent antiguo: {e}"
+                    )
+
+                # Limpiar datos de pago antiguos
+                existing.stripe_payment_intent_id = None
+                existing.payment_status = None
+                existing.amount_paid_cents = None
+                existing.payment_date = None
+                existing.refund_date = None
+                existing.refund_amount_cents = None
+                existing.payment_expiry = None
+
             # Verificar capacidad de nuevo
             registered_count = db.query(EventParticipation).filter(
                 EventParticipation.event_id == event.id,
@@ -878,7 +924,7 @@ async def register_for_event(
                 existing.status = EventParticipationStatus.REGISTERED
             else:
                 existing.status = EventParticipationStatus.WAITING_LIST
-            
+
             existing.updated_at = datetime.now(timezone.utc)
             db.add(existing)
             db.commit()
@@ -955,12 +1001,18 @@ async def register_for_event(
         # Solo crear Payment Intent si el usuario está REGISTERED (no para WAITING_LIST)
         if participation.status == EventParticipationStatus.REGISTERED:
             try:
-                # Crear Payment Intent para el evento
-                payment_info = await event_payment_service.create_payment_intent_for_event(
+                logger.info(
+                    f"[Registro] Procesando pago para participación {participation.id}, "
+                    f"evento {event.id}, usuario {user.id}"
+                )
+
+                # Usar función idempotente para obtener o crear Payment Intent
+                payment_info = await event_payment_service.get_or_create_payment_intent_for_event(
                     db=db,
                     event=event,
                     user=user,
-                    gym_id=current_gym.id
+                    gym_id=current_gym.id,
+                    participation=participation
                 )
 
                 # Actualizar participación con información del Payment Intent
@@ -975,12 +1027,31 @@ async def register_for_event(
                 response_data['payment_amount'] = payment_info["amount"]
                 response_data['payment_currency'] = payment_info["currency"]
 
-                logger.info(f"Payment Intent creado para participación {participation.id} en evento {event.id}")
+                # Validar consistencia antes de enviar al cliente
+                pi_id_from_secret = payment_info["client_secret"].split('_secret_')[0] if payment_info.get("client_secret") else None
+                if pi_id_from_secret != payment_info["payment_intent_id"]:
+                    logger.error(
+                        f"[Registro] ¡ADVERTENCIA! Enviando al cliente IDs inconsistentes:\n"
+                        f"  - Payment Intent ID: {payment_info['payment_intent_id']}\n"
+                        f"  - ID del client_secret: {pi_id_from_secret}"
+                    )
+                else:
+                    logger.info(
+                        f"[Registro] ✅ Enviando al cliente Payment Intent consistente: {payment_info['payment_intent_id']}"
+                    )
+
+                reused_text = " (reutilizado)" if payment_info.get("reused") else " (nuevo)"
+                logger.info(
+                    f"[Registro] Payment Intent{reused_text} asignado a participación {participation.id}:\n"
+                    f"  - Payment Intent ID: {payment_info['payment_intent_id']}\n"
+                    f"  - Client Secret: {payment_info['client_secret'][:50]}..."
+                )
+
             except Exception as e:
                 # Si hay error creando el Payment Intent, cancelar el registro
                 db.delete(participation)
                 db.commit()
-                logger.error(f"Error creando Payment Intent para evento {event.id}: {e}")
+                logger.error(f"[Registro] Error procesando Payment Intent para evento {event.id}: {e}")
                 raise HTTPException(
                     status_code=400,
                     detail=f"Error procesando el pago: {str(e)}"

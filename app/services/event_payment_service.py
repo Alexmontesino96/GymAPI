@@ -147,6 +147,158 @@ class EventPaymentService:
             logger.error(f"Error creando Payment Intent para evento {event.id}: {e}")
             raise
 
+    async def get_or_create_payment_intent_for_event(
+        self,
+        db: Session,
+        event: Event,
+        user: User,
+        gym_id: int,
+        participation: EventParticipation
+    ) -> Dict[str, Any]:
+        """
+        Obtener o crear un Payment Intent para un evento (función idempotente).
+
+        Verifica si ya existe un Payment Intent válido antes de crear uno nuevo.
+        Esto previene la creación de Payment Intents duplicados.
+
+        Args:
+            db: Sesión de base de datos
+            event: Evento a pagar
+            user: Usuario que realiza el pago
+            gym_id: ID del gimnasio
+            participation: Participación asociada
+
+        Returns:
+            Diccionario con client_secret y payment_intent_id
+        """
+        try:
+            # Obtener cuenta de Stripe Connect
+            stripe_account = db.query(GymStripeAccount).filter(
+                GymStripeAccount.gym_id == gym_id
+            ).first()
+
+            if not stripe_account:
+                raise ValueError("Cuenta de Stripe no configurada")
+
+            # Verificar si ya existe un Payment Intent
+            if participation.stripe_payment_intent_id:
+                logger.info(
+                    f"[Idempotencia] Participación {participation.id} ya tiene Payment Intent: "
+                    f"{participation.stripe_payment_intent_id}"
+                )
+
+                try:
+                    # Intentar recuperar Payment Intent existente
+                    existing_pi = stripe.PaymentIntent.retrieve(
+                        participation.stripe_payment_intent_id,
+                        stripe_account=stripe_account.stripe_account_id
+                    )
+
+                    logger.info(
+                        f"[Idempotencia] Payment Intent {existing_pi.id} encontrado con estado: {existing_pi.status}"
+                    )
+
+                    # Verificar si es reutilizable
+                    if existing_pi.status in ['requires_payment_method', 'requires_confirmation', 'requires_action', 'processing']:
+                        # Payment Intent todavía es válido, reutilizarlo
+                        logger.info(
+                            f"[Idempotencia] Reutilizando Payment Intent {existing_pi.id} "
+                            f"para participación {participation.id}"
+                        )
+
+                        # Validar consistencia del client_secret
+                        pi_id_from_secret = existing_pi.client_secret.split('_secret_')[0] if existing_pi.client_secret else None
+                        if pi_id_from_secret != existing_pi.id:
+                            logger.error(
+                                f"[Validación] ¡INCONSISTENCIA! Payment Intent ID {existing_pi.id} "
+                                f"no coincide con ID extraído del client_secret: {pi_id_from_secret}"
+                            )
+
+                        return {
+                            "client_secret": existing_pi.client_secret,
+                            "payment_intent_id": existing_pi.id,
+                            "amount": event.price_cents,
+                            "currency": event.currency,
+                            "reused": True
+                        }
+
+                    elif existing_pi.status == 'succeeded':
+                        # Ya fue pagado, no crear nuevo
+                        logger.warning(
+                            f"[Idempotencia] Payment Intent {existing_pi.id} ya fue pagado. "
+                            f"Participación {participation.id} debería estar en estado PAID"
+                        )
+                        return {
+                            "client_secret": existing_pi.client_secret,
+                            "payment_intent_id": existing_pi.id,
+                            "amount": existing_pi.amount,
+                            "currency": existing_pi.currency,
+                            "reused": True,
+                            "already_paid": True
+                        }
+
+                    else:  # canceled, requires_payment_method con fallo, etc.
+                        logger.info(
+                            f"[Idempotencia] Payment Intent {existing_pi.id} tiene estado "
+                            f"{existing_pi.status}, creando uno nuevo"
+                        )
+                        # Continuar para crear uno nuevo
+
+                except stripe.error.InvalidRequestError as e:
+                    logger.warning(
+                        f"[Idempotencia] Payment Intent {participation.stripe_payment_intent_id} "
+                        f"no encontrado en Stripe: {e}. Creando uno nuevo"
+                    )
+                    # Continuar para crear uno nuevo
+
+                except stripe.error.StripeError as e:
+                    logger.error(f"[Idempotencia] Error verificando Payment Intent: {e}")
+                    # En caso de error, continuar para crear uno nuevo
+
+            # Si llegamos aquí, necesitamos crear un nuevo Payment Intent
+            logger.info(
+                f"[Creación] Creando nuevo Payment Intent para participación {participation.id}, "
+                f"evento {event.id}, usuario {user.id}"
+            )
+
+            payment_info = await self.create_payment_intent_for_event(
+                db=db,
+                event=event,
+                user=user,
+                gym_id=gym_id
+            )
+
+            # Validar consistencia del client_secret
+            pi_id_from_secret = payment_info["client_secret"].split('_secret_')[0] if payment_info.get("client_secret") else None
+            if pi_id_from_secret != payment_info["payment_intent_id"]:
+                logger.error(
+                    f"[Validación] ¡INCONSISTENCIA! Payment Intent ID {payment_info['payment_intent_id']} "
+                    f"no coincide con ID extraído del client_secret: {pi_id_from_secret}"
+                )
+            else:
+                logger.info(
+                    f"[Validación] ✅ Payment Intent ID y client_secret son consistentes: {payment_info['payment_intent_id']}"
+                )
+
+            # Log completo para debugging
+            logger.info(
+                f"[Creación] Payment Intent creado exitosamente:\n"
+                f"  - Participación ID: {participation.id}\n"
+                f"  - Payment Intent ID: {payment_info['payment_intent_id']}\n"
+                f"  - Client Secret: {payment_info['client_secret'][:50]}...\n"
+                f"  - Monto: {payment_info['amount']} {payment_info['currency']}"
+            )
+
+            payment_info["reused"] = False
+            return payment_info
+
+        except Exception as e:
+            logger.error(
+                f"[Error] Error en get_or_create_payment_intent_for_event para "
+                f"participación {participation.id}: {e}"
+            )
+            raise
+
     async def _get_or_create_stripe_customer(
         self,
         db: Session,
