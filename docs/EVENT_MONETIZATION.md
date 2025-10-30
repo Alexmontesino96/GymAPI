@@ -132,35 +132,62 @@ Content-Type: application/json
 
 **IMPORTANTE**: Al usar Stripe Connect, debes incluir el `stripeAccount` en la configuración de Stripe.
 
+**🎯 Flujo Recomendado (Basado en Webhooks de Stripe)**
+
+El sistema usa **webhooks de Stripe como fuente primaria de verdad**. Después de procesar el pago con Stripe SDK:
+
+**Opción A (Recomendada): Esperar Webhook**
 ```javascript
-// Inicializar Stripe con tu publishable key
+// 1. Procesar pago con Stripe SDK
 const stripe = Stripe('pk_test_...');
+const {payment_client_secret, stripe_account_id} = responseData;
 
-// Si el evento requiere pago, obtendrás estos datos del backend
-const {
-  payment_client_secret,
-  stripe_account_id  // ⭐ NUEVO: Necesario para Stripe Connect
-} = responseData;
-
-// ⭐ IMPORTANTE: Incluir stripeAccount para Stripe Connect
 const {error} = await stripe.confirmCardPayment(
   payment_client_secret,
   {
     payment_method: {
       card: cardElement,
-      billing_details: {
-        name: 'John Doe'
-      }
+      billing_details: {name: 'John Doe'}
     }
   },
-  {
-    stripeAccount: stripe_account_id  // ⭐ Necesario para procesar en la cuenta del gym
-  }
+  {stripeAccount: stripe_account_id}
 );
 
 if (!error) {
-  // Confirmar el pago en el backend
-  await confirmPayment(participation_id, payment_intent_id);
+  // 2. NO llamar /confirm-payment inmediatamente
+  // 3. Hacer polling a /participation/{id} cada 2 segundos
+  const checkPaymentStatus = async () => {
+    for (let i = 0; i < 10; i++) {
+      const participation = await fetch(`/api/v1/events/participation/${participation_id}`);
+      const data = await participation.json();
+
+      if (data.payment_status === 'PAID') {
+        // ✅ Webhook confirmó el pago
+        return data;
+      }
+
+      await new Promise(resolve => setTimeout(resolve, 2000));
+    }
+    throw new Error('Timeout esperando confirmación');
+  };
+}
+```
+
+**Opción B (Híbrida): Usar /confirm-payment con Retry**
+```javascript
+// El endpoint /confirm-payment ahora consulta BD local (actualizada por webhook)
+// en lugar de Stripe API, evitando race conditions
+
+if (!error) {
+  try {
+    await confirmPayment(participation_id, payment_intent_id);
+  } catch (error) {
+    if (error.message.includes('espera unos segundos')) {
+      // Reintentar después de 2 segundos
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      await confirmPayment(participation_id, payment_intent_id);
+    }
+  }
 }
 ```
 
@@ -175,11 +202,23 @@ STPPaymentHandler.shared().confirmPayment(
     paymentIntentParams,
     with: self
 ) { status, paymentIntent, error in
-    // Handle result
+    if paymentIntent?.status == .succeeded {
+        // Opción A: Polling a /participation/{id}
+        // Opción B: Llamar /confirm-payment con retry
+    }
 }
 ```
 
-### 4. Confirmar el Pago
+### 4. Confirmar el Pago (Opcional - Webhooks lo hacen automáticamente)
+
+**⚠️ IMPORTANTE**: Los webhooks de Stripe confirman automáticamente los pagos. Este endpoint es opcional y actúa como fallback.
+
+**Cómo funciona el nuevo flujo:**
+1. Webhook de Stripe recibe `payment_intent.succeeded`
+2. Backend actualiza automáticamente `payment_status = PAID` y `status = REGISTERED`
+3. Este endpoint consulta BD local (ya actualizada por webhook) en lugar de Stripe API
+4. Si webhook no ha llegado, espera hasta 5 segundos con retry
+5. Como último recurso, consulta Stripe API
 
 ```http
 POST /api/v1/events/participation/{participation_id}/confirm-payment
@@ -190,6 +229,10 @@ Content-Type: application/json
   "payment_intent_id": "pi_xxx"
 }
 ```
+
+**Respuestas posibles:**
+- `200 OK`: Pago confirmado (por webhook o fallback)
+- `400 Bad Request`: Pago no completado (mensaje indica si debe reintentar)
 
 ### 5. Cancelar Participación con Reembolso
 

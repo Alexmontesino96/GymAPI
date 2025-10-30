@@ -379,6 +379,10 @@ class EventPaymentService:
         """
         Confirmar el pago exitoso de un evento.
 
+        IMPORTANTE: Usa webhooks de Stripe como fuente primaria de verdad.
+        Este endpoint hace polling a la BD local (ya actualizada por webhook)
+        en lugar de consultar Stripe API directamente, evitando race conditions.
+
         Args:
             db: Sesión de base de datos
             participation: Participación a actualizar
@@ -387,12 +391,50 @@ class EventPaymentService:
         Returns:
             Participación actualizada
         """
+        import asyncio
+
         try:
-            # Obtener Payment Intent de Stripe
             event = db.query(Event).filter(Event.id == participation.event_id).first()
             stripe_account = db.query(GymStripeAccount).filter(
                 GymStripeAccount.gym_id == event.gym_id
             ).first()
+
+            # ESTRATEGIA: Confiar en webhooks como fuente primaria
+            # 1. Primero hacer polling a BD local (ya actualizada por webhook)
+            # 2. Solo consultar Stripe API como fallback si webhook no llegó
+
+            max_retries = 5
+            retry_delay = 1.0  # 1 segundo entre intentos
+
+            logger.info(
+                f"[Confirmación] Iniciando verificación de pago para participación {participation.id}. "
+                f"Payment Intent: {payment_intent_id}"
+            )
+
+            # Paso 1: Polling a BD local (esperando que webhook actualice)
+            for attempt in range(max_retries):
+                # Refrescar participación desde BD
+                db.refresh(participation)
+
+                if participation.payment_status == PaymentStatusType.PAID:
+                    logger.info(
+                        f"[Confirmación] ✅ Pago ya confirmado por webhook en intento {attempt + 1}/{max_retries}. "
+                        f"Participación {participation.id} está en estado PAID."
+                    )
+                    return participation
+
+                if attempt < max_retries - 1:
+                    logger.info(
+                        f"[Confirmación] Intento {attempt + 1}/{max_retries}: payment_status={participation.payment_status}. "
+                        f"Esperando {retry_delay}s para que webhook actualice..."
+                    )
+                    await asyncio.sleep(retry_delay)
+
+            # Paso 2: Fallback - Consultar Stripe API si webhook no llegó
+            logger.warning(
+                f"[Confirmación] Webhook no actualizó en {max_retries * retry_delay}s. "
+                f"Consultando Stripe API como fallback..."
+            )
 
             payment_intent = stripe.PaymentIntent.retrieve(
                 payment_intent_id,
@@ -401,7 +443,14 @@ class EventPaymentService:
 
             # Verificar que el pago fue exitoso
             if payment_intent.status != "succeeded":
-                raise ValueError(f"Pago no completado. Estado: {payment_intent.status}")
+                logger.error(
+                    f"[Confirmación] ❌ Payment Intent {payment_intent_id} no está succeeded. "
+                    f"Estado en Stripe: {payment_intent.status}"
+                )
+                raise ValueError(
+                    f"Pago no completado. Estado: {payment_intent.status}. "
+                    f"Si acabas de realizar el pago, espera unos segundos e intenta de nuevo."
+                )
 
             # Actualizar estado de pago
             participation.payment_status = PaymentStatusType.PAID
@@ -436,7 +485,10 @@ class EventPaymentService:
             db.commit()
             db.refresh(participation)
 
-            logger.info(f"Pago confirmado para participación {participation.id}")
+            logger.info(
+                f"[Confirmación] ✅ Pago confirmado para participación {participation.id} "
+                f"(usó fallback de Stripe API)"
+            )
             return participation
 
         except stripe.error.StripeError as e:

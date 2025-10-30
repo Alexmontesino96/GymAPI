@@ -1,5 +1,32 @@
 # 🔍 Troubleshooting: Pagos de Eventos en Estado PENDING
 
+## Arquitectura: Webhooks vs Polling
+
+### 🎯 Estrategia Recomendada por Stripe
+
+El sistema usa **webhooks de Stripe como fuente primaria de verdad**, siguiendo las mejores prácticas oficiales de Stripe:
+
+✅ **Webhooks (Primario)**:
+- Stripe envía notificación `payment_intent.succeeded` al backend
+- Backend actualiza automáticamente BD: `payment_status = PAID`, `status = REGISTERED`
+- **Más confiable**, no depende del cliente
+- **Más eficiente**, no consume API limits
+- **Más rápido** en la mayoría de casos
+
+❌ **Polling desde Cliente (NO Recomendado)**:
+- Cliente consulta repetidamente Stripe API
+- Stripe documenta: "mucho menos confiable y puede causar rate limiting"
+- Puede fallar si usuario cierra la app antes de completar
+
+### 🔄 Flujo Híbrido Implementado
+
+1. **Frontend** procesa pago con Stripe SDK
+2. **Webhook** actualiza BD automáticamente (1-3 segundos típicamente)
+3. **Endpoint `/confirm-payment`** (opcional):
+   - Consulta BD local con retry (5 intentos, 1 segundo cada uno)
+   - Si webhook ya actualizó → respuesta inmediata
+   - Si no → fallback a Stripe API como último recurso
+
 ## Problema: Pago Queda en Estado PENDING
 
 Cuando un pago de evento queda en estado "PENDING", significa que el Payment Intent fue creado pero el pago no se ha completado o confirmado.
@@ -297,6 +324,63 @@ def check_payment_status(participation_id: int):
 └─────────┘    └─────────┘
 ```
 
+## Race Condition: Frontend vs Webhook
+
+### Síntoma
+```
+Frontend: "Payment succeeded in Stripe"
+Backend /confirm-payment: "400 - Pago no completado. Estado: requires_payment_method"
+```
+
+### Causa
+**Race condition** entre:
+1. Stripe confirma el pago (200 OK)
+2. Frontend llama `/confirm-payment` inmediatamente
+3. Backend consulta Stripe API
+4. **Propagación de estado en Stripe aún no completada**
+
+### Solución Implementada (v2.2+)
+
+El endpoint `/confirm-payment` ahora:
+1. ✅ Consulta BD local primero (actualizada por webhook)
+2. ✅ Hace retry con polling (5 segundos máximo)
+3. ✅ Solo consulta Stripe API como último recurso
+
+**Logs esperados:**
+```
+[Confirmación] Iniciando verificación...
+[Confirmación] Intento 1/5: payment_status=PENDING. Esperando 1s...
+[Confirmación] Intento 2/5: payment_status=PENDING. Esperando 1s...
+[Confirmación] ✅ Pago ya confirmado por webhook en intento 3/5
+```
+
+O si webhook no llegó:
+```
+[Confirmación] Webhook no actualizó en 5s. Consultando Stripe API como fallback...
+[Confirmación] ✅ Pago confirmado (usó fallback de Stripe API)
+```
+
+### Recomendación para Frontends
+
+**Opción A (Mejor)**: Polling a GET `/participation/{id}`
+```javascript
+// No llamar /confirm-payment
+// Hacer polling cada 2 segundos hasta que payment_status = PAID
+```
+
+**Opción B (Alternativa)**: Retry en `/confirm-payment`
+```javascript
+try {
+  await confirmPayment(participation_id, payment_intent_id);
+} catch (error) {
+  if (error.message.includes('espera unos segundos')) {
+    // Esperar 2s y reintentar
+    await sleep(2000);
+    await confirmPayment(participation_id, payment_intent_id);
+  }
+}
+```
+
 ## Checklist de Depuración
 
 - [ ] ¿El frontend recibe el `payment_client_secret`?
@@ -312,6 +396,7 @@ def check_payment_status(participation_id: int):
 - [ ] ¿El `client_secret` enviado al cliente coincide con el `payment_intent_id` logeado?
 - [ ] ¿Los logs muestran `[Idempotencia]` o `[Creación]`?
 - [ ] ¿El sistema está reutilizando Payment Intents correctamente en retries?
+- [ ] ¿Los logs muestran `[Confirmación]` con retry o fallback?
 
 ## Prevención
 
