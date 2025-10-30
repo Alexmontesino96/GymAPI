@@ -91,14 +91,20 @@ async def handle_new_message(
         # Get webhook payload
         payload = await request.json()
         logger.info(f"📦 Payload completo: {payload}")
-        
+
+        # Verificar tipo de evento - solo procesar message.new
+        event_type = payload.get("type")
+        if event_type != "message.new":
+            logger.info(f"ℹ️  Evento {event_type} ignorado - este endpoint solo procesa message.new")
+            return {"status": "ok", "message": f"Event type {event_type} ignored"}
+
         # Extract message data
         message = payload.get("message", {})
         channel = payload.get("channel", {})
-        
+
         logger.info(f"✉️  Mensaje extraído: {message}")
         logger.info(f"📺 Canal extraído: {channel}")
-        
+
         if not message or not channel:
             logger.error("❌ ERROR: Payload de webhook inválido: falta message o channel")
             return {"status": "error", "message": "Invalid webhook payload"}
