@@ -46,6 +46,7 @@ GYM_EXEMPT_PATHS = [
     "/api/v1/token",
     "/api/v1/callback",
     "/api/v1/profile",
+    "/api/v1/webhooks/",  # Webhooks externos (Stripe, Stream, etc.)
     "/"
 ]
 
@@ -55,6 +56,7 @@ AUTH_EXEMPT_PATHS = [
     "/api/v1/docs",
     "/api/v1/openapi.json",
     "/api/v1/redoc",
+    "/api/v1/webhooks/",  # Webhooks externos verifican autenticidad mediante firmas
     "/"
 ]
 
