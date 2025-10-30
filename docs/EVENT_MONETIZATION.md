@@ -123,16 +123,26 @@ Content-Type: application/json
   "payment_client_secret": "pi_xxx_secret_xxx",
   "payment_amount": 4999,
   "payment_currency": "EUR",
-  "payment_deadline": null  // Solo para lista de espera
+  "payment_deadline": null,  // Solo para lista de espera
+  "stripe_account_id": "acct_1RjWs7PZfGCbdUwY"  // ID de la cuenta de Stripe Connect del gym
 }
 ```
 
 ### 3. Procesar el Pago en el Frontend
 
+**IMPORTANTE**: Al usar Stripe Connect, debes incluir el `stripeAccount` en la configuración de Stripe.
+
 ```javascript
-// Usar Stripe.js con el client_secret recibido
+// Inicializar Stripe con tu publishable key
 const stripe = Stripe('pk_test_...');
 
+// Si el evento requiere pago, obtendrás estos datos del backend
+const {
+  payment_client_secret,
+  stripe_account_id  // ⭐ NUEVO: Necesario para Stripe Connect
+} = responseData;
+
+// ⭐ IMPORTANTE: Incluir stripeAccount para Stripe Connect
 const {error} = await stripe.confirmCardPayment(
   payment_client_secret,
   {
@@ -142,12 +152,30 @@ const {error} = await stripe.confirmCardPayment(
         name: 'John Doe'
       }
     }
+  },
+  {
+    stripeAccount: stripe_account_id  // ⭐ Necesario para procesar en la cuenta del gym
   }
 );
 
 if (!error) {
   // Confirmar el pago en el backend
   await confirmPayment(participation_id, payment_intent_id);
+}
+```
+
+**Nota para iOS/Swift**: Al usar el Stripe SDK en iOS, configura el `stripeAccount`:
+
+```swift
+// Swift example para iOS
+let paymentIntentParams = STPPaymentIntentParams(clientSecret: paymentClientSecret)
+paymentIntentParams.stripeAccount = stripeAccountId  // ⭐ Necesario para Stripe Connect
+
+STPPaymentHandler.shared().confirmPayment(
+    paymentIntentParams,
+    with: self
+) { status, paymentIntent, error in
+    // Handle result
 }
 ```
 
@@ -196,7 +224,8 @@ Respuesta:
   "payment_intent_id": "pi_xxx",
   "amount": 4999,
   "currency": "EUR",
-  "payment_deadline": "2025-01-28T10:00:00Z"
+  "payment_deadline": "2025-01-28T10:00:00Z",
+  "stripe_account_id": "acct_1RjWs7PZfGCbdUwY"
 }
 ```
 

@@ -982,7 +982,8 @@ async def register_for_event(
         'payment_client_secret': None,
         'payment_amount': None,
         'payment_currency': None,
-        'payment_deadline': None
+        'payment_deadline': None,
+        'stripe_account_id': None
     }
 
     # Verificar si el evento requiere pago y procesar
@@ -1006,6 +1007,11 @@ async def register_for_event(
                     f"evento {event.id}, usuario {user.id}"
                 )
 
+                # Obtener cuenta de Stripe del gym para incluir en respuesta
+                stripe_account = db.query(GymStripeAccount).filter(
+                    GymStripeAccount.gym_id == current_gym.id
+                ).first()
+
                 # Usar función idempotente para obtener o crear Payment Intent
                 payment_info = await event_payment_service.get_or_create_payment_intent_for_event(
                     db=db,
@@ -1026,6 +1032,7 @@ async def register_for_event(
                 response_data['payment_client_secret'] = payment_info["client_secret"]
                 response_data['payment_amount'] = payment_info["amount"]
                 response_data['payment_currency'] = payment_info["currency"]
+                response_data['stripe_account_id'] = stripe_account.stripe_account_id if stripe_account else None
 
                 # Validar consistencia antes de enviar al cliente
                 pi_id_from_secret = payment_info["client_secret"].split('_secret_')[0] if payment_info.get("client_secret") else None
@@ -1044,7 +1051,8 @@ async def register_for_event(
                 logger.info(
                     f"[Registro] Payment Intent{reused_text} asignado a participación {participation.id}:\n"
                     f"  - Payment Intent ID: {payment_info['payment_intent_id']}\n"
-                    f"  - Client Secret: {payment_info['client_secret'][:50]}..."
+                    f"  - Client Secret: {payment_info['client_secret'][:50]}...\n"
+                    f"  - Stripe Account ID: {stripe_account.stripe_account_id if stripe_account else 'N/A'}"
                 )
 
             except Exception as e:
@@ -1249,6 +1257,11 @@ async def get_payment_intent_for_waitlist(
         )
 
     try:
+        # Obtener cuenta de Stripe del gym para incluir en respuesta
+        stripe_account = db.query(GymStripeAccount).filter(
+            GymStripeAccount.gym_id == current_gym.id
+        ).first()
+
         # Manejar oportunidad de pago para lista de espera
         payment_info = await event_payment_service.handle_waitlist_payment_opportunity(
             db=db,
@@ -1256,7 +1269,13 @@ async def get_payment_intent_for_waitlist(
             event=event
         )
 
-        logger.info(f"Payment Intent creado para usuario de lista de espera: participación {participation_id}")
+        # Agregar stripe_account_id a la respuesta
+        payment_info["stripe_account_id"] = stripe_account.stripe_account_id if stripe_account else None
+
+        logger.info(
+            f"Payment Intent creado para usuario de lista de espera: participación {participation_id}, "
+            f"Stripe Account: {payment_info['stripe_account_id']}"
+        )
         return payment_info
 
     except Exception as e:

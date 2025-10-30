@@ -256,6 +256,7 @@ class EventParticipationWithPayment(EventParticipation):
     payment_amount: Optional[int] = Field(None, description="Monto a pagar en centavos")
     payment_currency: Optional[str] = Field(None, description="Moneda del pago")
     payment_deadline: Optional[datetime] = Field(None, description="Fecha límite para realizar el pago (solo lista de espera)")
+    stripe_account_id: Optional[str] = Field(None, description="ID de la cuenta de Stripe Connect del gimnasio (necesario para procesar pagos)")
 
     class Config:
         from_attributes = True
