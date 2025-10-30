@@ -941,8 +941,22 @@ async def register_for_event(
                     logger.warning(f"No se encontró canal de chat para evento {participation_in.event_id} (reactivación)")
             except Exception as e:
                 logger.error(f"Error añadiendo usuario al canal de chat del evento (reactivación): {e}", exc_info=True)
+        elif existing.status == EventParticipationStatus.PENDING_PAYMENT:
+            # Usuario ya tiene participación pendiente de pago
+            # Devolver información del Payment Intent existente
+            logger.info(
+                f"[Registro] Usuario {user.id} ya tiene participación {existing.id} "
+                f"en estado PENDING_PAYMENT para evento {event.id}"
+            )
+            participation = existing
+        elif existing.status == EventParticipationStatus.WAITING_LIST:
+            # Usuario ya está en lista de espera
+            raise HTTPException(
+                status_code=400,
+                detail="Ya estás en la lista de espera para este evento"
+            )
         else:
-            # Por ejemplo, si está en WAITING_LIST, no debería poder registrarse de nuevo por esta vía
+            # Otro estado no esperado
             raise HTTPException(
                 status_code=400,
                 detail=f"No puedes registrarte de nuevo con estado actual: {existing.status}"
