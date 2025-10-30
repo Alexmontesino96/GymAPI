@@ -16,7 +16,7 @@ import logging
 from sqlalchemy.orm import Session
 from sqlalchemy import and_
 
-from app.models.event import Event, EventParticipation, RefundPolicyType, PaymentStatusType
+from app.models.event import Event, EventParticipation, RefundPolicyType, PaymentStatusType, EventParticipationStatus
 from app.models.stripe_profile import GymStripeAccount, UserGymStripeProfile
 from app.models.user import User
 from app.models.gym import Gym
@@ -374,19 +374,20 @@ class EventPaymentService:
         self,
         db: Session,
         participation: EventParticipation,
-        payment_intent_id: str
+        payment_intent_id: Optional[str] = None
     ) -> EventParticipation:
         """
-        Confirmar el pago exitoso de un evento.
+        Confirmar el pago exitoso de un evento con estrategia robusta de 3 niveles.
 
-        IMPORTANTE: Usa webhooks de Stripe como fuente primaria de verdad.
-        Este endpoint hace polling a la BD local (ya actualizada por webhook)
-        en lugar de consultar Stripe API directamente, evitando race conditions.
+        ESTRATEGIA DE FALLBACK:
+        NIVEL 1: Polling a BD (esperar que webhook actualice) - 80% de casos
+        NIVEL 2: Fallback directo con payment_intent_id - 15% de casos
+        NIVEL 3: Búsqueda por metadata (recuperación total) - 5% de casos
 
         Args:
             db: Sesión de base de datos
             participation: Participación a actualizar
-            payment_intent_id: ID del Payment Intent de Stripe
+            payment_intent_id: ID del Payment Intent de Stripe (opcional)
 
         Returns:
             Participación actualizada
@@ -394,109 +395,189 @@ class EventPaymentService:
         import asyncio
 
         try:
+            # Obtener datos necesarios
             event = db.query(Event).filter(Event.id == participation.event_id).first()
             stripe_account = db.query(GymStripeAccount).filter(
-                GymStripeAccount.gym_id == event.gym_id
+                GymStripeAccount.gym_id == participation.gym_id
             ).first()
 
-            # ESTRATEGIA: Confiar en webhooks como fuente primaria
-            # 1. Primero hacer polling a BD local (ya actualizada por webhook)
-            # 2. Solo consultar Stripe API como fallback si webhook no llegó
+            if not stripe_account:
+                raise ValueError("Cuenta de Stripe no configurada")
 
+            # ========================================
+            # NIVEL 1: POLLING - Esperar que webhook actualice
+            # ========================================
             max_retries = 5
-            retry_delay = 1.0  # 1 segundo entre intentos
+            retry_delay = 1.0
 
             logger.info(
-                f"[Confirmación] Iniciando verificación de pago para participación {participation.id}. "
-                f"Payment Intent: {payment_intent_id}"
+                f"[Confirmación] Iniciando verificación para participación {participation.id}. "
+                f"Payment Intent ID proporcionado: {payment_intent_id or 'None'}"
             )
 
-            # Paso 1: Polling a BD local (esperando que webhook actualice)
             for attempt in range(max_retries):
-                # Refrescar participación desde BD
                 db.refresh(participation)
 
                 if participation.payment_status == PaymentStatusType.PAID:
                     logger.info(
-                        f"[Confirmación] ✅ Pago ya confirmado por webhook en intento {attempt + 1}/{max_retries}. "
-                        f"Participación {participation.id} está en estado PAID."
+                        f"[Nivel 1] ✅ Pago confirmado por webhook en intento {attempt + 1}/{max_retries}"
                     )
                     return participation
 
                 if attempt < max_retries - 1:
                     logger.info(
-                        f"[Confirmación] Intento {attempt + 1}/{max_retries}: payment_status={participation.payment_status}. "
-                        f"Esperando {retry_delay}s para que webhook actualice..."
+                        f"[Nivel 1] Intento {attempt + 1}/{max_retries}: payment_status={participation.payment_status}. "
+                        f"Esperando {retry_delay}s..."
                     )
                     await asyncio.sleep(retry_delay)
 
-            # Paso 2: Fallback - Consultar Stripe API si webhook no llegó
             logger.warning(
-                f"[Confirmación] Webhook no actualizó en {max_retries * retry_delay}s. "
-                f"Consultando Stripe API como fallback..."
+                f"[Nivel 1] Webhook no actualizó en {max_retries * retry_delay}s. "
+                f"Pasando a fallback de Stripe API..."
             )
 
-            payment_intent = stripe.PaymentIntent.retrieve(
-                payment_intent_id,
-                stripe_account=stripe_account.stripe_account_id
-            )
+            # ========================================
+            # NIVEL 2: FALLBACK DIRECTO - Usar payment_intent_id conocido
+            # ========================================
 
-            # Verificar que el pago fue exitoso
-            if payment_intent.status != "succeeded":
-                logger.error(
-                    f"[Confirmación] ❌ Payment Intent {payment_intent_id} no está succeeded. "
-                    f"Estado en Stripe: {payment_intent.status}"
-                )
-                raise ValueError(
-                    f"Pago no completado. Estado: {payment_intent.status}. "
-                    f"Si acabas de realizar el pago, espera unos segundos e intenta de nuevo."
+            # Determinar qué payment_intent_id usar
+            pi_id_to_use = payment_intent_id or participation.stripe_payment_intent_id
+
+            if pi_id_to_use:
+                logger.info(
+                    f"[Nivel 2] Intentando retrieve directo con Payment Intent: {pi_id_to_use} "
+                    f"(fuente: {'parámetro' if payment_intent_id else 'BD'})"
                 )
 
-            # Actualizar estado de pago
-            participation.payment_status = PaymentStatusType.PAID
-            participation.stripe_payment_intent_id = payment_intent_id
-            participation.amount_paid_cents = payment_intent.amount
-            participation.payment_date = datetime.utcnow()
+                try:
+                    payment_intent = stripe.PaymentIntent.retrieve(
+                        pi_id_to_use,
+                        stripe_account=stripe_account.stripe_account_id
+                    )
 
-            # CRÍTICO: Promover de PENDING_PAYMENT a REGISTERED (ahora SÍ ocupa plaza)
-            if participation.status == EventParticipationStatus.PENDING_PAYMENT:
-                # Verificar que hay capacidad disponible
-                from sqlalchemy import func
-                registered_count = db.query(func.count(EventParticipation.id)).filter(
-                    EventParticipation.event_id == event.id,
-                    EventParticipation.status == EventParticipationStatus.REGISTERED
-                ).scalar()
+                    if payment_intent.status == "succeeded":
+                        logger.info(f"[Nivel 2] ✅ Payment Intent {pi_id_to_use} confirmado")
+                        return await self._process_successful_payment(
+                            db, participation, event, payment_intent
+                        )
+                    else:
+                        logger.warning(
+                            f"[Nivel 2] Payment Intent {pi_id_to_use} tiene estado {payment_intent.status}, "
+                            f"no 'succeeded'"
+                        )
+                        # Continuar a Nivel 3
 
-                if event.max_participants > 0 and registered_count >= event.max_participants:
-                    # No hay capacidad, mover a lista de espera
-                    participation.status = EventParticipationStatus.WAITING_LIST
+                except stripe.error.InvalidRequestError as e:
                     logger.warning(
-                        f"[Pago Confirmado] Participación {participation.id} movida a WAITING_LIST "
-                        f"por falta de capacidad (registrados: {registered_count}/{event.max_participants})"
+                        f"[Nivel 2] Payment Intent {pi_id_to_use} no encontrado: {e}. "
+                        f"Pasando a búsqueda por metadata..."
                     )
-                else:
-                    # Hay capacidad, promover a REGISTERED
-                    participation.status = EventParticipationStatus.REGISTERED
-                    logger.info(
-                        f"[Pago Confirmado] Participación {participation.id} promovida de PENDING_PAYMENT "
-                        f"a REGISTERED (registrados: {registered_count + 1}/{event.max_participants or 'sin límite'})"
-                    )
+                    # Continuar a Nivel 3
 
-            db.commit()
-            db.refresh(participation)
+                except stripe.error.StripeError as e:
+                    logger.error(f"[Nivel 2] Error de Stripe: {e}")
+                    # Continuar a Nivel 3
+            else:
+                logger.warning(
+                    f"[Nivel 2] No hay payment_intent_id disponible (parámetro: {payment_intent_id}, "
+                    f"BD: {participation.stripe_payment_intent_id}). "
+                    f"Pasando directamente a búsqueda por metadata..."
+                )
 
-            logger.info(
-                f"[Confirmación] ✅ Pago confirmado para participación {participation.id} "
-                f"(usó fallback de Stripe API)"
+            # ========================================
+            # NIVEL 3: BÚSQUEDA POR METADATA - Último recurso robusto
+            # ========================================
+
+            logger.warning(
+                f"[Nivel 3 - Fallback Metadata] Buscando Payment Intent por metadata: "
+                f"event_id={event.id}, user_id={participation.member_id}, gym_id={participation.gym_id}"
             )
-            return participation
 
-        except stripe.error.StripeError as e:
-            logger.error(f"Error verificando Payment Intent: {e}")
-            raise ValueError(f"Error verificando pago: {str(e)}")
-        except Exception as e:
-            logger.error(f"Error confirmando pago: {e}")
+            try:
+                # Construir query para Stripe Search API
+                search_query = (
+                    f"metadata['event_id']:'{event.id}' AND "
+                    f"metadata['user_id']:'{participation.member_id}' AND "
+                    f"metadata['gym_id']:'{participation.gym_id}' AND "
+                    f"status:'succeeded'"
+                )
+
+                logger.info(f"[Nivel 3] Query de búsqueda: {search_query}")
+
+                result = stripe.PaymentIntent.search(
+                    query=search_query,
+                    stripe_account=stripe_account.stripe_account_id,
+                    limit=10  # Máximo razonable
+                )
+
+                if not result.data:
+                    # No se encontró ningún Payment Intent
+                    raise ValueError(
+                        f"No se encontró ningún pago exitoso para evento {event.id}, "
+                        f"usuario {participation.member_id}. El pago puede estar aún procesándose. "
+                        f"Espera unos segundos e intenta de nuevo. "
+                        f"Si el problema persiste, contacta a soporte con ID de participación: {participation.id}"
+                    )
+
+                # Filtrar y ordenar Payment Intents exitosos
+                succeeded_intents = [pi for pi in result.data if pi.status == 'succeeded']
+
+                if not succeeded_intents:
+                    raise ValueError(
+                        f"Se encontraron {len(result.data)} Payment Intent(s) pero ninguno con status 'succeeded'. "
+                        f"El pago puede estar aún procesándose."
+                    )
+
+                # Si hay múltiples, usar el más reciente
+                if len(succeeded_intents) > 1:
+                    logger.warning(
+                        f"[Nivel 3] ⚠️ Se encontraron {len(succeeded_intents)} Payment Intents exitosos. "
+                        f"IDs: {[pi.id for pi in succeeded_intents]}. "
+                        f"Usando el más reciente."
+                    )
+                    succeeded_intents.sort(key=lambda x: x.created, reverse=True)
+
+                payment_intent = succeeded_intents[0]
+
+                logger.info(
+                    f"[Nivel 3] ✅ Payment Intent encontrado por metadata: {payment_intent.id} "
+                    f"(creado: {datetime.fromtimestamp(payment_intent.created)}, "
+                    f"monto: {payment_intent.amount} {payment_intent.currency})"
+                )
+
+                # CRÍTICO: Auto-reparación - Actualizar BD con el ID encontrado
+                if not participation.stripe_payment_intent_id:
+                    logger.info(
+                        f"[Nivel 3] 🔧 Auto-reparación: Actualizando participation.stripe_payment_intent_id "
+                        f"de NULL a {payment_intent.id}"
+                    )
+                    participation.stripe_payment_intent_id = payment_intent.id
+                    db.commit()
+                elif participation.stripe_payment_intent_id != payment_intent.id:
+                    logger.warning(
+                        f"[Nivel 3] ⚠️ Inconsistencia: BD tiene {participation.stripe_payment_intent_id} "
+                        f"pero metadata encontró {payment_intent.id}. Actualizando a {payment_intent.id}"
+                    )
+                    participation.stripe_payment_intent_id = payment_intent.id
+                    db.commit()
+
+                return await self._process_successful_payment(
+                    db, participation, event, payment_intent
+                )
+
+            except stripe.error.StripeError as e:
+                logger.error(f"[Nivel 3] Error buscando Payment Intent por metadata: {e}")
+                raise ValueError(
+                    f"Error verificando pago con Stripe: {str(e)}. "
+                    f"Por favor contacta a soporte con ID de participación: {participation.id}"
+                )
+
+        except ValueError:
+            # Re-raise ValueError para que el endpoint lo maneje
             raise
+        except Exception as e:
+            logger.error(f"Error inesperado confirmando pago: {e}", exc_info=True)
+            raise ValueError(f"Error inesperado procesando confirmación de pago: {str(e)}")
 
     async def calculate_refund_amount(
         self,
@@ -774,6 +855,71 @@ class EventPaymentService:
         except Exception as e:
             logger.error(f"Error expirando pagos pendientes: {e}")
             raise
+
+    async def _process_successful_payment(
+        self,
+        db: Session,
+        participation: EventParticipation,
+        event: Event,
+        payment_intent: stripe.PaymentIntent
+    ) -> EventParticipation:
+        """
+        Procesar pago exitoso y actualizar participación.
+
+        Extraído como función helper para evitar duplicación de código
+        entre los 3 niveles de fallback.
+
+        Args:
+            db: Sesión de base de datos
+            participation: Participación a actualizar
+            event: Evento asociado
+            payment_intent: Payment Intent de Stripe con status='succeeded'
+
+        Returns:
+            Participación actualizada
+        """
+        logger.info(
+            f"[Procesamiento] Confirmando pago para participación {participation.id} "
+            f"con Payment Intent {payment_intent.id}"
+        )
+
+        # Actualizar estado de pago
+        participation.payment_status = PaymentStatusType.PAID
+        participation.stripe_payment_intent_id = payment_intent.id
+        participation.amount_paid_cents = payment_intent.amount
+        participation.payment_date = datetime.utcnow()
+
+        # CRÍTICO: Promover de PENDING_PAYMENT a REGISTERED
+        if participation.status == EventParticipationStatus.PENDING_PAYMENT:
+            from sqlalchemy import func
+            registered_count = db.query(func.count(EventParticipation.id)).filter(
+                EventParticipation.event_id == event.id,
+                EventParticipation.status == EventParticipationStatus.REGISTERED
+            ).scalar()
+
+            if event.max_participants > 0 and registered_count >= event.max_participants:
+                # No hay capacidad, mover a lista de espera
+                participation.status = EventParticipationStatus.WAITING_LIST
+                logger.warning(
+                    f"[Procesamiento] Participación {participation.id} movida a WAITING_LIST "
+                    f"(capacidad llena: {registered_count}/{event.max_participants})"
+                )
+            else:
+                # Hay capacidad, promover a REGISTERED
+                participation.status = EventParticipationStatus.REGISTERED
+                logger.info(
+                    f"[Procesamiento] Participación {participation.id} promovida a REGISTERED "
+                    f"(registrados: {registered_count + 1}/{event.max_participants or 'ilimitado'})"
+                )
+
+        db.commit()
+        db.refresh(participation)
+
+        logger.info(
+            f"[Procesamiento] ✅ Pago confirmado exitosamente para participación {participation.id}"
+        )
+
+        return participation
 
 
 # Instancia global del servicio

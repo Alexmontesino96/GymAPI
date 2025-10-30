@@ -1039,8 +1039,23 @@ async def register_for_event(
                 # Actualizar participación con información del Payment Intent
                 participation.payment_status = PaymentStatusType.PENDING
                 participation.stripe_payment_intent_id = payment_info["payment_intent_id"]
-                db.commit()
-                db.refresh(participation)
+
+                try:
+                    db.commit()
+                    db.refresh(participation)
+
+                    logger.info(
+                        f"[Registro] ✅ Payment Intent {payment_info['payment_intent_id']} "
+                        f"guardado exitosamente en participación {participation.id}"
+                    )
+                except Exception as commit_error:
+                    logger.error(
+                        f"[Registro] ❌ ERROR guardando Payment Intent en participación {participation.id}: {commit_error}. "
+                        f"Payment Intent creado: {payment_info['payment_intent_id']} "
+                        f"(el pago puede procesarse pero requerirá fallback por metadata)"
+                    )
+                    # Re-raise para que el bloque except externo lo maneje
+                    raise
 
                 # Agregar información de pago a la respuesta
                 response_data['payment_required'] = True
@@ -1119,7 +1134,7 @@ async def register_for_event(
 async def confirm_event_payment(
     *,
     participation_id: int = Path(..., description="ID de la participación"),
-    payment_intent_id: str = Body(..., embed=True, description="ID del Payment Intent de Stripe"),
+    payment_intent_id: str = Body(None, embed=True, description="ID del Payment Intent de Stripe (opcional, se usa el de la participación si no se proporciona)"),
     db: Session = Depends(get_db),
     current_gym: GymSchema = Depends(verify_gym_access),
     current_user: Auth0User = Security(auth.get_user, scopes=["resource:write"]),
@@ -1133,7 +1148,7 @@ async def confirm_event_payment(
 
     Args:
         participation_id: ID de la participación
-        payment_intent_id: ID del Payment Intent de Stripe que fue pagado exitosamente
+        payment_intent_id: ID del Payment Intent de Stripe que fue pagado exitosamente (opcional)
 
     Returns:
         EventParticipation actualizada con estado de pago confirmado
@@ -1170,12 +1185,25 @@ async def confirm_event_payment(
             detail="Este evento no requiere pago"
         )
 
-    # Verificar que el pago está pendiente
+    # Verificar si el pago ya está confirmado
     if participation.payment_status == PaymentStatusType.PAID:
-        raise HTTPException(
-            status_code=400,
-            detail="El pago ya fue confirmado anteriormente"
+        logger.info(
+            f"[Confirmación] Participación {participation_id} ya tiene payment_status=PAID. "
+            f"Retornando estado actual (pago ya procesado por webhook)."
         )
+        # Retornar la participación actualizada en lugar de error 400
+        # El pago ya fue confirmado exitosamente (probablemente por webhook)
+        return participation
+
+    # Si no se proporciona payment_intent_id, usar el de la participación
+    if not payment_intent_id:
+        payment_intent_id = participation.stripe_payment_intent_id
+        if not payment_intent_id:
+            raise HTTPException(
+                status_code=400,
+                detail="No se encontró Payment Intent asociado a esta participación"
+            )
+        logger.info(f"[Confirmación] Usando Payment Intent de la participación: {payment_intent_id}")
 
     try:
         # Confirmar el pago usando el servicio
