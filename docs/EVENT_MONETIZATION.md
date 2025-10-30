@@ -322,6 +322,31 @@ Content-Type: application/json
 
 ## ⚠️ Consideraciones Importantes
 
+### 🔒 Control de Capacidad (IMPORTANTE)
+
+**Desde v2.1+**, los eventos de pago implementan un flujo de dos fases para evitar que usuarios sin pagar ocupen plazas:
+
+1. **Fase 1 - Registro sin Plaza (`PENDING_PAYMENT`)**:
+   - Usuario se registra al evento de pago
+   - Estado inicial: `PENDING_PAYMENT` + `payment_status: PENDING`
+   - **NO ocupa plaza** en `max_participants`
+   - Payment Intent se crea inmediatamente
+
+2. **Fase 2 - Confirmación de Pago (`REGISTERED`)**:
+   - Usuario paga exitosamente con Stripe
+   - Webhook `payment_intent.succeeded` o endpoint `/confirm-payment`
+   - Sistema verifica capacidad disponible
+   - Si hay espacio: `REGISTERED` + `payment_status: PAID` → **SÍ ocupa plaza**
+   - Si no hay espacio: `WAITING_LIST` + `payment_status: PAID` → No ocupa plaza (pero pagó)
+
+**Ventajas**:
+- ✅ Solo usuarios pagados ocupan plazas reales
+- ✅ No se bloquean espacios por pagos pendientes
+- ✅ Evita "reservas fantasma" que nunca se pagan
+- ✅ Capacidad del evento refleja asistentes confirmados
+
+**Eventos Gratuitos**: Mantienen el comportamiento anterior (REGISTERED inmediato según capacidad)
+
 ### Validaciones
 
 1. **Precio requerido**: Si `is_paid = true`, debe especificar `price_cents > 0`
@@ -342,16 +367,46 @@ Content-Type: application/json
 - **Lista de espera**: 24 horas para completar pago al ser promovido
 - **Reembolsos**: Procesados inmediatamente vía Stripe API
 
-## 🔄 Flujo de Estado de Pago
+## 🔄 Flujo de Estados de Participación y Pago
+
+### Estados de Participación (`EventParticipationStatus`)
+
+- **PENDING_PAYMENT**: Usuario registrado pero NO ocupa plaza hasta confirmar pago
+- **REGISTERED**: Usuario confirmado que SÍ ocupa plaza en el evento
+- **WAITING_LIST**: Usuario en lista de espera
+- **CANCELLED**: Usuario canceló su participación
+
+### Estados de Pago (`PaymentStatusType`)
+
+- **PENDING**: Pago pendiente de confirmación
+- **PAID**: Pago confirmado exitosamente
+- **EXPIRED**: Plazo de pago expirado
+- **REFUNDED**: Pago reembolsado
+- **CREDITED**: Crédito otorgado en lugar de reembolso
+
+### Flujo Completo para Eventos de Pago
 
 ```mermaid
 graph TD
-    A[Sin Pago] -->|Registro a Evento de Pago| B[PENDING]
-    B -->|Pago Exitoso| C[PAID]
-    B -->|Tiempo Expirado| D[EXPIRED]
-    C -->|Cancelación con Reembolso| E[REFUNDED]
-    C -->|Cancelación con Crédito| F[CREDITED]
-    D -->|Nueva Oportunidad| B
+    A[Usuario se registra] -->|Evento de Pago| B[PENDING_PAYMENT + PENDING]
+    B -->|NO ocupa plaza| C[Payment Intent creado]
+    C -->|Usuario paga| D[Webhook: payment_intent.succeeded]
+    D -->|Verificar capacidad| E{¿Hay capacidad?}
+    E -->|Sí| F[REGISTERED + PAID]
+    E -->|No| G[WAITING_LIST + PAID]
+    F --> H[Ocupa plaza del evento]
+    B -->|Tiempo expirado| I[PENDING_PAYMENT + EXPIRED]
+    F -->|Cancelación| J[Reembolso según política]
+```
+
+### Flujo para Eventos Gratuitos
+
+```mermaid
+graph TD
+    A[Usuario se registra] -->|Evento Gratuito| B{¿Hay capacidad?}
+    B -->|Sí| C[REGISTERED]
+    B -->|No| D[WAITING_LIST]
+    C --> E[Ocupa plaza del evento]
 ```
 
 ## 🐛 Troubleshooting

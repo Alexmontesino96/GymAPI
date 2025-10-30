@@ -403,11 +403,35 @@ class EventPaymentService:
             if payment_intent.status != "succeeded":
                 raise ValueError(f"Pago no completado. Estado: {payment_intent.status}")
 
-            # Actualizar participación
+            # Actualizar estado de pago
             participation.payment_status = PaymentStatusType.PAID
             participation.stripe_payment_intent_id = payment_intent_id
             participation.amount_paid_cents = payment_intent.amount
             participation.payment_date = datetime.utcnow()
+
+            # CRÍTICO: Promover de PENDING_PAYMENT a REGISTERED (ahora SÍ ocupa plaza)
+            if participation.status == EventParticipationStatus.PENDING_PAYMENT:
+                # Verificar que hay capacidad disponible
+                from sqlalchemy import func
+                registered_count = db.query(func.count(EventParticipation.id)).filter(
+                    EventParticipation.event_id == event.id,
+                    EventParticipation.status == EventParticipationStatus.REGISTERED
+                ).scalar()
+
+                if event.max_participants > 0 and registered_count >= event.max_participants:
+                    # No hay capacidad, mover a lista de espera
+                    participation.status = EventParticipationStatus.WAITING_LIST
+                    logger.warning(
+                        f"[Pago Confirmado] Participación {participation.id} movida a WAITING_LIST "
+                        f"por falta de capacidad (registrados: {registered_count}/{event.max_participants})"
+                    )
+                else:
+                    # Hay capacidad, promover a REGISTERED
+                    participation.status = EventParticipationStatus.REGISTERED
+                    logger.info(
+                        f"[Pago Confirmado] Participación {participation.id} promovida de PENDING_PAYMENT "
+                        f"a REGISTERED (registrados: {registered_count + 1}/{event.max_participants or 'sin límite'})"
+                    )
 
             db.commit()
             db.refresh(participation)

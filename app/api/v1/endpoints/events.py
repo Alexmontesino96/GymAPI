@@ -999,8 +999,9 @@ async def register_for_event(
                 detail="El evento requiere pago pero el sistema de pagos no está configurado para este gimnasio"
             )
 
-        # Solo crear Payment Intent si el usuario está REGISTERED (no para WAITING_LIST)
-        if participation.status == EventParticipationStatus.REGISTERED:
+        # Solo crear Payment Intent para eventos de pago (PENDING_PAYMENT status)
+        # WAITING_LIST no recibe Payment Intent inmediatamente
+        if participation.status == EventParticipationStatus.PENDING_PAYMENT:
             try:
                 logger.info(
                     f"[Registro] Procesando pago para participación {participation.id}, "

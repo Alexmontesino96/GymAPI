@@ -100,7 +100,8 @@ class Event(Base):
 
 class EventParticipationStatus(str, enum.Enum):
     """Estado de la participación del miembro en un evento."""
-    REGISTERED = "REGISTERED"  # Usuario registrado y confirmado
+    REGISTERED = "REGISTERED"  # Usuario registrado y confirmado (ocupa plaza)
+    PENDING_PAYMENT = "PENDING_PAYMENT"  # Esperando confirmación de pago (NO ocupa plaza)
     CANCELLED = "CANCELLED"    # Usuario canceló su participación
     WAITING_LIST = "WAITING_LIST"  # Usuario en lista de espera
 

@@ -1036,6 +1036,36 @@ class StripeService:
                 participation.amount_paid_cents = payment_intent['amount']
                 participation.payment_date = datetime.utcnow()
 
+                # CRÍTICO: Promover de PENDING_PAYMENT a REGISTERED (ahora SÍ ocupa plaza)
+                from app.models.event import EventParticipationStatus, Event
+                from sqlalchemy import func
+
+                if participation.status == EventParticipationStatus.PENDING_PAYMENT:
+                    # Obtener el evento
+                    event = db.query(Event).filter(Event.id == participation.event_id).first()
+
+                    if event:
+                        # Verificar capacidad disponible
+                        registered_count = db.query(func.count(EventParticipation.id)).filter(
+                            EventParticipation.event_id == event.id,
+                            EventParticipation.status == EventParticipationStatus.REGISTERED
+                        ).scalar()
+
+                        if event.max_participants > 0 and registered_count >= event.max_participants:
+                            # No hay capacidad, mover a lista de espera
+                            participation.status = EventParticipationStatus.WAITING_LIST
+                            logger.warning(
+                                f"[Webhook] Participación {participation.id} movida a WAITING_LIST "
+                                f"por falta de capacidad (registrados: {registered_count}/{event.max_participants})"
+                            )
+                        else:
+                            # Hay capacidad, promover a REGISTERED
+                            participation.status = EventParticipationStatus.REGISTERED
+                            logger.info(
+                                f"[Webhook] Participación {participation.id} promovida de PENDING_PAYMENT "
+                                f"a REGISTERED (registrados: {registered_count + 1}/{event.max_participants or 'sin límite'})"
+                            )
+
                 db.commit()
                 logger.info(
                     f"Pago de evento confirmado automáticamente via webhook: "

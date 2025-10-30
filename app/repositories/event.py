@@ -557,13 +557,17 @@ class EventParticipationRepository:
             if existing:
                 # Si ya existe pero está cancelada, reactivarla
                 if existing.status == EventParticipationStatus.CANCELLED:
-                    # Determinar estado basado en capacidad disponible
-                    if event.max_participants == 0 or registered_count < event.max_participants:
+                    # Determinar estado basado en si es evento de pago o capacidad disponible
+                    if event.is_paid and event.price_cents:
+                        # Eventos de pago siempre empiezan en PENDING_PAYMENT
+                        existing.status = EventParticipationStatus.PENDING_PAYMENT
+                    elif event.max_participants == 0 or registered_count < event.max_participants:
+                        # Eventos gratuitos con capacidad disponible
                         existing.status = EventParticipationStatus.REGISTERED
                     else:
+                        # Eventos gratuitos sin capacidad
                         existing.status = EventParticipationStatus.WAITING_LIST
-                    
-                    existing.notes = participation_in.notes
+
                     db.add(existing)
                     db.commit()
                     return existing
@@ -571,11 +575,18 @@ class EventParticipationRepository:
                     # Ya registrado (no cancelado), retornar la participación existente
                     return existing
             
-            # Determinar el estado inicial (registrado o en lista de espera)
-            participation_status = EventParticipationStatus.REGISTERED
-            if event.max_participants > 0 and registered_count >= event.max_participants:
-                participation_status = EventParticipationStatus.WAITING_LIST
-            
+            # Determinar el estado inicial
+            # Para eventos de pago: PENDING_PAYMENT (no ocupa plaza hasta pagar)
+            # Para eventos gratuitos: REGISTERED o WAITING_LIST según capacidad
+            if event.is_paid and event.price_cents:
+                # Eventos de pago siempre empiezan en PENDING_PAYMENT
+                participation_status = EventParticipationStatus.PENDING_PAYMENT
+            else:
+                # Eventos gratuitos: verificar capacidad
+                participation_status = EventParticipationStatus.REGISTERED
+                if event.max_participants > 0 and registered_count >= event.max_participants:
+                    participation_status = EventParticipationStatus.WAITING_LIST
+
             # Crear la participación con todos los datos necesarios
             now = datetime.now(timezone.utc)  # Usar la misma marca de tiempo para ambos campos
             db_participation = EventParticipation(
