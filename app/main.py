@@ -198,9 +198,30 @@ app.include_router(api_router, prefix=settings_instance.API_V1_STR)
 # Ruta raíz
 @app.get("/")
 def root():
+    import subprocess
+    import os
+
+    # Obtener git hash del commit actual
+    git_hash = "unknown"
+    try:
+        if os.path.exists(".git"):
+            result = subprocess.run(
+                ["git", "rev-parse", "--short", "HEAD"],
+                capture_output=True,
+                text=True,
+                timeout=2
+            )
+            if result.returncode == 0:
+                git_hash = result.stdout.strip()
+    except Exception:
+        pass
+
     return {
         "message": "Bienvenido a la API",
         "docs": f"{settings_instance.API_V1_STR}/docs",
+        "version": settings_instance.VERSION,
+        "git_commit": git_hash,
+        "fix_deployed": "v2_diagnostic_log_added"  # Identificador del fix
     }
 
 if __name__ == "__main__":
