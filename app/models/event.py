@@ -81,9 +81,22 @@ class Event(Base):
     survey_responses = relationship("SurveyResponse", back_populates="event")
     
     # Contador de intentos fallidos de completar el evento
-    completion_attempts = Column(Integer, default=0, nullable=False, 
+    completion_attempts = Column(Integer, default=0, nullable=False,
                                 comment="Número de intentos fallidos de marcar el evento como completado")
-    
+
+    # Campos de auditoría de cancelación
+    cancellation_date = Column(DateTime(timezone=True), nullable=True,
+                              comment="Fecha en que el evento fue cancelado")
+    cancelled_by_user_id = Column(Integer, ForeignKey("user.id"), nullable=True, index=True,
+                                  comment="ID del usuario que canceló el evento (admin/owner)")
+    cancellation_reason = Column(Text, nullable=True,
+                                comment="Razón de la cancelación del evento")
+    total_refunded_cents = Column(Integer, nullable=True,
+                                 comment="Total de dinero reembolsado en cancelación masiva (en centavos)")
+
+    # Relación con el usuario que canceló
+    cancelled_by = relationship("User", foreign_keys=[cancelled_by_user_id])
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     

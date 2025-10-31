@@ -202,6 +202,12 @@ class Event(EventBase):
     stripe_product_id: Optional[str] = None
     stripe_price_id: Optional[str] = None
 
+    # Campos de auditoría de cancelación (solo lectura)
+    cancellation_date: Optional[datetime] = None
+    cancelled_by_user_id: Optional[int] = None
+    cancellation_reason: Optional[str] = None
+    total_refunded_cents: Optional[int] = None
+
     class Config:
         from_attributes = True
 
@@ -257,6 +263,34 @@ class EventParticipationWithPayment(EventParticipation):
     payment_currency: Optional[str] = Field(None, description="Moneda del pago")
     payment_deadline: Optional[datetime] = Field(None, description="Fecha límite para realizar el pago (solo lista de espera)")
     stripe_account_id: Optional[str] = Field(None, description="ID de la cuenta de Stripe Connect del gimnasio (necesario para procesar pagos)")
+
+    class Config:
+        from_attributes = True
+
+
+# Schema para respuesta de cancelación de evento con reembolsos
+class EventCancellationResponse(BaseModel):
+    """Respuesta detallada al cancelar un evento con reembolsos automáticos."""
+    event_id: int
+    event_title: str
+    cancellation_date: datetime
+    cancellation_reason: Optional[str] = None
+
+    # Estadísticas de participantes
+    participants_count: int = Field(..., description="Total de participantes en el evento")
+    refunds_processed: int = Field(..., description="Cantidad de reembolsos procesados exitosamente")
+    refunds_failed: int = Field(..., description="Cantidad de reembolsos que fallaron")
+    payments_cancelled: int = Field(..., description="Cantidad de Payment Intents cancelados (PENDING_PAYMENT)")
+
+    # Información financiera
+    total_refunded_amount: int = Field(..., description="Monto total reembolsado en centavos")
+    currency: str = Field(..., description="Moneda de los reembolsos")
+
+    # Detalles de errores si los hubo
+    failed_refunds: Optional[List[Dict[str, Any]]] = Field(default=[], description="Lista de reembolsos fallidos con detalles del error")
+
+    # Notificaciones enviadas
+    notifications_sent: Dict[str, int] = Field(..., description="Contador de notificaciones enviadas por canal (push, email, chat)")
 
     class Config:
         from_attributes = True

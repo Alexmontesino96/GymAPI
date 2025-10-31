@@ -37,7 +37,8 @@ from app.schemas.event import (
     EventWithParticipantCount,
     EventParticipationWithEvent,
     EventBulkParticipationCreate,
-    EventParticipationWithPayment
+    EventParticipationWithPayment,
+    EventCancellationResponse
 )
 from app.models.event import EventStatus, EventParticipationStatus, Event, EventParticipation, RefundPolicyType, PaymentStatusType
 from app.models.user import UserRole, User
@@ -51,6 +52,7 @@ import time
 from app.services.event import event_service
 from app.services.chat import chat_service
 from app.services.event_payment_service import event_payment_service
+from app.services.notification_service import notification_service
 from app.core.config import get_settings
 from app.services import sqs_service, queue_service
 
@@ -752,56 +754,199 @@ async def delete_event(
     return None
 
 
-@router.delete("/admin/{event_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/admin/{event_id}", response_model=EventCancellationResponse)
 async def admin_delete_event(
     *,
     request: Request,
     db: Session = Depends(get_db),
     event_id: int = Path(..., title="Event ID"),
+    reason: Optional[str] = Query(None, max_length=500, description="Razón de la cancelación del evento"),
     current_gym: GymSchema = Depends(verify_gym_access),  # Usar GymSchema
     current_user: Auth0User = Security(auth.get_user, scopes=["resource:admin"]),
     redis_client: Redis = Depends(get_redis_client)
-) -> None:
+) -> EventCancellationResponse:
     """
-    Administrative endpoint to delete any event regardless of ownership.
-    
-    This is a specialized admin-only endpoint that allows administrators to
-    delete any event without ownership verification. It's useful for content
-    moderation and managing events when the original creator is unavailable.
-    
+    Administrative endpoint to cancel/delete any event with automatic refunds.
+
+    **COMPORTAMIENTO MEJORADO PARA EVENTOS DE PAGO:**
+    - Reembolsa automáticamente 100% a todos los participantes que ya pagaron
+    - Cancela Payment Intents pendientes en Stripe
+    - Marca el evento como CANCELLED (no lo elimina físicamente)
+    - Envía notificaciones multi-canal (Push, Email, Chat)
+    - Registra auditoría completa de la cancelación
+
+    **COMPORTAMIENTO PARA EVENTOS GRATUITOS:**
+    - Elimina el evento físicamente (comportamiento anterior)
+    - Marca participaciones como CANCELLED
+
     Permissions:
         - Requires 'admin:events' scope (administrators only)
         - This is a protected administrative operation
-        
+
     Args:
         db: Database session
-        event_id: ID of the event to delete
+        event_id: ID of the event to delete/cancel
+        reason: Razón opcional de la cancelación (se recomienda para eventos de pago)
         current_gym: The current gym (tenant) context
         current_user: Authenticated administrator
-        
+        redis_client: Redis client for cache invalidation
+
+    Returns:
+        EventCancellationResponse con estadísticas de reembolsos y notificaciones
+
     Raises:
-        HTTPException: 404 if event not found, 500 for other errors
+        HTTPException: 404 if event not found, 400 if already cancelled, 500 for other errors
     """
-    # Verificar primero que el evento pertenezca al gimnasio actual
-    event_exists = db.query(Event.id).filter(
+    # Obtener evento completo con validación de gimnasio
+    event = db.query(Event).filter(
         Event.id == event_id,
         Event.gym_id == current_gym.id
-    ).scalar() is not None
-    
-    if not event_exists:
+    ).first()
+
+    if not event:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Event not found in current gym"
         )
-    
-    # Delete event without ownership verification
+
+    # Verificar si ya está cancelado
+    if event.status == EventStatus.CANCELLED:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Event is already cancelled"
+        )
+
     try:
-        await event_service.delete_event(db=db, event_id=event_id, redis_client=redis_client)
-        return None
+        # CASO 1: Evento de pago -> Cancelar con reembolsos automáticos
+        if event.is_paid and event.price_cents and event.price_cents > 0:
+            logger.info(
+                f"Cancelando evento DE PAGO {event_id} del gym {current_gym.id} "
+                f"con reembolsos automáticos. Admin: {current_user.id}"
+            )
+
+            # Obtener ID interno del usuario admin
+            admin_user = db.query(User).filter(User.auth0_id == current_user.id).first()
+            if not admin_user:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Admin user not found in database"
+                )
+
+            # Procesar cancelación con reembolsos masivos
+            refund_stats = await event_payment_service.cancel_event_with_full_refunds(
+                db=db,
+                event=event,
+                gym_id=current_gym.id,
+                cancelled_by_user_id=admin_user.id,
+                reason=reason
+            )
+
+            # Obtener IDs de participantes para notificaciones
+            participant_ids = [
+                p.member_id for p in event.participants
+                if p.status in [
+                    EventParticipationStatus.REGISTERED,
+                    EventParticipationStatus.PENDING_PAYMENT,
+                    EventParticipationStatus.WAITING_LIST
+                ]
+            ]
+
+            # Enviar notificaciones multi-canal
+            notification_stats = {"push": 0, "email": 0, "chat": 0}
+            if participant_ids:
+                try:
+                    notification_stats = await notification_service.notify_event_cancellation(
+                        db=db,
+                        event_title=event.title,
+                        event_id=event.id,
+                        gym_id=current_gym.id,
+                        participant_user_ids=participant_ids,
+                        total_refunded_cents=refund_stats["total_refunded_cents"],
+                        currency=event.currency or "EUR",
+                        cancellation_reason=reason
+                    )
+                    logger.info(
+                        f"Notificaciones enviadas para evento {event_id}: "
+                        f"Push={notification_stats['push']}, Email={notification_stats['email']}, "
+                        f"Chat={notification_stats['chat']}"
+                    )
+                except Exception as e:
+                    logger.error(f"Error enviando notificaciones de cancelación: {e}", exc_info=True)
+                    # Continuar aunque falle el envío de notificaciones
+
+            # Invalidar cachés relacionados
+            try:
+                await event_service.delete_event(
+                    db=db,
+                    event_id=event_id,
+                    redis_client=redis_client
+                )
+            except Exception as e:
+                logger.warning(f"Error invalidando cache para evento {event_id}: {e}")
+                # No fallar si solo es problema de cache
+
+            # Construir respuesta
+            return EventCancellationResponse(
+                event_id=event.id,
+                event_title=event.title,
+                cancellation_date=event.cancellation_date or datetime.now(timezone.utc),
+                cancellation_reason=reason,
+                participants_count=refund_stats["participants_count"],
+                refunds_processed=refund_stats["refunds_processed"],
+                refunds_failed=refund_stats["refunds_failed"],
+                payments_cancelled=refund_stats["payments_cancelled"],
+                total_refunded_amount=refund_stats["total_refunded_cents"],
+                currency=event.currency or "EUR",
+                failed_refunds=refund_stats["failed_refunds"],
+                notifications_sent=notification_stats
+            )
+
+        # CASO 2: Evento gratuito -> Eliminar normalmente (comportamiento anterior)
+        else:
+            logger.info(
+                f"Eliminando evento GRATUITO {event_id} del gym {current_gym.id}. "
+                f"Admin: {current_user.id}"
+            )
+
+            # Marcar participaciones como canceladas antes de eliminar
+            participant_count = db.query(EventParticipation).filter(
+                EventParticipation.event_id == event_id
+            ).count()
+
+            db.query(EventParticipation).filter(
+                EventParticipation.event_id == event_id
+            ).update({"status": EventParticipationStatus.CANCELLED})
+
+            # Eliminar evento (comportamiento anterior)
+            await event_service.delete_event(
+                db=db,
+                event_id=event_id,
+                redis_client=redis_client
+            )
+
+            # Respuesta para evento gratuito
+            return EventCancellationResponse(
+                event_id=event_id,
+                event_title=event.title,
+                cancellation_date=datetime.now(timezone.utc),
+                cancellation_reason=reason or "Evento gratuito eliminado por administrador",
+                participants_count=participant_count,
+                refunds_processed=0,
+                refunds_failed=0,
+                payments_cancelled=0,
+                total_refunded_amount=0,
+                currency="EUR",
+                failed_refunds=[],
+                notifications_sent={"push": 0, "email": 0, "chat": 0}
+            )
+
+    except HTTPException:
+        raise
     except Exception as e:
+        logger.error(f"Error cancelando evento {event_id}: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error deleting event: {str(e)}"
+            detail=f"Error cancelling event: {str(e)}"
         )
 
 

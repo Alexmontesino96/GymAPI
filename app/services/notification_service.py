@@ -167,6 +167,129 @@ class OneSignalService:
         except Exception as e:
             logger.error(f"Error updating tokens last_used: {str(e)}", exc_info=True)
 
+    async def notify_event_cancellation(
+        self,
+        db: Session,
+        event_title: str,
+        event_id: int,
+        gym_id: int,
+        participant_user_ids: List[int],
+        total_refunded_cents: int = 0,
+        currency: str = "EUR",
+        cancellation_reason: Optional[str] = None
+    ) -> Dict[str, int]:
+        """
+        Enviar notificaciones multi-canal sobre la cancelación de un evento.
+
+        Canales de notificación:
+        - Push (OneSignal): Notificación inmediata en dispositivos móviles
+        - Email: Correo detallado sobre la cancelación (TODO: implementar)
+        - Chat (Stream): Mensaje en el canal del evento si existe (TODO: implementar)
+
+        Args:
+            db: Sesión de base de datos
+            event_title: Título del evento cancelado
+            event_id: ID del evento
+            gym_id: ID del gimnasio
+            participant_user_ids: Lista de IDs de usuarios participantes
+            total_refunded_cents: Total reembolsado en centavos
+            currency: Moneda del reembolso
+            cancellation_reason: Razón de la cancelación
+
+        Returns:
+            Diccionario con contadores de notificaciones enviadas:
+            - push: Cantidad de notificaciones push enviadas
+            - email: Cantidad de emails enviados
+            - chat: Cantidad de mensajes en chat enviados
+        """
+        stats = {
+            "push": 0,
+            "email": 0,
+            "chat": 0
+        }
+
+        if not participant_user_ids:
+            logger.warning(f"No hay participantes para notificar sobre cancelación de evento {event_id}")
+            return stats
+
+        # Formatear monto reembolsado
+        refund_text = ""
+        if total_refunded_cents > 0:
+            amount_display = total_refunded_cents / 100
+            refund_text = f"Reembolso: {amount_display:.2f} {currency}"
+
+        # Preparar mensaje
+        title = f"Evento Cancelado: {event_title}"
+        message_parts = [
+            f"El evento '{event_title}' ha sido cancelado."
+        ]
+
+        if cancellation_reason:
+            message_parts.append(f"Razón: {cancellation_reason}")
+
+        if refund_text:
+            message_parts.append(f"{refund_text} (procesado automáticamente)")
+
+        message = " ".join(message_parts)
+
+        # Convertir IDs a strings para OneSignal
+        user_ids_str = [str(uid) for uid in participant_user_ids]
+
+        # 1. NOTIFICACIÓN PUSH (OneSignal)
+        try:
+            push_result = self.send_to_users(
+                user_ids=user_ids_str,
+                title=title,
+                message=message,
+                data={
+                    "type": "event_cancelled",
+                    "event_id": event_id,
+                    "gym_id": gym_id,
+                    "refund_cents": total_refunded_cents,
+                    "currency": currency
+                },
+                db=db
+            )
+
+            if push_result.get("success"):
+                stats["push"] = push_result.get("recipients", len(user_ids_str))
+                logger.info(f"Notificación push enviada a {stats['push']} usuarios sobre cancelación de evento {event_id}")
+            else:
+                logger.error(f"Error enviando notificación push: {push_result.get('errors')}")
+
+        except Exception as e:
+            logger.error(f"Error al enviar notificación push de cancelación: {e}", exc_info=True)
+
+        # 2. EMAIL (TODO: Implementar servicio de email)
+        try:
+            # TODO: Implementar envío de email con template de cancelación
+            # Debería incluir:
+            # - Detalles del evento cancelado
+            # - Razón de la cancelación
+            # - Información del reembolso (monto, método, tiempo estimado)
+            # - Contacto de soporte
+
+            logger.info(f"TODO: Enviar email de cancelación a {len(participant_user_ids)} usuarios")
+            # stats["email"] = len(participant_user_ids)
+
+        except Exception as e:
+            logger.error(f"Error al enviar email de cancelación: {e}", exc_info=True)
+
+        # 3. CHAT (Stream) - Mensaje automático en canal del evento
+        try:
+            # TODO: Verificar si el evento tiene chat_room asociado
+            # Enviar mensaje automático al canal informando de la cancelación
+            # Usar Stream Chat SDK para enviar mensaje como "system"
+
+            logger.info(f"TODO: Enviar mensaje de cancelación en chat del evento {event_id}")
+            # stats["chat"] = 1  # Un mensaje en el canal del evento
+
+        except Exception as e:
+            logger.error(f"Error al enviar mensaje de chat de cancelación: {e}", exc_info=True)
+
+        return stats
+
+
 # Instancia global
 notification_service = OneSignalService(
     app_id=ONESIGNAL_APP_ID,

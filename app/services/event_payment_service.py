@@ -921,6 +921,207 @@ class EventPaymentService:
 
         return participation
 
+    async def cancel_event_with_full_refunds(
+        self,
+        db: Session,
+        event: Event,
+        gym_id: int,
+        cancelled_by_user_id: int,
+        reason: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Cancelar un evento y procesar reembolsos automáticos del 100% para todos los participantes.
+
+        Este método:
+        - Reembolsa 100% a todos los participantes con payment_status=PAID (ignora políticas de reembolso)
+        - Cancela Payment Intents pendientes (status=PENDING_PAYMENT)
+        - Marca todas las participaciones como CANCELLED
+        - Actualiza el evento con información de auditoría
+        - Continúa procesando aunque algunos reembolsos fallen
+
+        Args:
+            db: Sesión de base de datos
+            event: Evento a cancelar
+            gym_id: ID del gimnasio
+            cancelled_by_user_id: ID del usuario admin que cancela
+            reason: Razón de la cancelación
+
+        Returns:
+            Diccionario con estadísticas de la cancelación:
+            - participants_count: Total de participantes
+            - refunds_processed: Reembolsos exitosos
+            - refunds_failed: Reembolsos fallidos
+            - payments_cancelled: Payment Intents cancelados
+            - total_refunded_cents: Total reembolsado en centavos
+            - failed_refunds: Lista de errores
+        """
+        try:
+            logger.info(f"Iniciando cancelación masiva de evento {event.id} del gym {gym_id}")
+
+            # Obtener cuenta de Stripe del gimnasio
+            stripe_account = db.query(GymStripeAccount).filter(
+                GymStripeAccount.gym_id == gym_id
+            ).first()
+
+            if not stripe_account and event.is_paid:
+                raise ValueError("No se encontró cuenta de Stripe para el gimnasio")
+
+            # Obtener todas las participaciones activas del evento
+            participations = db.query(EventParticipation).filter(
+                and_(
+                    EventParticipation.event_id == event.id,
+                    EventParticipation.gym_id == gym_id,
+                    EventParticipation.status.in_([
+                        EventParticipationStatus.REGISTERED,
+                        EventParticipationStatus.PENDING_PAYMENT,
+                        EventParticipationStatus.WAITING_LIST
+                    ])
+                )
+            ).all()
+
+            # Estadísticas de procesamiento
+            stats = {
+                "participants_count": len(participations),
+                "refunds_processed": 0,
+                "refunds_failed": 0,
+                "payments_cancelled": 0,
+                "total_refunded_cents": 0,
+                "failed_refunds": []
+            }
+
+            # Procesar cada participación
+            for participation in participations:
+                try:
+                    # CASO 1: Participante ya pagó -> Reembolsar 100%
+                    if participation.payment_status == PaymentStatusType.PAID:
+                        if not participation.stripe_payment_intent_id:
+                            logger.warning(
+                                f"Participación {participation.id} marcada como PAID "
+                                f"pero sin stripe_payment_intent_id"
+                            )
+                            stats["refunds_failed"] += 1
+                            stats["failed_refunds"].append({
+                                "participation_id": participation.id,
+                                "member_id": participation.member_id,
+                                "error": "Sin Payment Intent ID"
+                            })
+                            continue
+
+                        # Reembolsar 100% del monto pagado
+                        refund_amount = participation.amount_paid_cents or 0
+
+                        if refund_amount > 0:
+                            try:
+                                refund = stripe.Refund.create(
+                                    payment_intent=participation.stripe_payment_intent_id,
+                                    amount=refund_amount,  # 100% del monto
+                                    reason="requested_by_customer",
+                                    metadata={
+                                        "event_id": str(event.id),
+                                        "participation_id": str(participation.id),
+                                        "refund_reason": reason or "Evento cancelado por administrador",
+                                        "cancelled_by_user_id": str(cancelled_by_user_id)
+                                    },
+                                    stripe_account=stripe_account.stripe_account_id
+                                )
+
+                                # Actualizar participación
+                                participation.payment_status = PaymentStatusType.REFUNDED
+                                participation.refund_date = datetime.utcnow()
+                                participation.refund_amount_cents = refund_amount
+                                participation.status = EventParticipationStatus.CANCELLED
+
+                                stats["refunds_processed"] += 1
+                                stats["total_refunded_cents"] += refund_amount
+
+                                logger.info(
+                                    f"Reembolso procesado: {refund.id} - "
+                                    f"Participación {participation.id} - "
+                                    f"{refund_amount} centavos"
+                                )
+
+                            except stripe.error.StripeError as e:
+                                logger.error(
+                                    f"Error en reembolso de Stripe para participación {participation.id}: {e}"
+                                )
+                                stats["refunds_failed"] += 1
+                                stats["failed_refunds"].append({
+                                    "participation_id": participation.id,
+                                    "member_id": participation.member_id,
+                                    "error": str(e)
+                                })
+                                # Continuar con otros reembolsos
+                                continue
+
+                    # CASO 2: Pago pendiente -> Cancelar Payment Intent
+                    elif participation.status == EventParticipationStatus.PENDING_PAYMENT:
+                        if participation.stripe_payment_intent_id:
+                            try:
+                                # Cancelar Payment Intent en Stripe
+                                stripe.PaymentIntent.cancel(
+                                    participation.stripe_payment_intent_id,
+                                    stripe_account=stripe_account.stripe_account_id
+                                )
+
+                                participation.payment_status = PaymentStatusType.EXPIRED
+                                participation.status = EventParticipationStatus.CANCELLED
+
+                                stats["payments_cancelled"] += 1
+
+                                logger.info(
+                                    f"Payment Intent cancelado para participación {participation.id}"
+                                )
+
+                            except stripe.error.StripeError as e:
+                                logger.warning(
+                                    f"Error cancelando Payment Intent para participación {participation.id}: {e}"
+                                )
+                                # Marcar como cancelado de todas formas
+                                participation.status = EventParticipationStatus.CANCELLED
+                                participation.payment_status = PaymentStatusType.EXPIRED
+                        else:
+                            # Sin Payment Intent, solo marcar como cancelado
+                            participation.status = EventParticipationStatus.CANCELLED
+                            participation.payment_status = PaymentStatusType.EXPIRED
+
+                    # CASO 3: Participante sin pago (evento gratuito o waiting list)
+                    else:
+                        participation.status = EventParticipationStatus.CANCELLED
+
+                except Exception as e:
+                    logger.error(f"Error procesando participación {participation.id}: {e}")
+                    stats["failed_refunds"].append({
+                        "participation_id": participation.id,
+                        "member_id": participation.member_id,
+                        "error": str(e)
+                    })
+                    continue
+
+            # Actualizar evento con información de auditoría
+            from app.models.event import EventStatus
+            event.status = EventStatus.CANCELLED
+            event.cancellation_date = datetime.utcnow()
+            event.cancelled_by_user_id = cancelled_by_user_id
+            event.cancellation_reason = reason
+            event.total_refunded_cents = stats["total_refunded_cents"]
+
+            # Commit de todos los cambios
+            db.commit()
+
+            logger.info(
+                f"Cancelación de evento {event.id} completada: "
+                f"{stats['refunds_processed']} reembolsos, "
+                f"{stats['payments_cancelled']} pagos cancelados, "
+                f"{stats['refunds_failed']} fallos"
+            )
+
+            return stats
+
+        except Exception as e:
+            logger.error(f"Error en cancelación masiva de evento {event.id}: {e}")
+            db.rollback()
+            raise
+
 
 # Instancia global del servicio
 event_payment_service = EventPaymentService()
