@@ -817,6 +817,13 @@ async def admin_delete_event(
         )
 
     try:
+        # Log de diagnóstico para verificar detección de eventos de pago
+        logger.info(
+            f"🔍 DIAGNÓSTICO CANCELACIÓN - Evento {event_id}: "
+            f"is_paid={event.is_paid}, price_cents={event.price_cents}, "
+            f"currency={event.currency}, status={event.status}"
+        )
+
         # CASO 1: Evento de pago -> Cancelar con reembolsos automáticos
         if event.is_paid and event.price_cents and event.price_cents > 0:
             logger.info(
