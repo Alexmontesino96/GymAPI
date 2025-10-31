@@ -54,7 +54,7 @@ class User(Base):
     survey_responses = relationship("SurveyResponse", foreign_keys="[SurveyResponse.user_id]", back_populates="user")
     
     # Relaciones para eventos
-    created_events = relationship("Event", back_populates="creator")
+    created_events = relationship("Event", foreign_keys="Event.creator_id", back_populates="creator")
     event_participations = relationship("EventParticipation", back_populates="member")
     
     # Relaciones para health tracking

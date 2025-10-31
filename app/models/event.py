@@ -62,7 +62,7 @@ class Event(Base):
 
     # Relación con el creador del evento (entrenador o admin)
     creator_id = Column(Integer, ForeignKey("user.id"), nullable=False, index=True)
-    creator = relationship("User", back_populates="created_events")
+    creator = relationship("User", foreign_keys=[creator_id], back_populates="created_events")
     
     # Relación con el gimnasio (tenant)
     gym = relationship("Gym", back_populates="events")
