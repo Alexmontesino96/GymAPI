@@ -820,8 +820,17 @@ async def admin_delete_event(
         # CASO 1: Evento de pago -> Cancelar con reembolsos automáticos
         if event.is_paid and event.price_cents and event.price_cents > 0:
             logger.info(
-                f"Cancelando evento DE PAGO {event_id} del gym {current_gym.id} "
-                f"con reembolsos automáticos. Admin: {current_user.id}"
+                f"╔════════════════════════════════════════════════════════════════╗\n"
+                f"║ DETECTADO EVENTO DE PAGO - FLUJO DE REEMBOLSOS AUTOMÁTICOS   ║\n"
+                f"╠════════════════════════════════════════════════════════════════╣\n"
+                f"║ Evento ID: {event_id}\n"
+                f"║ Gimnasio: {current_gym.id}\n"
+                f"║ Título: {event.title}\n"
+                f"║ Precio: ${event.price_cents/100:.2f} {event.currency or 'EUR'}\n"
+                f"║ Admin: {current_user.id}\n"
+                f"║ is_paid: {event.is_paid}\n"
+                f"║ price_cents: {event.price_cents}\n"
+                f"╚════════════════════════════════════════════════════════════════╝"
             )
 
             # Obtener ID interno del usuario admin
@@ -874,13 +883,15 @@ async def admin_delete_event(
                     logger.error(f"Error enviando notificaciones de cancelación: {e}", exc_info=True)
                     # Continuar aunque falle el envío de notificaciones
 
-            # Invalidar cachés relacionados
+            # Invalidar cachés relacionados (NO eliminar el evento físicamente - ya está CANCELLED)
             try:
-                await event_service.delete_event(
-                    db=db,
+                await event_service.invalidate_event_caches(
+                    redis_client=redis_client,
                     event_id=event_id,
-                    redis_client=redis_client
+                    gym_id=current_gym.id,
+                    creator_id=event.creator_id
                 )
+                logger.info(f"Cache invalidado para evento cancelado {event_id}")
             except Exception as e:
                 logger.warning(f"Error invalidando cache para evento {event_id}: {e}")
                 # No fallar si solo es problema de cache
@@ -904,8 +915,17 @@ async def admin_delete_event(
         # CASO 2: Evento gratuito -> Eliminar normalmente (comportamiento anterior)
         else:
             logger.info(
-                f"Eliminando evento GRATUITO {event_id} del gym {current_gym.id}. "
-                f"Admin: {current_user.id}"
+                f"╔════════════════════════════════════════════════════════════════╗\n"
+                f"║ DETECTADO EVENTO GRATUITO - ELIMINACIÓN FÍSICA                ║\n"
+                f"╠════════════════════════════════════════════════════════════════╣\n"
+                f"║ Evento ID: {event_id}\n"
+                f"║ Gimnasio: {current_gym.id}\n"
+                f"║ Título: {event.title}\n"
+                f"║ Admin: {current_user.id}\n"
+                f"║ is_paid: {event.is_paid}\n"
+                f"║ price_cents: {event.price_cents}\n"
+                f"║ ACCIÓN: Eliminar físicamente de la BD\n"
+                f"╚════════════════════════════════════════════════════════════════╝"
             )
 
             # Marcar participaciones como canceladas antes de eliminar
