@@ -673,85 +673,54 @@ async def update_event(
     return updated_event
 
 
-@router.delete("/{event_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{event_id}", response_model=EventCancellationResponse)
 async def delete_event(
     *,
     request: Request,
     db: Session = Depends(get_db),
     event_id: int = Path(..., title="Event ID"),
-    current_gym: GymSchema = Depends(verify_gym_access),  # Usar GymSchema
+    reason: Optional[str] = Query(None, max_length=500, description="Razón de la cancelación del evento"),
+    current_gym: GymSchema = Depends(verify_gym_access),
     current_user: Auth0User = Security(auth.get_user, scopes=["resource:admin"]),
     redis_client: Redis = Depends(get_redis_client)
-) -> None:
+) -> EventCancellationResponse:
     """
-    Delete an event.
-    
-    This endpoint allows the event creator or administrators to delete
-    an event. This will also remove all associated participations.
-    Only the creator of the event or administrators can perform this operation.
-    
+    Delete/Cancel an event with automatic refunds for paid events.
+
+    **REDIRIGIDO AL ENDPOINT CON LÓGICA DE REEMBOLSOS**
+
+    This endpoint now handles both free and paid events intelligently:
+    - **Paid events**: Cancels with 100% automatic refunds
+    - **Free events**: Deletes physically from database
+
     Permissions:
-        - Requires 'delete:events' scope (trainers and administrators)
-        - Also requires ownership of the event or admin privileges
-        
+        - Requires 'resource:admin' scope (administrators)
+
     Args:
         db: Database session
-        event_id: ID of the event to delete
+        event_id: ID of the event to delete/cancel
+        reason: Optional cancellation reason
         current_gym: The current gym (tenant) context
         current_user: Authenticated user with appropriate permissions
-        
+        redis_client: Redis client for cache invalidation
+
+    Returns:
+        EventCancellationResponse with detailed statistics
+
     Raises:
-        HTTPException: 404 if event not found, 403 if insufficient permissions
+        HTTPException: 404 if event not found, 400 if already cancelled
     """
-    # Verificar primero que el evento pertenezca al gimnasio actual
-    event = db.query(Event).filter(
-        Event.id == event_id,
-        Event.gym_id == current_gym.id
-    ).first()
-    
-    if not event:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Event not found in current gym"
-        )
-    
-    # === Verificación de permisos ===
-    user_auth0_id = current_user.id
-    user_permissions = getattr(current_user, "permissions", []) or []
-
-    # 1) Permisos globales (plataforma)
-    is_global_admin = "admin:all" in user_permissions or "admin:events" in user_permissions
-
-    # 2) Permisos de recurso/tenant indicados en el token
-    is_resource_admin = "resource:admin" in user_permissions
-    is_tenant_admin   = "tenant:admin"   in user_permissions
-
-    # 3) Rol dentro del gimnasio (OWNER o ADMIN)
-    from app.models.user import User
-    from app.models.user_gym import UserGym, GymRoleType
-
-    internal_user_id = db.query(User.id).filter(User.auth0_id == user_auth0_id).scalar()
-
-    role_in_gym = db.query(UserGym.role).filter(
-        UserGym.user_id == internal_user_id,
-        UserGym.gym_id == current_gym.id
-    ).scalar()
-
-    is_gym_admin_or_owner = role_in_gym in [GymRoleType.ADMIN, GymRoleType.OWNER]
-
-    # 4) Es el creador del evento
-    is_creator = internal_user_id == event.creator_id
-
-    # Evaluar permiso final
-    if not (is_global_admin or is_resource_admin or is_tenant_admin or is_gym_admin_or_owner or is_creator):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You don't have permission to delete this event"
-        )
-    
-    # Delete event usando servicio (invalida caché)
-    await event_service.delete_event(db=db, event_id=event_id, redis_client=redis_client)
-    return None
+    # Redirigir a la función con lógica completa de reembolsos
+    logger.info(f"Redirigiendo DELETE /{event_id} → /admin/{event_id} (con lógica de reembolsos)")
+    return await admin_delete_event(
+        request=request,
+        db=db,
+        event_id=event_id,
+        reason=reason,
+        current_gym=current_gym,
+        current_user=current_user,
+        redis_client=redis_client
+    )
 
 
 @router.delete("/admin/{event_id}", response_model=EventCancellationResponse)
