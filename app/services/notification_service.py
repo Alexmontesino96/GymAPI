@@ -9,9 +9,15 @@ from app.repositories.notification_repository import notification_repository
 
 logger = logging.getLogger(__name__)
 
-# Obtener directamente las credenciales de las variables de entorno
-ONESIGNAL_APP_ID = os.environ.get("ONESIGNAL_APP_ID", "57c2285f-1a1a-4431-a5db-7ecd0bab4c5f")
-ONESIGNAL_REST_API_KEY = os.environ.get("ONESIGNAL_REST_API_KEY", "os_v2_app_k7bcqxy2djcddjo3p3gqxk2ml5yilwxkkezur7mhf2ofworqrxvejkvtmywal5lniukbix5ugvyqoka5adzapeuu5f5nxzfparez6lq")
+# Obtener credenciales de las variables de entorno (SIN defaults por seguridad)
+ONESIGNAL_APP_ID = os.environ.get("ONESIGNAL_APP_ID")
+ONESIGNAL_REST_API_KEY = os.environ.get("ONESIGNAL_REST_API_KEY")
+
+# Validación en tiempo de importación
+if not ONESIGNAL_APP_ID:
+    logger.warning("⚠️  ONESIGNAL_APP_ID no configurado - las notificaciones push estarán deshabilitadas")
+if not ONESIGNAL_REST_API_KEY:
+    logger.warning("⚠️  ONESIGNAL_REST_API_KEY no configurado - las notificaciones push estarán deshabilitadas")
 
 class OneSignalService:
     def __init__(self, app_id: str, api_key: str):

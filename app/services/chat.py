@@ -500,7 +500,10 @@ class ChatService:
                 channel = stream_client.channel(channel_type, channel_id)
                 
                 # PASO 2: Crear el canal con el creador y asignarlo al team del gimnasio
-                channel_data_create = {"created_by_id": creator_stream_id}
+                channel_data_create = {
+                    "created_by_id": creator_stream_id,
+                    "name": room_data.name  # Incluir el nombre del canal para que aparezca correctamente en Stream
+                }
                 if gym_id:
                     channel_data_create["team"] = f"gym_{gym_id}"
                     channel_data_create["gym_id"] = str(gym_id)
@@ -1036,7 +1039,9 @@ class ChatService:
                     try:
                         # Crear canal de manera manual con team del gimnasio
                         channel = stream_client.channel(channel_type, channel_id)
-                        channel_data_create = {}
+                        channel_data_create = {
+                            "name": room_data.name  # Incluir el nombre del canal
+                        }
                         if gym_id:
                             channel_data_create["team"] = f"gym_{gym_id}"
                             channel_data_create["gym_id"] = str(gym_id)

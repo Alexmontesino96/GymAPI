@@ -257,7 +257,9 @@ Marca los siguientes eventos:
 ### **Webhook Secret**
 ```bash
 # En tu archivo .env
-STRIPE_WEBHOOK_SECRET=whsec_4s_E3leBjuII-VSYIoiBh3YN_jyW_wXMwVtQ_cB_EV8
+STRIPE_WEBHOOK_SECRET=whsec_XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+# Obtén el webhook secret desde el Dashboard de Stripe:
+# https://dashboard.stripe.com/webhooks
 ```
 
 ### **Verificación de Signature**

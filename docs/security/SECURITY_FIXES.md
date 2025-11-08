@@ -13,7 +13,7 @@ Este documento detalla las correcciones críticas de seguridad aplicadas al áre
 **Problema:**
 ```python
 # ❌ ANTES (app/core/config.py:281)
-STRIPE_WEBHOOK_SECRET: str = "whsec_4s_E3leBjuII-VSYIoiBh3YN_jyW_wXMwVtQ_cB_EV8"
+STRIPE_WEBHOOK_SECRET: str = "whsec_XXXXXXXXXXXXXXXXXXXXXXXX" # CREDENCIAL EXPUESTA
 ```
 
 **Solución:**
