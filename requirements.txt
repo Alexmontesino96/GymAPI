@@ -36,4 +36,4 @@ openai==1.12.0
 
 # Dependencias para exportación de datos
 pandas==2.2.3
-openpyxl==3.1.5
+openpyxl==3.1.5Pillow==10.1.0
