@@ -17,4 +17,12 @@ from app.models.schedule import (
 from app.models.notification import DeviceToken  # noqa
 from app.models.stripe_profile import UserGymStripeProfile, GymStripeAccount  # noqa
 from app.models.user_gym_subscription import UserGymSubscription
+from app.models.story import (
+    Story,
+    StoryView,
+    StoryReaction,
+    StoryReport,
+    StoryHighlight,
+    StoryHighlightItem
+)  # noqa
 # Importar aquí otros modelos que se vayan creando 

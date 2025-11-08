@@ -66,4 +66,8 @@ class User(Base):
     created_nutrition_plans = relationship("NutritionPlan", back_populates="creator")
     followed_nutrition_plans = relationship("NutritionPlanFollower", back_populates="user")
     nutrition_progress = relationship("UserDailyProgress", back_populates="user")
-    meal_completions = relationship("UserMealCompletion", back_populates="user") 
+    meal_completions = relationship("UserMealCompletion", back_populates="user")
+
+    # Relaciones para historias
+    stories = relationship("Story", back_populates="user", cascade="all, delete-orphan")
+    story_highlights = relationship("StoryHighlight", back_populates="user", cascade="all, delete-orphan") 

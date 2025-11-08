@@ -77,6 +77,9 @@ class Gym(Base):
     survey_responses = relationship("SurveyResponse", back_populates="gym")
     survey_templates = relationship("SurveyTemplate", back_populates="gym")
 
+    # Relación con historias
+    stories = relationship("Story", back_populates="gym", cascade="all, delete-orphan")
+
     # Propiedades helper para verificación de tipo
     @property
     def is_personal_trainer(self) -> bool:

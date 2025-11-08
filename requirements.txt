@@ -27,6 +27,7 @@ gunicorn==21.2.0
 redis==5.2.1
 supabase==2.15.0
 stream-chat==4.23.0
+stream-python==5.4.0
 apscheduler==3.11.0
 boto3==1.37.28
 
