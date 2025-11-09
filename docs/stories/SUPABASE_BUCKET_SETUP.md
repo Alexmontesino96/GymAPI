@@ -34,9 +34,33 @@
 
 ### 2. Configurar Políticas de Acceso (RLS)
 
+**IMPORTANTE:** En Supabase Dashboard, las políticas se crean desde la interfaz web, NO ejecutando SQL directamente.
+
+#### Pasos para crear políticas:
+
+1. Ir a **Storage** > **Policies** en el bucket "stories"
+2. Click en **New Policy**
+3. Seleccionar la operación (INSERT, SELECT, DELETE, UPDATE)
+4. Completar los campos según las políticas abajo
+
+---
+
 #### Política 1: Permitir upload autenticado
+
+**En Supabase Dashboard:**
+- **Policy name:** `Users can upload their own stories`
+- **Allowed operation:** `INSERT`
+- **Target roles:** `authenticated`
+- **USING expression:** (dejar vacío para INSERT)
+- **WITH CHECK expression:**
 ```sql
--- Nombre: "Users can upload their own stories"
+bucket_id = 'stories' AND
+(storage.foldername(name))[1] LIKE 'gym_%' AND
+(storage.foldername(name))[2] LIKE 'user_%'
+```
+
+**O usando SQL Editor:**
+```sql
 CREATE POLICY "Users can upload their own stories"
 ON storage.objects FOR INSERT
 TO authenticated
@@ -47,25 +71,67 @@ WITH CHECK (
 );
 ```
 
+---
+
 #### Política 2: Lectura pública
+
+**En Supabase Dashboard:**
+- **Policy name:** `Public read access for stories`
+- **Allowed operation:** `SELECT`
+- **Target roles:** `public`
+- **USING expression:**
 ```sql
--- Nombre: "Public read access for stories"
+bucket_id = 'stories'
+```
+- **WITH CHECK expression:** (dejar vacío para SELECT)
+
+**O usando SQL Editor:**
+```sql
 CREATE POLICY "Public read access for stories"
 ON storage.objects FOR SELECT
 TO public
 USING (bucket_id = 'stories');
 ```
 
+---
+
 #### Política 3: Eliminar propias stories
+
+**En Supabase Dashboard:**
+- **Policy name:** `Users can delete their own stories`
+- **Allowed operation:** `DELETE`
+- **Target roles:** `authenticated`
+- **USING expression:**
 ```sql
--- Nombre: "Users can delete their own stories"
+bucket_id = 'stories'
+```
+- **WITH CHECK expression:** (dejar vacío para DELETE)
+
+**O usando SQL Editor:**
+```sql
 CREATE POLICY "Users can delete their own stories"
 ON storage.objects FOR DELETE
 TO authenticated
-USING (
-  bucket_id = 'stories' AND
-  (storage.foldername(name))[2] = 'user_' || auth.uid()
-);
+USING (bucket_id = 'stories');
+```
+
+---
+
+**ALTERNATIVA SIMPLE:** Si las políticas anteriores causan problemas, puedes usar estas políticas más permisivas:
+
+```sql
+-- Permitir todo a usuarios autenticados (SOLO PARA DESARROLLO)
+CREATE POLICY "Allow authenticated users all operations"
+ON storage.objects
+TO authenticated
+USING (bucket_id = 'stories')
+WITH CHECK (bucket_id = 'stories');
+
+-- Lectura pública
+CREATE POLICY "Allow public read"
+ON storage.objects FOR SELECT
+TO public
+USING (bucket_id = 'stories');
 ```
 
 ### 3. Estructura de Carpetas
