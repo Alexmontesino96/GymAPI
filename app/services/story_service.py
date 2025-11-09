@@ -55,7 +55,7 @@ class StoryService:
         """
         try:
             # Verificar que el usuario pertenece al gimnasio
-            user_gym = await self.db.execute(
+            user_gym = self.db.execute(
                 select(UserGym).where(
                     and_(
                         UserGym.user_id == user_id,
@@ -139,7 +139,7 @@ class StoryService:
         Returns:
             Historia encontrada
         """
-        story = await self.db.execute(
+        story = self.db.execute(
             select(Story).where(
                 and_(
                     Story.id == story_id,
@@ -208,7 +208,7 @@ class StoryService:
         # Ordenar por fecha de creación descendente
         query = query.order_by(Story.created_at.desc())
 
-        result = await self.db.execute(query)
+        result = self.db.execute(query)
         stories = result.scalars().all()
 
         # Filtrar por privacidad
@@ -261,7 +261,7 @@ class StoryService:
 
                 # Cargar historias de BD
                 if story_ids:
-                    stories = await self.db.execute(
+                    stories = self.db.execute(
                         select(Story).where(
                             and_(
                                 Story.id.in_(story_ids),
@@ -298,7 +298,7 @@ class StoryService:
                 # Paginación y ordenamiento
                 query = query.order_by(Story.created_at.desc()).limit(limit).offset(offset)
 
-                result = await self.db.execute(query)
+                result = self.db.execute(query)
                 stories = result.scalars().all()
 
             # Agrupar historias por usuario
@@ -382,7 +382,7 @@ class StoryService:
         story = await self.get_story_by_id(story_id, gym_id, user_id)
 
         # Verificar si ya existe una vista
-        existing_view = await self.db.execute(
+        existing_view = self.db.execute(
             select(StoryView).where(
                 and_(
                     StoryView.story_id == story_id,
@@ -439,7 +439,7 @@ class StoryService:
         story = await self.get_story_by_id(story_id, gym_id, user_id)
 
         # Verificar si ya existe una reacción del usuario
-        existing_reaction = await self.db.execute(
+        existing_reaction = self.db.execute(
             select(StoryReaction).where(
                 and_(
                     StoryReaction.story_id == story_id,
@@ -507,7 +507,7 @@ class StoryService:
             True si se eliminó exitosamente
         """
         # Obtener historia
-        story = await self.db.execute(
+        story = self.db.execute(
             select(Story).where(
                 and_(
                     Story.id == story_id,
@@ -571,7 +571,7 @@ class StoryService:
             Highlight creado
         """
         # Verificar que las historias existen y pertenecen al usuario
-        stories = await self.db.execute(
+        stories = self.db.execute(
             select(Story).where(
                 and_(
                     Story.id.in_(highlight_data.story_ids),
@@ -648,7 +648,7 @@ class StoryService:
             )
 
         # Verificar si ya existe un reporte del mismo usuario
-        existing_report = await self.db.execute(
+        existing_report = self.db.execute(
             select(StoryReport).where(
                 and_(
                     StoryReport.story_id == story_id,
@@ -704,7 +704,7 @@ class StoryService:
         """
         Verifica si un usuario ya vio una historia.
         """
-        result = await self.db.execute(
+        result = self.db.execute(
             select(StoryView).where(
                 and_(
                     StoryView.story_id == story_id,
