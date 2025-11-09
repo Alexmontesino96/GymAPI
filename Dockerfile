@@ -18,6 +18,11 @@ RUN pip install --no-cache-dir --upgrade pip && \
 # Copiar el código de la aplicación
 COPY . .
 
+# Limpiar cualquier archivo Python compilado que pueda haberse copiado
+RUN find . -type f -name '*.pyc' -delete && \
+    find . -type d -name '__pycache__' -delete && \
+    echo "Cleaned Python cache files"
+
 # Puerto en el que se ejecuta la aplicación
 EXPOSE 8000
 
