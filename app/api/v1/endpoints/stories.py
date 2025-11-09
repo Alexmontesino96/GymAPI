@@ -31,7 +31,6 @@ from app.schemas.story import (
 )
 
 router = APIRouter(
-    prefix="/stories",
     tags=["stories"],
     dependencies=[module_enabled("stories")]
 )
