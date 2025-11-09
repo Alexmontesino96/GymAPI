@@ -144,7 +144,7 @@ async def get_stories_feed(
     - **filter_type**: Filtrar por tipo (all, following, close_friends)
     - **story_types**: Filtrar por tipos de historia específicos
     """
-service = StoryService(db)
+    service = StoryService(db)
     feed = await service.get_stories_feed(
         gym_id=gym_id,
         user_id=current_user.id,
@@ -170,7 +170,7 @@ async def get_user_stories(
     - **user_id**: ID del usuario
     - **include_expired**: Incluir historias expiradas (solo para propias historias)
     """
-# Solo el propio usuario puede ver sus historias expiradas
+    # Solo el propio usuario puede ver sus historias expiradas
     if include_expired and user_id != current_user.id:
         include_expired = False
 
@@ -219,7 +219,7 @@ async def get_story(
     """
     Obtener una historia específica por ID.
     """
-service = StoryService(db)
+    service = StoryService(db)
     story = await service.get_story_by_id(
         story_id=story_id,
         gym_id=gym_id,
@@ -254,7 +254,7 @@ async def mark_story_viewed(
     """
     Marcar una historia como vista.
     """
-service = StoryService(db)
+    service = StoryService(db)
     await service.mark_story_as_viewed(
         story_id=story_id,
         gym_id=gym_id,
@@ -276,7 +276,7 @@ async def get_story_viewers(
     Obtener la lista de usuarios que vieron una historia.
     Solo el dueño de la historia puede ver esta información.
     """
-service = StoryService(db)
+    service = StoryService(db)
     story = await service.get_story_by_id(
         story_id=story_id,
         gym_id=gym_id,
@@ -317,7 +317,7 @@ async def add_story_reaction(
     """
     Agregar una reacción a una historia.
     """
-service = StoryService(db)
+    service = StoryService(db)
     reaction = await service.add_reaction(
         story_id=story_id,
         gym_id=gym_id,
@@ -342,7 +342,7 @@ async def delete_story(
     """
     Eliminar una historia (solo el dueño puede eliminar).
     """
-service = StoryService(db)
+    service = StoryService(db)
     await service.delete_story(
         story_id=story_id,
         gym_id=gym_id,
@@ -363,7 +363,7 @@ async def update_story(
     """
     Actualizar una historia (solo caption y privacidad).
     """
-service = StoryService(db)
+    service = StoryService(db)
     story = await service.get_story_by_id(
         story_id=story_id,
         gym_id=gym_id,
@@ -414,7 +414,7 @@ async def report_story(
     """
     Reportar una historia por contenido inapropiado.
     """
-service = StoryService(db)
+    service = StoryService(db)
     report = await service.report_story(
         story_id=story_id,
         gym_id=gym_id,
@@ -439,7 +439,7 @@ async def create_story_highlight(
     """
     Crear un highlight de historias (colección de historias destacadas).
     """
-service = StoryService(db)
+    service = StoryService(db)
     highlight = await service.create_highlight(
         gym_id=gym_id,
         user_id=current_user.id,
