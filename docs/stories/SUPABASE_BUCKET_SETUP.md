@@ -34,105 +34,182 @@
 
 ### 2. Configurar Políticas de Acceso (RLS)
 
-**IMPORTANTE:** En Supabase Dashboard, las políticas se crean desde la interfaz web, NO ejecutando SQL directamente.
+**⚠️ IMPORTANTE:** Esta API usa **Auth0** para autenticación, NO Supabase Auth.
 
-#### Pasos para crear políticas:
-
-1. Ir a **Storage** > **Policies** en el bucket "stories"
-2. Click en **New Policy**
-3. Seleccionar la operación (INSERT, SELECT, DELETE, UPDATE)
-4. Completar los campos según las políticas abajo
+Por lo tanto, las políticas con `TO authenticated` **NO funcionarán** porque:
+- Los requests usan `SUPABASE_ANON_KEY` (anónima)
+- No hay usuarios autenticados en Supabase Auth
+- `auth.uid()` será `null`
 
 ---
 
-#### Política 1: Permitir upload autenticado
+### 🎯 Políticas Correctas para Auth0 + Supabase Storage
 
-**En Supabase Dashboard:**
-- **Policy name:** `Users can upload their own stories`
-- **Allowed operation:** `INSERT`
-- **Target roles:** `authenticated`
-- **USING expression:** (dejar vacío para INSERT)
-- **WITH CHECK expression:**
-```sql
-bucket_id = 'stories' AND
-(storage.foldername(name))[1] LIKE 'gym_%' AND
-(storage.foldername(name))[2] LIKE 'user_%'
-```
+#### Opción A: Políticas Públicas con Anon Key (RECOMENDADO)
 
-**O usando SQL Editor:**
+Estas políticas permiten operaciones con la `anon key`:
+
+**1. Permitir INSERT y UPDATE con anon key**
+
+En SQL Editor:
 ```sql
-CREATE POLICY "Users can upload their own stories"
+CREATE POLICY "Allow anon insert stories"
 ON storage.objects FOR INSERT
-TO authenticated
-WITH CHECK (
-  bucket_id = 'stories' AND
-  (storage.foldername(name))[1] LIKE 'gym_%' AND
-  (storage.foldername(name))[2] LIKE 'user_%'
-);
-```
-
----
-
-#### Política 2: Lectura pública
-
-**En Supabase Dashboard:**
-- **Policy name:** `Public read access for stories`
-- **Allowed operation:** `SELECT`
-- **Target roles:** `public`
-- **USING expression:**
-```sql
-bucket_id = 'stories'
-```
-- **WITH CHECK expression:** (dejar vacío para SELECT)
-
-**O usando SQL Editor:**
-```sql
-CREATE POLICY "Public read access for stories"
-ON storage.objects FOR SELECT
-TO public
-USING (bucket_id = 'stories');
-```
-
----
-
-#### Política 3: Eliminar propias stories
-
-**En Supabase Dashboard:**
-- **Policy name:** `Users can delete their own stories`
-- **Allowed operation:** `DELETE`
-- **Target roles:** `authenticated`
-- **USING expression:**
-```sql
-bucket_id = 'stories'
-```
-- **WITH CHECK expression:** (dejar vacío para DELETE)
-
-**O usando SQL Editor:**
-```sql
-CREATE POLICY "Users can delete their own stories"
-ON storage.objects FOR DELETE
-TO authenticated
-USING (bucket_id = 'stories');
-```
-
----
-
-**ALTERNATIVA SIMPLE:** Si las políticas anteriores causan problemas, puedes usar estas políticas más permisivas:
-
-```sql
--- Permitir todo a usuarios autenticados (SOLO PARA DESARROLLO)
-CREATE POLICY "Allow authenticated users all operations"
-ON storage.objects
-TO authenticated
-USING (bucket_id = 'stories')
+TO anon, authenticated
 WITH CHECK (bucket_id = 'stories');
 
--- Lectura pública
-CREATE POLICY "Allow public read"
+CREATE POLICY "Allow anon update stories"
+ON storage.objects FOR UPDATE
+TO anon, authenticated
+USING (bucket_id = 'stories')
+WITH CHECK (bucket_id = 'stories');
+```
+
+**2. Lectura pública**
+```sql
+CREATE POLICY "Allow public read stories"
 ON storage.objects FOR SELECT
 TO public
 USING (bucket_id = 'stories');
 ```
+
+**3. Eliminar con anon key**
+```sql
+CREATE POLICY "Allow anon delete stories"
+ON storage.objects FOR DELETE
+TO anon, authenticated
+USING (bucket_id = 'stories');
+```
+
+---
+
+#### Opción B: Bucket Público Sin RLS (MÁS SIMPLE)
+
+Si prefieres no usar RLS (más simple pero menos seguro):
+
+1. En Supabase Dashboard > Storage > "stories" bucket
+2. Click en **Settings** (del bucket)
+3. ✅ Activar **Public bucket**
+4. **NO crear políticas RLS**
+
+**Ventajas:**
+- ✅ Más simple
+- ✅ No requiere políticas
+- ✅ Funciona inmediatamente
+
+**Desventajas:**
+- ❌ Cualquiera con la URL puede borrar archivos
+- ❌ Menos seguro (pero la seguridad real está en tu API con Auth0)
+
+---
+
+#### Opción C: Service Role Key (Bypass RLS)
+
+Usar `SUPABASE_SERVICE_ROLE_KEY` en lugar de `SUPABASE_ANON_KEY`:
+
+**En `.env` y Render:**
+```bash
+# Cambiar de:
+SUPABASE_ANON_KEY=eyJhbGc...  # Anon key - respeta RLS
+
+# A:
+SUPABASE_SERVICE_ROLE_KEY=eyJhbGc...  # Service role - bypass RLS
+```
+
+**En `app/core/config.py`:**
+```python
+SUPABASE_KEY: str = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
+# En lugar de SUPABASE_ANON_KEY
+```
+
+**Ventajas:**
+- ✅ Bypass completo de RLS
+- ✅ Control total desde tu API (con Auth0)
+
+**Desventajas:**
+- ⚠️ Service role key es muy poderosa (guardar como secreto)
+
+---
+
+### ✅ Configuración Recomendada: Validación en API
+
+**Enfoque adoptado:** Seguridad a nivel de API con Auth0, storage permisivo
+
+**Razón:**
+- ✅ La API ya valida con Auth0 (tokens JWT)
+- ✅ Los endpoints `/api/v1/stories/` requieren autenticación
+- ✅ Supabase Storage es solo almacenamiento pasivo
+- ✅ Más simple y mantenible
+
+---
+
+### 🎯 Configuración Final (Opción B - Bucket Público)
+
+**Pasos:**
+
+1. **Crear bucket "stories" como PÚBLICO**
+   - En Supabase Dashboard > Storage
+   - New Bucket > Name: `stories`
+   - ✅ **Public bucket** activado
+   - File size limit: 50 MB
+
+2. **NO crear políticas RLS**
+   - Dejar las policies vacías
+   - El acceso es público desde Supabase
+   - La seguridad la maneja Auth0 en la API
+
+---
+
+### 🔒 Cómo Funciona la Seguridad
+
+**Flujo de upload de story:**
+
+```
+Cliente (App móvil)
+    ↓
+    | POST /api/v1/stories/
+    | Authorization: Bearer {AUTH0_TOKEN}
+    | X-Gym-ID: 5
+    | media=@imagen.jpg
+    ↓
+FastAPI Endpoint (stories.py)
+    ↓
+    | 1. Auth0 valida token JWT ✅
+    | 2. get_current_db_user() obtiene usuario ✅
+    | 3. Verifica permisos y gym_id ✅
+    ↓
+MediaService.upload_story_media()
+    ↓
+    | 4. Construye path: gym_5/user_123/stories/abc.jpg
+    | 5. Sube a Supabase (con ANON_KEY)
+    ↓
+Supabase Storage (bucket público)
+    ↓
+    | 6. Acepta el upload (bucket público)
+    | 7. Retorna URL pública
+    ↓
+API retorna 201 Created
+```
+
+**Seguridad:**
+- ✅ Solo usuarios autenticados (Auth0) pueden llamar `/api/v1/stories/`
+- ✅ La API valida que el usuario pertenece al gym
+- ✅ La API construye la ruta con el user_id correcto
+- ⚠️ Las URLs son públicas (cualquiera con la URL puede ver la imagen)
+- ⚠️ Para borrar, se debe llamar al endpoint de API (también validado)
+
+**Limitaciones aceptables:**
+- Una vez subida, la URL es pública (normal para stories estilo Instagram)
+- No se puede borrar directamente desde Supabase (solo vía API)
+- Esto es **correcto** para el caso de uso de stories
+
+---
+
+### ❌ Lo que NO se usa
+
+- ❌ Políticas RLS con `TO authenticated` (requieren Supabase Auth)
+- ❌ Políticas con `auth.uid()` (Auth0 no es Supabase Auth)
+- ❌ Service Role Key (innecesario para bucket público)
 
 ### 3. Estructura de Carpetas
 
