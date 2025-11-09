@@ -7,7 +7,11 @@ credenciales que Stream Chat, ya que ambos servicios comparten las API keys.
 
 import logging
 from typing import Optional
-from stream import Stream
+try:
+    import stream
+except ImportError:
+    stream = None
+
 from app.core.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -16,14 +20,18 @@ logger = logging.getLogger(__name__)
 _settings = get_settings()
 
 # Validar configuración requerida
-if not _settings.STREAM_API_KEY or not _settings.STREAM_API_SECRET:
+if not stream:
+    logger.warning("stream-python package not installed")
+    stream_feeds_client = None
+elif not _settings.STREAM_API_KEY or not _settings.STREAM_API_SECRET:
     logger.warning("Stream Feeds credentials not configured")
     stream_feeds_client = None
 else:
     try:
         # Inicializar cliente de Stream Activity Feeds
         # Nota: Usamos las MISMAS credenciales que Stream Chat
-        stream_feeds_client = Stream(
+        # La importación correcta para stream-python es: import stream; stream.connect()
+        stream_feeds_client = stream.connect(
             api_key=_settings.STREAM_API_KEY,
             api_secret=_settings.STREAM_API_SECRET,
             app_id=_settings.STREAM_APP_ID if _settings.STREAM_APP_ID else None,
@@ -41,7 +49,7 @@ else:
         stream_feeds_client = None
 
 
-def get_stream_feeds_client() -> Optional[Stream]:
+def get_stream_feeds_client():
     """
     Obtiene el cliente de Stream Activity Feeds.
 

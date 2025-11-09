@@ -8,7 +8,14 @@ from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta
 import json
 
-from app.core.stream_feeds_client import stream_feeds_client
+try:
+    from app.core.stream_feeds_client import stream_feeds_client
+    STREAM_AVAILABLE = stream_feeds_client is not None
+except Exception as e:
+    logging.getLogger(__name__).warning(f"Stream Feeds not available: {e}")
+    stream_feeds_client = None
+    STREAM_AVAILABLE = False
+
 from app.core.config import get_settings
 from app.models.story import Story, StoryType
 from app.schemas.story import StoryCreate
@@ -23,8 +30,9 @@ class StoryFeedRepository:
     """
 
     def __init__(self):
-        self.client = stream_feeds_client
-        self.app_id = settings.STREAM_APP_ID
+        self.client = stream_feeds_client if STREAM_AVAILABLE else None
+        self.app_id = settings.STREAM_APP_ID if STREAM_AVAILABLE else None
+        self.available = STREAM_AVAILABLE
 
     def _get_feed(self, gym_id: int, user_id: int, feed_type: str = "user"):
         """
@@ -55,6 +63,10 @@ class StoryFeedRepository:
         Returns:
             Datos de la actividad creada en Stream
         """
+        if not self.available or not self.client:
+            logger.warning("Stream Feeds not available, story will only exist in database")
+            return {"id": f"local_{story.id}", "created_at": datetime.utcnow().isoformat()}
+
         try:
             # Preparar datos de la actividad
             activity_data = {
@@ -128,6 +140,10 @@ class StoryFeedRepository:
         Returns:
             Historias del usuario desde Stream
         """
+        if not self.available or not self.client:
+            logger.debug("Stream Feeds not available, returning empty results")
+            return {"results": [], "next": None}
+
         try:
             user_feed = self._get_feed(gym_id, user_id, "user")
 
@@ -181,6 +197,10 @@ class StoryFeedRepository:
         Returns:
             Feed de historias desde Stream
         """
+        if not self.available or not self.client:
+            logger.debug("Stream Feeds not available, returning empty results")
+            return {"results": [], "next": None}
+
         try:
             # Usar timeline feed del usuario para ver historias de seguidos
             timeline_feed = self._get_feed(gym_id, user_id, "timeline")
@@ -240,6 +260,10 @@ class StoryFeedRepository:
         Returns:
             True si se eliminó exitosamente
         """
+        if not self.available or not self.client:
+            logger.debug("Stream Feeds not available, skipping delete from stream")
+            return True
+
         try:
             user_feed = self._get_feed(gym_id, user_id, "user")
 
