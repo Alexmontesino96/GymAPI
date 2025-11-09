@@ -4,6 +4,7 @@ Maneja la creación, obtención y gestión de historias en Stream Activity Feeds
 """
 
 import logging
+import re
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta
 import json
@@ -34,6 +35,26 @@ class StoryFeedRepository:
         self.app_id = settings.STREAM_APP_ID if STREAM_AVAILABLE else None
         self.available = STREAM_AVAILABLE
 
+    def _sanitize_user_id(self, user_id: Any) -> str:
+        """
+        Sanitiza el user_id para cumplir con restricciones de Stream.
+        Stream solo permite letras, números y guiones bajos.
+
+        Args:
+            user_id: ID del usuario (puede ser int o str)
+
+        Returns:
+            ID sanitizado como string
+        """
+        # Convertir a string
+        user_id_str = str(user_id)
+
+        # Reemplazar caracteres no permitidos con guión bajo
+        # Stream solo permite: letras, números y _
+        sanitized = re.sub(r'[^a-zA-Z0-9_]', '_', user_id_str)
+
+        return sanitized
+
     def _get_feed(self, gym_id: int, user_id: int, feed_type: str = "user"):
         """
         Obtiene un feed específico de Stream.
@@ -43,7 +64,9 @@ class StoryFeedRepository:
             user_id: ID del usuario
             feed_type: Tipo de feed (user, timeline, etc.)
         """
-        feed_id = f"gym_{gym_id}_user_{user_id}"
+        # Sanitizar user_id para Stream
+        safe_user_id = self._sanitize_user_id(user_id)
+        feed_id = f"gym_{gym_id}_user_{safe_user_id}"
         return self.client.feed(feed_type, feed_id)
 
     async def create_story_activity(
@@ -68,9 +91,12 @@ class StoryFeedRepository:
             return {"id": f"local_{story.id}", "created_at": datetime.utcnow().isoformat()}
 
         try:
+            # Sanitizar user_id para Stream
+            safe_user_id = self._sanitize_user_id(user_id)
+
             # Preparar datos de la actividad
             activity_data = {
-                "actor": f"gym_{gym_id}_user_{user_id}",
+                "actor": f"gym_{gym_id}_user_{safe_user_id}",
                 "verb": "story",
                 "object": f"story:{story.id}",
                 "foreign_id": f"story_{story.id}",
@@ -109,7 +135,7 @@ class StoryFeedRepository:
                 # Hacer que el timeline del gimnasio siga al usuario
                 # Esto permite que las historias públicas aparezcan en el feed global
                 try:
-                    gym_timeline_feed.follow("user", f"gym_{gym_id}_user_{user_id}")
+                    gym_timeline_feed.follow("user", f"gym_{gym_id}_user_{safe_user_id}")
                 except Exception as e:
                     # Puede fallar si ya está siguiendo
                     logger.debug(f"Timeline already following user: {e}")
@@ -299,10 +325,13 @@ class StoryFeedRepository:
             Datos de la reacción creada
         """
         try:
+            # Sanitizar user_id para Stream
+            safe_user_id = self._sanitize_user_id(user_id)
+
             reaction_data = {
                 "kind": reaction_type,
                 "activity_id": f"story_{story_id}",
-                "user_id": f"gym_{gym_id}_user_{user_id}",
+                "user_id": f"gym_{gym_id}_user_{safe_user_id}",
                 "data": data or {}
             }
 
@@ -335,9 +364,12 @@ class StoryFeedRepository:
             True si se siguió exitosamente
         """
         try:
+            # Sanitizar IDs para Stream
+            safe_following_id = self._sanitize_user_id(following_id)
+
             # Timeline del seguidor sigue al feed del usuario seguido
             follower_timeline = self._get_feed(gym_id, follower_id, "timeline")
-            following_user_feed = f"gym_{gym_id}_user_{following_id}"
+            following_user_feed = f"gym_{gym_id}_user_{safe_following_id}"
 
             follower_timeline.follow("user", following_user_feed)
 
@@ -366,9 +398,12 @@ class StoryFeedRepository:
             True si se dejó de seguir exitosamente
         """
         try:
+            # Sanitizar IDs para Stream
+            safe_following_id = self._sanitize_user_id(following_id)
+
             # Timeline del seguidor deja de seguir al feed del usuario
             follower_timeline = self._get_feed(gym_id, follower_id, "timeline")
-            following_user_feed = f"gym_{gym_id}_user_{following_id}"
+            following_user_feed = f"gym_{gym_id}_user_{safe_following_id}"
 
             follower_timeline.unfollow("user", following_user_feed)
 
