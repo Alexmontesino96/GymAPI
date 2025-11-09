@@ -87,8 +87,8 @@ class StoryService:
             )
 
             self.db.add(story)
-            await self.db.commit()
-            await self.db.refresh(story)
+            self.db.commit()
+            self.db.refresh(story)
 
             # Crear actividad en Stream Feeds
             try:
@@ -100,7 +100,7 @@ class StoryService:
 
                 # Guardar el ID de actividad de Stream
                 story.stream_activity_id = activity.get("id")
-                await self.db.commit()
+                self.db.commit()
 
             except Exception as e:
                 logger.error(f"Error creating Stream activity for story: {e}")
@@ -116,7 +116,7 @@ class StoryService:
             raise
         except Exception as e:
             logger.error(f"Error creating story: {str(e)}")
-            await self.db.rollback()
+            self.db.rollback()
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Error al crear la historia"
@@ -408,8 +408,8 @@ class StoryService:
         # Actualizar contador de vistas
         story.view_count = (story.view_count or 0) + 1
 
-        await self.db.commit()
-        await self.db.refresh(story_view)
+        self.db.commit()
+        self.db.refresh(story_view)
 
         # Limpiar cache
         await self._invalidate_story_cache(gym_id, story.user_id)
@@ -453,7 +453,7 @@ class StoryService:
             # Actualizar reacción existente
             existing_reaction.emoji = reaction_data.emoji
             existing_reaction.message = reaction_data.message
-            await self.db.commit()
+            self.db.commit()
             return existing_reaction
 
         # Crear nueva reacción
@@ -469,8 +469,8 @@ class StoryService:
         # Actualizar contador de reacciones
         story.reaction_count = (story.reaction_count or 0) + 1
 
-        await self.db.commit()
-        await self.db.refresh(reaction)
+        self.db.commit()
+        self.db.refresh(reaction)
 
         # Agregar reacción en Stream
         try:
@@ -535,7 +535,7 @@ class StoryService:
         story.is_deleted = True
         story.deleted_at = datetime.utcnow()
 
-        await self.db.commit()
+        self.db.commit()
 
         # Eliminar de Stream Feeds
         try:
@@ -598,7 +598,7 @@ class StoryService:
         )
 
         self.db.add(highlight)
-        await self.db.flush()
+        self.db.flush()
 
         # Agregar historias al highlight
         for idx, story_id in enumerate(highlight_data.story_ids):
@@ -613,8 +613,8 @@ class StoryService:
             story = next(s for s in stories if s.id == story_id)
             story.is_pinned = True
 
-        await self.db.commit()
-        await self.db.refresh(highlight)
+        self.db.commit()
+        self.db.refresh(highlight)
 
         return highlight
 
@@ -671,8 +671,8 @@ class StoryService:
         )
 
         self.db.add(report)
-        await self.db.commit()
-        await self.db.refresh(report)
+        self.db.commit()
+        self.db.refresh(report)
 
         logger.warning(f"Story {story_id} reported by user {user_id} for {report_data.reason}")
 
