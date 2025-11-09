@@ -236,9 +236,13 @@ class StoryFeedRepository:
                 timeline_feed = self.client.feed("timeline", f"gym_{gym_id}")
 
             # Obtener actividades con paginación
+            # Asegurar que limit y offset son integers
+            limit_int = int(limit) if limit else 25
+            offset_int = int(offset) if offset else 0
+
             activities = timeline_feed.get(
-                limit=limit,
-                offset=offset
+                limit=limit_int,
+                offset=offset_int
             )
 
             # Filtrar historias no expiradas y aplicar filtros adicionales
@@ -246,18 +250,35 @@ class StoryFeedRepository:
             filtered_activities = []
 
             for activity in activities.get("results", []):
-                # Verificar si la historia ha expirado
-                if activity.get("expires_at"):
-                    expires_at = datetime.fromisoformat(activity["expires_at"].replace("Z", "+00:00"))
-                    if expires_at < now and not activity.get("is_pinned"):
-                        continue
+                try:
+                    # Verificar si la historia ha expirado
+                    if activity.get("expires_at"):
+                        expires_at_str = activity["expires_at"]
+                        # Manejar diferentes formatos de fecha
+                        if isinstance(expires_at_str, str):
+                            expires_at = datetime.fromisoformat(expires_at_str.replace("Z", "+00:00"))
+                        else:
+                            # Si no es string, asumir que ya es datetime
+                            expires_at = expires_at_str
 
-                # Aplicar filtros de privacidad si es necesario
-                if filter_type == "close_friends":
-                    if activity.get("privacy") != "close_friends":
-                        continue
+                        # Obtener is_pinned como booleano
+                        is_pinned = activity.get("is_pinned", False)
+                        if isinstance(is_pinned, str):
+                            is_pinned = is_pinned.lower() == "true"
 
-                filtered_activities.append(activity)
+                        if expires_at < now and not is_pinned:
+                            continue
+
+                    # Aplicar filtros de privacidad si es necesario
+                    if filter_type == "close_friends":
+                        if activity.get("privacy") != "close_friends":
+                            continue
+
+                    filtered_activities.append(activity)
+                except (ValueError, TypeError, AttributeError) as e:
+                    # Log y skip actividad problemática
+                    logger.warning(f"Error procesando actividad de Stream: {e}, actividad: {activity}")
+                    continue
 
             return {
                 "results": filtered_activities,
