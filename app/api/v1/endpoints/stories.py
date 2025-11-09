@@ -11,7 +11,7 @@ from app.core.dependencies import (
 )
 from app.db.session import get_db
 from app.core.tenant import get_tenant_id
-from app.core.auth0_fastapi import get_current_user
+from app.core.auth0_fastapi import get_current_user, get_current_db_user, Auth0User
 from app.models.user import User
 from app.services.story_service import StoryService
 from app.services.media_service import get_media_service
@@ -47,7 +47,8 @@ async def create_story(
     media_url: Optional[str] = Form(None),
     db: Session = Depends(get_db),
     gym_id: int = Depends(get_tenant_id),
-    current_user: User = Depends(get_current_user)
+    current_user: Auth0User = Depends(get_current_user),
+    db_user: User = Depends(get_current_db_user)
 ):
     """
     Crear una nueva historia.
@@ -72,7 +73,7 @@ async def create_story(
         media_service = get_media_service()
         media_result = await media_service.upload_story_media(
             gym_id=gym_id,
-            user_id=current_user.id,
+            user_id=db_user.id,  # Usar ID numérico de BD, no Auth0 ID
             file=media,
             media_type=media_type
         )
@@ -106,7 +107,7 @@ async def create_story(
     service = StoryService(db)
     story = await service.create_story(
         gym_id=gym_id,
-        user_id=current_user.id,
+        user_id=db_user.id,  # Usar ID numérico de BD
         story_data=story_data
     )
 
@@ -118,9 +119,9 @@ async def create_story(
         has_viewed=False,
         has_reacted=False,
         user_info={
-            "id": current_user.id,
-            "name": f"{current_user.first_name} {current_user.last_name}",
-            "avatar": current_user.picture
+            "id": db_user.id,
+            "name": f"{db_user.first_name} {db_user.last_name}" if db_user.first_name else db_user.email,
+            "avatar": db_user.picture
         }
     )
 

@@ -25,8 +25,8 @@ class MediaService(StorageService):
 
     def __init__(self):
         super().__init__()
-        # Bucket para historias (usar el mismo o crear uno nuevo)
-        self.stories_bucket = settings.PROFILE_IMAGE_BUCKET or "stories-media"
+        # Bucket dedicado para historias
+        self.stories_bucket = settings.STORIES_BUCKET
         self.max_image_size = 10 * 1024 * 1024  # 10MB
         self.max_video_size = 50 * 1024 * 1024  # 50MB
 

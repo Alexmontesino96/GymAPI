@@ -496,6 +496,33 @@ async def get_current_user(
     return user # Devolver el usuario original de Auth0 (posiblemente enriquecido)
 
 
+async def get_current_db_user(
+    db: Session = Depends(get_db),
+    current_user: Auth0User = Depends(get_current_user)
+) -> User:
+    """
+    Obtiene el usuario de la base de datos local usando el Auth0 ID.
+
+    Esta dependencia es útil cuando necesitas el ID numérico del usuario
+    (por ejemplo, para construir rutas de archivos, claves foráneas, etc.)
+    en lugar del Auth0 ID (string con caracteres especiales).
+
+    Returns:
+        User: Modelo de usuario de la base de datos con ID numérico
+
+    Raises:
+        HTTPException: Si el usuario no existe en la BD local
+    """
+    db_user = user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
+
+    if not db_user:
+        raise Auth0UnauthenticatedException(
+            detail="Usuario no encontrado en la base de datos local"
+        )
+
+    return db_user
+
+
 async def get_current_user_with_permissions(required_permissions: List[str] = [], user: Auth0User = Security(auth.get_user)):
     """
     Verifica que el usuario tenga los permisos específicos.

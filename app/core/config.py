@@ -266,6 +266,7 @@ class Settings(BaseSettings):
 
     # Storage configuration
     PROFILE_IMAGE_BUCKET: str = "profile-images"
+    STORIES_BUCKET: str = os.getenv("STORIES_BUCKET", "stories")
     SUPABASE_URL: Optional[str] = None
     SUPABASE_ANON_KEY: Optional[str] = None
     S3_ACCESS_KEY_ID: str = os.getenv("S3_ACCESS_KEY_ID", "")
