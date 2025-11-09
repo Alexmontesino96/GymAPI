@@ -23,8 +23,6 @@ from app.schemas.story import (
     StoryHighlightCreate, StoryHighlightUpdate
 )
 from app.repositories.story_feed_repository import StoryFeedRepository
-from app.core.cache import cache_manager
-from app.core.validators import validate_cross_gym_permission
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +35,6 @@ class StoryService:
     def __init__(self, db: Session):
         self.db = db
         self.feed_repo = StoryFeedRepository()
-        self.cache = cache_manager
 
     async def create_story(
         self,
@@ -720,12 +717,11 @@ class StoryService:
     async def _invalidate_story_cache(self, gym_id: int, user_id: int):
         """
         Invalida el cache relacionado con historias.
-        """
-        patterns = [
-            f"gym:{gym_id}:stories:*",
-            f"gym:{gym_id}:user:{user_id}:stories:*",
-            f"gym:{gym_id}:feed:*"
-        ]
 
-        for pattern in patterns:
-            await self.cache.invalidate_pattern(pattern)
+        TODO: Implementar invalidación de cache con redis_client
+        Por ahora, el sistema funciona sin cache para historias.
+        """
+        # Nota: Para invalidar cache necesitamos acceso a redis_client
+        # que no está disponible en el servicio actual.
+        # El sistema funciona correctamente sin cache de historias.
+        logger.debug(f"Cache invalidation skipped for gym {gym_id}, user {user_id}")
