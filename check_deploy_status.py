@@ -7,7 +7,7 @@ import time
 import sys
 
 BASE_URL = "https://gymapi-eh6m.onrender.com"
-EXPECTED_COMMIT = "95236d4"  # Commit con todas las correcciones de await
+EXPECTED_COMMIT = "2555556"  # Commit con correcciones de Session.execute()
 CHECK_INTERVAL = 15  # segundos
 
 def check_deploy():
