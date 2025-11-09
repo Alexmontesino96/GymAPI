@@ -306,7 +306,7 @@ class StoryService:
             for story in stories:
                 if story.user_id not in user_stories_map:
                     # Obtener información del usuario
-                    user = await self.db.get(User, story.user_id)
+                    user = self.db.get(User, story.user_id)
                     user_stories_map[story.user_id] = {
                         "user_id": story.user_id,
                         "user_name": f"{user.first_name} {user.last_name}" if user else "Usuario",

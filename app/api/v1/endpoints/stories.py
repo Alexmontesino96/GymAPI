@@ -185,7 +185,7 @@ async def get_user_stories(
     story_responses = []
     for story in stories:
         # Obtener información del usuario
-        story_user = await db.get(User, story.user_id)
+        story_user = db.get(User, story.user_id)
 
         story_responses.append(StoryResponse(
             **story.__dict__,
@@ -226,7 +226,7 @@ async def get_story(
     )
 
     # Obtener información del usuario
-    story_user = await db.get(User, story.user_id)
+    story_user = db.get(User, story.user_id)
 
     return StoryResponse(
         **story.__dict__,
@@ -292,7 +292,7 @@ async def get_story_viewers(
     # Obtener vistas de la historia
     viewers = []
     for view in story.views:
-        viewer = await db.get(User, view.viewer_id)
+        viewer = db.get(User, view.viewer_id)
         if viewer:
             viewers.append(StoryViewerResponse(
                 viewer_id=viewer.id,
@@ -382,11 +382,11 @@ async def update_story(
     if story_update.privacy is not None:
         story.privacy = story_update.privacy
 
-    await db.commit()
-    await db.refresh(story)
+    db.commit()
+    db.refresh(story)
 
     # Obtener información del usuario
-    story_user = await db.get(User, story.user_id)
+    story_user = db.get(User, story.user_id)
 
     return StoryResponse(
         **story.__dict__,
