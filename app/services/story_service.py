@@ -378,8 +378,23 @@ class StoryService:
         Returns:
             Registro de vista creado o existente
         """
-        # Verificar que la historia existe y pertenece al gimnasio
-        story = await self.get_story_by_id(story_id, gym_id, user_id)
+        # Verificar que la historia existe y pertenece al gimnasio (sin registrar vista)
+        story = self.db.execute(
+            select(Story).where(
+                and_(
+                    Story.id == story_id,
+                    Story.gym_id == gym_id,
+                    Story.is_deleted == False
+                )
+            )
+        )
+        story = story.scalar_one_or_none()
+
+        if not story:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Historia no encontrada"
+            )
 
         # Verificar si ya existe una vista
         existing_view = self.db.execute(
