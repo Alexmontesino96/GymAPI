@@ -30,7 +30,11 @@ from app.schemas.story import (
     StoryViewerResponse
 )
 
-router = APIRouter(prefix="/stories", tags=["stories"])
+router = APIRouter(
+    prefix="/stories",
+    tags=["stories"],
+    dependencies=[module_enabled("stories")]
+)
 
 
 @router.post("/", response_model=StoryResponse, status_code=status.HTTP_201_CREATED)
@@ -57,14 +61,7 @@ async def create_story(
     - **media**: Archivo de imagen/video a subir
     - **media_url**: URL de media ya subida (alternativo a media)
     """
-    # Verificar que el módulo de historias esté habilitado
-    if not await module_enabled(db, gym_id, "stories"):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Módulo de historias no disponible"
-        )
-
-    # Procesar media si se proporciona
+# Procesar media si se proporciona
     processed_media_url = media_url
     thumbnail_url = None
 
@@ -147,14 +144,7 @@ async def get_stories_feed(
     - **filter_type**: Filtrar por tipo (all, following, close_friends)
     - **story_types**: Filtrar por tipos de historia específicos
     """
-    # Verificar módulo habilitado
-    if not await module_enabled(db, gym_id, "stories"):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Módulo de historias no disponible"
-        )
-
-    service = StoryService(db)
+service = StoryService(db)
     feed = await service.get_stories_feed(
         gym_id=gym_id,
         user_id=current_user.id,
@@ -180,14 +170,7 @@ async def get_user_stories(
     - **user_id**: ID del usuario
     - **include_expired**: Incluir historias expiradas (solo para propias historias)
     """
-    # Verificar módulo habilitado
-    if not await module_enabled(db, gym_id, "stories"):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Módulo de historias no disponible"
-        )
-
-    # Solo el propio usuario puede ver sus historias expiradas
+# Solo el propio usuario puede ver sus historias expiradas
     if include_expired and user_id != current_user.id:
         include_expired = False
 
@@ -236,14 +219,7 @@ async def get_story(
     """
     Obtener una historia específica por ID.
     """
-    # Verificar módulo habilitado
-    if not await module_enabled(db, gym_id, "stories"):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Módulo de historias no disponible"
-        )
-
-    service = StoryService(db)
+service = StoryService(db)
     story = await service.get_story_by_id(
         story_id=story_id,
         gym_id=gym_id,
@@ -278,14 +254,7 @@ async def mark_story_viewed(
     """
     Marcar una historia como vista.
     """
-    # Verificar módulo habilitado
-    if not await module_enabled(db, gym_id, "stories"):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Módulo de historias no disponible"
-        )
-
-    service = StoryService(db)
+service = StoryService(db)
     await service.mark_story_as_viewed(
         story_id=story_id,
         gym_id=gym_id,
@@ -307,14 +276,7 @@ async def get_story_viewers(
     Obtener la lista de usuarios que vieron una historia.
     Solo el dueño de la historia puede ver esta información.
     """
-    # Verificar módulo habilitado
-    if not await module_enabled(db, gym_id, "stories"):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Módulo de historias no disponible"
-        )
-
-    service = StoryService(db)
+service = StoryService(db)
     story = await service.get_story_by_id(
         story_id=story_id,
         gym_id=gym_id,
@@ -355,14 +317,7 @@ async def add_story_reaction(
     """
     Agregar una reacción a una historia.
     """
-    # Verificar módulo habilitado
-    if not await module_enabled(db, gym_id, "stories"):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Módulo de historias no disponible"
-        )
-
-    service = StoryService(db)
+service = StoryService(db)
     reaction = await service.add_reaction(
         story_id=story_id,
         gym_id=gym_id,
@@ -387,14 +342,7 @@ async def delete_story(
     """
     Eliminar una historia (solo el dueño puede eliminar).
     """
-    # Verificar módulo habilitado
-    if not await module_enabled(db, gym_id, "stories"):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Módulo de historias no disponible"
-        )
-
-    service = StoryService(db)
+service = StoryService(db)
     await service.delete_story(
         story_id=story_id,
         gym_id=gym_id,
@@ -415,14 +363,7 @@ async def update_story(
     """
     Actualizar una historia (solo caption y privacidad).
     """
-    # Verificar módulo habilitado
-    if not await module_enabled(db, gym_id, "stories"):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Módulo de historias no disponible"
-        )
-
-    service = StoryService(db)
+service = StoryService(db)
     story = await service.get_story_by_id(
         story_id=story_id,
         gym_id=gym_id,
@@ -473,14 +414,7 @@ async def report_story(
     """
     Reportar una historia por contenido inapropiado.
     """
-    # Verificar módulo habilitado
-    if not await module_enabled(db, gym_id, "stories"):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Módulo de historias no disponible"
-        )
-
-    service = StoryService(db)
+service = StoryService(db)
     report = await service.report_story(
         story_id=story_id,
         gym_id=gym_id,
@@ -505,14 +439,7 @@ async def create_story_highlight(
     """
     Crear un highlight de historias (colección de historias destacadas).
     """
-    # Verificar módulo habilitado
-    if not await module_enabled(db, gym_id, "stories"):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Módulo de historias no disponible"
-        )
-
-    service = StoryService(db)
+service = StoryService(db)
     highlight = await service.create_highlight(
         gym_id=gym_id,
         user_id=current_user.id,
