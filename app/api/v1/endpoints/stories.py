@@ -7,11 +7,11 @@ from fastapi import APIRouter, Depends, File, UploadFile, Form, HTTPException, s
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import (
-    get_db,
-    get_current_gym_id,
-    get_current_user,
     module_enabled
 )
+from app.db.session import get_db
+from app.core.tenant import get_tenant_id
+from app.core.auth0_fastapi import get_current_user
 from app.models.user import User
 from app.services.story_service import StoryService
 from app.services.media_service import get_media_service
@@ -43,7 +43,7 @@ async def create_story(
     media: Optional[UploadFile] = File(None),
     media_url: Optional[str] = Form(None),
     db: Session = Depends(get_db),
-    gym_id: int = Depends(get_current_gym_id),
+    gym_id: int = Depends(get_tenant_id),
     current_user: User = Depends(get_current_user)
 ):
     """
@@ -136,7 +136,7 @@ async def get_stories_feed(
     filter_type: Optional[str] = Query(None, regex="^(all|following|close_friends)$"),
     story_types: Optional[List[str]] = Query(None),
     db: Session = Depends(get_db),
-    gym_id: int = Depends(get_current_gym_id),
+    gym_id: int = Depends(get_tenant_id),
     current_user: User = Depends(get_current_user)
 ):
     """
@@ -171,7 +171,7 @@ async def get_user_stories(
     user_id: int,
     include_expired: bool = Query(False),
     db: Session = Depends(get_db),
-    gym_id: int = Depends(get_current_gym_id),
+    gym_id: int = Depends(get_tenant_id),
     current_user: User = Depends(get_current_user)
 ):
     """
@@ -230,7 +230,7 @@ async def get_user_stories(
 async def get_story(
     story_id: int,
     db: Session = Depends(get_db),
-    gym_id: int = Depends(get_current_gym_id),
+    gym_id: int = Depends(get_tenant_id),
     current_user: User = Depends(get_current_user)
 ):
     """
@@ -272,7 +272,7 @@ async def mark_story_viewed(
     story_id: int,
     view_data: Optional[StoryViewCreate] = None,
     db: Session = Depends(get_db),
-    gym_id: int = Depends(get_current_gym_id),
+    gym_id: int = Depends(get_tenant_id),
     current_user: User = Depends(get_current_user)
 ):
     """
@@ -300,7 +300,7 @@ async def mark_story_viewed(
 async def get_story_viewers(
     story_id: int,
     db: Session = Depends(get_db),
-    gym_id: int = Depends(get_current_gym_id),
+    gym_id: int = Depends(get_tenant_id),
     current_user: User = Depends(get_current_user)
 ):
     """
@@ -349,7 +349,7 @@ async def add_story_reaction(
     story_id: int,
     reaction_data: StoryReactionCreate,
     db: Session = Depends(get_db),
-    gym_id: int = Depends(get_current_gym_id),
+    gym_id: int = Depends(get_tenant_id),
     current_user: User = Depends(get_current_user)
 ):
     """
@@ -381,7 +381,7 @@ async def add_story_reaction(
 async def delete_story(
     story_id: int,
     db: Session = Depends(get_db),
-    gym_id: int = Depends(get_current_gym_id),
+    gym_id: int = Depends(get_tenant_id),
     current_user: User = Depends(get_current_user)
 ):
     """
@@ -409,7 +409,7 @@ async def update_story(
     story_id: int,
     story_update: StoryUpdate,
     db: Session = Depends(get_db),
-    gym_id: int = Depends(get_current_gym_id),
+    gym_id: int = Depends(get_tenant_id),
     current_user: User = Depends(get_current_user)
 ):
     """
@@ -467,7 +467,7 @@ async def report_story(
     story_id: int,
     report_data: StoryReportCreate,
     db: Session = Depends(get_db),
-    gym_id: int = Depends(get_current_gym_id),
+    gym_id: int = Depends(get_tenant_id),
     current_user: User = Depends(get_current_user)
 ):
     """
@@ -499,7 +499,7 @@ async def report_story(
 async def create_story_highlight(
     highlight_data: StoryHighlightCreate,
     db: Session = Depends(get_db),
-    gym_id: int = Depends(get_current_gym_id),
+    gym_id: int = Depends(get_tenant_id),
     current_user: User = Depends(get_current_user)
 ):
     """
