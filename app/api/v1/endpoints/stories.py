@@ -134,7 +134,7 @@ async def get_stories_feed(
     story_types: Optional[List[str]] = Query(None),
     db: Session = Depends(get_db),
     gym_id: int = Depends(get_tenant_id),
-    current_user: User = Depends(get_current_user)
+    db_user: User = Depends(get_current_db_user)  # Usar db_user en vez de current_user
 ):
     """
     Obtener el feed de historias del usuario.
@@ -147,7 +147,7 @@ async def get_stories_feed(
     service = StoryService(db)
     feed = await service.get_stories_feed(
         gym_id=gym_id,
-        user_id=current_user.id,
+        user_id=db_user.id,  # ID numérico de BD
         limit=limit,
         offset=offset,
         filter_type=filter_type
@@ -162,7 +162,7 @@ async def get_user_stories(
     include_expired: bool = Query(False),
     db: Session = Depends(get_db),
     gym_id: int = Depends(get_tenant_id),
-    current_user: User = Depends(get_current_user)
+    db_user: User = Depends(get_current_db_user)  # Usar db_user
 ):
     """
     Obtener las historias de un usuario específico.
@@ -171,14 +171,14 @@ async def get_user_stories(
     - **include_expired**: Incluir historias expiradas (solo para propias historias)
     """
     # Solo el propio usuario puede ver sus historias expiradas
-    if include_expired and user_id != current_user.id:
+    if include_expired and user_id != db_user.id:
         include_expired = False
 
     service = StoryService(db)
     stories = await service.get_user_stories(
         target_user_id=user_id,
         gym_id=gym_id,
-        requesting_user_id=current_user.id,
+        requesting_user_id=db_user.id,  # ID numérico
         include_expired=include_expired
     )
 
@@ -191,8 +191,8 @@ async def get_user_stories(
         story_responses.append(StoryResponse(
             **story.__dict__,
             is_expired=story.is_expired,
-            is_own_story=(story.user_id == current_user.id),
-            has_viewed=await service._has_viewed_story(story.id, current_user.id),
+            is_own_story=(story.user_id == db_user.id),
+            has_viewed=await service._has_viewed_story(story.id, db_user.id),  # ID numérico
             has_reacted=False,  # TODO: Implementar verificación de reacción
             user_info={
                 "id": story_user.id if story_user else user_id,
@@ -214,7 +214,7 @@ async def get_story(
     story_id: int,
     db: Session = Depends(get_db),
     gym_id: int = Depends(get_tenant_id),
-    current_user: User = Depends(get_current_user)
+    db_user: User = Depends(get_current_db_user)
 ):
     """
     Obtener una historia específica por ID.
@@ -223,7 +223,7 @@ async def get_story(
     story = await service.get_story_by_id(
         story_id=story_id,
         gym_id=gym_id,
-        user_id=current_user.id
+        user_id=db_user.id  # ID numérico
     )
 
     # Obtener información del usuario
@@ -232,8 +232,8 @@ async def get_story(
     return StoryResponse(
         **story.__dict__,
         is_expired=story.is_expired,
-        is_own_story=(story.user_id == current_user.id),
-        has_viewed=await service._has_viewed_story(story.id, current_user.id),
+        is_own_story=(story.user_id == db_user.id),
+        has_viewed=await service._has_viewed_story(story.id, db_user.id),  # ID numérico
         has_reacted=False,  # TODO: Implementar verificación
         user_info={
             "id": story_user.id if story_user else story.user_id,
@@ -249,7 +249,7 @@ async def mark_story_viewed(
     view_data: Optional[StoryViewCreate] = None,
     db: Session = Depends(get_db),
     gym_id: int = Depends(get_tenant_id),
-    current_user: User = Depends(get_current_user)
+    db_user: User = Depends(get_current_db_user)
 ):
     """
     Marcar una historia como vista.
@@ -258,7 +258,7 @@ async def mark_story_viewed(
     await service.mark_story_as_viewed(
         story_id=story_id,
         gym_id=gym_id,
-        user_id=current_user.id,
+        user_id=db_user.id,  # ID numérico
         view_data=view_data
     )
 
@@ -270,7 +270,7 @@ async def get_story_viewers(
     story_id: int,
     db: Session = Depends(get_db),
     gym_id: int = Depends(get_tenant_id),
-    current_user: User = Depends(get_current_user)
+    db_user: User = Depends(get_current_db_user)
 ):
     """
     Obtener la lista de usuarios que vieron una historia.
@@ -280,11 +280,11 @@ async def get_story_viewers(
     story = await service.get_story_by_id(
         story_id=story_id,
         gym_id=gym_id,
-        user_id=current_user.id
+        user_id=db_user.id  # ID numérico
     )
 
     # Solo el dueño puede ver quién vio su historia
-    if story.user_id != current_user.id:
+    if story.user_id != db_user.id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="No tienes permiso para ver esta información"
@@ -312,7 +312,7 @@ async def add_story_reaction(
     reaction_data: StoryReactionCreate,
     db: Session = Depends(get_db),
     gym_id: int = Depends(get_tenant_id),
-    current_user: User = Depends(get_current_user)
+    db_user: User = Depends(get_current_db_user)
 ):
     """
     Agregar una reacción a una historia.
@@ -321,7 +321,7 @@ async def add_story_reaction(
     reaction = await service.add_reaction(
         story_id=story_id,
         gym_id=gym_id,
-        user_id=current_user.id,
+        user_id=db_user.id,
         reaction_data=reaction_data
     )
 
@@ -337,7 +337,7 @@ async def delete_story(
     story_id: int,
     db: Session = Depends(get_db),
     gym_id: int = Depends(get_tenant_id),
-    current_user: User = Depends(get_current_user)
+    db_user: User = Depends(get_current_db_user)
 ):
     """
     Eliminar una historia (solo el dueño puede eliminar).
@@ -346,7 +346,7 @@ async def delete_story(
     await service.delete_story(
         story_id=story_id,
         gym_id=gym_id,
-        user_id=current_user.id
+        user_id=db_user.id
     )
 
     return {"success": True, "message": "Historia eliminada exitosamente"}
@@ -358,7 +358,7 @@ async def update_story(
     story_update: StoryUpdate,
     db: Session = Depends(get_db),
     gym_id: int = Depends(get_tenant_id),
-    current_user: User = Depends(get_current_user)
+    db_user: User = Depends(get_current_db_user)
 ):
     """
     Actualizar una historia (solo caption y privacidad).
@@ -367,11 +367,11 @@ async def update_story(
     story = await service.get_story_by_id(
         story_id=story_id,
         gym_id=gym_id,
-        user_id=current_user.id
+        user_id=db_user.id
     )
 
     # Solo el dueño puede actualizar
-    if story.user_id != current_user.id:
+    if story.user_id != db_user.id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="No tienes permiso para actualizar esta historia"
@@ -409,7 +409,7 @@ async def report_story(
     report_data: StoryReportCreate,
     db: Session = Depends(get_db),
     gym_id: int = Depends(get_tenant_id),
-    current_user: User = Depends(get_current_user)
+    db_user: User = Depends(get_current_db_user)
 ):
     """
     Reportar una historia por contenido inapropiado.
@@ -418,7 +418,7 @@ async def report_story(
     report = await service.report_story(
         story_id=story_id,
         gym_id=gym_id,
-        user_id=current_user.id,
+        user_id=db_user.id,
         report_data=report_data
     )
 
@@ -434,7 +434,7 @@ async def create_story_highlight(
     highlight_data: StoryHighlightCreate,
     db: Session = Depends(get_db),
     gym_id: int = Depends(get_tenant_id),
-    current_user: User = Depends(get_current_user)
+    db_user: User = Depends(get_current_db_user)
 ):
     """
     Crear un highlight de historias (colección de historias destacadas).
@@ -442,7 +442,7 @@ async def create_story_highlight(
     service = StoryService(db)
     highlight = await service.create_highlight(
         gym_id=gym_id,
-        user_id=current_user.id,
+        user_id=db_user.id,
         highlight_data=highlight_data
     )
 
