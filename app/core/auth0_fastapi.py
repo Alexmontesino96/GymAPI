@@ -18,6 +18,11 @@ from app.services.user import user_service
 from app.db.session import get_db
 from app.db.redis_client import get_redis_client, redis
 
+# Import circular seguro - solo para type hints
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from app.models.user import User
+
 logger = logging.getLogger('fastapi_auth0')
 
 auth0_rule_namespace: str = 'https://github.com/dorinclisu/fastapi-auth0/'
@@ -499,7 +504,7 @@ async def get_current_user(
 async def get_current_db_user(
     db: Session = Depends(get_db),
     current_user: Auth0User = Depends(get_current_user)
-) -> User:
+) -> "User":
     """
     Obtiene el usuario de la base de datos local usando el Auth0 ID.
 
