@@ -8,15 +8,18 @@ from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File,
 from sqlalchemy.orm import Session
 import json
 
-from app.core.dependencies import get_db, get_current_db_user, get_tenant_id, module_enabled
+from app.core.dependencies import module_enabled
+from app.db.session import get_db
+from app.core.tenant import get_tenant_id
+from app.core.auth0_fastapi import get_current_db_user
 from app.models.user import User
-from app.models.post import Post, PostType, PostPrivacy
+from app.models.post import Post as PostModel, PostType, PostPrivacy
 from app.schemas.post import (
-    PostCreate, PostUpdate, PostResponse, PostListResponse, PostFeedResponse,
+    Post, PostCreate, PostUpdate, PostResponse, PostListResponse, PostFeedResponse,
     PostStatsResponse, PostCreateMultipart
 )
 from app.schemas.post_interaction import (
-    CommentCreate, CommentUpdate, CommentsListResponse, CommentCreateResponse,
+    CommentCreate, CommentUpdate, CommentResponse, CommentsListResponse, CommentCreateResponse,
     LikeToggleResponse, PostLikesListResponse, PostReportCreate, ReportCreateResponse
 )
 from app.services.post_service import PostService
@@ -28,7 +31,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(
     prefix="/posts",
     tags=["posts"],
-    dependencies=[Depends(module_enabled("posts"))]
+    dependencies=[module_enabled("posts")]
 )
 
 
@@ -397,7 +400,7 @@ async def get_post_comments(
     )
 
 
-@router.put("/comments/{comment_id}", response_model=Post)
+@router.put("/comments/{comment_id}", response_model=CommentResponse)
 async def update_comment(
     comment_id: int,
     update_data: CommentUpdate,
