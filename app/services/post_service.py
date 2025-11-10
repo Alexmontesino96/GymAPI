@@ -525,7 +525,7 @@ class PostService:
         mention_pattern = r'@(\w+)'
         return re.findall(mention_pattern, caption)
 
-    async def _enrich_post_with_user_info(self, post: Post, requesting_user_id: int) -> Post:
+    async def _enrich_post_with_user_info(self, post: Post, requesting_user_id: int) -> Dict[str, Any]:
         """
         Enriquece un post con información del usuario y engagement data.
 
@@ -534,15 +534,16 @@ class PostService:
             requesting_user_id: ID del usuario que solicita
 
         Returns:
-            Post enriquecido
+            Dict con el post enriquecido
         """
         # Obtener información del usuario que creó el post
         user = self.db.execute(
             select(User).where(User.id == post.user_id)
         ).scalar_one_or_none()
 
+        user_info = None
         if user:
-            post.user_info = {
+            user_info = {
                 "id": user.id,
                 "first_name": user.first_name,
                 "last_name": user.last_name,
@@ -551,7 +552,7 @@ class PostService:
             }
 
         # Verificar si es post propio
-        post.is_own_post = (post.user_id == requesting_user_id)
+        is_own_post = (post.user_id == requesting_user_id)
 
         # Verificar si el usuario actual dio like
         like_exists = self.db.execute(
@@ -563,17 +564,60 @@ class PostService:
             )
         ).scalar_one_or_none()
 
-        post.has_liked = like_exists is not None
+        has_liked = like_exists is not None
 
-        # Calcular engagement score
-        # Fórmula simple: (likes + comments * 2) / (age_in_hours + 2)
-        age_in_hours = (datetime.utcnow() - post.created_at).total_seconds() / 3600
-        engagement = (post.like_count + post.comment_count * 2) / (age_in_hours + 2)
-        post.engagement_score = engagement
+        # Convertir el post a dict y agregar campos adicionales
+        post_dict = {
+            "id": post.id,
+            "gym_id": post.gym_id,
+            "user_id": post.user_id,
+            "stream_activity_id": post.stream_activity_id,
+            "post_type": post.post_type,
+            "caption": post.caption,
+            "location": post.location,
+            "workout_data": post.workout_data,
+            "privacy": post.privacy,
+            "is_edited": post.is_edited,
+            "edited_at": post.edited_at,
+            "is_deleted": post.is_deleted,
+            "deleted_at": post.deleted_at,
+            "like_count": post.like_count,
+            "comment_count": post.comment_count,
+            "view_count": post.view_count,
+            "created_at": post.created_at,
+            "updated_at": post.updated_at,
+            "media": [
+                {
+                    "id": m.id,
+                    "post_id": m.post_id,
+                    "media_url": m.media_url,
+                    "thumbnail_url": m.thumbnail_url,
+                    "media_type": m.media_type,
+                    "display_order": m.display_order,
+                    "width": m.width,
+                    "height": m.height,
+                    "created_at": m.created_at
+                }
+                for m in (post.media if hasattr(post, 'media') and post.media else [])
+            ],
+            "tags": [
+                {
+                    "id": t.id,
+                    "tag_type": t.tag_type,
+                    "tag_value": t.tag_value,
+                    "created_at": t.created_at
+                }
+                for t in (post.tags if hasattr(post, 'tags') and post.tags else [])
+            ],
+            "user_info": user_info,
+            "is_own_post": is_own_post,
+            "has_liked": has_liked,
+            "engagement_score": post.engagement_score  # Esta es una property calculada
+        }
 
-        return post
+        return post_dict
 
-    async def _enrich_posts_bulk(self, posts: List[Post], requesting_user_id: int) -> List[Post]:
+    async def _enrich_posts_bulk(self, posts: List[Post], requesting_user_id: int) -> List[Dict[str, Any]]:
         """
         Enriquece múltiples posts con información del usuario de forma optimizada.
 
@@ -582,10 +626,10 @@ class PostService:
             requesting_user_id: ID del usuario que solicita
 
         Returns:
-            Lista de posts enriquecidos
+            Lista de dicts con posts enriquecidos
         """
         if not posts:
-            return posts
+            return []
 
         # Obtener todos los user_ids únicos
         user_ids = list(set(post.user_id for post in posts))
@@ -615,8 +659,9 @@ class PostService:
         for post in posts:
             user = users_dict.get(post.user_id)
 
+            user_info = None
             if user:
-                post.user_info = {
+                user_info = {
                     "id": user.id,
                     "first_name": user.first_name,
                     "last_name": user.last_name,
@@ -624,14 +669,58 @@ class PostService:
                     "email": user.email
                 }
 
-            post.is_own_post = (post.user_id == requesting_user_id)
-            post.has_liked = post.id in liked_post_ids
+            is_own_post = (post.user_id == requesting_user_id)
+            has_liked = post.id in liked_post_ids
 
-            # Calcular engagement score
-            age_in_hours = (datetime.utcnow() - post.created_at).total_seconds() / 3600
-            engagement = (post.like_count + post.comment_count * 2) / (age_in_hours + 2)
-            post.engagement_score = engagement
+            # Convertir el post a dict y agregar campos adicionales
+            post_dict = {
+                "id": post.id,
+                "gym_id": post.gym_id,
+                "user_id": post.user_id,
+                "stream_activity_id": post.stream_activity_id,
+                "post_type": post.post_type,
+                "caption": post.caption,
+                "location": post.location,
+                "workout_data": post.workout_data,
+                "privacy": post.privacy,
+                "is_edited": post.is_edited,
+                "edited_at": post.edited_at,
+                "is_deleted": post.is_deleted,
+                "deleted_at": post.deleted_at,
+                "like_count": post.like_count,
+                "comment_count": post.comment_count,
+                "view_count": post.view_count,
+                "created_at": post.created_at,
+                "updated_at": post.updated_at,
+                "media": [
+                    {
+                        "id": m.id,
+                        "post_id": m.post_id,
+                        "media_url": m.media_url,
+                        "thumbnail_url": m.thumbnail_url,
+                        "media_type": m.media_type,
+                        "display_order": m.display_order,
+                        "width": m.width,
+                        "height": m.height,
+                        "created_at": m.created_at
+                    }
+                    for m in (post.media if hasattr(post, 'media') and post.media else [])
+                ],
+                "tags": [
+                    {
+                        "id": t.id,
+                        "tag_type": t.tag_type,
+                        "tag_value": t.tag_value,
+                        "created_at": t.created_at
+                    }
+                    for t in (post.tags if hasattr(post, 'tags') and post.tags else [])
+                ],
+                "user_info": user_info,
+                "is_own_post": is_own_post,
+                "has_liked": has_liked,
+                "engagement_score": post.engagement_score  # Esta es una property calculada
+            }
 
-            enriched_posts.append(post)
+            enriched_posts.append(post_dict)
 
         return enriched_posts
