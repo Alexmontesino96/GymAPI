@@ -271,7 +271,8 @@ async def get_posts_by_location(
     limit: int = 20,
     offset: int = 0,
     db: Session = Depends(get_db),
-    gym_id: int = Depends(get_tenant_id)
+    gym_id: int = Depends(get_tenant_id),
+    db_user: User = Depends(get_current_db_user)
 ):
     """
     Obtiene posts por ubicación.
@@ -285,13 +286,17 @@ async def get_posts_by_location(
         offset=offset
     )
 
+    # Enriquecer posts con user_info
+    service = PostService(db)
+    enriched_posts = await service._enrich_posts_bulk(posts, db_user.id)
+
     return PostListResponse(
-        posts=posts,
-        total=len(posts),
+        posts=enriched_posts,
+        total=len(enriched_posts),
         limit=limit,
         offset=offset,
-        has_more=len(posts) == limit,
-        next_offset=offset + limit if len(posts) == limit else None
+        has_more=len(enriched_posts) == limit,
+        next_offset=offset + limit if len(enriched_posts) == limit else None
     )
 
 
@@ -504,7 +509,8 @@ async def get_posts_by_event(
     limit: int = 20,
     offset: int = 0,
     db: Session = Depends(get_db),
-    gym_id: int = Depends(get_tenant_id)
+    gym_id: int = Depends(get_tenant_id),
+    db_user: User = Depends(get_current_db_user)
 ):
     """
     Obtiene posts etiquetados con un evento específico.
@@ -518,13 +524,17 @@ async def get_posts_by_event(
         offset=offset
     )
 
+    # Enriquecer posts con user_info
+    service = PostService(db)
+    enriched_posts = await service._enrich_posts_bulk(posts, db_user.id)
+
     return PostListResponse(
-        posts=posts,
-        total=len(posts),
+        posts=enriched_posts,
+        total=len(enriched_posts),
         limit=limit,
         offset=offset,
-        has_more=len(posts) == limit,
-        next_offset=offset + limit if len(posts) == limit else None
+        has_more=len(enriched_posts) == limit,
+        next_offset=offset + limit if len(enriched_posts) == limit else None
     )
 
 
@@ -534,7 +544,8 @@ async def get_posts_by_session(
     limit: int = 20,
     offset: int = 0,
     db: Session = Depends(get_db),
-    gym_id: int = Depends(get_tenant_id)
+    gym_id: int = Depends(get_tenant_id),
+    db_user: User = Depends(get_current_db_user)
 ):
     """
     Obtiene posts etiquetados con una sesión/clase específica.
@@ -548,13 +559,17 @@ async def get_posts_by_session(
         offset=offset
     )
 
+    # Enriquecer posts con user_info
+    service = PostService(db)
+    enriched_posts = await service._enrich_posts_bulk(posts, db_user.id)
+
     return PostListResponse(
-        posts=posts,
-        total=len(posts),
+        posts=enriched_posts,
+        total=len(enriched_posts),
         limit=limit,
         offset=offset,
-        has_more=len(posts) == limit,
-        next_offset=offset + limit if len(posts) == limit else None
+        has_more=len(enriched_posts) == limit,
+        next_offset=offset + limit if len(enriched_posts) == limit else None
     )
 
 
@@ -578,11 +593,15 @@ async def get_my_mentions(
         offset=offset
     )
 
+    # Enriquecer posts con user_info
+    service = PostService(db)
+    enriched_posts = await service._enrich_posts_bulk(posts, db_user.id)
+
     return PostListResponse(
-        posts=posts,
-        total=len(posts),
+        posts=enriched_posts,
+        total=len(enriched_posts),
         limit=limit,
         offset=offset,
-        has_more=len(posts) == limit,
-        next_offset=offset + limit if len(posts) == limit else None
+        has_more=len(enriched_posts) == limit,
+        next_offset=offset + limit if len(enriched_posts) == limit else None
     )

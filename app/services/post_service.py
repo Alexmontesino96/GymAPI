@@ -15,6 +15,7 @@ from app.models.user import User
 from app.models.user_gym import UserGym
 from app.models.event import Event
 from app.models.schedule import ClassSession
+from app.models.post_interaction import PostLike
 from app.schemas.post import PostCreate, PostUpdate
 from app.services.post_media_service import PostMediaService
 from app.repositories.post_feed_repository import PostFeedRepository
@@ -152,7 +153,9 @@ class PostService:
             # TODO: Enviar notificaciones a usuarios mencionados
 
             logger.info(f"Post {post.id} created for user {user_id} in gym {gym_id}")
-            return post
+
+            # Enriquecer post con user_info antes de retornar
+            return await self._enrich_post_with_user_info(post, user_id)
 
         except HTTPException:
             # Ya hubo manejo específico; intentar limpiar media si existe
@@ -218,7 +221,8 @@ class PostService:
                 detail="No tienes permiso para ver este post"
             )
 
-        return post
+        # Enriquecer post con user_info
+        return await self._enrich_post_with_user_info(post, user_id)
 
     async def get_user_posts(
         self,
@@ -264,7 +268,8 @@ class PostService:
             if await self._can_view_post(post, requesting_user_id):
                 filtered_posts.append(post)
 
-        return filtered_posts
+        # Enriquecer posts con user_info
+        return await self._enrich_posts_bulk(filtered_posts, requesting_user_id)
 
     async def get_gym_posts(
         self,
@@ -311,7 +316,10 @@ class PostService:
         query = query.limit(limit).offset(offset)
 
         result = self.db.execute(query)
-        return result.scalars().all()
+        posts = result.scalars().all()
+
+        # Enriquecer posts con user_info
+        return await self._enrich_posts_bulk(posts, user_id)
 
     async def update_post(
         self,
@@ -355,7 +363,9 @@ class PostService:
         self.db.refresh(post)
 
         logger.info(f"Post {post_id} updated by user {user_id}")
-        return post
+
+        # Enriquecer post con user_info
+        return await self._enrich_post_with_user_info(post, user_id)
 
     async def delete_post(
         self,
@@ -514,3 +524,114 @@ class PostService:
 
         mention_pattern = r'@(\w+)'
         return re.findall(mention_pattern, caption)
+
+    async def _enrich_post_with_user_info(self, post: Post, requesting_user_id: int) -> Post:
+        """
+        Enriquece un post con información del usuario y engagement data.
+
+        Args:
+            post: Post a enriquecer
+            requesting_user_id: ID del usuario que solicita
+
+        Returns:
+            Post enriquecido
+        """
+        # Obtener información del usuario que creó el post
+        user = self.db.execute(
+            select(User).where(User.id == post.user_id)
+        ).scalar_one_or_none()
+
+        if user:
+            post.user_info = {
+                "id": user.id,
+                "first_name": user.first_name,
+                "last_name": user.last_name,
+                "profile_picture_url": user.profile_picture_url,
+                "username": getattr(user, 'username', None)  # Si existe username
+            }
+
+        # Verificar si es post propio
+        post.is_own_post = (post.user_id == requesting_user_id)
+
+        # Verificar si el usuario actual dio like
+        like_exists = self.db.execute(
+            select(PostLike).where(
+                and_(
+                    PostLike.post_id == post.id,
+                    PostLike.user_id == requesting_user_id
+                )
+            )
+        ).scalar_one_or_none()
+
+        post.has_liked = like_exists is not None
+
+        # Calcular engagement score
+        # Fórmula simple: (likes + comments * 2) / (age_in_hours + 2)
+        age_in_hours = (datetime.utcnow() - post.created_at).total_seconds() / 3600
+        engagement = (post.like_count + post.comment_count * 2) / (age_in_hours + 2)
+        post.engagement_score = engagement
+
+        return post
+
+    async def _enrich_posts_bulk(self, posts: List[Post], requesting_user_id: int) -> List[Post]:
+        """
+        Enriquece múltiples posts con información del usuario de forma optimizada.
+
+        Args:
+            posts: Lista de posts a enriquecer
+            requesting_user_id: ID del usuario que solicita
+
+        Returns:
+            Lista de posts enriquecidos
+        """
+        if not posts:
+            return posts
+
+        # Obtener todos los user_ids únicos
+        user_ids = list(set(post.user_id for post in posts))
+
+        # Cargar todos los usuarios de una vez
+        users_result = self.db.execute(
+            select(User).where(User.id.in_(user_ids))
+        )
+        users_dict = {user.id: user for user in users_result.scalars().all()}
+
+        # Obtener todos los post_ids
+        post_ids = [post.id for post in posts]
+
+        # Cargar todos los likes del usuario actual de una vez
+        likes_result = self.db.execute(
+            select(PostLike.post_id).where(
+                and_(
+                    PostLike.post_id.in_(post_ids),
+                    PostLike.user_id == requesting_user_id
+                )
+            )
+        )
+        liked_post_ids = set(post_id for post_id in likes_result.scalars().all())
+
+        # Enriquecer cada post
+        enriched_posts = []
+        for post in posts:
+            user = users_dict.get(post.user_id)
+
+            if user:
+                post.user_info = {
+                    "id": user.id,
+                    "first_name": user.first_name,
+                    "last_name": user.last_name,
+                    "profile_picture_url": user.profile_picture_url,
+                    "username": getattr(user, 'username', None)
+                }
+
+            post.is_own_post = (post.user_id == requesting_user_id)
+            post.has_liked = post.id in liked_post_ids
+
+            # Calcular engagement score
+            age_in_hours = (datetime.utcnow() - post.created_at).total_seconds() / 3600
+            engagement = (post.like_count + post.comment_count * 2) / (age_in_hours + 2)
+            post.engagement_score = engagement
+
+            enriched_posts.append(post)
+
+        return enriched_posts
