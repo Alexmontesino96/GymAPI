@@ -3,6 +3,7 @@ import uuid
 import logging
 import re
 import time
+import asyncio
 from typing import Optional, Any, Dict, Callable, Union, Awaitable
 from fastapi import UploadFile, HTTPException, status
 from supabase import create_client, Client
@@ -97,7 +98,7 @@ class StorageService:
                 if attempt < MAX_RETRIES:
                     wait_time = RETRY_DELAY * attempt  # Espera progresiva
                     logger.info(f"Esperando {wait_time}s antes del siguiente intento...")
-                    time.sleep(wait_time)
+                    await asyncio.sleep(wait_time)
         
         # Si llegamos aquí, todos los reintentos fallaron
         logger.error(f"Todos los intentos de {operation_name} fallaron. Último error: {str(last_error)}")

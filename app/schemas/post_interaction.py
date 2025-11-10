@@ -33,8 +33,7 @@ class PostLikeResponse(BaseModel):
     created_at: datetime
     user_info: Optional[Dict[str, Any]] = None
 
-    class Config:
-        orm_mode = True
+    model_config = {"from_attributes": True}
 
 
 class LikeToggleResponse(BaseModel):
@@ -87,8 +86,7 @@ class CommentResponse(BaseModel):
     user_info: Optional[Dict[str, Any]] = None
     has_liked: bool = Field(False, description="Si el usuario actual dio like al comentario")
 
-    class Config:
-        orm_mode = True
+    model_config = {"from_attributes": True}
 
 
 class CommentCreateResponse(BaseModel):
@@ -121,13 +119,14 @@ class PostReportCreate(BaseModel):
     reason: ReportReason = Field(..., description="Razón del reporte")
     description: Optional[str] = Field(None, max_length=1000, description="Descripción adicional")
 
-    class Config:
-        schema_extra = {
+    model_config = {
+        "json_schema_extra": {
             "example": {
                 "reason": "spam",
                 "description": "Este post contiene spam publicitario no relacionado con el gimnasio"
             }
         }
+    }
 
 
 class PostReportResponse(BaseModel):
@@ -143,8 +142,7 @@ class PostReportResponse(BaseModel):
     action_taken: Optional[str]
     created_at: datetime
 
-    class Config:
-        orm_mode = True
+    model_config = {"from_attributes": True}
 
 
 class ReportCreateResponse(BaseModel):

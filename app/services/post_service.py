@@ -51,6 +51,7 @@ class PostService:
         Returns:
             Post creado
         """
+        uploaded_media_urls: List[str] = []
         try:
             # Verificar que el usuario pertenece al gimnasio
             user_gym = self.db.execute(
@@ -110,6 +111,8 @@ class PostService:
 
                     # Crear registros de PostMedia
                     for media_data in uploaded_media:
+                        if media_data.get("media_url"):
+                            uploaded_media_urls.append(media_data["media_url"])
                         post_media = PostMedia(
                             post_id=post.id,
                             media_url=media_data["media_url"],
@@ -152,10 +155,24 @@ class PostService:
             return post
 
         except HTTPException:
+            # Ya hubo manejo específico; intentar limpiar media si existe
+            if uploaded_media_urls:
+                for url in uploaded_media_urls:
+                    try:
+                        await self.media_service.delete_post_media(url)
+                    except Exception:
+                        pass
             raise
         except Exception as e:
             logger.error(f"Error creating post: {str(e)}")
             self.db.rollback()
+            # Limpieza best-effort de media subida si falla creación
+            if uploaded_media_urls:
+                for url in uploaded_media_urls:
+                    try:
+                        await self.media_service.delete_post_media(url)
+                    except Exception:
+                        pass
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Error al crear el post"
@@ -396,7 +413,17 @@ class PostService:
         except Exception as e:
             logger.error(f"Error deleting post from Stream: {e}")
 
-        # TODO: Eliminar archivos de media del storage
+        # Eliminar archivos de media del storage (best-effort)
+        try:
+            # Cargar media asociada (puede estar lazy_loaded via relación)
+            media_items = list(post.media) if hasattr(post, 'media') and post.media is not None else []
+            for m in media_items:
+                if m.media_url:
+                    await self.media_service.delete_post_media(m.media_url)
+                if m.thumbnail_url:
+                    await self.media_service.delete_post_media(m.thumbnail_url)
+        except Exception as e:
+            logger.error(f"Error cleaning post media from storage: {e}")
 
         logger.info(f"Post {post_id} deleted by user {user_id}")
         return True

@@ -82,17 +82,23 @@ async def create_post(
                     detail="mentioned_user_ids_json debe ser un JSON array válido"
                 )
 
-        # Crear schema de PostCreate
-        post_data = PostCreate(
-            caption=caption,
-            post_type=PostType(post_type),
-            privacy=PostPrivacy(privacy),
-            location=location,
-            workout_data=workout_data,
-            tagged_event_id=tagged_event_id,
-            tagged_session_id=tagged_session_id,
-            mentioned_user_ids=mentioned_user_ids
-        )
+        # Crear schema de PostCreate con validación de enums
+        try:
+            post_data = PostCreate(
+                caption=caption,
+                post_type=PostType(post_type),
+                privacy=PostPrivacy(privacy),
+                location=location,
+                workout_data=workout_data,
+                tagged_event_id=tagged_event_id,
+                tagged_session_id=tagged_session_id,
+                mentioned_user_ids=mentioned_user_ids
+            )
+        except ValueError as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Valores inválidos: {str(e)}"
+            )
 
         service = PostService(db)
         post = await service.create_post(

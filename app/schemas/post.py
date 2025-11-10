@@ -51,8 +51,8 @@ class PostCreate(PostBase):
             raise ValueError("workout_data es requerida para posts de tipo workout")
         return v
 
-    class Config:
-        schema_extra = {
+    model_config = {
+        "json_schema_extra": {
             "example": {
                 "post_type": "single_image",
                 "caption": "Nuevo PR en sentadilla! 💪 @usuario123 #workout",
@@ -62,6 +62,7 @@ class PostCreate(PostBase):
                 "mentioned_user_ids": [123, 456]
             }
         }
+    }
 
 
 class PostUpdate(BaseModel):
@@ -92,8 +93,7 @@ class PostMediaResponse(BaseModel):
     height: Optional[int]
     created_at: datetime
 
-    class Config:
-        orm_mode = True
+    model_config = {"from_attributes": True}
 
 
 class PostTagResponse(BaseModel):
@@ -103,8 +103,7 @@ class PostTagResponse(BaseModel):
     tag_value: str
     created_at: datetime
 
-    class Config:
-        orm_mode = True
+    model_config = {"from_attributes": True}
 
 
 class PostInDBBase(PostBase):
@@ -122,8 +121,7 @@ class PostInDBBase(PostBase):
     created_at: datetime
     updated_at: Optional[datetime]
 
-    class Config:
-        orm_mode = True
+    model_config = {"from_attributes": True}
 
 
 class Post(PostInDBBase):

@@ -7,6 +7,7 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime
 from sqlalchemy.orm import Session
 from sqlalchemy import select, and_, update as sql_update, delete as sql_delete
+from sqlalchemy.exc import IntegrityError
 from fastapi import HTTPException, status
 
 from app.models.post import Post
@@ -93,31 +94,30 @@ class PostInteractionService:
             }
         else:
             # Like - crear nuevo like
-            new_like = PostLike(
-                post_id=post_id,
-                user_id=user_id,
-                gym_id=gym_id
-            )
-            self.db.add(new_like)
+            try:
+                new_like = PostLike(
+                    post_id=post_id,
+                    user_id=user_id,
+                    gym_id=gym_id
+                )
+                self.db.add(new_like)
 
-            # Incrementar contador atómicamente
-            self.db.execute(
-                sql_update(Post)
-                .where(Post.id == post_id)
-                .values(like_count=Post.like_count + 1)
-            )
+                # Incrementar contador atómicamente
+                self.db.execute(
+                    sql_update(Post)
+                    .where(Post.id == post_id)
+                    .values(like_count=Post.like_count + 1)
+                )
 
-            self.db.commit()
+                self.db.commit()
+            except IntegrityError:
+                # Carrera: ya existe like por constraint único
+                self.db.rollback()
+            finally:
+                # Obtener total actualizado
+                self.db.refresh(post)
 
-            # Obtener nuevo total
-            self.db.refresh(post)
-
-            # TODO: Notificar al dueño del post
-
-            return {
-                "action": "liked",
-                "total_likes": post.like_count
-            }
+            return {"action": "liked", "total_likes": post.like_count}
 
     async def get_post_likes(
         self,
@@ -428,26 +428,27 @@ class PostInteractionService:
             }
         else:
             # Like
-            new_like = PostCommentLike(
-                comment_id=comment_id,
-                user_id=user_id
-            )
-            self.db.add(new_like)
+            try:
+                new_like = PostCommentLike(
+                    comment_id=comment_id,
+                    user_id=user_id
+                )
+                self.db.add(new_like)
 
-            # Incrementar contador
-            self.db.execute(
-                sql_update(PostComment)
-                .where(PostComment.id == comment_id)
-                .values(like_count=PostComment.like_count + 1)
-            )
+                # Incrementar contador
+                self.db.execute(
+                    sql_update(PostComment)
+                    .where(PostComment.id == comment_id)
+                    .values(like_count=PostComment.like_count + 1)
+                )
 
-            self.db.commit()
-            self.db.refresh(comment)
+                self.db.commit()
+            except IntegrityError:
+                self.db.rollback()
+            finally:
+                self.db.refresh(comment)
 
-            return {
-                "action": "liked",
-                "total_likes": comment.like_count
-            }
+            return {"action": "liked", "total_likes": comment.like_count}
 
     async def report_post(
         self,

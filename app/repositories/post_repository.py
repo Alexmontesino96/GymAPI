@@ -66,7 +66,8 @@ class PostRepository(BaseRepository[Post, PostCreate, PostUpdate]):
             and_(
                 Post.id.in_(tag_subquery),
                 Post.gym_id == gym_id,
-                Post.is_deleted == False
+                Post.is_deleted == False,
+                Post.privacy == PostPrivacy.PUBLIC
             )
         ).order_by(Post.created_at.desc()).limit(limit).offset(offset)
 
@@ -96,7 +97,8 @@ class PostRepository(BaseRepository[Post, PostCreate, PostUpdate]):
             and_(
                 Post.id.in_(tag_subquery),
                 Post.gym_id == gym_id,
-                Post.is_deleted == False
+                Post.is_deleted == False,
+                Post.privacy == PostPrivacy.PUBLIC
             )
         ).order_by(Post.created_at.desc()).limit(limit).offset(offset)
 
@@ -157,7 +159,8 @@ class PostRepository(BaseRepository[Post, PostCreate, PostUpdate]):
             and_(
                 Post.id.in_(tag_subquery),
                 Post.gym_id == gym_id,
-                Post.is_deleted == False
+                Post.is_deleted == False,
+                Post.privacy == PostPrivacy.PUBLIC
             )
         ).order_by(Post.created_at.desc()).limit(limit).offset(offset)
 
