@@ -546,8 +546,8 @@ class PostService:
                 "id": user.id,
                 "first_name": user.first_name,
                 "last_name": user.last_name,
-                "profile_picture_url": user.profile_picture_url,
-                "username": getattr(user, 'username', None)  # Si existe username
+                "picture": user.picture,
+                "email": user.email
             }
 
         # Verificar si es post propio
@@ -620,8 +620,8 @@ class PostService:
                     "id": user.id,
                     "first_name": user.first_name,
                     "last_name": user.last_name,
-                    "profile_picture_url": user.profile_picture_url,
-                    "username": getattr(user, 'username', None)
+                    "picture": user.picture,
+                    "email": user.email
                 }
 
             post.is_own_post = (post.user_id == requesting_user_id)
