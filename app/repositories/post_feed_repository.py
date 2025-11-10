@@ -29,20 +29,26 @@ class PostFeedRepository:
     def _sanitize_user_id(self, user_id: int) -> str:
         """
         Sanitiza el user_id para cumplir con restricciones de Stream.
-        Stream no permite user IDs que empiecen con números.
+        Stream solo permite letras, números y guiones bajos.
+
+        Nota: Unificado con StoryFeedRepository para consistencia.
         """
-        # Stream requiere que el ID empiece con letra
-        return f"u{user_id}"
+        # Convertir a string y sanitizar caracteres no permitidos
+        user_id_str = str(user_id)
+        sanitized = re.sub(r'[^a-zA-Z0-9_]', '_', user_id_str)
+        return sanitized
 
     def _get_feed(self, gym_id: int, user_id: int, feed_slug: str):
         """
         Obtiene un feed de Stream Feeds.
+
+        Feed ID unificado: gym_{gym_id}_user_{safe_user_id}
         """
         if not self.client:
             raise Exception("Stream client not available")
 
         sanitized_user_id = self._sanitize_user_id(user_id)
-        feed_id = f"gym_{gym_id}_{sanitized_user_id}"
+        feed_id = f"gym_{gym_id}_user_{sanitized_user_id}"
         return self.client.feed(feed_slug, feed_id)
 
     async def create_post_activity(
