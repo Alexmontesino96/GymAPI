@@ -29,7 +29,6 @@ from app.repositories.post_repository import PostRepository
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
-    prefix="/posts",
     tags=["posts"],
     dependencies=[module_enabled("posts")]
 )
