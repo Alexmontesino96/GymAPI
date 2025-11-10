@@ -317,10 +317,11 @@ python activate_posts_for_all_gyms.py
 
 - [x] Migración de BD aplicada (7 tablas)
 - [x] Módulo configurado en tabla `modules` (ID: 9)
-- [x] Módulo activado para todos los gyms
+- [x] Módulo activado para todos los gyms (5 gimnasios)
 - [x] Router registrado en `/api/v1/posts`
-- [ ] Bucket `gym-posts` creado en Supabase
-- [ ] Permisos del bucket configurados
+- [x] Bucket `gym-posts` creado en Supabase ✅
+- [x] Imports y dependencias corregidos
+- [x] Rutas de API configuradas correctamente
 - [ ] Primera prueba de creación de post
 - [ ] Integración con frontend
 
