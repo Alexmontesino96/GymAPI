@@ -231,7 +231,7 @@ async def get_timeline_feed(
         feed_type="timeline",
         has_more=len(posts) == limit,
         next_offset=offset + limit if len(posts) == limit else None,
-        last_update=posts[0].created_at if posts else None
+        last_update=posts[0]["created_at"] if posts else None
     )
 
 
@@ -261,7 +261,7 @@ async def get_explore_feed(
         feed_type="explore",
         has_more=len(posts) == limit,
         next_offset=offset + limit if len(posts) == limit else None,
-        last_update=posts[0].created_at if posts else None
+        last_update=posts[0]["created_at"] if posts else None
     )
 
 
