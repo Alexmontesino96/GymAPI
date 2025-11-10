@@ -25,4 +25,15 @@ from app.models.story import (
     StoryHighlight,
     StoryHighlightItem
 )  # noqa
+from app.models.post import (
+    Post,
+    PostMedia,
+    PostTag
+)  # noqa
+from app.models.post_interaction import (
+    PostLike,
+    PostComment,
+    PostCommentLike,
+    PostReport
+)  # noqa
 # Importar aquí otros modelos que se vayan creando 

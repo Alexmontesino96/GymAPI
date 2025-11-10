@@ -10,6 +10,7 @@ from app.api.v1.endpoints.user_dashboard import router as user_dashboard_router
 from app.api.v1.endpoints.surveys import router as surveys_router
 from app.api.v1.endpoints.context import router as context_router
 from app.api.v1.endpoints.stories import router as stories_router
+from app.api.v1.endpoints.posts import router as posts_router
 
 # Import modular packages directly
 from app.api.v1.endpoints.auth import router as auth_router
@@ -77,3 +78,6 @@ api_router.include_router(context_router, prefix="/context", tags=["context"])
 
 # Stories module
 api_router.include_router(stories_router, prefix="/stories", tags=["stories"])
+
+# Posts module
+api_router.include_router(posts_router, prefix="/posts", tags=["posts"])

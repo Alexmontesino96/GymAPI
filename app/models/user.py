@@ -70,4 +70,7 @@ class User(Base):
 
     # Relaciones para historias
     stories = relationship("Story", back_populates="user", cascade="all, delete-orphan")
-    story_highlights = relationship("StoryHighlight", back_populates="user", cascade="all, delete-orphan") 
+    story_highlights = relationship("StoryHighlight", back_populates="user", cascade="all, delete-orphan")
+
+    # Relaciones para posts
+    posts = relationship("Post", back_populates="user", cascade="all, delete-orphan") 

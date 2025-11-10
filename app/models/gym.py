@@ -80,6 +80,9 @@ class Gym(Base):
     # Relación con historias
     stories = relationship("Story", back_populates="gym", cascade="all, delete-orphan")
 
+    # Relación con posts
+    posts = relationship("Post", back_populates="gym", cascade="all, delete-orphan")
+
     # Propiedades helper para verificación de tipo
     @property
     def is_personal_trainer(self) -> bool:
