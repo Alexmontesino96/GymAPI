@@ -38,17 +38,17 @@ router = APIRouter(
 
 @router.post("/", response_model=StoryResponse, status_code=status.HTTP_201_CREATED)
 async def create_story(
-    caption: Optional[str] = Form(None, max_length=500),
     story_type: str = Form(...),
+    caption: Optional[str] = Form(None, max_length=500),
     privacy: str = Form("public"),
     duration_hours: int = Form(24, ge=1, le=48),
     workout_data: Optional[str] = Form(None),  # JSON string
-    media: Optional[UploadFile] = File(None),
     media_url: Optional[str] = Form(None),
-    db: Session = Depends(get_db),
-    gym_id: int = Depends(get_tenant_id),
+    media: Optional[UploadFile] = File(None),
     current_user: Auth0User = Depends(get_current_user),
-    db_user: User = Depends(get_current_db_user)
+    db_user: User = Depends(get_current_db_user),
+    db: Session = Depends(get_db),
+    gym_id: int = Depends(get_tenant_id)
 ):
     """
     Crear una nueva historia.
