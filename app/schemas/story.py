@@ -3,7 +3,7 @@ Schemas de Pydantic para el sistema de historias.
 """
 
 from pydantic import BaseModel, Field, HttpUrl, validator
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 from enum import Enum
 
@@ -106,7 +106,7 @@ class Story(StoryInDBBase):
             return False
         expires_at = values.get('expires_at')
         if expires_at:
-            return datetime.utcnow() > expires_at
+            return datetime.now(timezone.utc) > expires_at
         return False
 
 

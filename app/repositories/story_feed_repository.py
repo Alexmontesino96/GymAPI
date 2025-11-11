@@ -6,7 +6,7 @@ Maneja la creación, obtención y gestión de historias en Stream Activity Feeds
 import logging
 import re
 from typing import List, Dict, Any, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import json
 
 try:
@@ -88,7 +88,7 @@ class StoryFeedRepository:
         """
         if not self.available or not self.client:
             logger.warning("Stream Feeds not available, story will only exist in database")
-            return {"id": f"local_{story.id}", "created_at": datetime.utcnow().isoformat()}
+            return {"id": f"local_{story.id}", "created_at": datetime.now(timezone.utc).isoformat()}
 
         try:
             # Sanitizar user_id para Stream
@@ -180,7 +180,7 @@ class StoryFeedRepository:
             )
 
             # Filtrar historias no expiradas
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)  # Usar timezone-aware datetime
             filtered_activities = []
 
             for activity in activities.get("results", []):
@@ -246,7 +246,7 @@ class StoryFeedRepository:
             )
 
             # Filtrar historias no expiradas y aplicar filtros adicionales
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)  # Usar timezone-aware datetime
             filtered_activities = []
 
             for activity in activities.get("results", []):

@@ -8,7 +8,7 @@ Las historias expiran automáticamente después de 24 horas.
 from sqlalchemy import Column, Integer, String, Text, DateTime, Boolean, ForeignKey, Enum as SQLAlchemyEnum, JSON, UniqueConstraint
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import enum
 
 from app.db.base_class import Base
@@ -85,14 +85,14 @@ class Story(Base):
         # Establecer fecha de expiración automáticamente si no está configurada
         if not self.expires_at and not self.is_pinned:
             duration = kwargs.get('duration_hours', 24)
-            self.expires_at = datetime.utcnow() + timedelta(hours=duration)
+            self.expires_at = datetime.now(timezone.utc) + timedelta(hours=duration)
 
     @property
     def is_expired(self) -> bool:
         """Verifica si la historia ha expirado"""
         if self.is_pinned:
             return False
-        return datetime.utcnow() > self.expires_at if self.expires_at else False
+        return datetime.now(timezone.utc) > self.expires_at if self.expires_at else False
 
     def __repr__(self):
         return f"<Story(id={self.id}, user_id={self.user_id}, type={self.story_type})>"

@@ -5,7 +5,7 @@ Maneja la lógica de negocio para crear, obtener y gestionar historias.
 
 import logging
 from typing import List, Optional, Dict, Any
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from sqlalchemy.orm import Session
 from sqlalchemy import select, and_, or_, func, update
 from fastapi import HTTPException, status
@@ -71,7 +71,7 @@ class StoryService:
                 )
 
             # Calcular fecha de expiración
-            expires_at = datetime.utcnow() + timedelta(hours=story_data.duration_hours)
+            expires_at = datetime.now(timezone.utc) + timedelta(hours=story_data.duration_hours)
 
             # Crear historia en BD
             story = Story(
@@ -200,7 +200,7 @@ class StoryService:
         if not include_expired:
             query = query.where(
                 or_(
-                    Story.expires_at > datetime.utcnow(),
+                    Story.expires_at > datetime.now(timezone.utc),
                     Story.is_pinned == True
                 )
             )
@@ -280,7 +280,7 @@ class StoryService:
                         Story.gym_id == gym_id,
                         Story.is_deleted == False,
                         or_(
-                            Story.expires_at > datetime.utcnow(),
+                            Story.expires_at > datetime.now(timezone.utc),
                             Story.is_pinned == True
                         )
                     )
@@ -349,7 +349,7 @@ class StoryService:
                 "total_users": len(user_stories),
                 "has_more": len(stories) == limit,
                 "next_offset": offset + limit if len(stories) == limit else None,
-                "last_update": datetime.utcnow()
+                "last_update": datetime.now(timezone.utc)
             }
 
         except Exception as e:
@@ -548,7 +548,7 @@ class StoryService:
 
         # Soft delete
         story.is_deleted = True
-        story.deleted_at = datetime.utcnow()
+        story.deleted_at = datetime.now(timezone.utc)
 
         self.db.commit()
 
