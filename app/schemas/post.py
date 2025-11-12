@@ -160,7 +160,7 @@ class PostFeedResponse(BaseModel):
     feed_type: str = Field(..., description="Tipo de feed: 'timeline', 'explore', 'user'")
     has_more: bool
     next_offset: Optional[int] = None
-    last_update: datetime
+    last_update: Optional[datetime] = None
 
 
 class PostStatsResponse(BaseModel):
