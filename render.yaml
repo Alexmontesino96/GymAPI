@@ -3,6 +3,8 @@ services:
   - type: web
     name: gymapi
     runtime: docker # Especifica que usemos el Dockerfile
+    # Comando para ejecutar migraciones antes de cada deploy
+    preDeployCommand: "alembic upgrade head"
     envVars:
       # IMPORTANTE: Configuración explícita para usar Transaction Pooler de Supabase
       - key: DATABASE_URL
