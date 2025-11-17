@@ -36,14 +36,14 @@ class FeedRankingRepository:
             str: Categoría primaria (ej: "cardio", "strength", "yoga") o None
         """
         query = text("""
-            SELECT c.category
+            SELECT c.category_enum
             FROM class_participation cp
-            JOIN classes c ON cp.class_id = c.id
+            JOIN class c ON cp.class_id = c.id
             WHERE cp.member_id = :user_id
               AND c.gym_id = :gym_id
-              AND cp.attended_at >= NOW() - INTERVAL '90 days'
+              AND cp.attendance_time >= NOW() - INTERVAL '90 days'
               AND cp.status = 'ATTENDED'
-            GROUP BY c.category
+            GROUP BY c.category_enum
             ORDER BY COUNT(*) DESC
             LIMIT 1
         """)
@@ -62,22 +62,22 @@ class FeedRankingRepository:
         query = text("""
             WITH category_counts AS (
                 SELECT
-                    c.category,
+                    c.category_enum,
                     COUNT(*) as count
                 FROM class_participation cp
-                JOIN classes c ON cp.class_id = c.id
+                JOIN class c ON cp.class_id = c.id
                 WHERE cp.member_id = :user_id
                   AND c.gym_id = :gym_id
-                  AND cp.attended_at >= NOW() - INTERVAL '90 days'
+                  AND cp.attendance_time >= NOW() - INTERVAL '90 days'
                   AND cp.status = 'ATTENDED'
-                GROUP BY c.category
+                GROUP BY c.category_enum
             ),
             total AS (
                 SELECT SUM(count) as total_count
                 FROM category_counts
             )
             SELECT
-                cc.category,
+                cc.category_enum,
                 cc.count::float / t.total_count as percentage
             FROM category_counts cc
             CROSS JOIN total t
