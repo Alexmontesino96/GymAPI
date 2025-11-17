@@ -345,6 +345,8 @@ async def get_ranked_feed(
         )
     except Exception as e:
         logger.error(f"Error calculando scores de ranking: {e}", exc_info=True)
+        # Rollback de la transacción fallida
+        db.rollback()
         # Si hay error en ranking, devolver feed cronológico simple
         feed_scores = []
         for post in candidate_posts[:page_size]:

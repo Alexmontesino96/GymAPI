@@ -38,7 +38,8 @@ class FeedRankingRepository:
         query = text("""
             SELECT c.category_enum
             FROM class_participation cp
-            JOIN class c ON cp.class_id = c.id
+            JOIN class_session cs ON cp.session_id = cs.id
+            JOIN class c ON cs.class_id = c.id
             WHERE cp.member_id = :user_id
               AND c.gym_id = :gym_id
               AND cp.attendance_time >= NOW() - INTERVAL '90 days'
@@ -65,7 +66,8 @@ class FeedRankingRepository:
                     c.category_enum,
                     COUNT(*) as count
                 FROM class_participation cp
-                JOIN class c ON cp.class_id = c.id
+                JOIN class_session cs ON cp.session_id = cs.id
+                JOIN class c ON cs.class_id = c.id
                 WHERE cp.member_id = :user_id
                   AND c.gym_id = :gym_id
                   AND cp.attendance_time >= NOW() - INTERVAL '90 days'
