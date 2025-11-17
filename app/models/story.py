@@ -68,10 +68,10 @@ class Story(Base):
     reaction_count = Column(Integer, default=0)
 
     # Timestamps
-    created_at = Column(DateTime, default=func.now(), nullable=False)
-    expires_at = Column(DateTime, nullable=False)
-    deleted_at = Column(DateTime, nullable=True)
-    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+    created_at = Column(DateTime(timezone=True), default=func.now(), nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    deleted_at = Column(DateTime(timezone=True), nullable=True)
+    updated_at = Column(DateTime(timezone=True), default=func.now(), onupdate=func.now())
 
     # Relaciones
     user = relationship("User", back_populates="stories")
@@ -92,7 +92,16 @@ class Story(Base):
         """Verifica si la historia ha expirado"""
         if self.is_pinned:
             return False
-        return datetime.now(timezone.utc) > self.expires_at if self.expires_at else False
+        if not self.expires_at:
+            return False
+
+        # Asegurar que expires_at tiene timezone para comparación segura
+        expires = self.expires_at
+        if expires.tzinfo is None:
+            # Si es naive, asumimos UTC
+            expires = expires.replace(tzinfo=timezone.utc)
+
+        return datetime.now(timezone.utc) > expires
 
     def __repr__(self):
         return f"<Story(id={self.id}, user_id={self.user_id}, type={self.story_type})>"
@@ -113,7 +122,7 @@ class StoryView(Base):
     viewer_id = Column(Integer, ForeignKey("user.id"), nullable=False, index=True)
 
     # Tracking
-    viewed_at = Column(DateTime, default=func.now(), nullable=False)
+    viewed_at = Column(DateTime(timezone=True), default=func.now(), nullable=False)
     view_duration_seconds = Column(Integer, nullable=True)  # Tiempo de visualización
     device_info = Column(String, nullable=True)  # iOS, Android, Web
 
@@ -143,7 +152,7 @@ class StoryReaction(Base):
     message = Column(String(500), nullable=True)  # Mensaje opcional con la reacción
 
     # Timestamp
-    created_at = Column(DateTime, default=func.now(), nullable=False)
+    created_at = Column(DateTime(timezone=True), default=func.now(), nullable=False)
 
     # Relaciones
     story = relationship("Story", back_populates="reactions")
@@ -170,11 +179,11 @@ class StoryReport(Base):
     # Estado
     is_reviewed = Column(Boolean, default=False)
     reviewed_by = Column(Integer, ForeignKey("user.id"), nullable=True)
-    reviewed_at = Column(DateTime, nullable=True)
+    reviewed_at = Column(DateTime(timezone=True), nullable=True)
     action_taken = Column(String, nullable=True)  # deleted, warned, no_action
 
     # Timestamp
-    created_at = Column(DateTime, default=func.now(), nullable=False)
+    created_at = Column(DateTime(timezone=True), default=func.now(), nullable=False)
 
     # Relaciones
     story = relationship("Story", back_populates="reports")
@@ -204,8 +213,8 @@ class StoryHighlight(Base):
     is_active = Column(Boolean, default=True)
 
     # Timestamps
-    created_at = Column(DateTime, default=func.now(), nullable=False)
-    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+    created_at = Column(DateTime(timezone=True), default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=func.now(), onupdate=func.now())
 
     # Relaciones
     user = relationship("User", back_populates="story_highlights")
@@ -230,7 +239,7 @@ class StoryHighlightItem(Base):
     display_order = Column(Integer, nullable=False, default=0)
 
     # Timestamp
-    added_at = Column(DateTime, default=func.now(), nullable=False)
+    added_at = Column(DateTime(timezone=True), default=func.now(), nullable=False)
 
     # Relaciones
     highlight = relationship("StoryHighlight", back_populates="highlight_stories")

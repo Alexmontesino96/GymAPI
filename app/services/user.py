@@ -663,6 +663,18 @@ class UserService:
         # Subir la nueva imagen usando la instancia del servicio
         image_url = await storage_service_instance.upload_profile_image(auth0_id, file=file)
         updated_user = user_repository.update(db, db_obj=user, obj_in={"picture": image_url})
+
+        # Sincronizar picture con Auth0
+        try:
+            from app.core.auth0_mgmt import auth0_mgmt_service
+            auth0_mgmt_service.update_user_picture(auth0_id, image_url)
+            logger.info(f"Imagen de perfil sincronizada exitosamente con Auth0 para usuario {user.id} ({auth0_id})")
+        except Exception as e:
+            # Log el error pero no fallar la operación principal
+            # La imagen ya está guardada en Supabase y en la BD local
+            logger.error(f"Error al sincronizar picture con Auth0 (usuario {user.id}, auth0_id {auth0_id}): {str(e)}")
+            logger.warning("La imagen se guardó localmente pero no se pudo sincronizar con Auth0. El usuario puede reautenticarse para ver la nueva imagen.")
+
         return updated_user
         
     # --- NUEVO MÉTODO PARA SINCRONIZACIÓN --- 

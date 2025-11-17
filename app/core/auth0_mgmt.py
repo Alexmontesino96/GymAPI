@@ -377,6 +377,77 @@ class Auth0ManagementService:
                 detail=f"Error interno inesperado al intentar eliminar usuario de Auth0."
             )
 
+    def update_user_picture(self, auth0_id: str, picture_url: str) -> Dict[str, Any]:
+        """
+        Actualiza el campo picture del perfil de Auth0.
+
+        Se usa para sincronizar la imagen de perfil de Supabase Storage con Auth0,
+        asegurando que el token JWT incluya la URL correcta de la foto del usuario.
+
+        Args:
+            auth0_id: ID de Auth0 del usuario (auth0|xxx o google-oauth2|xxx).
+            picture_url: URL pública de la imagen en Supabase Storage.
+
+        Returns:
+            Dict con información del usuario actualizado de Auth0.
+
+        Raises:
+            HTTPException: Si ocurre un error al actualizar Auth0.
+        """
+        token = self.get_auth_token()
+        url = f"https://{self.domain}/api/v2/users/{auth0_id}"
+
+        payload = {
+            "picture": picture_url
+        }
+
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json"
+        }
+
+        try:
+            import logging
+            logger = logging.getLogger("auth0_service")
+            logger.info(f"Actualizando picture en Auth0 para {auth0_id}: {picture_url}")
+
+            response = requests.patch(url, json=payload, headers=headers)
+
+            # Verificar errores específicos
+            if response.status_code != 200:
+                logger.error(f"Error HTTP {response.status_code} al actualizar picture en Auth0")
+                logger.error(f"Respuesta: {response.text}")
+
+            response.raise_for_status()
+
+            logger.info(f"Picture actualizado exitosamente en Auth0 para {auth0_id}")
+            return response.json()
+
+        except requests.RequestException as e:
+            error_detail = f"Error al actualizar picture en Auth0 para {auth0_id}: {str(e)}"
+            status_code = 503
+
+            if hasattr(e, 'response') and e.response is not None:
+                status_code = e.response.status_code
+                try:
+                    error_data = e.response.json()
+                    error_message = error_data.get('message', e.response.text)
+                    error_detail = f"{error_detail} - {error_message}"
+                except:
+                    error_detail = f"{error_detail} - {e.response.text}"
+
+            logger.error(error_detail)
+            raise HTTPException(
+                status_code=status_code,
+                detail=error_detail
+            )
+        except Exception as e:
+            logger.error(f"Error inesperado en update_user_picture para {auth0_id}: {e}", exc_info=True)
+            raise HTTPException(
+                status_code=500,
+                detail="Error interno al actualizar picture en Auth0"
+            )
+
     # _get_reset_time ya no es relevante para Redis
     # def _get_reset_time(self, ...) -> int: ...
 
