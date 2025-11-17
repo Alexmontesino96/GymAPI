@@ -23,4 +23,5 @@ from app.models.health import (
 from app.models.survey import (
     Survey, SurveyQuestion, QuestionChoice, SurveyResponse, SurveyAnswer, SurveyTemplate,
     SurveyStatus, QuestionType
-) 
+)
+from app.models.user_follow import UserFollow 
