@@ -107,6 +107,10 @@ class FeedRankingService:
 
         except Exception as e:
             logger.error(f"Error en content_affinity_score: {e}", exc_info=True)
+            try:
+                self.db.rollback()
+            except Exception:
+                pass
             return 0.5  # Score neutral en caso de error
 
     def social_affinity_score(
@@ -161,6 +165,10 @@ class FeedRankingService:
 
         except Exception as e:
             logger.error(f"Error en social_affinity_score: {e}", exc_info=True)
+            try:
+                self.db.rollback()
+            except Exception:
+                pass
             return 0.3  # Score bajo en caso de error
 
     def past_engagement_score(
@@ -208,6 +216,10 @@ class FeedRankingService:
 
         except Exception as e:
             logger.error(f"Error en past_engagement_score: {e}", exc_info=True)
+            try:
+                self.db.rollback()
+            except Exception:
+                pass
             return 0.5
 
     def timing_score(
@@ -258,6 +270,10 @@ class FeedRankingService:
 
         except Exception as e:
             logger.error(f"Error en timing_score: {e}", exc_info=True)
+            try:
+                self.db.rollback()
+            except Exception:
+                pass
             return 0.5
 
     def popularity_score(
@@ -314,6 +330,10 @@ class FeedRankingService:
 
         except Exception as e:
             logger.error(f"Error en popularity_score: {e}", exc_info=True)
+            try:
+                self.db.rollback()
+            except Exception:
+                pass
             return 0.3
 
     def calculate_feed_score(
@@ -385,6 +405,10 @@ class FeedRankingService:
 
         except Exception as e:
             logger.error(f"Error en calculate_feed_score para post {post.id}: {e}", exc_info=True)
+            try:
+                self.db.rollback()
+            except Exception:
+                pass
             # Retornar score neutral en caso de error
             return FeedScore(
                 post_id=post.id,
