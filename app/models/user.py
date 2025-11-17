@@ -73,4 +73,8 @@ class User(Base):
     story_highlights = relationship("StoryHighlight", back_populates="user", cascade="all, delete-orphan")
 
     # Relaciones para posts
-    posts = relationship("Post", back_populates="user", cascade="all, delete-orphan") 
+    posts = relationship("Post", back_populates="user", cascade="all, delete-orphan")
+
+    # Relaciones para seguimiento de usuarios (follow system)
+    following = relationship("UserFollow", foreign_keys="[UserFollow.follower_id]", back_populates="follower", cascade="all, delete-orphan")
+    followers = relationship("UserFollow", foreign_keys="[UserFollow.following_id]", back_populates="following_user", cascade="all, delete-orphan") 

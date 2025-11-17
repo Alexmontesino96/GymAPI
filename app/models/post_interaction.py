@@ -151,3 +151,37 @@ class PostReport(Base):
 
     def __repr__(self):
         return f"<PostReport(id={self.id}, post_id={self.post_id}, reason={self.reason})>"
+
+
+class PostView(Base):
+    """
+    Tracking de vistas de posts para deduplicación en el feed.
+
+    Registra cuando un usuario visualiza un post para:
+    - Evitar mostrar posts ya vistos en el feed rankeado
+    - Medir engagement real (view-through rate)
+    - Calcular métricas de popularidad
+    """
+    __tablename__ = "post_views"
+    __table_args__ = (
+        Index('ix_post_views_user_post', 'user_id', 'post_id'),
+        Index('ix_post_views_gym_user', 'gym_id', 'user_id'),
+        Index('ix_post_views_post_date', 'post_id', 'viewed_at'),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    post_id = Column(Integer, ForeignKey("posts.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("user.id"), nullable=False, index=True)
+    gym_id = Column(Integer, ForeignKey("gyms.id"), nullable=False, index=True)
+
+    # Tracking de vista
+    viewed_at = Column(DateTime(timezone=True), default=func.now(), nullable=False)
+    view_duration_seconds = Column(Integer, nullable=True)  # Tiempo en vista (futuro)
+    device_type = Column(String(50), nullable=True)  # iOS, Android, Web
+
+    # Relaciones
+    post = relationship("Post", back_populates="views")
+    user = relationship("User", foreign_keys=[user_id])
+
+    def __repr__(self):
+        return f"<PostView(id={self.id}, post_id={self.post_id}, user_id={self.user_id})>"

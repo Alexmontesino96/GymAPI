@@ -89,6 +89,7 @@ class Post(Base):
     likes = relationship("PostLike", back_populates="post", cascade="all, delete-orphan")
     comments = relationship("PostComment", back_populates="post", cascade="all, delete-orphan")
     reports = relationship("PostReport", back_populates="post", cascade="all, delete-orphan")
+    views = relationship("PostView", back_populates="post", cascade="all, delete-orphan")
 
     @property
     def engagement_score(self) -> float:
