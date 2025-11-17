@@ -4,8 +4,10 @@ Endpoints para el sistema de posts.
 
 import logging
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form, Query
 from sqlalchemy.orm import Session
+from sqlalchemy import and_
+from datetime import datetime, timedelta, timezone
 import json
 
 from app.core.dependencies import module_enabled
@@ -16,7 +18,8 @@ from app.models.user import User
 from app.models.post import Post as PostModel, PostType, PostPrivacy
 from app.schemas.post import (
     Post, PostCreate, PostUpdate, PostResponse, PostListResponse, PostFeedResponse,
-    PostStatsResponse, PostCreateMultipart
+    PostStatsResponse, PostCreateMultipart,
+    RankedPost, RankedFeedResponse, FeedScoreDebug
 )
 from app.schemas.post_interaction import (
     CommentCreate, CommentUpdate, CommentResponse, CommentsListResponse, CommentCreateResponse,
@@ -24,6 +27,7 @@ from app.schemas.post_interaction import (
 )
 from app.services.post_service import PostService
 from app.services.post_interaction_service import PostInteractionService
+from app.services.feed_ranking_service import FeedRankingService
 from app.repositories.post_repository import PostRepository
 
 logger = logging.getLogger(__name__)
@@ -262,6 +266,151 @@ async def get_explore_feed(
         has_more=len(posts) == limit,
         next_offset=offset + limit if len(posts) == limit else None,
         last_update=posts[0]["created_at"] if posts else None
+    )
+
+
+@router.get("/feed/ranked", response_model=RankedFeedResponse)
+async def get_ranked_feed(
+    db: Session = Depends(get_db),
+    gym_id: int = Depends(get_tenant_id),
+    db_user: User = Depends(get_current_db_user),
+    page: int = Query(1, ge=1, description="Número de página (1-indexed)"),
+    page_size: int = Query(20, ge=1, le=100, description="Posts por página"),
+    debug: bool = Query(False, description="Incluir scores de debug"),
+    exclude_seen: bool = Query(True, description="Excluir posts ya vistos")
+):
+    """
+    Feed de posts personalizado con ranking inteligente.
+
+    **Algoritmo de 5 señales ponderadas:**
+    - Content Affinity (25%): Match con intereses del usuario
+    - Social Affinity (25%): Relación con autor
+    - Past Engagement (15%): Historial de interacciones
+    - Timing (15%): Recency + horarios activos
+    - Popularity (20%): Trending + engagement
+
+    **Parámetros:**
+    - page: Número de página (default: 1)
+    - page_size: Posts por página (max: 100, default: 20)
+    - debug: Si true, incluye scores detallados
+    - exclude_seen: Si true, excluye posts ya vistos
+    """
+    # 1. Obtener posts candidatos (últimas 7 días, no borrados)
+    offset = (page - 1) * page_size
+
+    query = db.query(PostModel).filter(
+        and_(
+            PostModel.gym_id == gym_id,
+            PostModel.is_deleted == False,
+            PostModel.created_at >= datetime.now(timezone.utc) - timedelta(days=7)
+        )
+    )
+
+    # 2. Excluir posts ya vistos
+    if exclude_seen:
+        from app.models.post_interaction import PostView
+
+        viewed_post_ids_query = db.query(PostView.post_id).filter(
+            and_(
+                PostView.user_id == db_user.id,
+                PostView.gym_id == gym_id,
+                PostView.viewed_at >= datetime.now(timezone.utc) - timedelta(days=7)
+            )
+        ).subquery()
+
+        query = query.filter(~PostModel.id.in_(viewed_post_ids_query))
+
+    # 3. Obtener posts candidatos (tomamos 5x más para rankear)
+    # Ej: si pide 20, traemos 100 para rankear y quedarnos con top 20
+    candidate_limit = min(page_size * 5, 500)  # Max 500 candidatos
+    candidate_posts = query.order_by(PostModel.created_at.desc()).limit(candidate_limit).all()
+
+    if not candidate_posts:
+        return RankedFeedResponse(
+            posts=[],
+            total=0,
+            page=page,
+            page_size=page_size,
+            has_more=False,
+            algorithm_version="heuristic_v1"
+        )
+
+    # 4. Calcular scores para todos los candidatos
+    ranking_service = FeedRankingService(db)
+    feed_scores = ranking_service.calculate_feed_scores_batch(
+        user_id=db_user.id,
+        gym_id=gym_id,
+        posts=candidate_posts
+    )
+
+    # 5. Tomar top posts según paginación
+    paginated_scores = feed_scores[offset:offset + page_size]
+
+    # 6. Enriquecer posts con información del usuario
+    post_service = PostService(db)
+    enriched_posts = []
+
+    for feed_score in paginated_scores:
+        # Obtener post original
+        post = next((p for p in candidate_posts if p.id == feed_score.post_id), None)
+        if not post:
+            continue
+
+        # Verificar si el usuario dio like
+        from app.models.post_interaction import PostLike
+        is_liked = db.query(PostLike).filter(
+            and_(
+                PostLike.post_id == post.id,
+                PostLike.user_id == db_user.id
+            )
+        ).first() is not None
+
+        # Construir post data
+        ranked_post = RankedPost(
+            id=post.id,
+            user_id=post.user_id,
+            post_type=post.post_type,
+            caption=post.caption,
+            location=post.location,
+            privacy=post.privacy,
+            media=[
+                {
+                    "media_url": m.media_url,
+                    "thumbnail_url": m.thumbnail_url,
+                    "media_type": m.media_type,
+                    "display_order": m.display_order
+                }
+                for m in sorted(post.media, key=lambda x: x.display_order)
+            ],
+            user_info={
+                "id": post.user.id,
+                "name": f"{post.user.first_name or ''} {post.user.last_name or ''}".strip() or "Usuario",
+                "picture": post.user.picture
+            },
+            like_count=post.like_count,
+            comment_count=post.comment_count,
+            view_count=post.view_count,
+            is_liked=is_liked,
+            created_at=post.created_at,
+            score=FeedScoreDebug(
+                content_affinity=feed_score.content_affinity,
+                social_affinity=feed_score.social_affinity,
+                past_engagement=feed_score.past_engagement,
+                timing=feed_score.timing,
+                popularity=feed_score.popularity,
+                final_score=feed_score.final_score
+            ) if debug else None
+        )
+
+        enriched_posts.append(ranked_post)
+
+    return RankedFeedResponse(
+        posts=enriched_posts,
+        total=len(feed_scores),
+        page=page,
+        page_size=page_size,
+        has_more=(offset + page_size) < len(feed_scores),
+        algorithm_version="heuristic_v1"
     )
 
 

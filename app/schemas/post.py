@@ -184,3 +184,57 @@ class PostCreateMultipart(BaseModel):
     tagged_event_id: Optional[int] = None
     tagged_session_id: Optional[int] = None
     mentioned_user_ids_json: Optional[str] = Field(None, description="JSON array de user IDs")
+
+
+# ==================== FEED RANKING SCHEMAS ====================
+
+class FeedScoreDebug(BaseModel):
+    """Información de debug del scoring (solo si debug=true)"""
+    content_affinity: float = Field(..., ge=0.0, le=1.0, description="Score de afinidad de contenido")
+    social_affinity: float = Field(..., ge=0.0, le=1.0, description="Score de afinidad social")
+    past_engagement: float = Field(..., ge=0.0, le=1.0, description="Score de engagement histórico")
+    timing: float = Field(..., ge=0.0, le=1.0, description="Score de timing (recency + horarios)")
+    popularity: float = Field(..., ge=0.0, le=1.0, description="Score de popularidad (trending)")
+    final_score: float = Field(..., ge=0.0, le=1.0, description="Score final ponderado")
+
+
+class RankedPost(BaseModel):
+    """Post en feed rankeado con información de usuario y scores opcionales"""
+    # Datos del post
+    id: int
+    user_id: int
+    post_type: PostType
+    caption: Optional[str]
+    location: Optional[str]
+    privacy: PostPrivacy
+
+    # Media
+    media: List[Dict[str, Any]] = Field(default_factory=list, description="Lista de media files")
+
+    # Metadata de usuario
+    user_info: Dict[str, Any] = Field(..., description="Info del autor (name, picture, etc)")
+
+    # Engagement
+    like_count: int
+    comment_count: int
+    view_count: int
+    is_liked: bool = Field(False, description="Si el usuario actual dio like")
+
+    # Timestamps
+    created_at: datetime
+
+    # Score de ranking (opcional, solo si debug=true)
+    score: Optional[FeedScoreDebug] = Field(None, description="Scores de ranking (solo en modo debug)")
+
+    class Config:
+        from_attributes = True
+
+
+class RankedFeedResponse(BaseModel):
+    """Respuesta del feed rankeado personalizado"""
+    posts: List[RankedPost] = Field(..., description="Posts rankeados por relevancia")
+    total: int = Field(..., description="Total de posts en el resultado")
+    page: int = Field(..., ge=1, description="Número de página actual")
+    page_size: int = Field(..., ge=1, le=100, description="Tamaño de página")
+    has_more: bool = Field(..., description="Si hay más posts disponibles")
+    algorithm_version: str = Field(default="heuristic_v1", description="Versión del algoritmo usado")
