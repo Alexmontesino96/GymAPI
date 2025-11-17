@@ -336,12 +336,28 @@ async def get_ranked_feed(
         )
 
     # 4. Calcular scores para todos los candidatos
-    ranking_service = FeedRankingService(db)
-    feed_scores = ranking_service.calculate_feed_scores_batch(
-        user_id=db_user.id,
-        gym_id=gym_id,
-        posts=candidate_posts
-    )
+    try:
+        ranking_service = FeedRankingService(db)
+        feed_scores = ranking_service.calculate_feed_scores_batch(
+            user_id=db_user.id,
+            gym_id=gym_id,
+            posts=candidate_posts
+        )
+    except Exception as e:
+        logger.error(f"Error calculando scores de ranking: {e}", exc_info=True)
+        # Si hay error en ranking, devolver feed cronológico simple
+        feed_scores = []
+        for post in candidate_posts[:page_size]:
+            from app.services.feed_ranking_service import FeedScore
+            feed_scores.append(FeedScore(
+                post_id=post.id,
+                final_score=0.5,
+                content_affinity=0.5,
+                social_affinity=0.5,
+                past_engagement=0.5,
+                timing=0.5,
+                popularity=0.5
+            ))
 
     # 5. Tomar top posts según paginación
     paginated_scores = feed_scores[offset:offset + page_size]

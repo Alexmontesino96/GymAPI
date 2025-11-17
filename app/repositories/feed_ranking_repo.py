@@ -196,7 +196,7 @@ class FeedRankingRepository:
                 JOIN posts p ON pl.post_id = p.id
                 WHERE pl.user_id = :user_id
                   AND p.user_id = :author_id
-                  AND pl.created_at >= NOW() - INTERVAL :days DAY
+                  AND pl.created_at >= NOW() - CAST(:days || ' days' AS INTERVAL)
 
                 UNION ALL
 
@@ -207,14 +207,14 @@ class FeedRankingRepository:
                 WHERE pc.user_id = :user_id
                   AND p.user_id = :author_id
                   AND pc.is_deleted = false
-                  AND pc.created_at >= NOW() - INTERVAL :days DAY
+                  AND pc.created_at >= NOW() - CAST(:days || ' days' AS INTERVAL)
             ) interactions
         """)
 
         result = self.db.execute(query, {
             "user_id": user_id,
             "author_id": author_id,
-            "days": f"{days} days"
+            "days": days
         })
         row = result.fetchone()
         return row[0] if row else 0
@@ -249,7 +249,7 @@ class FeedRankingRepository:
                 JOIN posts p ON pl.post_id = p.id
                 WHERE pl.user_id = :user_id
                   AND p.gym_id = :gym_id
-                  AND pl.created_at >= NOW() - INTERVAL :days DAY
+                  AND pl.created_at >= NOW() - CAST(:days || ' days' AS INTERVAL)
             ),
             user_comments AS (
                 SELECT COUNT(*) as comment_count
@@ -257,7 +257,7 @@ class FeedRankingRepository:
                 JOIN posts p ON pc.post_id = p.id
                 WHERE pc.user_id = :user_id
                   AND p.gym_id = :gym_id
-                  AND pc.created_at >= NOW() - INTERVAL :days DAY
+                  AND pc.created_at >= NOW() - CAST(:days || ' days' AS INTERVAL)
                   AND pc.is_deleted = false
             ),
             post_type_counts AS (
@@ -323,7 +323,7 @@ class FeedRankingRepository:
                 SELECT EXTRACT(HOUR FROM pl.created_at)::int as hour
                 FROM post_likes pl
                 WHERE pl.user_id = :user_id
-                  AND pl.created_at >= NOW() - INTERVAL :days DAY
+                  AND pl.created_at >= NOW() - CAST(:days || ' days' AS INTERVAL)
 
                 UNION ALL
 
@@ -331,7 +331,7 @@ class FeedRankingRepository:
                 SELECT EXTRACT(HOUR FROM pc.created_at)::int as hour
                 FROM post_comments pc
                 WHERE pc.user_id = :user_id
-                  AND pc.created_at >= NOW() - INTERVAL :days DAY
+                  AND pc.created_at >= NOW() - CAST(:days || ' days' AS INTERVAL)
 
                 UNION ALL
 
@@ -340,7 +340,7 @@ class FeedRankingRepository:
                 FROM posts p
                 WHERE p.user_id = :user_id
                   AND p.gym_id = :gym_id
-                  AND p.created_at >= NOW() - INTERVAL :days DAY
+                  AND p.created_at >= NOW() - CAST(:days || ' days' AS INTERVAL)
             )
             SELECT hour, COUNT(*) as activity_count
             FROM user_activity
@@ -442,7 +442,7 @@ class FeedRankingRepository:
                         GREATEST(EXTRACT(EPOCH FROM (NOW() - p.created_at)) / 3600.0, 0.1) as velocity
                 FROM posts p
                 WHERE p.gym_id = :gym_id
-                  AND p.created_at >= NOW() - INTERVAL :hours_lookback HOUR
+                  AND p.created_at >= NOW() - CAST(:hours_lookback || ' hours' AS INTERVAL)
                   AND p.is_deleted = false
             )
             SELECT
@@ -488,7 +488,7 @@ class FeedRankingRepository:
             FROM post_views
             WHERE user_id = :user_id
               AND gym_id = :gym_id
-              AND viewed_at >= NOW() - INTERVAL :days DAY
+              AND viewed_at >= NOW() - CAST(:days || ' days' AS INTERVAL)
         """)
 
         result = self.db.execute(query, {
