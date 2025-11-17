@@ -65,7 +65,8 @@ Thumbs.db
 htmlcov/
 
 # Alembic
-migrations/versions/*
+# IMPORTANTE: Las migraciones DEBEN estar en git para funcionar en producción
+# migrations/versions/*
 !migrations/versions/.gitkeep
 
 # OS específicos
