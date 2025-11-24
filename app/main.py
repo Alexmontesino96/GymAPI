@@ -209,12 +209,24 @@ app.add_middleware(
     max_age=86400,  # 24 horas en segundos
 )
 
+# Configurar Prometheus ANTES de incluir routers
+from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
+from fastapi.responses import Response
+
+# Endpoint manual de métricas
+@app.get("/metrics", include_in_schema=False)
+async def get_metrics():
+    """Endpoint para exponer métricas de Prometheus."""
+    metrics = generate_latest()
+    return Response(content=metrics, media_type=CONTENT_TYPE_LATEST)
+
+# Instrumentar la aplicación
+from prometheus_fastapi_instrumentator import Instrumentator
+instrumentator = Instrumentator()
+instrumentator.instrument(app)  # Solo instrumentar, no exponer (ya tenemos el endpoint manual)
+
 # Incluir routers
 app.include_router(api_router, prefix=settings_instance.API_V1_STR)
-
-# Configurar Prometheus
-instrumentator = get_instrumentator()
-instrumentator.instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)
 
 # Ruta raíz
 @app.get("/")
