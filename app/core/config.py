@@ -290,7 +290,11 @@ class Settings(BaseSettings):
     AWS_ACCESS_KEY_ID: Optional[str] = None
     AWS_SECRET_ACCESS_KEY: Optional[str] = None
     AWS_REGION: str = "us-east-1"
-    SQS_QUEUE_URL: Optional[str] = None
+    SQS_QUEUE_URL: Optional[str] = None  # Cola FIFO para eventos
+
+    # SQS Nutrition Notifications (cola Standard, separada de eventos)
+    SQS_NUTRITION_QUEUE_URL: Optional[str] = None
+    SQS_NUTRITION_DLQ_URL: Optional[str] = None
 
     # Configuración para el Worker
     WORKER_API_KEY: str = os.getenv("WORKER_API_KEY", "")

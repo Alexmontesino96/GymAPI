@@ -2,7 +2,7 @@
 Endpoints para el sistema de planes nutricionales.
 """
 
-from typing import List, Optional, Any
+from typing import List, Optional, Any, Dict
 from fastapi import APIRouter, Depends, HTTPException, Query, Path, Header
 from sqlalchemy.orm import Session
 
@@ -2411,3 +2411,392 @@ def get_plan_status(
         
     except NotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e)) 
+
+
+# ============================================================================
+# ENDPOINTS DE NOTIFICACIONES
+# ============================================================================
+
+@router.get(
+    "/notifications/settings",
+    response_model=Dict[str, Any],
+    summary="Obtener configuración de notificaciones",
+    description="""
+    Obtiene la configuración de notificaciones del usuario para todos sus planes activos.
+
+    **Información Devuelta:**
+    - Configuración global de notificaciones
+    - Horarios personalizados por tipo de comida
+    - Planes con notificaciones activas
+
+    **Permisos:**
+    - Usuario autenticado
+    """
+)
+def get_notification_settings(
+    db: Session = Depends(get_db),
+    current_user: Auth0User = Depends(get_current_user),
+    current_gym: Gym = Depends(verify_gym_access)
+) -> Dict[str, Any]:
+    """Obtener configuración de notificaciones del usuario"""
+    # Obtener usuario local
+    db_user = user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
+    if not db_user:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+
+    # Obtener planes activos del usuario
+    from app.models.nutrition import NutritionPlanFollower, NutritionPlan
+
+    active_followers = db.query(NutritionPlanFollower).join(
+        NutritionPlan
+    ).filter(
+        NutritionPlanFollower.user_id == db_user.id,
+        NutritionPlanFollower.is_active == True,
+        NutritionPlan.gym_id == current_gym.id
+    ).all()
+
+    # Si no hay planes activos, devolver configuración por defecto
+    if not active_followers:
+        return {
+            "has_active_plans": False,
+            "global_enabled": True,
+            "default_times": {
+                "breakfast": "08:00",
+                "lunch": "13:00",
+                "dinner": "20:00"
+            },
+            "active_plans": []
+        }
+
+    # Obtener configuración del primer plan activo (asumimos que todos tienen la misma)
+    primary_config = active_followers[0]
+
+    # Listar todos los planes con su configuración
+    plans_config = []
+    for follower in active_followers:
+        plan = db.query(NutritionPlan).filter(
+            NutritionPlan.id == follower.plan_id
+        ).first()
+
+        plans_config.append({
+            "plan_id": plan.id,
+            "plan_title": plan.title,
+            "plan_type": plan.plan_type,
+            "notifications_enabled": follower.notifications_enabled,
+            "notification_times": {
+                "breakfast": follower.notification_time_breakfast,
+                "lunch": follower.notification_time_lunch,
+                "dinner": follower.notification_time_dinner
+            }
+        })
+
+    return {
+        "has_active_plans": True,
+        "global_enabled": primary_config.notifications_enabled,
+        "default_times": {
+            "breakfast": primary_config.notification_time_breakfast,
+            "lunch": primary_config.notification_time_lunch,
+            "dinner": primary_config.notification_time_dinner
+        },
+        "active_plans": plans_config
+    }
+
+
+@router.put(
+    "/notifications/settings",
+    response_model=Dict[str, Any],
+    summary="Actualizar configuración de notificaciones",
+    description="""
+    Actualiza la configuración de notificaciones para los planes del usuario.
+
+    **Opciones de Configuración:**
+    - Habilitar/deshabilitar notificaciones globalmente
+    - Configurar horarios por tipo de comida (formato HH:MM)
+    - Aplicar a todos los planes o a uno específico
+
+    **Horarios Válidos:**
+    - Formato 24 horas: "08:00", "13:30", "20:15"
+    - Rango: 00:00 a 23:59
+
+    **Permisos:**
+    - Usuario autenticado
+    - Solo puede modificar sus propias notificaciones
+    """
+)
+def update_notification_settings(
+    settings: Dict[str, Any],
+    plan_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+    current_user: Auth0User = Depends(get_current_user),
+    current_gym: Gym = Depends(verify_gym_access)
+) -> Dict[str, Any]:
+    """Actualizar configuración de notificaciones"""
+    # Obtener usuario local
+    db_user = user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
+    if not db_user:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+
+    # Validar formato de horarios si se proporcionan
+    import re
+    time_pattern = re.compile(r'^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$')
+
+    notification_times = settings.get("notification_times", {})
+    for meal_type, time_str in notification_times.items():
+        if time_str and not time_pattern.match(time_str):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Formato de hora inválido para {meal_type}: {time_str}. Use formato HH:MM"
+            )
+
+    from app.models.nutrition import NutritionPlanFollower, NutritionPlan
+
+    # Si se especifica un plan, actualizar solo ese
+    if plan_id:
+        # Verificar que el plan existe y pertenece al gimnasio
+        plan = db.query(NutritionPlan).filter(
+            NutritionPlan.id == plan_id,
+            NutritionPlan.gym_id == current_gym.id
+        ).first()
+
+        if not plan:
+            raise HTTPException(status_code=404, detail="Plan no encontrado")
+
+        # Obtener la relación follower
+        follower = db.query(NutritionPlanFollower).filter(
+            NutritionPlanFollower.plan_id == plan_id,
+            NutritionPlanFollower.user_id == db_user.id,
+            NutritionPlanFollower.is_active == True
+        ).first()
+
+        if not follower:
+            raise HTTPException(status_code=404, detail="No estás siguiendo este plan")
+
+        # Actualizar configuración
+        if "enabled" in settings:
+            follower.notifications_enabled = settings["enabled"]
+
+        if "notification_times" in settings:
+            times = settings["notification_times"]
+            if "breakfast" in times:
+                follower.notification_time_breakfast = times["breakfast"]
+            if "lunch" in times:
+                follower.notification_time_lunch = times["lunch"]
+            if "dinner" in times:
+                follower.notification_time_dinner = times["dinner"]
+
+        db.commit()
+
+        return {
+            "success": True,
+            "message": f"Configuración actualizada para el plan: {plan.title}",
+            "plan_id": plan_id,
+            "updated_settings": {
+                "enabled": follower.notifications_enabled,
+                "notification_times": {
+                    "breakfast": follower.notification_time_breakfast,
+                    "lunch": follower.notification_time_lunch,
+                    "dinner": follower.notification_time_dinner
+                }
+            }
+        }
+
+    else:
+        # Actualizar todos los planes activos del usuario
+        active_followers = db.query(NutritionPlanFollower).join(
+            NutritionPlan
+        ).filter(
+            NutritionPlanFollower.user_id == db_user.id,
+            NutritionPlanFollower.is_active == True,
+            NutritionPlan.gym_id == current_gym.id
+        ).all()
+
+        if not active_followers:
+            raise HTTPException(status_code=404, detail="No tienes planes activos")
+
+        updated_count = 0
+        for follower in active_followers:
+            if "enabled" in settings:
+                follower.notifications_enabled = settings["enabled"]
+
+            if "notification_times" in settings:
+                times = settings["notification_times"]
+                if "breakfast" in times:
+                    follower.notification_time_breakfast = times["breakfast"]
+                if "lunch" in times:
+                    follower.notification_time_lunch = times["lunch"]
+                if "dinner" in times:
+                    follower.notification_time_dinner = times["dinner"]
+
+            updated_count += 1
+
+        db.commit()
+
+        return {
+            "success": True,
+            "message": f"Configuración actualizada para {updated_count} planes",
+            "plans_updated": updated_count,
+            "updated_settings": settings
+        }
+
+
+@router.post(
+    "/notifications/test",
+    response_model=Dict[str, Any],
+    summary="Enviar notificación de prueba",
+    description="""
+    Envía una notificación de prueba al usuario para verificar que las notificaciones están funcionando.
+
+    **Tipos de Prueba:**
+    - meal_reminder: Recordatorio de comida
+    - achievement: Logro desbloqueado
+    - daily_plan: Plan del día
+
+    **Permisos:**
+    - Usuario autenticado
+    """
+)
+def send_test_notification(
+    notification_type: str = "meal_reminder",
+    db: Session = Depends(get_db),
+    current_user: Auth0User = Depends(get_current_user),
+    current_gym: Gym = Depends(verify_gym_access)
+) -> Dict[str, Any]:
+    """Enviar notificación de prueba"""
+    from app.services.nutrition_notification_service import nutrition_notification_service
+
+    # Obtener usuario local
+    db_user = user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
+    if not db_user:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+
+    # Validar tipo de notificación
+    valid_types = ["meal_reminder", "achievement", "daily_plan"]
+    if notification_type not in valid_types:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Tipo de notificación inválido. Opciones: {', '.join(valid_types)}"
+        )
+
+    try:
+        success = False
+
+        if notification_type == "meal_reminder":
+            success = nutrition_notification_service.send_meal_reminder(
+                db=db,
+                user_id=db_user.id,
+                meal_type="lunch",
+                meal_name="Comida de Prueba",
+                plan_title="Plan de Prueba",
+                gym_id=current_gym.id
+            )
+
+        elif notification_type == "achievement":
+            success = nutrition_notification_service.send_achievement_notification(
+                db=db,
+                user_id=db_user.id,
+                achievement_type="week_streak",
+                gym_id=current_gym.id
+            )
+
+        elif notification_type == "daily_plan":
+            # Simular notificación de plan diario
+            from app.services.notification_service import notification_service
+            result = notification_service.send_to_users(
+                user_ids=[str(db_user.id)],
+                title="📋 Notificación de Prueba",
+                message="Tu sistema de notificaciones está funcionando correctamente",
+                data={
+                    "type": "test",
+                    "notification_type": notification_type
+                },
+                db=db
+            )
+            success = result.get("success", False)
+
+        if success:
+            return {
+                "success": True,
+                "message": "Notificación de prueba enviada exitosamente",
+                "notification_type": notification_type
+            }
+        else:
+            return {
+                "success": False,
+                "message": "No se pudo enviar la notificación. Verifica que tengas la app instalada y las notificaciones habilitadas",
+                "notification_type": notification_type
+            }
+
+    except Exception as e:
+        logger.error(f"Error sending test notification: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail="Error al enviar la notificación de prueba"
+        )
+
+
+
+@router.get(
+    "/notifications/analytics",
+    response_model=Dict[str, Any],
+    summary="Obtener analytics de notificaciones",
+    description="""
+    Obtiene estadísticas de notificaciones enviadas en los últimos días.
+
+    **Métricas Disponibles:**
+    - Total de notificaciones enviadas y fallidas
+    - Tasa de éxito
+    - Desglose por tipo de comida
+    - Tendencia diaria
+
+    **Permisos:**
+    - Solo administradores y entrenadores
+    """
+)
+def get_notifications_analytics(
+    days: int = Query(default=7, ge=1, le=30, description="Número de días a analizar"),
+    db: Session = Depends(get_db),
+    current_user: Auth0User = Depends(get_current_user),
+    current_gym: Gym = Depends(verify_gym_access)
+) -> Dict[str, Any]:
+    """Obtener analytics de notificaciones de nutrición"""
+    from app.services.nutrition_notification_service import get_notification_analytics
+
+    # Obtener analytics
+    analytics = get_notification_analytics(current_gym.id, days)
+
+    return analytics
+
+
+@router.get(
+    "/notifications/status",
+    response_model=Dict[str, Any],
+    summary="Obtener estado de notificaciones del usuario",
+    description="""
+    Obtiene el estado de notificaciones del usuario actual.
+
+    **Información Devuelta:**
+    - Notificaciones enviadas hoy por tipo de comida
+    - Última notificación recibida
+    - Días de racha
+
+    **Permisos:**
+    - Usuario autenticado
+    """
+)
+def get_my_notification_status(
+    db: Session = Depends(get_db),
+    current_user: Auth0User = Depends(get_current_user),
+    current_gym: Gym = Depends(verify_gym_access)
+) -> Dict[str, Any]:
+    """Obtener estado de notificaciones del usuario"""
+    from app.services.nutrition_notification_service import get_user_notification_status
+
+    # Obtener usuario local
+    db_user = user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
+    if not db_user:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+
+    # Obtener estado
+    status = get_user_notification_status(db_user.id, current_gym.id)
+
+    return status

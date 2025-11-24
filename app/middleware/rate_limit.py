@@ -61,23 +61,28 @@ RATE_LIMITS = {
     "login": "5 per minute",
     "register": "3 per minute",
     "password_reset": "2 per minute",
-    
+
     # Endpoints de billing (críticos)
     "billing_create": "5 per minute",
     "billing_webhook": "100 per minute",  # Webhooks de Stripe pueden ser frecuentes
     "stripe_checkout": "10 per minute",
-    
+
     # Endpoints de API general
     "api_read": "200 per minute",
     "api_write": "50 per minute",
-    
+
     # Endpoints de chat
     "chat_send": "30 per minute",
     "chat_read": "100 per minute",
-    
+
     # Endpoints de uploads
     "file_upload": "10 per minute",
-    
+
+    # Endpoints de notificaciones de nutrición
+    "nutrition_notification_test": "5 per hour",
+    "nutrition_notification_settings": "10 per hour",
+    "nutrition_notification_read": "60 per minute",
+
     # Endpoints públicos
     "public": "500 per hour"
 }
@@ -85,7 +90,7 @@ RATE_LIMITS = {
 def get_rate_limit_for_endpoint(request: Request) -> str:
     """Determinar el límite de velocidad basado en el endpoint"""
     path = request.url.path.lower()
-    
+
     # Endpoints críticos de autenticación
     if any(x in path for x in ["/auth/login", "/auth/token"]):
         return RATE_LIMITS["login"]
@@ -95,7 +100,7 @@ def get_rate_limit_for_endpoint(request: Request) -> str:
         return RATE_LIMITS["password_reset"]
     elif "/auth/" in path:
         return RATE_LIMITS["auth"]
-    
+
     # Endpoints de billing
     elif any(x in path for x in ["/memberships/create", "/memberships/subscribe"]):
         return RATE_LIMITS["billing_create"]
@@ -103,23 +108,31 @@ def get_rate_limit_for_endpoint(request: Request) -> str:
         return RATE_LIMITS["billing_webhook"]
     elif any(x in path for x in ["/checkout", "/payment"]):
         return RATE_LIMITS["stripe_checkout"]
-    
+
+    # Endpoints de notificaciones de nutrición (antes de chat para mayor especificidad)
+    elif "/nutrition/notifications/test" in path:
+        return RATE_LIMITS["nutrition_notification_test"]
+    elif "/nutrition/notifications/settings" in path and request.method in ["PUT", "POST"]:
+        return RATE_LIMITS["nutrition_notification_settings"]
+    elif "/nutrition/notifications" in path:
+        return RATE_LIMITS["nutrition_notification_read"]
+
     # Endpoints de chat
     elif "/chat/" in path and request.method == "POST":
         return RATE_LIMITS["chat_send"]
     elif "/chat/" in path:
         return RATE_LIMITS["chat_read"]
-    
+
     # Endpoints de uploads
     elif any(x in path for x in ["/upload", "/file"]):
         return RATE_LIMITS["file_upload"]
-    
+
     # Endpoints de API por método
     elif request.method in ["POST", "PUT", "DELETE", "PATCH"]:
         return RATE_LIMITS["api_write"]
     elif request.method == "GET":
         return RATE_LIMITS["api_read"]
-    
+
     # Default para endpoints públicos
     else:
         return RATE_LIMITS["public"]
