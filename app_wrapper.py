@@ -24,7 +24,9 @@ def check_and_install_dependencies():
         'uvicorn': 'uvicorn', 
         'supabase': 'supabase==2.15.0', 
         'stream_chat': 'stream-chat==4.23.0', # Actualizar a versión encontrada
-        'apscheduler': 'apscheduler==3.11.0' # Añadir APScheduler
+        'apscheduler': 'apscheduler==3.11.0', # Añadir APScheduler
+        # Imagenes usadas por MediaService (PIL)
+        'PIL': 'Pillow==10.1.0',
     }
     missing_install_failed = False
     

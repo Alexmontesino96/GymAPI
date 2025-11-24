@@ -72,7 +72,11 @@ class EventCreateBase(EventBase):
         if values.get('is_paid') and v is None:
             raise ValueError("Debe especificar una política de reembolso para eventos de pago")
         if not values.get('is_paid') and v is not None:
-            raise ValueError("No se puede establecer política de reembolso para eventos gratuitos")
+            raise ValueError(
+                "No se puede establecer política de reembolso para eventos gratuitos. "
+                "Para eventos con is_paid=false, omita los campos: refund_policy, "
+                "refund_deadline_hours, partial_refund_percentage, price_cents"
+            )
         return v
 
 

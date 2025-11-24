@@ -26,6 +26,13 @@ from app.db.redis_client import initialize_redis_pool, close_redis_client
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
+# Importar Prometheus
+from app.core.metrics import (
+    setup_metrics,
+    get_instrumentator,
+    setup_metrics_endpoint
+)
+
 logger = logging.getLogger(__name__) # Mantener o ajustar según necesidad
 
 # Obtener la instancia de configuración al inicio del módulo
@@ -34,7 +41,7 @@ settings_instance = get_settings()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Lifespan: Startup iniciado...")
-    
+
     # Iniciar el scheduler
     try:
         scheduler = init_scheduler()
@@ -53,6 +60,16 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Lifespan: Error al inicializar Redis connection pool: {e}", exc_info=True)
     print(f"Lifespan: Conexión Redis {'EXITOSA' if redis_connected else 'FALLIDA'}.")
+
+    # Inicializar métricas de Prometheus
+    try:
+        setup_metrics(
+            app_version=settings_instance.VERSION,
+            environment="production" if not settings_instance.DEBUG_MODE else "development"
+        )
+        logger.info("Lifespan: Métricas de Prometheus inicializadas.")
+    except Exception as e:
+        logger.error(f"Lifespan: Error al inicializar métricas de Prometheus: {e}", exc_info=True)
     
     yield # Aplicación en ejecución
     
@@ -194,6 +211,10 @@ app.add_middleware(
 
 # Incluir routers
 app.include_router(api_router, prefix=settings_instance.API_V1_STR)
+
+# Configurar Prometheus
+instrumentator = get_instrumentator()
+instrumentator.instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)
 
 # Ruta raíz
 @app.get("/")
