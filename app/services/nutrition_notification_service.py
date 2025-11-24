@@ -150,6 +150,55 @@ class NutritionNotificationService:
         except Exception as e:
             logger.warning(f"Redis metrics error: {e}")
 
+    def _audit_notification(
+        self,
+        redis_client,
+        gym_id: int,
+        user_id: int,
+        notification_type: str,
+        status: str,
+        details: Optional[Dict] = None
+    ):
+        """
+        Registrar notificación en el log de auditoría.
+
+        Args:
+            redis_client: Cliente Redis
+            gym_id: ID del gimnasio
+            user_id: ID del usuario
+            notification_type: Tipo de notificación (meal_reminder, achievement, etc)
+            status: Estado (sent, queued, failed, skipped)
+            details: Detalles adicionales
+        """
+        if not redis_client:
+            return
+
+        try:
+            timestamp = datetime.now(timezone).isoformat() if 'timezone' in dir() else datetime.now().isoformat()
+            audit_entry = {
+                "timestamp": timestamp,
+                "gym_id": gym_id,
+                "user_id": user_id,
+                "type": notification_type,
+                "status": status,
+                "details": details or {}
+            }
+
+            # Guardar en lista de auditoría por gym (últimas 1000 entradas)
+            audit_key = f"nutrition:audit:{gym_id}"
+            redis_client.lpush(audit_key, json.dumps(audit_entry))
+            redis_client.ltrim(audit_key, 0, 999)  # Mantener solo las últimas 1000
+            redis_client.expire(audit_key, 86400 * 30)  # 30 días TTL
+
+            # Guardar también por usuario (últimas 100 entradas)
+            user_audit_key = f"nutrition:audit:user:{user_id}"
+            redis_client.lpush(user_audit_key, json.dumps(audit_entry))
+            redis_client.ltrim(user_audit_key, 0, 99)  # Mantener solo las últimas 100
+            redis_client.expire(user_audit_key, 86400 * 30)
+
+        except Exception as e:
+            logger.warning(f"Redis audit error: {e}")
+
     def send_meal_reminder(
         self,
         db: Session,
@@ -236,6 +285,12 @@ class NutritionNotificationService:
                         redis_client, user_id, f"meal_{meal_type}", today_str
                     )
                     self._increment_metric(redis_client, gym_id, f"meal_reminder_{meal_type}_queued")
+                    # Auditoría
+                    self._audit_notification(
+                        redis_client, gym_id, user_id,
+                        f"meal_reminder_{meal_type}", "queued",
+                        {"meal_name": meal_name, "plan_title": plan_title}
+                    )
                     logger.info(f"Meal reminder queued in SQS for user {user_id}, meal {meal_type}")
                     return True
                 else:
@@ -262,11 +317,23 @@ class NutritionNotificationService:
                 )
                 # Incrementar métrica
                 self._increment_metric(redis_client, gym_id, f"meal_reminder_{meal_type}_sent")
+                # Auditoría
+                self._audit_notification(
+                    redis_client, gym_id, user_id,
+                    f"meal_reminder_{meal_type}", "sent",
+                    {"meal_name": meal_name, "plan_title": plan_title, "direct": True}
+                )
                 logger.info(f"Meal reminder sent directly to user {user_id} for {meal_type}")
                 return True
 
             # Incrementar métrica de fallo
             self._increment_metric(redis_client, gym_id, f"meal_reminder_{meal_type}_failed")
+            # Auditoría de fallo
+            self._audit_notification(
+                redis_client, gym_id, user_id,
+                f"meal_reminder_{meal_type}", "failed",
+                {"meal_name": meal_name, "error": result.get("errors", "Unknown error")}
+            )
             return False
 
         except Exception as e:
@@ -865,12 +932,38 @@ class NutritionNotificationService:
 
 # Funciones para usar con APScheduler
 
-def send_meal_reminders_job(gym_id: int, meal_type: str, scheduled_time: str):
+def get_active_gyms_with_nutrition() -> List[int]:
     """
-    Job para enviar recordatorios de comidas.
-    Ejecutar con APScheduler a las horas configuradas.
+    Obtener IDs de gimnasios activos que tienen el módulo de nutrición habilitado.
 
-    Usa SQS si está disponible (batch enqueue), si no envía directamente.
+    Returns:
+        Lista de gym_ids con nutrición activa
+    """
+    from app.db.session import SessionLocal
+    from app.models.gym import Gym
+
+    db = SessionLocal()
+    try:
+        # Obtener gyms activos con módulo de nutrición
+        # Verificamos que tengan planes de nutrición activos
+        gyms_with_nutrition = db.query(NutritionPlan.gym_id).filter(
+            NutritionPlan.is_active == True
+        ).distinct().all()
+
+        gym_ids = [g[0] for g in gyms_with_nutrition]
+        logger.debug(f"Found {len(gym_ids)} gyms with active nutrition plans")
+        return gym_ids
+
+    except Exception as e:
+        logger.error(f"Error getting active gyms: {e}")
+        return []
+    finally:
+        db.close()
+
+
+def send_meal_reminders_job_single_gym(gym_id: int, meal_type: str, scheduled_time: str):
+    """
+    Job para enviar recordatorios de comidas a un gimnasio específico.
 
     Args:
         gym_id: ID del gimnasio
@@ -883,7 +976,6 @@ def send_meal_reminders_job(gym_id: int, meal_type: str, scheduled_time: str):
 
     db = SessionLocal()
     try:
-        # Usar el nuevo método batch que maneja SQS automáticamente
         notification_srv = NutritionNotificationService()
         results = notification_srv.batch_enqueue_meal_reminders(
             db=db,
@@ -893,16 +985,73 @@ def send_meal_reminders_job(gym_id: int, meal_type: str, scheduled_time: str):
         )
 
         logger.info(
-            f"Meal reminders job completed for {meal_type}: "
-            f"method={results['method']}, users_found={results['users_found']}, "
-            f"queued={results['queued']}, skipped={results['skipped_duplicate']}, "
-            f"failed={results['failed']}"
+            f"Meal reminders for gym {gym_id}, {meal_type}: "
+            f"method={results['method']}, users={results['users_found']}, "
+            f"queued={results['queued']}, skipped={results['skipped_duplicate']}"
         )
 
+        return results
+
     except Exception as e:
-        logger.error(f"Error in send_meal_reminders_job: {str(e)}")
+        logger.error(f"Error in send_meal_reminders_job for gym {gym_id}: {str(e)}")
+        return {"error": str(e)}
     finally:
         db.close()
+
+
+def send_meal_reminders_job(gym_id: int, meal_type: str, scheduled_time: str):
+    """
+    Job para enviar recordatorios de comidas.
+    DEPRECATED: Usar send_meal_reminders_all_gyms_job para soporte multi-gym.
+
+    Args:
+        gym_id: ID del gimnasio
+        meal_type: Tipo de comida (breakfast, lunch, dinner)
+        scheduled_time: Hora programada (formato HH:MM)
+    """
+    return send_meal_reminders_job_single_gym(gym_id, meal_type, scheduled_time)
+
+
+def send_meal_reminders_all_gyms_job(meal_type: str, scheduled_time: str):
+    """
+    Job para enviar recordatorios de comidas a TODOS los gimnasios activos.
+    Este es el job recomendado para el scheduler.
+
+    Args:
+        meal_type: Tipo de comida (breakfast, lunch, dinner)
+        scheduled_time: Hora programada (formato HH:MM)
+    """
+    logger.info(f"Running meal reminders for ALL gyms: {meal_type} at {scheduled_time}")
+
+    gym_ids = get_active_gyms_with_nutrition()
+
+    if not gym_ids:
+        logger.info("No active gyms with nutrition found")
+        return
+
+    total_stats = {
+        "gyms_processed": 0,
+        "total_users": 0,
+        "total_queued": 0,
+        "total_failed": 0
+    }
+
+    for gym_id in gym_ids:
+        try:
+            results = send_meal_reminders_job_single_gym(gym_id, meal_type, scheduled_time)
+            if "error" not in results:
+                total_stats["gyms_processed"] += 1
+                total_stats["total_users"] += results.get("users_found", 0)
+                total_stats["total_queued"] += results.get("queued", 0)
+                total_stats["total_failed"] += results.get("failed", 0)
+        except Exception as e:
+            logger.error(f"Error processing gym {gym_id}: {e}")
+
+    logger.info(
+        f"Meal reminders ALL GYMS completed for {meal_type} at {scheduled_time}: "
+        f"gyms={total_stats['gyms_processed']}, users={total_stats['total_users']}, "
+        f"queued={total_stats['total_queued']}, failed={total_stats['total_failed']}"
+    )
 
 
 def check_live_plan_status_job():
@@ -1227,6 +1376,156 @@ def get_user_notification_status(user_id: int, gym_id: int) -> Dict[str, Any]:
         logger.error(f"Error getting user notification status: {e}")
 
     return status
+
+
+def get_notification_audit_log(
+    gym_id: int,
+    limit: int = 100,
+    user_id: Optional[int] = None
+) -> Dict[str, Any]:
+    """
+    Obtener log de auditoría de notificaciones.
+
+    Args:
+        gym_id: ID del gimnasio
+        limit: Número máximo de entradas a devolver (default 100)
+        user_id: Filtrar por usuario específico (opcional)
+
+    Returns:
+        Dict con entradas de auditoría
+    """
+    audit_log = {
+        "gym_id": gym_id,
+        "user_id": user_id,
+        "entries": [],
+        "total_entries": 0,
+        "retrieved_at": datetime.now().isoformat()
+    }
+
+    try:
+        import redis
+        from app.core.config import get_settings
+        settings = get_settings()
+
+        redis_client = None
+        if settings.REDIS_URL:
+            redis_client = redis.from_url(settings.REDIS_URL, decode_responses=True)
+
+        if not redis_client:
+            return audit_log
+
+        # Determinar qué clave usar
+        if user_id:
+            audit_key = f"nutrition:audit:user:{user_id}"
+        else:
+            audit_key = f"nutrition:audit:{gym_id}"
+
+        # Obtener entradas
+        raw_entries = redis_client.lrange(audit_key, 0, limit - 1)
+        audit_log["total_entries"] = redis_client.llen(audit_key)
+
+        for entry_str in raw_entries:
+            try:
+                entry = json.loads(entry_str)
+                # Filtrar por gym si estamos viendo auditoría de usuario
+                if user_id and entry.get("gym_id") != gym_id:
+                    continue
+                audit_log["entries"].append(entry)
+            except json.JSONDecodeError:
+                continue
+
+    except Exception as e:
+        logger.error(f"Error getting audit log: {e}")
+
+    return audit_log
+
+
+def get_notification_audit_summary(gym_id: int, hours: int = 24) -> Dict[str, Any]:
+    """
+    Obtener resumen de auditoría de las últimas N horas.
+
+    Args:
+        gym_id: ID del gimnasio
+        hours: Número de horas a analizar (default 24)
+
+    Returns:
+        Dict con resumen de auditoría
+    """
+    summary = {
+        "gym_id": gym_id,
+        "period_hours": hours,
+        "total_notifications": 0,
+        "by_status": {
+            "sent": 0,
+            "queued": 0,
+            "failed": 0,
+            "skipped": 0
+        },
+        "by_type": {},
+        "unique_users": set(),
+        "last_activity": None,
+        "generated_at": datetime.now().isoformat()
+    }
+
+    try:
+        import redis
+        from app.core.config import get_settings
+        settings = get_settings()
+
+        redis_client = None
+        if settings.REDIS_URL:
+            redis_client = redis.from_url(settings.REDIS_URL, decode_responses=True)
+
+        if not redis_client:
+            summary["unique_users"] = 0
+            return summary
+
+        audit_key = f"nutrition:audit:{gym_id}"
+        cutoff_time = datetime.now() - timedelta(hours=hours)
+
+        # Obtener todas las entradas (máximo 1000)
+        raw_entries = redis_client.lrange(audit_key, 0, 999)
+
+        for entry_str in raw_entries:
+            try:
+                entry = json.loads(entry_str)
+                entry_time = datetime.fromisoformat(entry.get("timestamp", ""))
+
+                # Solo incluir entradas dentro del período
+                if entry_time < cutoff_time:
+                    continue
+
+                summary["total_notifications"] += 1
+
+                # Por estado
+                status = entry.get("status", "unknown")
+                if status in summary["by_status"]:
+                    summary["by_status"][status] += 1
+
+                # Por tipo
+                notif_type = entry.get("type", "unknown")
+                if notif_type not in summary["by_type"]:
+                    summary["by_type"][notif_type] = 0
+                summary["by_type"][notif_type] += 1
+
+                # Usuarios únicos
+                summary["unique_users"].add(entry.get("user_id"))
+
+                # Última actividad
+                if summary["last_activity"] is None or entry_time > datetime.fromisoformat(summary["last_activity"]):
+                    summary["last_activity"] = entry.get("timestamp")
+
+            except (json.JSONDecodeError, ValueError):
+                continue
+
+        # Convertir set a conteo
+        summary["unique_users"] = len(summary["unique_users"])
+
+    except Exception as e:
+        logger.error(f"Error getting audit summary: {e}")
+        summary["unique_users"] = 0
+
+    return summary
 
 
 # Instancia global del servicio

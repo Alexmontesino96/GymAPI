@@ -427,28 +427,24 @@ def init_scheduler():
     )
 
     # ============================================================================
-    # JOBS DE NUTRICIÓN
+    # JOBS DE NUTRICIÓN (Multi-gym support)
     # ============================================================================
 
     # Importar funciones de nutrición
     try:
         from app.services.nutrition_notification_service import (
-            send_meal_reminders_job,
+            send_meal_reminders_all_gyms_job,
             check_live_plan_status_job,
             check_daily_achievements_job
         )
 
-        # Recordatorios de comidas - ejecutar cada hora en el minuto 00
-        # El job verificará internamente qué usuarios tienen configurado ese horario
-        # Nota: Los recordatorios de comidas se ejecutan cada hora y verifican internamente
-        # qué usuarios tienen configurado ese horario específico
-        # Por ahora usando gym_id=1, esto debería mejorarse para manejar múltiples gimnasios
+        # Recordatorios de comidas - ejecutar cada hora para TODOS los gimnasios
+        # El job itera sobre todos los gyms con nutrición activa
 
-        # Crear jobs específicos para horarios comunes de comidas
         # Desayuno - típicamente entre 6-10 AM
         for hour in [6, 7, 8, 9, 10]:
             _scheduler.add_job(
-                lambda h=hour: send_meal_reminders_job(1, "breakfast", f"{h:02d}:00"),
+                lambda h=hour: send_meal_reminders_all_gyms_job("breakfast", f"{h:02d}:00"),
                 trigger=CronTrigger(hour=hour, minute=0),
                 id=f'nutrition_breakfast_{hour:02d}00',
                 replace_existing=True
@@ -457,7 +453,7 @@ def init_scheduler():
         # Almuerzo - típicamente entre 12-15 PM
         for hour in [12, 13, 14, 15]:
             _scheduler.add_job(
-                lambda h=hour: send_meal_reminders_job(1, "lunch", f"{h:02d}:00"),
+                lambda h=hour: send_meal_reminders_all_gyms_job("lunch", f"{h:02d}:00"),
                 trigger=CronTrigger(hour=hour, minute=0),
                 id=f'nutrition_lunch_{hour:02d}00',
                 replace_existing=True
@@ -466,7 +462,7 @@ def init_scheduler():
         # Cena - típicamente entre 19-22 PM
         for hour in [19, 20, 21, 22]:
             _scheduler.add_job(
-                lambda h=hour: send_meal_reminders_job(1, "dinner", f"{h:02d}:00"),
+                lambda h=hour: send_meal_reminders_all_gyms_job("dinner", f"{h:02d}:00"),
                 trigger=CronTrigger(hour=hour, minute=0),
                 id=f'nutrition_dinner_{hour:02d}00',
                 replace_existing=True
@@ -488,7 +484,7 @@ def init_scheduler():
             replace_existing=True
         )
 
-        logger.info("Nutrition notification jobs added to scheduler")
+        logger.info("Nutrition notification jobs added to scheduler (multi-gym enabled)")
 
     except ImportError as e:
         logger.warning(f"Could not import nutrition notification jobs: {e}")

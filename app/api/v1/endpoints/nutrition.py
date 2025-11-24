@@ -2800,3 +2800,94 @@ def get_my_notification_status(
     status = get_user_notification_status(db_user.id, current_gym.id)
 
     return status
+
+
+# ============================================================================
+# ENDPOINTS DE AUDITORÍA (Solo Admin/Trainer)
+# ============================================================================
+
+@router.get(
+    "/notifications/audit",
+    response_model=Dict[str, Any],
+    summary="Obtener log de auditoría de notificaciones",
+    description="Obtiene el historial de notificaciones enviadas. Solo Admin/Trainer."
+)
+async def get_audit_log(
+    limit: int = Query(100, ge=1, le=500, description="Número máximo de entradas"),
+    user_id: Optional[int] = Query(None, description="Filtrar por usuario específico"),
+    db: Session = Depends(get_db),
+    current_user: Auth0User = Depends(get_current_user),
+    current_gym: Gym = Depends(get_current_gym)
+) -> Dict[str, Any]:
+    """
+    Obtener log de auditoría de notificaciones.
+
+    Solo accesible por Admin y Trainer.
+    Muestra las últimas N notificaciones enviadas con detalles.
+    """
+    from app.services.nutrition_notification_service import get_notification_audit_log
+
+    # Verificar permisos (admin o trainer)
+    db_user = user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
+    if not db_user:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+
+    user_gym = user_service.get_user_gym(db, db_user.id, current_gym.id)
+    if not user_gym or user_gym.role not in ["admin", "trainer"]:
+        raise HTTPException(
+            status_code=403,
+            detail="Solo administradores y entrenadores pueden ver la auditoría"
+        )
+
+    # Obtener auditoría
+    audit_log = get_notification_audit_log(
+        gym_id=current_gym.id,
+        limit=limit,
+        user_id=user_id
+    )
+
+    return audit_log
+
+
+@router.get(
+    "/notifications/audit/summary",
+    response_model=Dict[str, Any],
+    summary="Obtener resumen de auditoría",
+    description="Obtiene un resumen de las notificaciones de las últimas N horas."
+)
+async def get_audit_summary(
+    hours: int = Query(24, ge=1, le=168, description="Número de horas a analizar"),
+    db: Session = Depends(get_db),
+    current_user: Auth0User = Depends(get_current_user),
+    current_gym: Gym = Depends(get_current_gym)
+) -> Dict[str, Any]:
+    """
+    Obtener resumen de auditoría de las últimas N horas.
+
+    Incluye:
+    - Total de notificaciones
+    - Desglose por estado (sent, queued, failed)
+    - Desglose por tipo de notificación
+    - Número de usuarios únicos notificados
+    """
+    from app.services.nutrition_notification_service import get_notification_audit_summary
+
+    # Verificar permisos (admin o trainer)
+    db_user = user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
+    if not db_user:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+
+    user_gym = user_service.get_user_gym(db, db_user.id, current_gym.id)
+    if not user_gym or user_gym.role not in ["admin", "trainer"]:
+        raise HTTPException(
+            status_code=403,
+            detail="Solo administradores y entrenadores pueden ver la auditoría"
+        )
+
+    # Obtener resumen
+    summary = get_notification_audit_summary(
+        gym_id=current_gym.id,
+        hours=hours
+    )
+
+    return summary
