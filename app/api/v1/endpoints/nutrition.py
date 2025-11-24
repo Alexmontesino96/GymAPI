@@ -2817,7 +2817,7 @@ async def get_audit_log(
     user_id: Optional[int] = Query(None, description="Filtrar por usuario específico"),
     db: Session = Depends(get_db),
     current_user: Auth0User = Depends(get_current_user),
-    current_gym: Gym = Depends(get_current_gym)
+    current_gym: Gym = Depends(verify_gym_access)
 ) -> Dict[str, Any]:
     """
     Obtener log de auditoría de notificaciones.
@@ -2859,7 +2859,7 @@ async def get_audit_summary(
     hours: int = Query(24, ge=1, le=168, description="Número de horas a analizar"),
     db: Session = Depends(get_db),
     current_user: Auth0User = Depends(get_current_user),
-    current_gym: Gym = Depends(get_current_gym)
+    current_gym: Gym = Depends(verify_gym_access)
 ) -> Dict[str, Any]:
     """
     Obtener resumen de auditoría de las últimas N horas.
