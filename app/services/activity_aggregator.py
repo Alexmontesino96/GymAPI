@@ -12,9 +12,7 @@ from sqlalchemy import func, and_, or_
 import logging
 
 from app.services.activity_feed_service import ActivityFeedService
-from app.models.class_participation import ClassParticipation
-from app.models.class_session import ClassSession
-from app.models.user_achievement import UserAchievement
+from app.models.schedule import ClassParticipation, ClassSession
 from app.models.user import User
 
 logger = logging.getLogger(__name__)

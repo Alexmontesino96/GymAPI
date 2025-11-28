@@ -15,8 +15,7 @@ from app.db.session import get_db
 from app.services.activity_feed_service import ActivityFeedService
 from app.services.activity_aggregator import ActivityAggregator
 from app.models.gym import Gym
-from app.models.class_participation import ClassParticipation
-from app.models.class_session import ClassSession
+from app.models.schedule import ClassParticipation, ClassSession, ClassParticipationStatus
 from sqlalchemy import and_, func
 from sqlalchemy.orm import Session
 
@@ -118,13 +117,13 @@ async def update_realtime_counters():
             now = datetime.utcnow()
             two_hours_ago = now.replace(hour=now.hour-2 if now.hour >= 2 else 0)
 
-            active_count = db.query(func.count(ClassParticipation.user_id.distinct())).join(
+            active_count = db.query(func.count(ClassParticipation.member_id.distinct())).join(
                 ClassSession
             ).filter(
                 and_(
                     ClassSession.gym_id == gym.id,
-                    ClassSession.scheduled_at >= two_hours_ago,
-                    ClassParticipation.attended == True
+                    ClassSession.start_time >= two_hours_ago,
+                    ClassParticipation.status == ClassParticipationStatus.ATTENDED
                 )
             ).scalar() or 0
 
@@ -210,10 +209,10 @@ async def update_daily_rankings():
             ).join(ClassSession).filter(
                 and_(
                     ClassSession.gym_id == gym.id,
-                    ClassSession.scheduled_at >= today_start,
-                    ClassParticipation.attended == True
+                    ClassSession.start_time >= today_start,
+                    ClassParticipation.status == ClassParticipationStatus.ATTENDED
                 )
-            ).group_by(ClassParticipation.user_id).all()
+            ).group_by(ClassParticipation.member_id).all()
 
             # Extraer solo los valores (sin IDs de usuario)
             values = [count[0] for count in attendance_counts if count[0] > 0]
