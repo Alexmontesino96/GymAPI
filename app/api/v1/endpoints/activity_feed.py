@@ -22,7 +22,6 @@ from app.core.dependencies import module_enabled
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
-    prefix="/activity-feed",
     tags=["Activity Feed"]
     # dependencies=[module_enabled("activity_feed")]  # TODO: Agregar módulo a BD
 )
