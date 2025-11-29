@@ -424,7 +424,7 @@ class ActivityFeedService:
         Args:
             gym_id: ID del gimnasio
             ranking_type: Tipo de ranking (consistency, attendance, etc)
-            entries: Lista de dicts con {name, value}
+            entries: Lista de dicts con {user_id, name, value}
             period: Período del ranking
 
         Returns:
@@ -432,26 +432,34 @@ class ActivityFeedService:
         """
         key = f"gym:{gym_id}:rankings:{period}:{ranking_type}"
         names_key = f"gym:{gym_id}:rankings:{period}:{ranking_type}:names"
+        users_key = f"gym:{gym_id}:rankings:{period}:{ranking_type}:users"
 
         # Limpiar ranking anterior
         await self.redis.delete(key)
         await self.redis.delete(names_key)
+        await self.redis.delete(users_key)
 
-        # Agregar valores con nombres
+        # Agregar valores con nombres y user_ids
         names_map = {}
+        users_map = {}
         for i, entry in enumerate(entries[:20]):  # Top 20
             member_key = f"pos_{i+1}"
             await self.redis.zadd(key, {member_key: entry["value"]})
             names_map[member_key] = entry["name"]
+            if entry.get("user_id"):
+                users_map[member_key] = str(entry["user_id"])
 
-        # Guardar nombres en hash separado
+        # Guardar nombres y user_ids en hashes separados
         if names_map:
             await self.redis.hset(names_key, mapping=names_map)
+        if users_map:
+            await self.redis.hset(users_key, mapping=users_map)
 
         # Establecer TTL según período
         ttl = self.TTL_CONFIG.get(period, self.TTL_CONFIG["weekly"])
         await self.redis.expire(key, ttl)
         await self.redis.expire(names_key, ttl)
+        await self.redis.expire(users_key, ttl)
 
         logger.info(f"Ranking con nombres actualizado: {ranking_type} con {len(entries)} entradas")
 
@@ -469,7 +477,7 @@ class ActivityFeedService:
         limit: int = 10
     ) -> List[Dict]:
         """
-        Obtiene rankings (con nombres si están disponibles).
+        Obtiene rankings (con nombres y user_id si están disponibles).
 
         Args:
             gym_id: ID del gimnasio
@@ -478,31 +486,43 @@ class ActivityFeedService:
             limit: Número de posiciones a mostrar
 
         Returns:
-            Lista con las posiciones del ranking
+            Lista con las posiciones del ranking incluyendo user_id para foto
         """
         key = f"gym:{gym_id}:rankings:{period}:{ranking_type}"
         names_key = f"gym:{gym_id}:rankings:{period}:{ranking_type}:names"
+        users_key = f"gym:{gym_id}:rankings:{period}:{ranking_type}:users"
 
         # Obtener top scores
         top_scores = await self.redis.zrevrange(key, 0, limit - 1, withscores=True)
 
-        # Intentar obtener nombres
+        # Intentar obtener nombres y user_ids
         names_map = await self.redis.hgetall(names_key)
+        users_map = await self.redis.hgetall(users_key)
 
         rankings = []
         for i, (member, score) in enumerate(top_scores, 1):
             member_str = member.decode() if isinstance(member, bytes) else member
+            member_key = member_str.encode() if isinstance(member_str, str) else member_str
 
             # Buscar nombre si existe
             name = None
             if names_map:
-                name_bytes = names_map.get(member_str.encode() if isinstance(member_str, str) else member_str)
+                name_bytes = names_map.get(member_key)
                 if name_bytes:
                     name = name_bytes.decode() if isinstance(name_bytes, bytes) else name_bytes
+
+            # Buscar user_id si existe
+            user_id = None
+            if users_map:
+                user_id_bytes = users_map.get(member_key)
+                if user_id_bytes:
+                    user_id_str = user_id_bytes.decode() if isinstance(user_id_bytes, bytes) else user_id_bytes
+                    user_id = int(user_id_str)
 
             rankings.append({
                 "position": i,
                 "value": int(score) if score == int(score) else round(score, 1),
+                "user_id": user_id,
                 "name": name,
                 "label": name if name else f"Posición {i}"
             })

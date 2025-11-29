@@ -267,6 +267,7 @@ async def update_daily_rankings():
             # Query para obtener conteos de asistencia con nombres de usuario
             from app.models.user import User
             attendance_data = db.query(
+                User.id.label('user_id'),
                 User.first_name,
                 User.last_name,
                 func.count(ClassParticipation.id).label('attendance_count')
@@ -285,12 +286,13 @@ async def update_daily_rankings():
             ).limit(20).all()
 
             if attendance_data:
-                # Guardar ranking con nombres
+                # Guardar ranking con nombres y user_id para foto de perfil
                 await feed_service.add_named_ranking(
                     gym_id=gym.id,
                     ranking_type="attendance",
                     entries=[
                         {
+                            "user_id": row.user_id,
                             "name": f"{row.first_name} {row.last_name[0]}." if row.last_name else row.first_name,
                             "value": row.attendance_count
                         }
