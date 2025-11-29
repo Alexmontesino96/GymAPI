@@ -7,7 +7,7 @@ estadísticas agregadas y actividades periódicas.
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from typing import List
-from datetime import datetime
+from datetime import datetime, timedelta
 import logging
 
 from app.db.redis_client import get_redis_client
@@ -100,26 +100,62 @@ async def update_realtime_counters():
     """
     Actualiza contadores en tiempo real basados en actividad actual.
 
-    Este job cuenta usuarios activos y actualiza estadísticas en tiempo real.
+    Este job:
+    1. Escanea check-ins de los últimos 5 minutos
+    2. Cuenta usuarios activos en las últimas 2 horas
+    3. Publica actividades al feed con TTL de 24 horas
     """
     logger.info("Actualizando contadores en tiempo real...")
 
+    db = None
     try:
         redis = await get_redis_client()
         feed_service = ActivityFeedService(redis)
 
-        # Obtener gimnasios activos
         db = next(get_db())
         gyms = db.query(Gym).filter(Gym.is_active == True).all()
 
-        for gym in gyms:
-            # Contar usuarios activos en las últimas 2 horas
-            now = datetime.utcnow()
-            two_hours_ago = now.replace(hour=now.hour-2 if now.hour >= 2 else 0)
+        now = datetime.utcnow()
+        five_minutes_ago = now - timedelta(minutes=5)
+        two_hours_ago = now - timedelta(hours=2)
 
-            active_count = db.query(func.count(ClassParticipation.member_id.distinct())).join(
-                ClassSession
+        for gym in gyms:
+            # 1. Detectar nuevos check-ins en los últimos 5 minutos
+            recent_checkins = db.query(
+                ClassSession.id,
+                func.count(ClassParticipation.id).label('count')
+            ).join(
+                ClassParticipation,
+                ClassParticipation.session_id == ClassSession.id
             ).filter(
+                and_(
+                    ClassSession.gym_id == gym.id,
+                    ClassParticipation.status == ClassParticipationStatus.ATTENDED,
+                    ClassParticipation.updated_at >= five_minutes_ago
+                )
+            ).group_by(ClassSession.id).all()
+
+            # Publicar actividad por cada clase con check-ins recientes
+            for session_id, checkin_count in recent_checkins:
+                if checkin_count >= 3:  # Umbral mínimo de privacidad
+                    # Obtener nombre de la clase
+                    session = db.query(ClassSession).filter(ClassSession.id == session_id).first()
+                    class_name = "Clase"
+                    if session and session.class_info:
+                        class_name = session.class_info.name
+
+                    await feed_service.publish_realtime_activity(
+                        gym_id=gym.id,
+                        activity_type="class_checkin",
+                        count=checkin_count,
+                        metadata={"class_name": class_name}
+                    )
+                    logger.debug(f"Gym {gym.id}: {checkin_count} check-ins en {class_name}")
+
+            # 2. Contar total de usuarios activos (últimas 2 horas)
+            active_count = db.query(
+                func.count(ClassParticipation.member_id.distinct())
+            ).join(ClassSession).filter(
                 and_(
                     ClassSession.gym_id == gym.id,
                     ClassSession.start_time >= two_hours_ago,
@@ -127,7 +163,24 @@ async def update_realtime_counters():
                 )
             ).scalar() or 0
 
-            if active_count >= 3:  # Solo publicar si hay suficientes personas
+            # 3. Actualizar contador diario de asistencia
+            daily_attendance_key = f"gym:{gym.id}:daily:attendance"
+            today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+            today_attendance = db.query(
+                func.count(ClassParticipation.id)
+            ).join(ClassSession).filter(
+                and_(
+                    ClassSession.gym_id == gym.id,
+                    ClassSession.start_time >= today_start,
+                    ClassParticipation.status == ClassParticipationStatus.ATTENDED
+                )
+            ).scalar() or 0
+
+            await redis.setex(daily_attendance_key, 86400, today_attendance)
+
+            # 4. Publicar total activo si hay suficientes personas
+            if active_count >= 3:
                 await feed_service.publish_realtime_activity(
                     gym_id=gym.id,
                     activity_type="training_count",
@@ -135,13 +188,17 @@ async def update_realtime_counters():
                     metadata={"source": "scheduled_update"}
                 )
 
-            logger.debug(f"Gym {gym.id}: {active_count} usuarios activos")
+            logger.debug(f"Gym {gym.id}: {active_count} activos, {today_attendance} hoy")
 
-        db.close()
         logger.info("Contadores en tiempo real actualizados")
 
     except Exception as e:
         logger.error(f"Error actualizando contadores en tiempo real: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+    finally:
+        if db:
+            db.close()
 
 
 async def generate_hourly_summary():
@@ -152,6 +209,7 @@ async def generate_hourly_summary():
     """
     logger.info("Generando resumen horario...")
 
+    db = None
     try:
         redis = await get_redis_client()
         feed_service = ActivityFeedService(redis)
@@ -177,21 +235,24 @@ async def generate_hourly_summary():
                     }
                 )
 
-        db.close()
         logger.info("Resúmenes horarios generados")
 
     except Exception as e:
         logger.error(f"Error generando resumen horario: {e}")
+    finally:
+        if db:
+            db.close()
 
 
 async def update_daily_rankings():
     """
-    Actualiza rankings diarios anónimos.
+    Actualiza rankings diarios con nombres de usuarios.
 
-    Calcula y actualiza los top performers del día sin exponer identidades.
+    Calcula y actualiza los top performers del día mostrando nombres.
     """
     logger.info("Actualizando rankings diarios...")
 
+    db = None
     try:
         redis = await get_redis_client()
         feed_service = ActivityFeedService(redis)
@@ -200,51 +261,66 @@ async def update_daily_rankings():
         gyms = db.query(Gym).filter(Gym.is_active == True).all()
 
         for gym in gyms:
-            # Obtener valores de asistencia del día (solo números)
+            # Obtener valores de asistencia del día con nombres
             today_start = datetime.utcnow().replace(hour=0, minute=0, second=0)
 
-            # Query para obtener conteos de asistencia
-            attendance_counts = db.query(
-                func.count(ClassParticipation.id)
-            ).join(ClassSession).filter(
+            # Query para obtener conteos de asistencia con nombres de usuario
+            from app.models.user import User
+            attendance_data = db.query(
+                User.first_name,
+                User.last_name,
+                func.count(ClassParticipation.id).label('attendance_count')
+            ).join(
+                ClassParticipation, ClassParticipation.member_id == User.id
+            ).join(
+                ClassSession, ClassSession.id == ClassParticipation.session_id
+            ).filter(
                 and_(
                     ClassSession.gym_id == gym.id,
                     ClassSession.start_time >= today_start,
                     ClassParticipation.status == ClassParticipationStatus.ATTENDED
                 )
-            ).group_by(ClassParticipation.member_id).all()
+            ).group_by(User.id, User.first_name, User.last_name).order_by(
+                func.count(ClassParticipation.id).desc()
+            ).limit(20).all()
 
-            # Extraer solo los valores (sin IDs de usuario)
-            values = [count[0] for count in attendance_counts if count[0] > 0]
-
-            if values:
-                await feed_service.add_anonymous_ranking(
+            if attendance_data:
+                # Guardar ranking con nombres
+                await feed_service.add_named_ranking(
                     gym_id=gym.id,
                     ranking_type="attendance",
-                    values=sorted(values, reverse=True)[:20],  # Top 20
+                    entries=[
+                        {
+                            "name": f"{row.first_name} {row.last_name[0]}." if row.last_name else row.first_name,
+                            "value": row.attendance_count
+                        }
+                        for row in attendance_data
+                    ],
                     period="daily"
                 )
 
                 # Publicar si hay suficiente actividad
-                if len(values) >= 10:
-                    top_3 = sorted(values, reverse=True)[:3]
+                if len(attendance_data) >= 3:
+                    top_3_names = [f"{row.first_name}" for row in attendance_data[:3]]
                     await feed_service.publish_realtime_activity(
                         gym_id=gym.id,
                         activity_type="motivational",
-                        count=len(values),
+                        count=len(attendance_data),
                         metadata={
-                            "message": f"🥇 Top 3 del día: {top_3[0]}, {top_3[1]}, {top_3[2]} clases",
+                            "message": f"🥇 Top 3 del día: {', '.join(top_3_names)}",
                             "type": "ranking_update"
                         }
                     )
 
             logger.debug(f"Rankings actualizados para gym {gym.id}")
 
-        db.close()
         logger.info("Rankings diarios actualizados")
 
     except Exception as e:
         logger.error(f"Error actualizando rankings: {e}")
+    finally:
+        if db:
+            db.close()
 
 
 async def reset_daily_counters():
@@ -282,6 +358,7 @@ async def generate_motivational_burst():
     """
     logger.info("Generando burst motivacional...")
 
+    db = None
     try:
         redis = await get_redis_client()
         feed_service = ActivityFeedService(redis)
@@ -307,17 +384,20 @@ async def generate_motivational_burst():
                 }
 
                 feed_key = f"gym:{gym.id}:feed:activities"
-                await redis.lpush(feed_key, str(activity))
+                import json
+                await redis.lpush(feed_key, json.dumps(activity))
                 await redis.ltrim(feed_key, 0, 99)
-                await redis.expire(feed_key, 3600)
+                await redis.expire(feed_key, 86400)
 
                 logger.debug(f"Insight motivacional publicado para gym {gym.id}")
 
-        db.close()
         logger.info("Burst motivacional completado")
 
     except Exception as e:
         logger.error(f"Error generando burst motivacional: {e}")
+    finally:
+        if db:
+            db.close()
 
 
 async def cleanup_expired_data():

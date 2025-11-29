@@ -31,7 +31,7 @@ class ActivityFeedService:
         "hourly": 3600,       # 1 hora para resúmenes horarios
         "daily": 86400,       # 24 horas para estadísticas diarias
         "weekly": 604800,     # 7 días para rankings semanales
-        "feed": 3600,         # 1 hora para items del feed
+        "feed": 86400,        # 24 horas para items del feed
     }
 
     # Umbrales mínimos de agregación para privacidad
@@ -411,6 +411,56 @@ class ActivityFeedService:
             "top_values": values[:10] if len(values) >= 10 else values
         }
 
+    async def add_named_ranking(
+        self,
+        gym_id: int,
+        ranking_type: str,
+        entries: List[Dict],
+        period: str = "weekly"
+    ) -> Dict:
+        """
+        Agrega ranking con nombres de usuarios.
+
+        Args:
+            gym_id: ID del gimnasio
+            ranking_type: Tipo de ranking (consistency, attendance, etc)
+            entries: Lista de dicts con {name, value}
+            period: Período del ranking
+
+        Returns:
+            Ranking creado
+        """
+        key = f"gym:{gym_id}:rankings:{period}:{ranking_type}"
+        names_key = f"gym:{gym_id}:rankings:{period}:{ranking_type}:names"
+
+        # Limpiar ranking anterior
+        await self.redis.delete(key)
+        await self.redis.delete(names_key)
+
+        # Agregar valores con nombres
+        names_map = {}
+        for i, entry in enumerate(entries[:20]):  # Top 20
+            member_key = f"pos_{i+1}"
+            await self.redis.zadd(key, {member_key: entry["value"]})
+            names_map[member_key] = entry["name"]
+
+        # Guardar nombres en hash separado
+        if names_map:
+            await self.redis.hset(names_key, mapping=names_map)
+
+        # Establecer TTL según período
+        ttl = self.TTL_CONFIG.get(period, self.TTL_CONFIG["weekly"])
+        await self.redis.expire(key, ttl)
+        await self.redis.expire(names_key, ttl)
+
+        logger.info(f"Ranking con nombres actualizado: {ranking_type} con {len(entries)} entradas")
+
+        return {
+            "type": ranking_type,
+            "period": period,
+            "entries": entries[:20]
+        }
+
     async def get_anonymous_rankings(
         self,
         gym_id: int,
@@ -419,7 +469,7 @@ class ActivityFeedService:
         limit: int = 10
     ) -> List[Dict]:
         """
-        Obtiene rankings anónimos.
+        Obtiene rankings (con nombres si están disponibles).
 
         Args:
             gym_id: ID del gimnasio
@@ -431,16 +481,30 @@ class ActivityFeedService:
             Lista con las posiciones del ranking
         """
         key = f"gym:{gym_id}:rankings:{period}:{ranking_type}"
+        names_key = f"gym:{gym_id}:rankings:{period}:{ranking_type}:names"
 
         # Obtener top scores
         top_scores = await self.redis.zrevrange(key, 0, limit - 1, withscores=True)
 
+        # Intentar obtener nombres
+        names_map = await self.redis.hgetall(names_key)
+
         rankings = []
         for i, (member, score) in enumerate(top_scores, 1):
+            member_str = member.decode() if isinstance(member, bytes) else member
+
+            # Buscar nombre si existe
+            name = None
+            if names_map:
+                name_bytes = names_map.get(member_str.encode() if isinstance(member_str, str) else member_str)
+                if name_bytes:
+                    name = name_bytes.decode() if isinstance(name_bytes, bytes) else name_bytes
+
             rankings.append({
                 "position": i,
                 "value": int(score) if score == int(score) else round(score, 1),
-                "label": f"Posición {i}"
+                "name": name,
+                "label": name if name else f"Posición {i}"
             })
 
         return rankings

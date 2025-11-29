@@ -9,6 +9,7 @@ from typing import Dict, List, Optional
 from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 from sqlalchemy import func, and_, or_
+import json
 import logging
 
 from app.services.activity_feed_service import ActivityFeedService
@@ -273,7 +274,7 @@ class ActivityAggregator:
             }
 
             feed_key = f"gym:{gym_id}:feed:activities"
-            await self.feed_service.redis.lpush(feed_key, activity)
+            await self.feed_service.redis.lpush(feed_key, json.dumps(activity))
 
         logger.info(f"Clase completada: gym={gym_id}, participantes={participants}")
 
@@ -310,7 +311,7 @@ class ActivityAggregator:
             }
 
             feed_key = f"gym:{gym_id}:feed:activities"
-            await self.feed_service.redis.lpush(feed_key, activity)
+            await self.feed_service.redis.lpush(feed_key, json.dumps(activity))
             await self.feed_service.redis.ltrim(feed_key, 0, 99)
             await self.feed_service.redis.expire(feed_key, 3600)
 
@@ -407,7 +408,7 @@ class ActivityAggregator:
             }
 
             feed_key = f"gym:{gym_id}:feed:activities"
-            await self.feed_service.redis.lpush(feed_key, activity)
+            await self.feed_service.redis.lpush(feed_key, json.dumps(activity))
 
     async def _gather_hourly_stats(self, gym_id: int) -> Dict:
         """

@@ -489,6 +489,85 @@ def init_scheduler():
     except ImportError as e:
         logger.warning(f"Could not import nutrition notification jobs: {e}")
 
+    # ============================================================================
+    # JOBS DE ACTIVITY FEED
+    # ============================================================================
+    try:
+        from app.core.activity_feed_jobs import (
+            update_realtime_counters,
+            generate_hourly_summary,
+            update_daily_rankings,
+            reset_daily_counters,
+            generate_motivational_burst,
+            cleanup_expired_data
+        )
+        import asyncio
+
+        def run_async_job(coro_func):
+            """Wrapper para ejecutar jobs async en scheduler síncrono"""
+            def wrapper():
+                try:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    loop.run_until_complete(coro_func())
+                    loop.close()
+                except Exception as e:
+                    logger.error(f"Error en job async: {e}")
+            return wrapper
+
+        # Actualizar contadores cada 5 minutos
+        _scheduler.add_job(
+            run_async_job(update_realtime_counters),
+            trigger=CronTrigger(minute='*/5'),
+            id='activity_feed_realtime',
+            replace_existing=True
+        )
+
+        # Resumen horario
+        _scheduler.add_job(
+            run_async_job(generate_hourly_summary),
+            trigger=CronTrigger(minute=0),
+            id='activity_feed_hourly',
+            replace_existing=True
+        )
+
+        # Rankings diarios a las 23:50
+        _scheduler.add_job(
+            run_async_job(update_daily_rankings),
+            trigger=CronTrigger(hour=23, minute=50),
+            id='activity_feed_rankings',
+            replace_existing=True
+        )
+
+        # Reset contadores diarios a las 00:05
+        _scheduler.add_job(
+            run_async_job(reset_daily_counters),
+            trigger=CronTrigger(hour=0, minute=5),
+            id='activity_feed_reset',
+            replace_existing=True
+        )
+
+        # Mensajes motivacionales cada 30 minutos
+        _scheduler.add_job(
+            run_async_job(generate_motivational_burst),
+            trigger=CronTrigger(minute='*/30'),
+            id='activity_feed_motivational',
+            replace_existing=True
+        )
+
+        # Limpieza cada 2 horas
+        _scheduler.add_job(
+            run_async_job(cleanup_expired_data),
+            trigger=CronTrigger(hour='*/2', minute=15),
+            id='activity_feed_cleanup',
+            replace_existing=True
+        )
+
+        logger.info("Activity Feed jobs added to scheduler")
+
+    except ImportError as e:
+        logger.warning(f"Could not import Activity Feed jobs: {e}")
+
     return _scheduler
 
 
