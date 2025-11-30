@@ -873,7 +873,11 @@ async def update_user_gym_role(
     updated_user_gym = gym_service.update_user_role_in_gym(
         db, user_id=user_id, gym_id=gym_id, role=role_in.role
     )
-    
+
+    # Commit del cambio de rol en la base de datos
+    db.commit()
+    db.refresh(updated_user_gym)
+
     # Si el rol cambió, actualizar en Auth0
     if old_role != role_in.role:
         from app.services.auth0_sync import auth0_sync_service
