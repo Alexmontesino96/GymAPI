@@ -870,7 +870,7 @@ async def update_user_gym_role(
             )
     
     # Actualizar el rol
-    updated_user_gym = gym_service.update_user_gym_role(
+    updated_user_gym = gym_service.update_user_role_in_gym(
         db, user_id=user_id, gym_id=gym_id, role=role_in.role
     )
     
