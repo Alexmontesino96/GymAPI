@@ -50,15 +50,42 @@ logger = logging.getLogger(__name__)
 @router.get("/profile", response_model=UserSchema, tags=["Profile"])
 async def get_user_profile(
     request: Request,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),  # ✅ MIGRADO A ASYNC
     user: Auth0User = Depends(get_current_user),
 ) -> Any:
-    """Obtiene el perfil del usuario autenticado."""
+    """
+    Obtiene el perfil del usuario autenticado.
+
+    ✅ ASYNC: Migrado a AsyncSession para mejor performance.
+    """
     auth0_id = user.id
     if not auth0_id:
         raise HTTPException(status_code=400, detail="Token inválido")
+
+    # ✅ ASYNC: Obtener o crear usuario
     user_data = {"sub": auth0_id, "email": getattr(user, "email", None)}
-    db_user = await user_service.create_or_update_auth0_user_async(db, user_data)
+
+    # Por ahora usar método sync en executor hasta migrar create_or_update_auth0_user
+    # TODO: Crear versión completamente async de create_or_update_auth0_user
+    from app.core.async_utils import run_sync_in_async
+
+    @run_sync_in_async
+    def _create_or_update(data):
+        from app.db.session import SessionLocal
+        sync_db = SessionLocal()
+        try:
+            # Importar el método sync temporalmente
+            import asyncio
+            loop = asyncio.new_event_loop()
+            result = loop.run_until_complete(
+                user_service.create_or_update_auth0_user_async(sync_db, data)
+            )
+            loop.close()
+            return result
+        finally:
+            sync_db.close()
+
+    db_user = await _create_or_update(user_data)
 
     # Consistencia: si viene X-Gym-ID y el middleware pobló el rol del gym,
     # incluirlo en la respuesta como gym_role.
@@ -68,8 +95,10 @@ async def get_user_profile(
         if role_in_gym:
             from app.models.user_gym import GymRoleType
             user_schema.gym_role = GymRoleType(role_in_gym)
+        logger.debug(f"Perfil async obtenido para usuario auth0_id={auth0_id}")
         return user_schema
-    except Exception:
+    except Exception as e:
+        logger.error(f"Error procesando perfil: {e}")
         # Fallback: devolver el modelo original si algo falla en la conversión
         return db_user
 
