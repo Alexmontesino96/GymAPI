@@ -5,6 +5,9 @@ import json
 
 from fastapi import HTTPException, UploadFile, status, Depends
 from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+from sqlalchemy.orm import selectinload, joinedload
 from jose import JWTError, jwt
 from redis.asyncio import Redis
 
@@ -18,6 +21,7 @@ from app.db.redis_client import get_redis_client
 from app.core.auth0_mgmt import auth0_mgmt_service
 from app.core.profiling import time_redis_operation, time_db_query, time_deserialize_operation, register_cache_hit, register_cache_miss, async_db_query_timer
 from app.services.attendance import attendance_service
+from app.core.async_utils import async_timed
 
 
 
@@ -25,7 +29,323 @@ logger = logging.getLogger(__name__) # Logger a nivel de módulo
 
 
 class UserService:
-    
+
+    # ==========================================
+    # MÉTODOS ASYNC (FASE 2 - NUEVO)
+    # ==========================================
+
+    @async_timed(log_level="debug")
+    async def get_user_async(
+        self,
+        db: AsyncSession,
+        user_id: int,
+        eager_load: bool = False
+    ) -> Optional[UserModel]:
+        """
+        Obtiene un usuario por ID (versión async).
+
+        Args:
+            db: Sesión async de SQLAlchemy
+            user_id: ID del usuario
+            eager_load: Si True, carga relaciones (gyms, etc.)
+
+        Returns:
+            Usuario o None
+        """
+        query = select(UserModel).where(UserModel.id == user_id)
+
+        if eager_load:
+            query = query.options(
+                selectinload(UserModel.gyms),
+                selectinload(UserModel.profile)
+            )
+
+        result = await db.execute(query)
+        user = result.scalar_one_or_none()
+
+        if user:
+            logger.debug(f"Usuario encontrado: {user.id}")
+        else:
+            logger.debug(f"Usuario no encontrado: {user_id}")
+
+        return user
+
+    @async_timed(log_level="debug")
+    async def get_user_by_email_async(
+        self,
+        db: AsyncSession,
+        email: str,
+        eager_load: bool = False
+    ) -> Optional[UserModel]:
+        """
+        Obtiene un usuario por email (versión async).
+
+        Args:
+            db: Sesión async
+            email: Email del usuario
+            eager_load: Cargar relaciones
+
+        Returns:
+            Usuario o None
+        """
+        query = select(UserModel).where(UserModel.email == email)
+
+        if eager_load:
+            query = query.options(
+                selectinload(UserModel.gyms),
+                selectinload(UserModel.profile)
+            )
+
+        result = await db.execute(query)
+        user = result.scalar_one_or_none()
+
+        if user:
+            logger.debug(f"Usuario encontrado por email: {user.id} ({email})")
+        else:
+            logger.debug(f"Usuario no encontrado por email: {email}")
+
+        return user
+
+    @async_timed(log_level="debug")
+    async def get_user_by_auth0_id_async_direct(
+        self,
+        db: AsyncSession,
+        auth0_id: str,
+        eager_load: bool = False
+    ) -> Optional[UserModel]:
+        """
+        Obtiene un usuario por Auth0 ID (versión async directa, sin caché).
+
+        Para versión con caché, usar get_user_by_auth0_id_cached().
+
+        Args:
+            db: Sesión async
+            auth0_id: ID de Auth0
+            eager_load: Cargar relaciones
+
+        Returns:
+            Usuario o None
+        """
+        query = select(UserModel).where(UserModel.auth0_id == auth0_id)
+
+        if eager_load:
+            query = query.options(
+                selectinload(UserModel.gyms),
+                selectinload(UserModel.profile)
+            )
+
+        result = await db.execute(query)
+        user = result.scalar_one_or_none()
+
+        if user:
+            logger.debug(f"Usuario encontrado por auth0_id: {user.id} ({auth0_id})")
+        else:
+            logger.debug(f"Usuario no encontrado por auth0_id: {auth0_id}")
+
+        return user
+
+    @async_timed(log_level="debug")
+    async def get_users_async(
+        self,
+        db: AsyncSession,
+        skip: int = 0,
+        limit: int = 100,
+        eager_load: bool = False
+    ) -> List[UserModel]:
+        """
+        Obtiene múltiples usuarios (versión async).
+
+        Args:
+            db: Sesión async
+            skip: Registros a omitir
+            limit: Límite de registros
+            eager_load: Cargar relaciones
+
+        Returns:
+            Lista de usuarios
+        """
+        query = select(UserModel).offset(skip).limit(limit)
+
+        if eager_load:
+            query = query.options(
+                selectinload(UserModel.gyms),
+                selectinload(UserModel.profile)
+            )
+
+        result = await db.execute(query)
+        users = result.scalars().all()
+
+        logger.debug(f"Usuarios encontrados: {len(users)}")
+        return list(users)
+
+    @async_timed(log_level="debug")
+    async def create_user_async_full(
+        self,
+        db: AsyncSession,
+        user_data: UserCreate,
+        redis_client: Optional[Redis] = None
+    ) -> UserModel:
+        """
+        Crea un nuevo usuario y genera su código QR único (versión async completa).
+
+        Args:
+            db: Sesión async
+            user_data: Datos del usuario a crear
+            redis_client: Cliente Redis para invalidar caché
+
+        Returns:
+            Usuario creado con QR code
+        """
+        # Crear el usuario
+        db_user = UserModel(**user_data.model_dump())
+        db.add(db_user)
+        await db.commit()
+        await db.refresh(db_user)
+
+        logger.info(f"Usuario creado: {db_user.id} ({db_user.email})")
+
+        # Generar código QR único para el usuario
+        try:
+            qr_code = await attendance_service.generate_qr_code(db_user.id)
+            db_user.qr_code = qr_code
+
+            db.add(db_user)
+            await db.commit()
+            await db.refresh(db_user)
+
+            logger.info(f"QR code generado para usuario {db_user.id}: {qr_code}")
+        except Exception as e:
+            logger.error(f"Error generando QR para usuario {db_user.id}: {e}")
+            # No fallar la creación si el QR falla
+
+        # Invalidar caché si existe
+        if redis_client:
+            await self._invalidate_user_cache_async(redis_client, db_user.id, db_user.auth0_id)
+
+        return db_user
+
+    @async_timed(log_level="debug")
+    async def update_user_async_full(
+        self,
+        db: AsyncSession,
+        user_id: int,
+        user_in: UserUpdate,
+        redis_client: Optional[Redis] = None
+    ) -> UserModel:
+        """
+        Actualiza un usuario (versión async completa).
+
+        Args:
+            db: Sesión async
+            user_id: ID del usuario
+            user_in: Datos a actualizar
+            redis_client: Cliente Redis para invalidar caché
+
+        Returns:
+            Usuario actualizado
+
+        Raises:
+            HTTPException: Si el usuario no existe
+        """
+        # Obtener usuario
+        user = await self.get_user_async(db, user_id)
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Usuario no encontrado"
+            )
+
+        # Email update requiere actualización en Auth0
+        if user_in.email and user_in.email != user.email and user.auth0_id:
+            logger.warning(
+                f"Actualización administrativa directa de email para usuario {user_id}: "
+                f"{user.email} -> {user_in.email}"
+            )
+            try:
+                await auth0_mgmt_service.update_user_email(
+                    auth0_id=user.auth0_id,
+                    new_email=user_in.email,
+                    verify_email=True,
+                    redis_client=redis_client
+                )
+                logger.info(f"Email actualizado en Auth0 para usuario {user_id}")
+            except HTTPException as http_exc:
+                logger.error(
+                    f"HTTP Error al actualizar email en Auth0 durante update_user "
+                    f"para {user_id}: {http_exc.detail}"
+                )
+                raise http_exc
+            except Exception as e:
+                logger.error(
+                    f"Error al actualizar email en Auth0 durante update_user "
+                    f"para {user_id}: {e}"
+                )
+
+        # Actualizar campos
+        update_data = user_in.model_dump(exclude_unset=True)
+        for field, value in update_data.items():
+            setattr(user, field, value)
+
+        try:
+            await db.commit()
+            await db.refresh(user)
+            logger.info(f"Usuario actualizado: {user.id}")
+        except Exception as e:
+            await db.rollback()
+            logger.error(f"Error actualizando usuario {user_id}: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error actualizando usuario: {e}"
+            )
+
+        # Invalidar caché
+        if user.auth0_id and redis_client:
+            await self._invalidate_user_cache_async(redis_client, user.id, user.auth0_id)
+
+        return user
+
+    async def _invalidate_user_cache_async(
+        self,
+        redis_client: Redis,
+        user_id: int,
+        auth0_id: Optional[str] = None
+    ) -> None:
+        """
+        Invalida todas las claves de caché relacionadas con un usuario (async).
+
+        Args:
+            redis_client: Cliente Redis
+            user_id: ID del usuario
+            auth0_id: Auth0 ID del usuario (opcional)
+        """
+        try:
+            keys_to_delete = [
+                f"user_public_profile:{user_id}",
+                f"user_gym_membership_obj:{user_id}:*",  # Pattern
+            ]
+
+            if auth0_id:
+                keys_to_delete.append(f"user_by_auth0_id:{auth0_id}")
+
+            # Eliminar claves individuales
+            for key in keys_to_delete:
+                if "*" in key:
+                    # Pattern - usar scan
+                    pattern_keys = await redis_client.keys(key)
+                    if pattern_keys:
+                        await redis_client.delete(*pattern_keys)
+                        logger.debug(f"Invalidadas {len(pattern_keys)} claves con patrón {key}")
+                else:
+                    await redis_client.delete(key)
+                    logger.debug(f"Invalidada caché: {key}")
+
+        except Exception as e:
+            logger.error(f"Error invalidando caché de usuario {user_id}: {e}")
+
+    # ==========================================
+    # MÉTODOS SYNC (EXISTENTES - MANTENER)
+    # ==========================================
+
     # --- Métodos Helper para Tokens JWT de Confirmación (privados) ---
     # @staticmethod
     # def _create_email_confirmation_token(data: dict) -> str:

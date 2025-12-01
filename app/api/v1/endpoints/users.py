@@ -24,6 +24,7 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Security, UploadFile, File, Path, BackgroundTasks, status, Request
 from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 from jose import JWTError, jwt
 from app.models.user import User, UserRole
 from app.models.gym import Gym
@@ -33,7 +34,7 @@ from app.schemas.user import User as UserSchema, UserCreate, UserUpdate, UserRol
 from app.services.auth0_mgmt import auth0_mgmt_service
 from app.core.tenant import verify_gym_access, verify_gym_admin_access, verify_gym_trainer_access, get_current_gym, GymSchema
 from app.core.auth0_fastapi import auth, get_current_user, Auth0User
-from app.db.session import get_db
+from app.db.session import get_db, get_async_db
 from app.core.config import get_settings
 from app.db.redis_client import get_redis_client, redis
 from app.services.cache_service import cache_service
@@ -186,7 +187,7 @@ async def create_or_update_user_profile_data(
 
 @router.get("/profile/me", response_model=UserProfile, tags=["Profile"])
 async def get_my_profile(
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),  # ✅ MIGRADO A ASYNC
     current_user: Auth0User = Depends(get_current_user),
     redis_client: redis.Redis = Depends(get_redis_client)
 ) -> Any:
@@ -196,8 +197,10 @@ async def get_my_profile(
     Este endpoint devuelve información detallada del perfil del usuario actual,
     pero excluye datos sensibles como email y número de teléfono. Incluye información
     como nombre, foto de perfil, biografía, metas, altura, peso y fecha de nacimiento.
+
+    ✅ ASYNC: Migrado a AsyncSession para mejor performance.
     """
-    logger = logging.getLogger("user_endpoint")
+    logger_local = logging.getLogger("user_endpoint")
 
     # Obtener ID de Auth0
     auth0_id = current_user.id
@@ -205,8 +208,13 @@ async def get_my_profile(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Token inválido")
 
     try:
-        # Obtener usuario desde la BD
-        db_user = user_service.get_user_by_auth0_id(db, auth0_id=auth0_id)
+        # ✅ ASYNC: Obtener usuario con método async
+        db_user = await user_service.get_user_by_auth0_id_async_direct(
+            db,
+            auth0_id=auth0_id,
+            eager_load=False  # No necesitamos relaciones para este endpoint
+        )
+
         if not db_user:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario no encontrado")
 
@@ -226,12 +234,14 @@ async def get_my_profile(
             created_at=db_user.created_at
         )
 
+        logger_local.debug(f"Perfil async obtenido para usuario {db_user.id}")
         return user_profile
+
     except HTTPException as e:
         # Re-lanzar excepciones HTTP
         raise e
     except Exception as e:
-        logger.error(f"Error obteniendo perfil propio: {str(e)}", exc_info=True)
+        logger_local.error(f"Error obteniendo perfil propio (async): {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Error interno al obtener perfil de usuario"
