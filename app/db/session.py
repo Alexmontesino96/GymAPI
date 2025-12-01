@@ -1,4 +1,5 @@
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.exc import SQLAlchemyError
 import re
@@ -15,6 +16,11 @@ settings_instance = get_settings()
 
 # Obtener la URL directamente de la instancia de configuración
 db_url = settings_instance.SQLALCHEMY_DATABASE_URI
+
+# URL async (asyncpg) - convertir postgresql:// a postgresql+asyncpg://
+db_url_async = str(db_url).replace("postgresql://", "postgresql+asyncpg://")
+
+logger.info(f"Database URLs configuradas: sync (psycopg2) y async (asyncpg)")
 
 # Log EXPLICITO de la URL que se usará para crear el engine
 # Asegurarse de ocultar credenciales en el log
@@ -58,6 +64,48 @@ except Exception as e:
 # Crear clase de sesión
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
+
+# ==========================================
+# ASYNC ENGINE (NUEVO - Fase 2)
+# ==========================================
+try:
+    async_engine = create_async_engine(
+        db_url_async,
+        echo=False,
+        pool_pre_ping=False,  # Desactivado para asyncpg (usa su propio health check)
+        pool_size=20,  # Más alto para async
+        max_overflow=40,
+        pool_timeout=30,
+        pool_recycle=280,
+        connect_args={
+            "statement_cache_size": 0,  # Requerido para pgbouncer (Supabase Transaction Pooler)
+            "server_settings": {
+                "application_name": "gymapi_async",
+                "statement_timeout": "30000"  # asyncpg usa server_settings
+            }
+        }
+    )
+
+    logger.info(f"✅ Async engine creado correctamente (asyncpg)")
+
+except Exception as e:
+    logger.critical(f"❌ FALLO CRÍTICO AL CREAR ASYNC ENGINE: {e}", exc_info=True)
+    async_engine = None
+
+# Async session maker
+AsyncSessionLocal = async_sessionmaker(
+    async_engine,
+    class_=AsyncSession,
+    expire_on_commit=False,
+    autoflush=False,
+    autocommit=False
+) if async_engine else None
+
+
+# ==========================================
+# DEPENDENCIAS
+# ==========================================
+
 # Dependencia para obtener la sesión de DB
 def get_db():
     db = SessionLocal()
@@ -81,4 +129,40 @@ def get_db():
     finally:
         # Asegurarse siempre de cerrar la sesión
         if db:
-            db.close() 
+            db.close()
+
+
+# Async DB dependency (NUEVO - Fase 2)
+async def get_async_db():
+    """
+    Dependencia async para obtener sesión de base de datos.
+
+    Uso en endpoints:
+        @router.get("/endpoint")
+        async def my_endpoint(db: AsyncSession = Depends(get_async_db)):
+            result = await db.execute(select(User))
+            users = result.scalars().all()
+    """
+    if async_engine is None:
+        raise RuntimeError("Async engine no inicializado")
+
+    if AsyncSessionLocal is None:
+        raise RuntimeError("AsyncSessionLocal no inicializado")
+
+    async with AsyncSessionLocal() as session:
+        try:
+            await session.execute(text("SET search_path TO public"))
+            await session.commit()
+            yield session
+        except SQLAlchemyError as e:
+            logger.error(f"Error SQLAlchemy en sesión async: {e}", exc_info=True)
+            await session.rollback()
+            raise
+        except Exception as e:
+            from fastapi import HTTPException
+            if isinstance(e, HTTPException):
+                raise
+            logger.error(f"Error inesperado en get_async_db: {e}", exc_info=True)
+            raise
+        finally:
+            await session.close() 
