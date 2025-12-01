@@ -1,4 +1,4 @@
-from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import OperationalError, DBAPIError
@@ -359,7 +359,7 @@ def init_scheduler():
     global _scheduler
     
     logger.info("Initializing scheduler with UTC timezone")
-    _scheduler = BackgroundScheduler(timezone=timezone.utc)
+    _scheduler = AsyncIOScheduler(timezone=timezone.utc)
     
     # Recordatorios de clase cada 30 minutos
     _scheduler.add_job(
@@ -501,23 +501,10 @@ def init_scheduler():
             generate_motivational_burst,
             cleanup_expired_data
         )
-        import asyncio
-
-        def run_async_job(coro_func):
-            """Wrapper para ejecutar jobs async en scheduler síncrono"""
-            def wrapper():
-                try:
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                    loop.run_until_complete(coro_func())
-                    loop.close()
-                except Exception as e:
-                    logger.error(f"Error en job async: {e}")
-            return wrapper
 
         # Actualizar contadores cada 5 minutos
         _scheduler.add_job(
-            run_async_job(update_realtime_counters),
+            update_realtime_counters,
             trigger=CronTrigger(minute='*/5'),
             id='activity_feed_realtime',
             replace_existing=True
@@ -525,7 +512,7 @@ def init_scheduler():
 
         # Resumen horario
         _scheduler.add_job(
-            run_async_job(generate_hourly_summary),
+            generate_hourly_summary,
             trigger=CronTrigger(minute=0),
             id='activity_feed_hourly',
             replace_existing=True
@@ -533,7 +520,7 @@ def init_scheduler():
 
         # Rankings diarios a las 23:50
         _scheduler.add_job(
-            run_async_job(update_daily_rankings),
+            update_daily_rankings,
             trigger=CronTrigger(hour=23, minute=50),
             id='activity_feed_rankings',
             replace_existing=True
@@ -541,7 +528,7 @@ def init_scheduler():
 
         # Reset contadores diarios a las 00:05
         _scheduler.add_job(
-            run_async_job(reset_daily_counters),
+            reset_daily_counters,
             trigger=CronTrigger(hour=0, minute=5),
             id='activity_feed_reset',
             replace_existing=True
@@ -549,7 +536,7 @@ def init_scheduler():
 
         # Mensajes motivacionales cada 30 minutos
         _scheduler.add_job(
-            run_async_job(generate_motivational_burst),
+            generate_motivational_burst,
             trigger=CronTrigger(minute='*/30'),
             id='activity_feed_motivational',
             replace_existing=True
@@ -557,7 +544,7 @@ def init_scheduler():
 
         # Limpieza cada 2 horas
         _scheduler.add_job(
-            run_async_job(cleanup_expired_data),
+            cleanup_expired_data,
             trigger=CronTrigger(hour='*/2', minute=15),
             id='activity_feed_cleanup',
             replace_existing=True

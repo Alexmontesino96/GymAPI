@@ -122,16 +122,7 @@ class TenantAuthMiddleware(BaseHTTPMiddleware):
                     user=Security(auth.get_user, scopes=[]),
                     redis_client=redis_client
                 )
-                
-                # 🔍 LOGGING ESPECÍFICO PARA TOKENS EN TENANT MIDDLEWARE
-                auth_header = request.headers.get("authorization", "")
-                if auth_header and auth_header.startswith("Bearer "):
-                    token = auth_header[7:]
-                    logger.info(f"🏢 TENANT MIDDLEWARE - TOKEN LENGTH: {len(token)} caracteres")
-                    logger.info(f"🏢 TOKEN PREVIEW: {token[:20]}***")
-                    logger.info(f"🏢 USER ID: {user.id if user else 'None'}")
-                    logger.info(f"🏢 GYM ID: {gym_id}")
-                
+
                 auth0_id = user.id if user else None
                 
             except Exception as e:

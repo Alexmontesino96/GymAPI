@@ -215,71 +215,83 @@ class Auth0:
                 return None
 
         if self.scope_auto_error:
+            from app.core.config import get_settings
+            debug_mode = get_settings().DEBUG_MODE
+
             token_scope_str: str = payload.get('scope', '')
             token_scopes = []
-            
-            logger.info(f"Verificando permisos. Requeridos: {security_scopes.scopes}")
-            logger.info(f"Token scope string: '{token_scope_str}'")
-            
+
+            if debug_mode:
+                logger.debug(f"Verificando permisos. Requeridos: {security_scopes.scopes}")
+                logger.debug(f"Token scope string: '{token_scope_str}'")
+
             if isinstance(token_scope_str, str):
                 token_scopes = token_scope_str.split()
-                logger.info(f"Token scopes después de split: {token_scopes}")
+                if debug_mode:
+                    logger.debug(f"Token scopes después de split: {token_scopes}")
             else:
                 # Este caso es poco probable, pero lo manejamos por seguridad
                 # (quizás auth0 cambie el formato del scope)
                 logger.error(f"Token scope no es string, tipo: {type(token_scope_str)}")
                 raise Auth0UnauthorizedException(detail='Token "scope" field must be a string')
-            
+
             # Buscar permisos en custom claims del Action
             token_permissions = payload.get('permissions', [])
-            logger.info(f"Token permissions (campo estándar): {token_permissions}")
-            
+            if debug_mode:
+                logger.debug(f"Token permissions (campo estándar): {token_permissions}")
+
             # Si no hay permisos en campo estándar, buscar en custom claims del Action
             if not token_permissions:
                 token_permissions = payload.get('https://gymapi/permissions', [])
-                logger.info(f"Token permissions (custom claim namespace): {token_permissions}")
-            
+                if debug_mode:
+                    logger.debug(f"Token permissions (custom claim namespace): {token_permissions}")
+
             # Si aún no hay permisos, intentar extraer del campo personalizado sin namespace
             if not token_permissions:
                 # Buscar otros posibles custom claims de permisos
                 for key in payload.keys():
                     if 'permissions' in key.lower() and isinstance(payload[key], list):
                         token_permissions = payload[key]
-                        logger.info(f"Token permissions encontrados en {key}: {token_permissions}")
+                        if debug_mode:
+                            logger.debug(f"Token permissions encontrados en {key}: {token_permissions}")
                         break
-            
-            logger.info(f"Token permissions finales: {token_permissions}")
-            
+
+            if debug_mode:
+                logger.debug(f"Token permissions finales: {token_permissions}")
+
             # Si la JWT contiene alguna información del usuario
             if isinstance(token_permissions, list):
                 token_scopes.extend(token_permissions)
-            
+
             # Crear versiones normalizadas de los permisos del token
             normalized_scopes = normalize_scopes(token_scopes)
-            logger.info(f"Scopes normalizados: {normalized_scopes}")
-            
-            # Registrar tipo de segurity_scopes
-            logger.info(f"security_scopes tipo: {type(security_scopes)}")
-            logger.info(f"security_scopes.scopes tipo: {type(security_scopes.scopes)}")
-            
+            if debug_mode:
+                logger.debug(f"Scopes normalizados: {normalized_scopes}")
+                logger.debug(f"security_scopes tipo: {type(security_scopes)}")
+                logger.debug(f"security_scopes.scopes tipo: {type(security_scopes.scopes)}")
+
             # Verificar permisos requeridos
             for scope in security_scopes.scopes:
-                logger.info(f"Verificando permiso: '{scope}' (tipo: {type(scope)})")
-                
+                if debug_mode:
+                    logger.debug(f"Verificando permiso: '{scope}' (tipo: {type(scope)})")
+
                 # Crear versión alternativa para permitir tanto formato con : como con _
                 alt_scope_format = scope.replace(':', '_') if ':' in scope else scope.replace('_', ':')
-                
+
                 # Verificar si el scope requerido está en los scopes normalizados del token
                 if scope in normalized_scopes or alt_scope_format in normalized_scopes:
-                    logger.info(f"Permiso '{scope}' encontrado en token_scopes")
+                    if debug_mode:
+                        logger.debug(f"Permiso '{scope}' encontrado en token_scopes")
                 else:
+                    # Keep warning for production (security relevant)
                     logger.warning(f"Permiso '{scope}' no encontrado en token_scopes")
                     raise Auth0UnauthorizedException(
                         detail=f'Missing "{scope}" scope',
                         headers={'WWW-Authenticate': f'Bearer scope="{security_scopes.scope_str}"'}
                     )
-            
-            logger.info("Verificación de permisos completada con éxito")
+
+            if debug_mode:
+                logger.debug("Verificación de permisos completada con éxito")
         
         try:
             # Extraer el email de diferentes posibles lugares en el payload
@@ -383,8 +395,8 @@ class Auth0:
         """Load or refresh JWKS with a small TTL and error handling."""
         import time
         now = time.time()
-        # Refresh at most every 10 minutes unless forced
-        if not force and not initial and (now - self._jwks_last_refresh) < 600:
+        # Refresh at most every 60 minutes unless forced (Auth0 rotates keys infrequently)
+        if not force and not initial and (now - self._jwks_last_refresh) < 3600:
             return
         try:
             url = f'https://{self.domain}/.well-known/jwks.json'

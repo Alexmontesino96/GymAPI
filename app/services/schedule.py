@@ -1,7 +1,7 @@
 from typing import List, Optional, Dict, Any, Union
 from datetime import datetime, time, timedelta, date
 from fastapi import HTTPException, status
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import or_
 import asyncio
 import json
@@ -1577,7 +1577,7 @@ class ClassService:
         # Si no hay gym_id, no usar caché y ejecutar consulta directa
         if gym_id is None:
             logger.warning("Attempted to get classes without gym_id. Cache disabled and no gym filtering applied.")
-            query = db.query(Class)
+            query = db.query(Class).options(joinedload(Class.custom_category))
             if active_only:
                 query = query.filter(Class.is_active == True)
             return query.offset(skip).limit(limit).all()
@@ -1586,7 +1586,7 @@ class ClassService:
         cache_key = f"schedule:classes:gym:{gym_id}:active:{active_only}:skip:{skip}:limit:{limit}"
         
         async def db_fetch():
-            query = db.query(Class).filter(Class.gym_id == gym_id)
+            query = db.query(Class).options(joinedload(Class.custom_category)).filter(Class.gym_id == gym_id)
             if active_only:
                 query = query.filter(Class.is_active == True)
             return query.offset(skip).limit(limit).all()

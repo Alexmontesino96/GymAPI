@@ -33,13 +33,16 @@ try:
     # Crear el motor con la URL obtenida de la instancia
     engine = create_engine(
         str(db_url), # Asegurarse de que es string
-        echo=settings_instance.DEBUG_MODE, # Usar DEBUG_MODE de la instancia
+        echo=False, # SIEMPRE False en producción para mejor rendimiento
         pool_pre_ping=True,
-        pool_size=5,
-        max_overflow=10,
+        pool_size=10,  # Aumentado de 5 a 10 para manejar más concurrencia
+        max_overflow=20,  # Aumentado de 10 a 20 para picos de tráfico
         pool_timeout=30,
         pool_recycle=280,  # Reciclar conexiones cada 4m40s (antes del timeout de pgbouncer ~5min)
-        connect_args={"connect_timeout": 10} # Timeout de conexión explícito
+        connect_args={
+            "connect_timeout": 10,  # Timeout de conexión explícito
+            "options": "-c statement_timeout=30000"  # 30s timeout por query
+        }
     )
 
     # Verificar la conexión al crear el engine y establecer search_path para Supabase
