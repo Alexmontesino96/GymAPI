@@ -40,7 +40,8 @@ class AttendanceService:
         db: Session,
         qr_code: str,
         gym_id: int,
-        redis_client: Optional[Redis] = None
+        redis_client: Optional[Redis] = None,
+        session_id: Optional[int] = None
     ) -> Dict[str, Any]:
         """
         Procesa el check-in de un usuario usando su código QR.
@@ -95,17 +96,36 @@ class AttendanceService:
             if window_start <= session.start_time <= window_end
         ]
         
-        if not valid_sessions:
-            return {
-                "success": False,
-                "message": "No hay clases disponibles para check-in en este momento"
-            }
-        
-        # Tomar la sesión más cercana a la hora actual
-        closest_session = min(
-            valid_sessions,
-            key=lambda s: abs((s.start_time - now).total_seconds())
-        )
+        # Si se especifica session_id, buscar esa sesión específica
+        if session_id:
+            target_session = await class_session_service.get_session(
+                db, session_id=session_id, gym_id=gym_id, redis_client=redis_client
+            )
+            if not target_session:
+                return {
+                    "success": False,
+                    "message": "Sesión no encontrada o no pertenece a este gimnasio"
+                }
+            # Validar que la sesión está dentro de la ventana de tiempo
+            if not (window_start <= target_session.start_time <= window_end):
+                return {
+                    "success": False,
+                    "message": "La sesión está fuera del horario de check-in (±30 minutos)"
+                }
+            closest_session = target_session
+        else:
+            # Comportamiento original: buscar sesión más cercana
+            if not valid_sessions:
+                return {
+                    "success": False,
+                    "message": "No hay clases disponibles para check-in en este momento"
+                }
+
+            # Tomar la sesión más cercana a la hora actual
+            closest_session = min(
+                valid_sessions,
+                key=lambda s: abs((s.start_time - now).total_seconds())
+            )
         
         # Verificar si el usuario ya tiene participación en esta sesión
         existing_participation = class_participation_repository.get_by_session_and_member(

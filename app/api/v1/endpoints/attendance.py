@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, Security, HTTPException, status, Body
 from sqlalchemy.orm import Session
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from pydantic import BaseModel
 
 from app.db.session import get_db
@@ -16,6 +16,7 @@ router = APIRouter()
 
 class QRCheckInRequest(BaseModel):
     qr_code: str
+    session_id: Optional[int] = None  # Si se provee, hace check-in a esta sesión específica
 
 @router.post("/check-in", response_model=Dict[str, Any])
 async def check_in(
@@ -46,7 +47,8 @@ async def check_in(
         db,
         qr_code=check_in_data.qr_code,
         gym_id=current_gym.id,
-        redis_client=redis_client
+        redis_client=redis_client,
+        session_id=check_in_data.session_id
     )
     
     if not result["success"]:
