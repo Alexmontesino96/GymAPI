@@ -1,5 +1,7 @@
 from typing import List, Dict, Any, Optional, Callable
 from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, func
 import time
 import logging
 import re
@@ -1668,12 +1670,12 @@ class ChatService:
     def validate_user_gym_membership(self, db: Session, user_id: int, gym_id: int) -> bool:
         """
         Valida que un usuario pertenezca a un gimnasio específico.
-        
+
         Args:
             db: Sesión de base de datos
             user_id: ID del usuario
             gym_id: ID del gimnasio
-            
+
         Returns:
             bool: True si el usuario pertenece al gimnasio
         """
@@ -1683,6 +1685,1109 @@ class ChatService:
                 UserGym.user_id == user_id,
                 UserGym.gym_id == gym_id
             ).first()
+            return membership is not None
+        except Exception as e:
+            logger.error(f"Error validando membresía: {str(e)}")
+            return False
+
+    # ============= ASYNC METHODS =============
+
+    async def get_user_token_async(self, user_id: int, user_data: Dict[str, Any], gym_id: int = None) -> str:
+        """
+        Genera un token para el usuario con cache para mejorar rendimiento (async).
+
+        Args:
+            user_id: ID interno del usuario (de la tabla user)
+            user_data: Datos adicionales del usuario (nombre, email, etc.)
+            gym_id: ID del gimnasio para restricciones de seguridad
+
+        Returns:
+            str: Token para el usuario con restricciones de gimnasio
+        """
+        # Verificar si ya existe un token en cache válido (incluir gym_id en el cache)
+        cache_key = f"token_{user_id}_gym_{gym_id}" if gym_id else f"token_{user_id}"
+        current_time = time.time()
+
+        if cache_key in user_token_cache:
+            cached_data = user_token_cache[cache_key]
+            # Si el token no ha expirado (menos de 5 minutos)
+            if current_time - cached_data["timestamp"] < 300:  # 5 minutos
+                return cached_data["token"]
+
+        try:
+            from app.db.session import get_async_session_context
+
+            async with get_async_session_context() as db:
+                stmt = select(User).where(User.id == user_id)
+                result = await db.execute(stmt)
+                user = result.scalar_one_or_none()
+
+                if not user or not user.auth0_id:
+                    raise ValueError(f"Usuario con ID interno {user_id} no encontrado o no tiene auth0_id")
+
+                # Adaptador interno: Convertir ID interno a stream_id (basado en auth0_id)
+                stream_id = self._get_stream_id_for_user(user)
+
+                # Obtener los gimnasios del usuario para asignar teams
+                user_teams = []
+                if gym_id:
+                    # Si se especifica un gym_id, incluirlo
+                    user_teams.append(f"gym_{gym_id}")
+                else:
+                    # Obtener todos los gimnasios del usuario
+                    from app.models.user_gym import UserGym
+                    stmt_gyms = select(UserGym).where(UserGym.user_id == user.id)
+                    result_gyms = await db.execute(stmt_gyms)
+                    user_gyms = result_gyms.scalars().all()
+                    user_teams = [f"gym_{ug.gym_id}" for ug in user_gyms]
+
+                # Actualizar usuario en Stream con teams
+                stream_user_data = {
+                    "id": stream_id,
+                    "name": user_data.get("name", user.id),
+                    "email": user_data.get("email"),
+                    "image": user_data.get("picture")
+                }
+
+                if user_teams:
+                    stream_user_data["teams"] = user_teams
+
+                stream_client.update_user(stream_user_data)
+
+                # Generar token con restricciones de gimnasio y expiración
+                exp_time = int(time.time()) + 3600  # 1 hora de expiración
+
+                # Crear token con metadatos del gimnasio para validación posterior
+                token_payload = {"user_id": stream_id}
+                if gym_id:
+                    token_payload["gym_id"] = str(gym_id)
+                    token_payload["exp"] = exp_time
+
+                token = stream_client.create_token(stream_id, exp=exp_time)
+
+                # Guardar en cache
+                user_token_cache[cache_key] = {
+                    "token": token,
+                    "timestamp": current_time
+                }
+
+                return token
+
+        except Exception as e:
+            logger.error(f"Error generando token para usuario interno {user_id}: {str(e)}", exc_info=True)
+            # Estrategia de recuperación: si hay un token en cache, devolverlo aunque haya expirado
+            if cache_key in user_token_cache:
+                logger.warning(f"Usando token expirado como fallback para usuario interno {user_id}")
+                return user_token_cache[cache_key]["token"]
+            raise ValueError(f"No se pudo generar token: {str(e)}")
+
+    async def _consolidate_user_in_stream_async(self, db: AsyncSession, user: User, gym_id: int) -> str:
+        """
+        Consolida un usuario en Stream Chat asegurando formato consistente (async).
+
+        Este método:
+        1. Verifica si el usuario existe con formato legacy (auth0_id)
+        2. Si existe, migra sus membresías al nuevo formato (user_X)
+        3. Crea/actualiza el usuario con el formato correcto
+        4. Limpia el usuario legacy si es necesario
+
+        Args:
+            db: Sesión de base de datos async
+            user: Objeto de usuario de la BD
+            gym_id: ID del gimnasio para configurar teams
+
+        Returns:
+            str: Stream ID consolidado en formato correcto (user_X)
+        """
+        try:
+            # Obtener IDs
+            new_stream_id = self._get_stream_id_for_user(user)  # Formato user_X
+            legacy_stream_id = user.auth0_id  # Formato legacy auth0|...
+
+            logger.info(f"🔄 Consolidando usuario {user.id}: legacy='{legacy_stream_id}' → nuevo='{new_stream_id}'")
+
+            # Obtener teams del usuario
+            from app.models.user_gym import UserGym
+            stmt = select(UserGym).where(UserGym.user_id == user.id)
+            result = await db.execute(stmt)
+            user_gyms = result.scalars().all()
+            user_teams = [f"gym_{ug.gym_id}" for ug in user_gyms]
+
+            # Preparar datos del nuevo usuario
+            new_user_data = {
+                "id": new_stream_id,
+                "name": self._get_display_name_for_user(user),
+                "email": user.email if user.email else None,
+                "user_id": str(user.id),
+                "internal_id": str(user.id)
+            }
+
+            if user_teams:
+                new_user_data["teams"] = user_teams
+
+            # 1. Crear/actualizar usuario con formato nuevo
+            stream_client.update_user(new_user_data)
+            logger.info(f"✅ Usuario {new_stream_id} creado/actualizado en Stream")
+
+            # 2. Si el usuario legacy existe, migrar sus membresías
+            if legacy_stream_id and legacy_stream_id != new_stream_id:
+                try:
+                    # Verificar si existe usuario legacy en Stream
+                    legacy_user_response = stream_client.query_users(
+                        filter_conditions={"id": legacy_stream_id},
+                        limit=1
+                    )
+
+                    legacy_users = legacy_user_response.get('users', [])
+
+                    if legacy_users:
+                        logger.info(f"🔍 Usuario legacy {legacy_stream_id} encontrado, iniciando migración...")
+
+                        # Obtener canales donde el usuario legacy es miembro
+                        channels_response = stream_client.query_channels(
+                            filter_conditions={"members": {"$in": [legacy_stream_id]}},
+                            limit=50
+                        )
+
+                        channels = channels_response.get('channels', [])
+                        logger.info(f"📺 Migrando {len(channels)} canales para usuario {legacy_stream_id}")
+
+                        migration_success_count = 0
+
+                        for channel_data in channels:
+                            try:
+                                channel_info = channel_data.get('channel', {})
+                                channel_type = channel_info.get('type')
+                                channel_id = channel_info.get('id')
+
+                                if channel_type and channel_id:
+                                    channel = stream_client.channel(channel_type, channel_id)
+
+                                    # Agregar nuevo usuario
+                                    channel.add_members([new_stream_id])
+
+                                    # Remover usuario legacy
+                                    channel.remove_members([legacy_stream_id])
+
+                                    migration_success_count += 1
+                                    logger.debug(f"🔄 Canal {channel_id}: migrado {legacy_stream_id} → {new_stream_id}")
+
+                            except Exception as channel_error:
+                                logger.warning(f"⚠️ Error migrando canal {channel_id}: {str(channel_error)}")
+                                continue
+
+                        logger.info(f"✅ Migración completada: {migration_success_count} canales migrados")
+
+                    else:
+                        logger.debug(f"ℹ️ Usuario legacy {legacy_stream_id} no existe en Stream, solo crear nuevo")
+
+                except Exception as migration_error:
+                    logger.warning(f"⚠️ Error en migración de usuario legacy: {str(migration_error)}")
+
+            return new_stream_id
+
+        except Exception as e:
+            logger.error(f"❌ Error consolidando usuario {user.id}: {str(e)}", exc_info=True)
+            return self._get_stream_id_for_user(user)
+
+    async def create_room_async(self, db: AsyncSession, creator_id: int, room_data: ChatRoomCreate, gym_id: int) -> Dict[str, Any]:
+        """
+        Crea un canal de chat en Stream y lo registra localmente (async).
+
+        Args:
+            db: Sesión de base de datos async
+            creator_id: ID interno del creador (en tabla user)
+            room_data: Datos de la sala con member_ids como IDs internos
+        """
+        logger.info(f"[DEBUG-CREATE] Iniciando create_room_async con creator_id={creator_id}, room_data.event_id={room_data.event_id}")
+
+        # Implementar reintentos con backoff exponencial
+        max_retries = 3
+        retry_delay = 1
+
+        for attempt in range(max_retries):
+            try:
+                # Obtener el usuario creador
+                stmt = select(User).where(User.id == creator_id)
+                result = await db.execute(stmt)
+                creator = result.scalar_one_or_none()
+
+                if not creator:
+                    logger.error(f"[DEBUG-CREATE] Usuario creador {creator_id} no encontrado")
+                    raise ValueError(f"Usuario creador {creator_id} no encontrado")
+
+                # Obtener stream_id para el creador
+                creator_stream_id = self._get_stream_id_for_user(creator)
+
+                # Asegurar que el creador está en la lista de miembros
+                if creator_id not in room_data.member_ids:
+                    room_data.member_ids.append(creator_id)
+
+                # Obtener todos los miembros y sus stream_ids
+                member_users = []
+                member_stream_ids = []
+
+                for member_internal_id in room_data.member_ids:
+                    stmt_member = select(User).where(User.id == member_internal_id)
+                    result_member = await db.execute(stmt_member)
+                    member = result_member.scalar_one_or_none()
+
+                    if member:
+                        member_users.append(member)
+                        member_stream_id = self._get_stream_id_for_user(member)
+                        member_stream_ids.append(member_stream_id)
+
+                # Crear usuarios en Stream antes de crear el canal con consolidación automática
+                logger.info(f"[DEBUG-CREATE] Asegurando usuarios en Stream: {member_stream_ids}")
+                consolidated_members = []
+
+                for i, stream_id in enumerate(member_stream_ids):
+                    try:
+                        consolidated_id = await self._consolidate_user_in_stream_async(db, member_users[i], gym_id)
+                        consolidated_members.append(consolidated_id)
+                        logger.info(f"[DEBUG-CREATE] Usuario consolidado {stream_id} → {consolidated_id} (ID interno: {member_users[i].id})")
+                    except Exception as e:
+                        logger.error(f"[DEBUG-CREATE] Error consolidando usuario {stream_id} en Stream: {str(e)}")
+                        consolidated_members.append(stream_id)
+
+                member_stream_ids = consolidated_members
+
+                # Sanitizar nombre de sala
+                safe_name = ""
+                if room_data.name:
+                    safe_name = re.sub(r'[^a-zA-Z0-9_\-]', '_', room_data.name)[:30]
+                else:
+                    current_time = datetime.now().strftime("%Y%m%d%H%M%S")
+                    safe_name = f"Sala-{current_time}"
+
+                channel_type = "messaging"
+
+                # Generar ID de canal
+                if room_data.is_direct:
+                    sorted_ids = sorted([stream_id[:15] for stream_id in member_stream_ids[:2]])
+                    channel_id = f"direct_{'_'.join(sorted_ids)}"
+
+                    existing_room = await chat_repository.get_room_by_stream_id_async(db, stream_channel_id=channel_id)
+                    if existing_room:
+                        return await self._get_existing_room_info_async(db, existing_room)
+                elif room_data.event_id:
+                    creator_hash = hashlib.md5(str(creator_id).encode()).hexdigest()[:8]
+                    channel_id = f"event_{room_data.event_id}_{creator_hash}"
+                    logger.info(f"[DEBUG-CREATE] Generando ID para chat de evento: event_id={room_data.event_id}, channel_id={channel_id}")
+
+                    existing_room = await chat_repository.get_event_room_async(db, event_id=room_data.event_id)
+                    if existing_room:
+                        logger.info(f"[DEBUG-CREATE] Sala existente encontrada para event_id={room_data.event_id}, id={existing_room.id}")
+                        return await self._get_existing_room_info_async(db, existing_room)
+                else:
+                    name_hash = hashlib.md5(f"{safe_name}_{creator_id}".encode()).hexdigest()[:16]
+                    channel_id = f"room_{safe_name}_{creator_id}"
+
+                    existing_room = await chat_repository.get_room_by_stream_id_async(db, stream_channel_id=channel_id)
+                    if existing_room:
+                        return await self._get_existing_room_info_async(db, existing_room)
+
+                if len(channel_id) > 64:
+                    channel_id = channel_id[:64]
+
+                existing_room = await chat_repository.get_room_by_stream_id_async(db, stream_channel_id=channel_id)
+                if existing_room:
+                    return await self._get_existing_room_info_async(db, existing_room)
+
+                logger.info(f"[DEBUG-CREATE] ID de canal generado: {channel_id} (longitud: {len(channel_id)})")
+
+                # Crear el canal en Stream
+                channel = stream_client.channel(channel_type, channel_id)
+
+                channel_data_create = {
+                    "created_by_id": creator_stream_id,
+                    "name": room_data.name
+                }
+                if gym_id:
+                    channel_data_create["team"] = f"gym_{gym_id}"
+                    channel_data_create["gym_id"] = str(gym_id)
+
+                response = channel.create(user_id=creator_stream_id, data=channel_data_create)
+                logger.info(f"[DEBUG-CREATE] Canal creado en Stream: user_id={creator_stream_id} (ID interno: {creator_id})")
+
+                if not response or 'channel' not in response:
+                    logger.error("[DEBUG-CREATE] Respuesta de creación del canal inválida")
+                    raise ValueError("Respuesta de Stream inválida al crear el canal")
+
+                channel_data = response['channel']
+                stream_channel_id = channel_data.get('id')
+                stream_channel_type = channel_data.get('type')
+
+                if not stream_channel_id or not stream_channel_type:
+                    logger.error(f"[DEBUG-CREATE] Datos de canal incompletos: {channel_data}")
+                    raise ValueError("Datos de canal incompletos en la respuesta de Stream")
+
+                logger.info(f"[DEBUG-CREATE] Canal creado - ID: {stream_channel_id}, Tipo: {stream_channel_type}")
+
+                # Añadir miembros
+                if len(member_stream_ids) > 0:
+                    logger.info(f"[DEBUG-CREATE] Añadiendo todos los miembros al canal: {member_stream_ids}")
+                    channel.add_members(member_stream_ids)
+
+                # Guardar en BD local
+                logger.info(f"[DEBUG-CREATE] Guardando sala en BD local: stream_channel_id={stream_channel_id}, event_id={room_data.event_id}")
+                try:
+                    logger.info(f"[DEBUG-CREATE] Verificación pre-creación: room_data.event_id={room_data.event_id}, is_direct={room_data.is_direct}")
+
+                    db_room = await chat_repository.create_room_async(
+                        db,
+                        stream_channel_id=stream_channel_id,
+                        stream_channel_type=stream_channel_type,
+                        room_data=room_data,
+                        gym_id=gym_id
+                    )
+
+                    logger.info(f"[DEBUG-CREATE] Sala creada en BD: id={db_room.id}, event_id={db_room.event_id}, stream_channel_id={db_room.stream_channel_id}")
+
+                    verify_room = await chat_repository.get_event_room_async(db, event_id=room_data.event_id)
+                    if verify_room:
+                        logger.info(f"[DEBUG-CREATE] Verificación: sala encontrada por event_id={room_data.event_id}, id={verify_room.id}")
+                    else:
+                        logger.warning(f"[DEBUG-CREATE] Verificación: ¡sala NO encontrada por event_id={room_data.event_id}!")
+
+                except Exception as db_error:
+                    logger.error(f"[DEBUG-CREATE] Error al crear sala en BD: {str(db_error)}", exc_info=True)
+                    raise
+
+                # Guardar en caché
+                cache_key = f"channel_{db_room.id}"
+                channel_cache[cache_key] = {
+                    "data": {
+                        "id": db_room.id,
+                        "stream_channel_id": stream_channel_id,
+                        "stream_channel_type": stream_channel_type,
+                        "name": db_room.name,
+                        "is_direct": db_room.is_direct,
+                        "event_id": db_room.event_id,
+                        "members": await self._convert_stream_members_to_internal_async(
+                            channel_data.get("members", []), db
+                        ),
+                        "created_at": db_room.created_at
+                    },
+                    "timestamp": time.time()
+                }
+
+                logger.info(f"[DEBUG-CREATE] Retornando resultado: id={db_room.id}, event_id={room_data.event_id}, stream_channel_id={stream_channel_id}")
+                return channel_cache[cache_key]["data"]
+
+            except Exception as e:
+                logger.error(f"[DEBUG-CREATE] Intento {attempt+1} fallido: {str(e)}", exc_info=True)
+                if attempt < max_retries - 1:
+                    sleep_time = retry_delay * (2 ** attempt)
+                    logger.info(f"[DEBUG-CREATE] Reintentando en {sleep_time} segundos...")
+                    time.sleep(sleep_time)
+                else:
+                    error_details = {
+                        "creator_id": creator_id,
+                        "room_name": room_data.name if room_data.name else "Sin nombre",
+                        "is_direct": room_data.is_direct,
+                        "event_id": room_data.event_id
+                    }
+                    logger.error(f"[DEBUG-CREATE] Detalles de la solicitud fallida: {error_details}")
+                    raise ValueError(f"Error creando canal en Stream después de {max_retries} intentos: {str(e)}")
+
+    async def _get_existing_room_info_async(self, db: AsyncSession, room: ChatRoom) -> Dict[str, Any]:
+        """
+        Obtiene información detallada de una sala existente (async).
+
+        Args:
+            db: Sesión de base de datos async
+            room: Objeto de sala existente
+
+        Returns:
+            Dict: Información detallada de la sala
+        """
+        try:
+            channel = stream_client.channel(room.stream_channel_type, room.stream_channel_id)
+            response = channel.query(
+                messages_limit=0,
+                watch=False,
+                presence=False
+            )
+
+            # Convertir miembros de stream a IDs internos
+            members = await self._convert_stream_members_to_internal_async(
+                response.get("members", []), db
+            )
+
+            return {
+                "id": room.id,
+                "stream_channel_id": room.stream_channel_id,
+                "stream_channel_type": room.stream_channel_type,
+                "is_direct": room.is_direct,
+                "event_id": room.event_id,
+                "name": room.name,
+                "members": members,
+                "created_at": room.created_at
+            }
+        except Exception as e:
+            logger.error(f"Error obteniendo información de sala existente: {e}")
+            # Devolver información básica
+            return {
+                "id": room.id,
+                "stream_channel_id": room.stream_channel_id,
+                "stream_channel_type": room.stream_channel_type,
+                "is_direct": room.is_direct,
+                "event_id": room.event_id,
+                "name": room.name,
+                "members": [],
+                "created_at": room.created_at
+            }
+
+    async def _convert_stream_members_to_internal_async(self, stream_members: List[Dict[str, Any]], db: AsyncSession) -> List[Dict[str, Any]]:
+        """
+        Convierte miembros de formato Stream a formato interno (async).
+
+        Args:
+            stream_members: Lista de miembros en formato Stream
+            db: Sesión de base de datos async
+
+        Returns:
+            List: Lista de miembros con IDs internos
+        """
+        from app.core.stream_utils import get_internal_id_from_stream, is_internal_id_format, is_legacy_id_format
+
+        result = []
+        for member in stream_members:
+            stream_id = member.get("user_id")
+            if not stream_id:
+                continue
+
+            user = None
+
+            # Determinar tipo de ID y buscar usuario apropiadamente
+            if is_internal_id_format(stream_id):
+                # Nuevo formato - obtener ID interno directamente
+                try:
+                    internal_id = get_internal_id_from_stream(stream_id)
+                    stmt = select(User).where(User.id == internal_id)
+                    result_db = await db.execute(stmt)
+                    user = result_db.scalar_one_or_none()
+                except ValueError:
+                    logger.warning(f"ID de Stream con formato inválido: {stream_id}")
+                    continue
+            elif is_legacy_id_format(stream_id):
+                # Formato legacy - buscar por auth0_id
+                stmt = select(User).where(User.auth0_id == stream_id)
+                result_db = await db.execute(stmt)
+                user = result_db.scalar_one_or_none()
+
+            if user:
+                # Añadir información del usuario interno
+                member_info = {
+                    "user_id": user.id,
+                    "stream_user_id": stream_id,
+                    "created_at": member.get("created_at"),
+                    "updated_at": member.get("updated_at")
+                }
+                result.append(member_info)
+
+        return result
+
+    async def get_or_create_direct_chat_async(self, db: AsyncSession, user1_id: int, user2_id: int, gym_id: int) -> Dict[str, Any]:
+        """
+        Obtiene o crea un chat directo entre dos usuarios con cache (async).
+
+        Args:
+            db: Sesión de base de datos async
+            user1_id: ID interno del primer usuario
+            user2_id: ID interno del segundo usuario
+            gym_id: ID del gimnasio
+        """
+        logger.info(f"Obteniendo/creando chat directo entre usuarios internos: {user1_id} y {user2_id}")
+
+        # Cache en memoria usando IDs internos
+        cache_key = f"direct_chat_{min(user1_id, user2_id)}_{max(user1_id, user2_id)}"
+        current_time = time.time()
+
+        # Verificar cache
+        if cache_key in channel_cache:
+            cached_data = channel_cache[cache_key]
+            if current_time - cached_data["timestamp"] < 300:
+                logger.info(f"Usando datos en cache para chat directo entre {user1_id} y {user2_id}")
+                return cached_data["data"]
+            else:
+                del channel_cache[cache_key]
+                logger.info(f"Cache expirado y limpiado para clave: {cache_key}")
+
+        # Buscar chat existente
+        db_room = await chat_repository.get_direct_chat_async(db, user1_id=user1_id, user2_id=user2_id)
+
+        if db_room:
+            try:
+                # Obtener usuario para query
+                stmt = select(User).where(User.id == user1_id)
+                result = await db.execute(stmt)
+                user1 = result.scalar_one_or_none()
+
+                if not user1:
+                    logger.error(f"Usuario {user1_id} no encontrado para query de canal")
+                    await db.delete(db_room)
+                    await db.flush()
+                    if cache_key in channel_cache:
+                        del channel_cache[cache_key]
+                else:
+                    query_stream_id = self._get_stream_id_for_user(user1)
+
+                    response = self._query_stream_channel_with_retry(
+                        db_room.stream_channel_type,
+                        db_room.stream_channel_id,
+                        query_stream_id
+                    )
+
+                    if not self._validate_channel_consistency(db_room, response):
+                        logger.error(f"Inconsistencia detectada en canal {db_room.id}. Eliminando registro local.")
+                        await db.delete(db_room)
+                        await db.flush()
+                        if cache_key in channel_cache:
+                            del channel_cache[cache_key]
+                    else:
+                        logger.info(f"Chat directo existente validado: {db_room.id}, consultado por user_id={query_stream_id}")
+
+                        result_data = {
+                            "id": db_room.id,
+                            "stream_channel_id": db_room.stream_channel_id,
+                            "stream_channel_type": db_room.stream_channel_type,
+                            "name": db_room.name,
+                            "is_direct": True,
+                            "members": response.get("members", []),
+                            "created_at": db_room.created_at
+                        }
+
+                        channel_cache[cache_key] = {
+                            "data": result_data,
+                            "timestamp": current_time
+                        }
+
+                        return result_data
+            except Exception as e:
+                logger.error(f"Error obteniendo canal existente: {e}")
+                await db.delete(db_room)
+                await db.flush()
+                if cache_key in channel_cache:
+                    del channel_cache[cache_key]
+
+        # Obtener usuarios
+        stmt1 = select(User).where(User.id == user1_id)
+        result1 = await db.execute(stmt1)
+        user1 = result1.scalar_one_or_none()
+
+        stmt2 = select(User).where(User.id == user2_id)
+        result2 = await db.execute(stmt2)
+        user2 = result2.scalar_one_or_none()
+
+        if not user1 or not user2 or not user1.auth0_id or not user2.auth0_id:
+            raise ValueError("Uno o ambos usuarios no existen o no tienen auth0_id")
+
+        auth0_user1_id = user1.auth0_id
+        auth0_user2_id = user2.auth0_id
+
+        # Sanitizar IDs
+        safe_user1_id = re.sub(r'[^a-zA-Z0-9@_\-]', '_', auth0_user1_id)
+        safe_user2_id = re.sub(r'[^a-zA-Z0-9@_\-]', '_', auth0_user2_id)
+
+        # Asegurar usuarios en Stream
+        try:
+            from app.models.user_gym import UserGym
+
+            # Usuario 1
+            stmt_gyms1 = select(UserGym).where(UserGym.user_id == user1_id)
+            result_gyms1 = await db.execute(stmt_gyms1)
+            user1_gyms = result_gyms1.scalars().all()
+            user1_teams = [f"gym_{ug.gym_id}" for ug in user1_gyms]
+
+            user1_data = {
+                "id": safe_user1_id,
+                "name": self._get_display_name_for_user(user1),
+            }
+            if user1_teams:
+                user1_data["teams"] = user1_teams
+
+            stream_client.update_user(user1_data)
+            logger.info(f"Usuario {safe_user1_id} creado/actualizado en Stream")
+
+            # Usuario 2
+            stmt_gyms2 = select(UserGym).where(UserGym.user_id == user2_id)
+            result_gyms2 = await db.execute(stmt_gyms2)
+            user2_gyms = result_gyms2.scalars().all()
+            user2_teams = [f"gym_{ug.gym_id}" for ug in user2_gyms]
+
+            user2_data = {
+                "id": safe_user2_id,
+                "name": self._get_display_name_for_user(user2),
+            }
+            if user2_teams:
+                user2_data["teams"] = user2_teams
+
+            stream_client.update_user(user2_data)
+            logger.info(f"Usuario {safe_user2_id} creado/actualizado en Stream")
+        except Exception as e:
+            logger.error(f"Error creando usuarios en Stream: {str(e)}")
+
+        # Crear nuevo chat directo
+        logger.info("Creando nuevo chat directo")
+
+        short_user1_id = safe_user1_id[:15] if len(safe_user1_id) > 15 else safe_user1_id
+        short_user2_id = safe_user2_id[:15] if len(safe_user2_id) > 15 else safe_user2_id
+
+        user1_name = self._get_display_name_for_user(user1)
+        user2_name = self._get_display_name_for_user(user2)
+        chat_name = f"Chat {user1_name} - {user2_name}"
+
+        logger.info(f"[DEBUG-DIRECT] Generando nombre de chat: '{chat_name}' para usuarios {user1_id} y {user2_id}")
+
+        room_data = ChatRoomCreate(
+            name=chat_name,
+            is_direct=True,
+            member_ids=[user1_id, user2_id]
+        )
+
+        return await self.create_room_async(db, user1_id, room_data, gym_id)
+
+    async def get_or_create_event_chat_async(self, db: AsyncSession, event_id: int, creator_id: int, gym_id: int) -> Dict[str, Any]:
+        """
+        Obtiene o crea un chat para un evento (async).
+
+        Args:
+            db: Sesión de base de datos async
+            event_id: ID del evento
+            creator_id: ID interno del creador
+            gym_id: ID del gimnasio
+        """
+        from app.core.stream_utils import get_stream_id_from_internal
+
+        logger = logging.getLogger("chat_service")
+        start_time = time.time()
+
+        logger.info(f"[DEBUG] Buscando o creando chat para evento {event_id}, usuario interno {creator_id}")
+
+        # Obtener creador
+        stmt_creator = select(User).where(User.id == creator_id)
+        result_creator = await db.execute(stmt_creator)
+        creator = result_creator.scalar_one_or_none()
+
+        if not creator:
+            logger.error(f"[DEBUG] Usuario creador {creator_id} no encontrado")
+            raise ValueError(f"Usuario creador {creator_id} no encontrado")
+
+        creator_stream_id = get_stream_id_from_internal(creator_id)
+
+        try:
+            # Verificar usuario en Stream
+            user_exists_in_stream = True
+            try:
+                from app.models.user_gym import UserGym
+
+                stmt_gyms = select(UserGym).where(UserGym.user_id == creator_id)
+                result_gyms = await db.execute(stmt_gyms)
+                creator_gyms = result_gyms.scalars().all()
+                creator_teams = [f"gym_{ug.gym_id}" for ug in creator_gyms]
+
+                creator_data = {
+                    "id": creator_stream_id,
+                    "name": f"Usuario {creator_id}",
+                }
+                if creator_teams:
+                    creator_data["teams"] = creator_teams
+
+                stream_client.update_user(creator_data)
+                logger.info(f"[DEBUG] Usuario {creator_stream_id} creado/actualizado en Stream")
+            except Exception as e:
+                logger.error(f"[DEBUG] Error creando usuario en Stream: {str(e)}")
+                if "was deleted" in str(e):
+                    user_exists_in_stream = False
+                    logger.warning(f"[DEBUG] Usuario {creator_stream_id} fue eliminado en Stream. Usaremos system como alternativa.")
+
+            # Verificar evento existe
+            from app.models.event import Event
+            stmt_event = select(Event).where(Event.id == event_id)
+            result_event = await db.execute(stmt_event)
+            event = result_event.scalar_one_or_none()
+
+            if not event:
+                logger.warning(f"[DEBUG] Evento {event_id} no encontrado")
+                raise ValueError(f"Evento no encontrado: {event_id}")
+
+            logger.info(f"[DEBUG] Evento encontrado: id={event.id}, title={event.title}, gym_id={event.gym_id}")
+
+            # Buscar sala existente
+            room_query_start = time.time()
+            db_room = await chat_repository.get_event_room_async(db, event_id=event_id)
+            room_query_time = time.time() - room_query_start
+            logger.info(f"[DEBUG] Consulta de sala: {room_query_time:.2f}s, encontrada: {bool(db_room)}")
+
+            if db_room:
+                try:
+                    stream_query_start = time.time()
+                    channel = stream_client.channel(db_room.stream_channel_type, db_room.stream_channel_id)
+
+                    response = channel.query(
+                        messages_limit=0,
+                        count=None,
+                        state=True,
+                        watch=False,
+                        presence=False
+                    )
+                    stream_query_time = time.time() - stream_query_start
+                    logger.info(f"[DEBUG] Consulta a Stream: {stream_query_time:.2f}s")
+
+                    members = response.get("members", [])
+                    current_members = [member.get("user_id", "") for member in members]
+
+                    if user_exists_in_stream and creator_stream_id not in current_members:
+                        logger.info(f"[DEBUG] Añadiendo usuario {creator_stream_id} al canal existente")
+                        try:
+                            channel.add_members([creator_stream_id])
+                        except Exception as e:
+                            logger.warning(f"[DEBUG] No se pudo añadir miembro al canal: {e}")
+
+                    result_data = {
+                        "id": db_room.id,
+                        "stream_channel_id": db_room.stream_channel_id,
+                        "stream_channel_type": db_room.stream_channel_type,
+                        "name": db_room.name,
+                        "event_id": event_id,
+                        "members": members,
+                        "created_at": db_room.created_at
+                    }
+
+                    total_time = time.time() - start_time
+                    logger.info(f"[DEBUG] Sala existente devuelta - tiempo total: {total_time:.2f}s")
+                    return result_data
+
+                except Exception as e:
+                    logger.error(f"[DEBUG] Error al recuperar canal existente: {e}")
+
+            # Crear nueva sala
+            logger.info(f"[DEBUG] Construyendo datos para nueva sala, event_id={event_id}")
+            room_data = ChatRoomCreate(
+                name=f"Evento {event.title[:20]}",
+                is_direct=False,
+                event_id=event_id,
+                member_ids=[creator_id]
+            )
+
+            logger.info(f"[DEBUG] room_data: name={room_data.name}, is_direct={room_data.is_direct}, event_id={room_data.event_id}, member_ids={room_data.member_ids}")
+
+            if db_room:
+                logger.info(f"[DEBUG] Eliminando referencia a sala no válida: {db_room.id}")
+                await db.delete(db_room)
+                await db.flush()
+
+            try:
+                if user_exists_in_stream:
+                    result = await self.create_room_async(db, creator_id, room_data, gym_id)
+                    logger.info(f"[DEBUG] Nueva sala creada - tiempo total: {time.time() - start_time:.2f}s")
+                    return result
+                else:
+                    logger.info("[DEBUG] Creando sala con usuario system ya que el creador fue eliminado en Stream")
+                    try:
+                        stream_client.update_user({
+                            "id": "system",
+                            "name": "System Bot",
+                        })
+                        logger.info("[DEBUG] Usuario system creado/actualizado en Stream")
+                    except Exception as system_error:
+                        logger.error(f"[DEBUG] Error creando usuario system en Stream: {system_error}")
+
+                    channel_type = "messaging"
+                    creator_hash = "system"
+                    channel_id = f"event_{room_data.event_id}_{creator_hash}"
+
+                    try:
+                        channel = stream_client.channel(channel_type, channel_id)
+                        channel_data_create = {
+                            "name": room_data.name
+                        }
+                        if gym_id:
+                            channel_data_create["team"] = f"gym_{gym_id}"
+                            channel_data_create["gym_id"] = str(gym_id)
+
+                        response = channel.create(user_id="system", data=channel_data_create)
+
+                        if response and 'channel' in response:
+                            db_room = await chat_repository.create_room_async(
+                                db,
+                                stream_channel_id=channel_id,
+                                stream_channel_type=channel_type,
+                                room_data=room_data,
+                                gym_id=gym_id
+                            )
+
+                            return {
+                                "id": db_room.id,
+                                "stream_channel_id": channel_id,
+                                "stream_channel_type": channel_type,
+                                "event_id": event_id,
+                                "name": room_data.name,
+                                "members": [],
+                                "created_at": db_room.created_at
+                            }
+                        else:
+                            logger.error("[DEBUG] Respuesta inválida al crear canal con system")
+                            raise ValueError("Respuesta inválida al crear canal con system")
+                    except Exception as channel_error:
+                        logger.error(f"[DEBUG] Error creando canal con system: {channel_error}")
+                        raise
+            except Exception as e:
+                logger.error(f"[DEBUG] Error en create_room: {str(e)}", exc_info=True)
+                raise ValueError(f"Error creando sala de chat: {str(e)}")
+
+        except Exception as e:
+            logger.warning(f"[DEBUG] Error de validación: {str(e)}")
+            raise ValueError(f"Error creando sala de chat: {str(e)}")
+
+    async def add_user_to_channel_async(self, db: AsyncSession, room_id: int, user_id: int) -> Dict[str, Any]:
+        """
+        Añade un usuario a un canal de chat (async).
+
+        Args:
+            db: Sesión de base de datos async
+            room_id: ID de la sala
+            user_id: ID interno del usuario
+        """
+        # Verificar que la sala existe
+        db_room = await chat_repository.get_room_async(db, room_id=room_id)
+        if not db_room:
+            raise ValueError(f"No existe sala de chat con ID {room_id}")
+
+        # Verificar que el usuario existe
+        stmt = select(User).where(User.id == user_id)
+        result = await db.execute(stmt)
+        user = result.scalar_one_or_none()
+
+        if not user:
+            raise ValueError(f"Usuario con ID interno {user_id} no encontrado")
+
+        # Obtener Stream ID
+        stream_id = self._get_stream_id_for_user(user)
+
+        try:
+            # Añadir a BD local
+            await chat_repository.add_member_to_room_async(db, room_id=room_id, user_id=user_id)
+
+            # Crear usuario en Stream
+            try:
+                from app.models.user_gym import UserGym
+                stmt_gyms = select(UserGym).where(UserGym.user_id == user_id)
+                result_gyms = await db.execute(stmt_gyms)
+                user_gyms = result_gyms.scalars().all()
+                user_teams = [f"gym_{ug.gym_id}" for ug in user_gyms]
+
+                user_data = {
+                    "id": stream_id,
+                    "name": f"Usuario {user_id}",
+                }
+                if user_teams:
+                    user_data["teams"] = user_teams
+
+                stream_client.update_user(user_data)
+                logger.info(f"Usuario {stream_id} creado/actualizado en Stream antes de añadirlo al canal")
+            except Exception as e:
+                logger.error(f"Error creando usuario {stream_id} en Stream: {str(e)}")
+
+            # Añadir a Stream
+            channel = stream_client.channel(db_room.stream_channel_type, db_room.stream_channel_id)
+            response = channel.add_members([stream_id])
+
+            return {
+                "room_id": room_id,
+                "user_id": user_id,
+                "stream_id": stream_id,
+                "stream_response": response
+            }
+        except Exception as e:
+            # Rollback en BD local
+            try:
+                await chat_repository.remove_member_from_room_async(db, room_id=room_id, user_id=user_id)
+            except:
+                pass
+
+            raise ValueError(f"Error añadiendo usuario al canal: {str(e)}")
+
+    async def remove_user_from_channel_async(self, db: AsyncSession, room_id: int, user_id: int) -> Dict[str, Any]:
+        """
+        Elimina un usuario de un canal de chat (async).
+
+        Args:
+            db: Sesión de base de datos async
+            room_id: ID de la sala
+            user_id: ID interno del usuario
+        """
+        # Verificar sala
+        db_room = await chat_repository.get_room_async(db, room_id=room_id)
+        if not db_room:
+            raise ValueError(f"No existe sala de chat con ID {room_id}")
+
+        # Verificar usuario
+        stmt = select(User).where(User.id == user_id)
+        result = await db.execute(stmt)
+        user = result.scalar_one_or_none()
+
+        if not user:
+            raise ValueError(f"Usuario con ID interno {user_id} no encontrado")
+
+        # Obtener Stream ID
+        stream_id = self._get_stream_id_for_user(user)
+
+        try:
+            # Eliminar de Stream
+            stream_response = None
+            try:
+                channel = stream_client.channel(db_room.stream_channel_type, db_room.stream_channel_id)
+                stream_response = channel.remove_members([stream_id])
+                logger.info(f"Usuario {stream_id} eliminado de Stream Chat")
+            except Exception as e:
+                logger.error(f"Error eliminando usuario {stream_id} de Stream: {str(e)}")
+
+            # Eliminar de BD local
+            if not await chat_repository.remove_member_from_room_async(db, room_id=room_id, user_id=user_id):
+                logger.warning(f"Usuario {user_id} no encontrado en la sala {room_id} en la BD local")
+
+            return {
+                "room_id": room_id,
+                "user_id": user_id,
+                "stream_id": stream_id,
+                "stream_response": stream_response
+            }
+        except Exception as e:
+            raise ValueError(f"Error eliminando usuario del canal: {str(e)}")
+
+    async def close_event_chat_async(self, db: AsyncSession, event_id: int) -> bool:
+        """
+        Cierra la sala de chat asociada a un evento cuando este se completa (async).
+
+        Esta función:
+        1. Busca la sala asociada al evento
+        2. Envía un mensaje de sistema indicando que el evento ha finalizado
+        3. Congela el canal para que no se puedan enviar más mensajes
+
+        Args:
+            db: Sesión de base de datos async
+            event_id: ID del evento cuya sala se va a cerrar
+
+        Returns:
+            bool: True si se cerró la sala correctamente, False si no existe o falló
+        """
+        logger.info(f"Intentando cerrar sala de chat para evento {event_id}")
+
+        try:
+            # Buscar sala
+            room = await chat_repository.get_event_room_async(db, event_id=event_id)
+            if not room:
+                logger.warning(f"No se encontró sala de chat para el evento {event_id}")
+                return False
+
+            # Obtener canal de Stream
+            try:
+                channel = stream_client.channel(room.stream_channel_type, room.stream_channel_id)
+
+                # Enviar mensaje de sistema
+                system_message = {
+                    "text": "Este evento ha finalizado. El chat ha sido archivado y no es posible enviar nuevos mensajes, pero puedes seguir viendo el historial de conversaciones.",
+                    "type": "system"
+                }
+
+                channel.send_message(system_message, user_id="system")
+                logger.info(f"Mensaje de sistema enviado al chat del evento {event_id}")
+
+                # Congelar canal
+                try:
+                    channel.update({"frozen": True})
+                    logger.info(f"Canal del evento {event_id} congelado exitosamente")
+                except Exception as e:
+                    logger.warning(f"No se pudo congelar el canal: {e}")
+
+                return True
+
+            except Exception as e:
+                logger.error(f"Error al cerrar sala de chat para evento {event_id} en Stream: {e}", exc_info=True)
+                return False
+
+        except Exception as e:
+            logger.error(f"Error general al cerrar sala de chat para evento {event_id}: {e}", exc_info=True)
+            return False
+
+    async def get_event_room_async(self, db: AsyncSession, event_id: int) -> Optional[ChatRoom]:
+        """
+        Obtiene la sala de chat asociada a un evento (async).
+
+        Args:
+            db: Sesión de base de datos async
+            event_id: ID del evento
+
+        Returns:
+            ChatRoom: La sala encontrada o None si no existe
+        """
+        try:
+            return await chat_repository.get_event_room_async(db, event_id=event_id)
+        except Exception as e:
+            logger.error(f"Error al buscar sala para evento {event_id}: {e}", exc_info=True)
+            return None
+
+    async def get_chat_statistics_async(self, db: AsyncSession, chat_room_id: int) -> Dict[str, Any]:
+        """
+        Obtiene estadísticas básicas de un chat (async).
+
+        Args:
+            db: Sesión de base de datos async
+            chat_room_id: ID de la sala de chat
+
+        Returns:
+            Dict con estadísticas del chat
+        """
+        try:
+            chat_room = await chat_repository.get_room_by_id_async(db, chat_room_id)
+            if not chat_room:
+                return {"error": "Chat no encontrado"}
+
+            # Contar miembros
+            stmt = select(func.count(ChatMember.id)).where(ChatMember.room_id == chat_room_id)
+            result = await db.execute(stmt)
+            member_count = result.scalar() or 0
+
+            # Información básica
+            stats = {
+                "room_id": chat_room_id,
+                "name": chat_room.name,
+                "is_direct": chat_room.is_direct,
+                "member_count": member_count,
+                "created_at": chat_room.created_at.isoformat() if chat_room.created_at else None,
+                "updated_at": chat_room.updated_at.isoformat() if chat_room.updated_at else None,
+                "stream_channel_id": chat_room.stream_channel_id
+            }
+
+            return stats
+
+        except Exception as e:
+            logger.error(f"Error obteniendo estadísticas del chat {chat_room_id}: {str(e)}")
+            return {"error": f"Error obteniendo estadísticas: {str(e)}"}
+
+    async def validate_user_gym_membership_async(self, db: AsyncSession, user_id: int, gym_id: int) -> bool:
+        """
+        Valida que un usuario pertenezca a un gimnasio específico (async).
+
+        Args:
+            db: Sesión de base de datos async
+            user_id: ID del usuario
+            gym_id: ID del gimnasio
+
+        Returns:
+            bool: True si el usuario pertenece al gimnasio
+        """
+        try:
+            from app.models.user_gym import UserGym
+            stmt = select(UserGym).where(
+                UserGym.user_id == user_id,
+                UserGym.gym_id == gym_id
+            )
+            result = await db.execute(stmt)
+            membership = result.scalar_one_or_none()
             return membership is not None
         except Exception as e:
             logger.error(f"Error validando membresía: {str(e)}")
