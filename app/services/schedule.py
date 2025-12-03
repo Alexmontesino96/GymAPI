@@ -2,7 +2,8 @@ from typing import List, Optional, Dict, Any, Union
 from datetime import datetime, time, timedelta, date
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import or_
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import or_, select
 import asyncio
 import json
 
@@ -939,8 +940,83 @@ class GymHoursService:
             
             schedule_list.append(schedule_entry)
             current_date += timedelta(days=1)
-            
+
         return schedule_list
+
+    # ============= ASYNC METHODS (NO CACHE) =============
+
+    async def get_gym_hours_by_day_async(self, db: AsyncSession, day: int, gym_id: int) -> Any:
+        """Obtener los horarios del gimnasio para un día específico (async)."""
+        result = await gym_hours_repository.get_by_day_async(db, day=day, gym_id=gym_id)
+        if not result:
+            result = await gym_hours_repository.get_or_create_default_async(db, day=day, gym_id=gym_id)
+        return result
+
+    async def get_all_gym_hours_async(self, db: AsyncSession, gym_id: int) -> List[Any]:
+        """Obtener los horarios para todos los días de la semana (async)."""
+        result = await gym_hours_repository.get_all_days_async(db, gym_id=gym_id)
+        if len(result) < 7:
+            existing_days = {hour.day_of_week for hour in result}
+            for day in range(7):
+                if day not in existing_days:
+                    new_day = await gym_hours_repository.get_or_create_default_async(db, day=day, gym_id=gym_id)
+                    result.append(new_day)
+            result.sort(key=lambda x: x.day_of_week)
+        return result
+
+    async def get_hours_for_date_async(self, db: AsyncSession, date_value: date, gym_id: int) -> Dict[str, Any]:
+        """Obtener horarios efectivos para una fecha específica (async)."""
+        # Verificar si hay un día especial
+        special_hours = await gym_special_hours_repository.get_by_date_async(db, date_value=date_value, gym_id=gym_id)
+
+        if special_hours:
+            return {
+                "date": date_value,
+                "is_special": True,
+                "special_hours": special_hours,
+                "effective_hours": {
+                    "open_time": special_hours.open_time,
+                    "close_time": special_hours.close_time,
+                    "is_closed": special_hours.is_closed,
+                    "source_id": special_hours.id
+                }
+            }
+
+        # Si no hay día especial, usar horarios regulares
+        day_of_week = date_value.weekday()
+        regular_hours = await gym_hours_repository.get_by_day_async(db, day=day_of_week, gym_id=gym_id)
+
+        if not regular_hours:
+            regular_hours = await gym_hours_repository.get_or_create_default_async(db, day=day_of_week, gym_id=gym_id)
+
+        return {
+            "date": date_value,
+            "is_special": False,
+            "special_hours": None,
+            "effective_hours": {
+                "open_time": regular_hours.open_time,
+                "close_time": regular_hours.close_time,
+                "is_closed": regular_hours.is_closed,
+                "source_id": regular_hours.id
+            }
+        }
+
+    async def create_or_update_gym_hours_async(
+        self, db: AsyncSession, day: int, gym_hours_data: Union[GymHoursCreate, GymHoursUpdate], gym_id: int
+    ) -> Any:
+        """Crear o actualizar los horarios del gimnasio para un día específico (async)."""
+        existing_hours = await gym_hours_repository.get_by_day_async(db, day=day, gym_id=gym_id)
+
+        if existing_hours:
+            result = await gym_hours_repository.update_async(db, db_obj=existing_hours, obj_in=gym_hours_data)
+        else:
+            obj_in_data = gym_hours_data.model_dump() if hasattr(gym_hours_data, 'model_dump') else gym_hours_data
+            if isinstance(obj_in_data, dict):
+                obj_in_data["day_of_week"] = day
+                obj_in_data["gym_id"] = gym_id
+            result = await gym_hours_repository.create_async(db, obj_in=obj_in_data)
+
+        return result
 
 
 class GymSpecialHoursService:
@@ -1286,8 +1362,137 @@ class GymSpecialHoursService:
         
         return gym_special_hours_repository.remove(db, id=special_day_id)
 
+    # ============= ASYNC METHODS (NO CACHE) =============
 
-# --- Añadir Servicio para Categorías Personalizadas --- 
+    async def apply_defaults_to_range_async(
+        self,
+        db: AsyncSession,
+        start_date: date,
+        end_date: date,
+        gym_id: int
+    ) -> int:
+        """Aplicar horarios predeterminados a un rango de fechas (async)."""
+        count = 0
+        current_date = start_date
+
+        while current_date <= end_date:
+            # Verificar si ya existe un día especial
+            existing = await gym_special_hours_repository.get_by_date_async(db, date_value=current_date, gym_id=gym_id)
+
+            if not existing:
+                # Obtener horarios regulares para este día
+                day_of_week = current_date.weekday()
+                regular_hours = await gym_hours_repository.get_by_day_async(db, day=day_of_week, gym_id=gym_id)
+
+                if not regular_hours:
+                    regular_hours = await gym_hours_repository.get_or_create_default_async(db, day=day_of_week, gym_id=gym_id)
+
+                # Crear día especial con horarios regulares
+                obj_in_data = {
+                    "date": current_date,
+                    "gym_id": gym_id,
+                    "open_time": regular_hours.open_time,
+                    "close_time": regular_hours.close_time,
+                    "is_closed": regular_hours.is_closed,
+                    "description": f"Horario regular aplicado automáticamente"
+                }
+
+                await gym_special_hours_repository.create_async(db, obj_in=obj_in_data)
+                count += 1
+
+            current_date += timedelta(days=1)
+
+        return count
+
+    async def get_schedule_for_date_range_async(
+        self,
+        db: AsyncSession,
+        start_date: date,
+        end_date: date,
+        gym_id: int
+    ) -> List[Dict[str, Any]]:
+        """Obtener horario efectivo para un rango de fechas (async)."""
+        schedule_list = []
+        current_date = start_date
+
+        while current_date <= end_date:
+            # Obtener horario efectivo para cada fecha
+            daily_schedule = await gym_hours_service.get_hours_for_date_async(
+                db=db,
+                date_value=current_date,
+                gym_id=gym_id
+            )
+
+            effective_hours = daily_schedule.get("effective_hours", {})
+            schedule_entry = {
+                "date": current_date,
+                "day_of_week": current_date.weekday(),
+                "open_time": effective_hours.get("open_time"),
+                "close_time": effective_hours.get("close_time"),
+                "is_closed": effective_hours.get("is_closed", False),
+                "is_special": daily_schedule.get("is_special", False),
+                "description": daily_schedule.get("special_hours", {}).get("description") if daily_schedule.get("special_hours") else None,
+                "source_id": effective_hours.get("source_id")
+            }
+
+            schedule_list.append(schedule_entry)
+            current_date += timedelta(days=1)
+
+        return schedule_list
+
+    async def get_special_hours_async(self, db: AsyncSession, special_day_id: int) -> Any:
+        """Obtener un día especial por ID (async)."""
+        return await gym_special_hours_repository.get_async(db, id=special_day_id)
+
+    async def get_special_hours_by_date_async(self, db: AsyncSession, date_value: date, gym_id: int) -> Any:
+        """Obtener horarios especiales para una fecha específica (async)."""
+        return await gym_special_hours_repository.get_by_date_async(db, date_value=date_value, gym_id=gym_id)
+
+    async def get_upcoming_special_days_async(self, db: AsyncSession, limit: int = 10, gym_id: int = None) -> List[Any]:
+        """Obtener los próximos días especiales (async)."""
+        return await gym_special_hours_repository.get_upcoming_special_days_async(db, limit=limit, gym_id=gym_id)
+
+    async def create_special_day_async(self, db: AsyncSession, special_hours_data: GymSpecialHoursCreate, gym_id: int = None) -> Any:
+        """Crear un nuevo día especial (async)."""
+        if gym_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Se requiere un ID de gimnasio válido"
+            )
+
+        obj_in_data = special_hours_data.model_dump()
+        obj_in_data["gym_id"] = gym_id
+
+        return await gym_special_hours_repository.create_async(db, obj_in=obj_in_data)
+
+    async def update_special_day_async(
+        self, db: AsyncSession, special_day_id: int, special_hours_data: GymSpecialHoursUpdate
+    ) -> Any:
+        """Actualizar un día especial existente (async)."""
+        special_day = await gym_special_hours_repository.get_async(db, id=special_day_id)
+        if not special_day:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Día especial no encontrado"
+            )
+
+        return await gym_special_hours_repository.update_async(
+            db, db_obj=special_day, obj_in=special_hours_data
+        )
+
+    async def delete_special_day_async(self, db: AsyncSession, special_day_id: int) -> Any:
+        """Eliminar un día especial (async)."""
+        special_day = await gym_special_hours_repository.get_async(db, id=special_day_id)
+        if not special_day:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Día especial no encontrado"
+            )
+
+        return await gym_special_hours_repository.remove_async(db, id=special_day_id)
+
+
+# --- Añadir Servicio para Categorías Personalizadas ---
 class ClassCategoryService:
     # --- Añadir método helper para invalidación --- 
     async def _invalidate_custom_category_caches(self, redis_client: Redis, gym_id: int, category_id: Optional[int] = None):
