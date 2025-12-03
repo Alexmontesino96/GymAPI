@@ -80,6 +80,7 @@ try:
         connect_args={
             "statement_cache_size": 0,  # Requerido para pgbouncer (Supabase Transaction Pooler)
             "server_settings": {
+                "search_path": "public",  # Configurar schema por defecto (una vez por conexión)
                 "application_name": "gymapi_async",
                 "statement_timeout": "30000"  # asyncpg usa server_settings
             }
@@ -151,13 +152,8 @@ async def get_async_db():
 
     async with AsyncSessionLocal() as session:
         try:
-            # SET search_path no requiere commit - es un comando de sesión
-            # Usar execution_options para evitar prepared statements con pgbouncer
-            await session.execute(
-                text("SET search_path TO public").execution_options(
-                    compiled_cache=None
-                )
-            )
+            # ✅ search_path ya está configurado en server_settings del engine
+            # No es necesario ejecutar SET search_path en cada request
             yield session
         except SQLAlchemyError as e:
             logger.error(f"Error SQLAlchemy en sesión async: {e}", exc_info=True)
