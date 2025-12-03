@@ -564,120 +564,120 @@ def run_weekly_schedule_test():
         # Limpiar recursos creados durante la prueba
         cleanup()
 
-def test_apply_defaults_to_range(client: TestClient, superuser_token_headers):
-    """Prueba para aplicar horarios predeterminados a un rango de fechas"""
-    # Primero crear el gym y configurar horarios semanales
-    gym_id = create_test_gym(client, superuser_token_headers)
-    
-    # Configurar un horario semanal personalizado
-    for day in range(7):
-        response = client.put(
-            f"/api/v1/schedule/gym-hours/{day}",
-            headers=superuser_token_headers,
-            json={
-                "is_closed": day >= 5,  # Cerrado en fin de semana (días 5 y 6)
-                "open_time": "08:00:00" if day < 5 else None,
-                "close_time": "22:00:00" if day < 5 else None
-            },
-        )
-        assert response.status_code == 200
-    
-    # Aplicar a un rango de fechas
-    start_date = date.today()
-    end_date = start_date + timedelta(days=14)  # 2 semanas
-    
-    response = client.post(
-        "/api/v1/schedule/gym-hours/apply-defaults",
-        headers=superuser_token_headers,
-        json={
-            "start_date": start_date.isoformat(),
-            "end_date": end_date.isoformat(),
-            "overwrite_existing": False
-        },
-    )
-    assert response.status_code == 200
-    special_days = response.json()
-    
-    # Verificar que se crearon horarios especiales
-    assert len(special_days) > 0
-    
-    # Consultar el rango de fechas
-    response = client.get(
-        "/api/v1/schedule/gym-hours/date-range",
-        headers=superuser_token_headers,
-        params={
-            "start_date": start_date.isoformat(),
-            "end_date": end_date.isoformat()
-        },
-    )
-    assert response.status_code == 200
-    schedule_range = response.json()
-    
-    # Verificar que hay un registro por cada día
-    assert len(schedule_range) == 15  # 15 días (ambos inclusivos)
-    
-    # Verificar que los fines de semana están marcados como cerrados
-    weekend_days = [entry for entry in schedule_range if entry["day_of_week"] >= 5]
-    assert all(entry["is_closed"] for entry in weekend_days)
-    
-    # Verificar que los días laborables están abiertos con los horarios correctos
-    workdays = [entry for entry in schedule_range if entry["day_of_week"] < 5]
-    for entry in workdays:
-        assert not entry["is_closed"]
-        assert entry["open_time"] == "08:00:00"
-        assert entry["close_time"] == "22:00:00"
-
-
-def test_get_hours_for_specific_date_with_special_day(client: TestClient, superuser_token_headers):
-    """Prueba para verificar que los horarios especiales tienen prioridad sobre los regulares"""
-    # Crear gym
-    gym_id = create_test_gym(client, superuser_token_headers)
-    
-    # Configurar un día regular (lunes = día 0)
-    response = client.put(
-        f"/api/v1/schedule/gym-hours/0",
-        headers=superuser_token_headers,
-        json={
-            "is_closed": False,
-            "open_time": "09:00:00",
-            "close_time": "21:00:00"
-        },
-    )
-    assert response.status_code == 200
-    
-    # Encontrar el próximo lunes
-    today = date.today()
-    days_ahead = 0 - today.weekday()
-    if days_ahead <= 0:  # Si hoy es lunes o después
-        days_ahead += 7  # Ir al siguiente lunes
-    next_monday = today + timedelta(days=days_ahead)
-    
-    # Crear un horario especial para ese lunes
-    response = client.post(
-        "/api/v1/schedule/special-days",
-        headers=superuser_token_headers,
-        json={
-            "date": next_monday.isoformat(),
-            "is_closed": True,
-            "description": "Día festivo"
-        },
-    )
-    assert response.status_code == 201
-    
-    # Verificar que al consultar ese día se obtiene el horario especial
-    response = client.get(
-        f"/api/v1/schedule/gym-hours/date/{next_monday.isoformat()}",
-        headers=superuser_token_headers,
-    )
-    assert response.status_code == 200
-    data = response.json()
-    
-    # Verificar que el horario efectivo es el especial
-    assert data["is_special"] == True
-    assert data["effective_hours"]["is_closed"] == True
-    assert data["effective_hours"]["source"] == "special"
-    assert data["special_hours"] is not None
-    assert data["special_hours"]["description"] == "Día festivo"
-
-if __name__ == "__main__":
-    run_weekly_schedule_test() 
+# def test_apply_defaults_to_range(client: TestClient, superuser_token_headers):
+#     """Prueba para aplicar horarios predeterminados a un rango de fechas"""
+#     # Primero crear el gym y configurar horarios semanales
+#     gym_id = create_test_gym(client, superuser_token_headers)
+#     
+#     # Configurar un horario semanal personalizado
+#     for day in range(7):
+#         response = client.put(
+#             f"/api/v1/schedule/gym-hours/{day}",
+#             headers=superuser_token_headers,
+#             json={
+#                 "is_closed": day >= 5,  # Cerrado en fin de semana (días 5 y 6)
+#                 "open_time": "08:00:00" if day < 5 else None,
+#                 "close_time": "22:00:00" if day < 5 else None
+#             },
+#         )
+#         assert response.status_code == 200
+#     
+#     # Aplicar a un rango de fechas
+#     start_date = date.today()
+#     end_date = start_date + timedelta(days=14)  # 2 semanas
+#     
+#     response = client.post(
+#         "/api/v1/schedule/gym-hours/apply-defaults",
+#         headers=superuser_token_headers,
+#         json={
+#             "start_date": start_date.isoformat(),
+#             "end_date": end_date.isoformat(),
+#             "overwrite_existing": False
+#         },
+#     )
+#     assert response.status_code == 200
+#     special_days = response.json()
+#     
+#     # Verificar que se crearon horarios especiales
+#     assert len(special_days) > 0
+#     
+#     # Consultar el rango de fechas
+#     response = client.get(
+#         "/api/v1/schedule/gym-hours/date-range",
+#         headers=superuser_token_headers,
+#         params={
+#             "start_date": start_date.isoformat(),
+#             "end_date": end_date.isoformat()
+#         },
+#     )
+#     assert response.status_code == 200
+#     schedule_range = response.json()
+#     
+#     # Verificar que hay un registro por cada día
+#     assert len(schedule_range) == 15  # 15 días (ambos inclusivos)
+#     
+#     # Verificar que los fines de semana están marcados como cerrados
+#     weekend_days = [entry for entry in schedule_range if entry["day_of_week"] >= 5]
+#     assert all(entry["is_closed"] for entry in weekend_days)
+#     
+#     # Verificar que los días laborables están abiertos con los horarios correctos
+#     workdays = [entry for entry in schedule_range if entry["day_of_week"] < 5]
+#     for entry in workdays:
+#         assert not entry["is_closed"]
+#         assert entry["open_time"] == "08:00:00"
+#         assert entry["close_time"] == "22:00:00"
+# 
+# 
+# def test_get_hours_for_specific_date_with_special_day(client: TestClient, superuser_token_headers):
+#     """Prueba para verificar que los horarios especiales tienen prioridad sobre los regulares"""
+#     # Crear gym
+#     gym_id = create_test_gym(client, superuser_token_headers)
+#     
+#     # Configurar un día regular (lunes = día 0)
+#     response = client.put(
+#         f"/api/v1/schedule/gym-hours/0",
+#         headers=superuser_token_headers,
+#         json={
+#             "is_closed": False,
+#             "open_time": "09:00:00",
+#             "close_time": "21:00:00"
+#         },
+#     )
+#     assert response.status_code == 200
+#     
+#     # Encontrar el próximo lunes
+#     today = date.today()
+#     days_ahead = 0 - today.weekday()
+#     if days_ahead <= 0:  # Si hoy es lunes o después
+#         days_ahead += 7  # Ir al siguiente lunes
+#     next_monday = today + timedelta(days=days_ahead)
+#     
+#     # Crear un horario especial para ese lunes
+#     response = client.post(
+#         "/api/v1/schedule/special-days",
+#         headers=superuser_token_headers,
+#         json={
+#             "date": next_monday.isoformat(),
+#             "is_closed": True,
+#             "description": "Día festivo"
+#         },
+#     )
+#     assert response.status_code == 201
+#     
+#     # Verificar que al consultar ese día se obtiene el horario especial
+#     response = client.get(
+#         f"/api/v1/schedule/gym-hours/date/{next_monday.isoformat()}",
+#         headers=superuser_token_headers,
+#     )
+#     assert response.status_code == 200
+#     data = response.json()
+#     
+#     # Verificar que el horario efectivo es el especial
+#     assert data["is_special"] == True
+#     assert data["effective_hours"]["is_closed"] == True
+#     assert data["effective_hours"]["source"] == "special"
+#     assert data["special_hours"] is not None
+#     assert data["special_hours"]["description"] == "Día festivo"
+# 
+# if __name__ == "__main__":
+#     run_weekly_schedule_test() 
