@@ -151,8 +151,13 @@ async def get_async_db():
 
     async with AsyncSessionLocal() as session:
         try:
-            await session.execute(text("SET search_path TO public"))
-            await session.commit()
+            # SET search_path no requiere commit - es un comando de sesión
+            # Usar execution_options para evitar prepared statements con pgbouncer
+            await session.execute(
+                text("SET search_path TO public").execution_options(
+                    compiled_cache=None
+                )
+            )
             yield session
         except SQLAlchemyError as e:
             logger.error(f"Error SQLAlchemy en sesión async: {e}", exc_info=True)
