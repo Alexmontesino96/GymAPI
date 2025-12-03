@@ -51,6 +51,14 @@ class UserRepository(BaseRepository[User, UserCreate, UserUpdate]):
         """
         return db.query(User).filter(User.role == role).offset(skip).limit(limit).all()
 
+    async def get_by_role_async(self, db: AsyncSession, *, role: UserRole, skip: int = 0, limit: int = 100) -> List[User]:
+        """
+        Obtener usuarios filtrados por rol (async).
+        """
+        stmt = select(User).where(User.role == role).offset(skip).limit(limit)
+        result = await db.execute(stmt)
+        return result.scalars().all()
+
     def get_by_role_and_gym(
         self, 
         db: Session, 
@@ -74,7 +82,29 @@ class UserRepository(BaseRepository[User, UserCreate, UserUpdate]):
             .limit(limit)
             .all()
         )
-        
+
+    async def get_by_role_and_gym_async(
+        self,
+        db: AsyncSession,
+        *,
+        role: UserRole,
+        gym_id: int,
+        skip: int = 0,
+        limit: int = 100
+    ) -> List[User]:
+        """
+        Obtener usuarios de un gimnasio específico, filtrados por su rol GLOBAL (async).
+        Nota: Esto filtra por el rol definido en la tabla User, no el de UserGym.
+        """
+        stmt = select(User)
+        stmt = stmt.join(UserGym, User.id == UserGym.user_id)
+        stmt = stmt.where(UserGym.gym_id == gym_id)
+        stmt = stmt.where(User.role == role)
+        stmt = stmt.offset(skip).limit(limit)
+
+        result = await db.execute(stmt)
+        return result.scalars().all()
+
     def search(
         self,
         db: Session,
@@ -241,7 +271,63 @@ class UserRepository(BaseRepository[User, UserCreate, UserUpdate]):
                  bio=row[5], 
                  is_active=row[6]
              ) for row in results
-        ] 
+        ]
+        return participants
+
+    async def get_public_participants_async(
+        self,
+        db: AsyncSession,
+        *,
+        gym_id: int,
+        roles: List[UserRole],
+        name: Optional[str] = None,
+        skip: int = 0,
+        limit: int = 100
+    ) -> List[UserPublicProfile]:
+        """
+        Obtiene perfiles públicos de participantes de un gym, filtrados y paginados (async).
+        Filtra por el rol del usuario dentro del gimnasio (UserGym.role).
+        """
+        role_values = [r.value if hasattr(r, "value") else str(r) for r in roles]
+
+        stmt = select(
+            User.id,
+            User.first_name,
+            User.last_name,
+            User.picture,
+            UserGym.role.label("role"),
+            User.bio,
+            User.is_active,
+        )
+        stmt = stmt.join(UserGym, User.id == UserGym.user_id)
+        stmt = stmt.where(UserGym.gym_id == gym_id)
+        stmt = stmt.where(UserGym.role.in_(role_values))
+
+        if name:
+            stmt = stmt.where(
+                or_(
+                    User.first_name.ilike(f"%{name}%"),
+                    User.last_name.ilike(f"%{name}%")
+                )
+            )
+
+        stmt = stmt.order_by(User.first_name, User.last_name, User.id)
+        stmt = stmt.offset(skip).limit(limit)
+
+        result = await db.execute(stmt)
+        results = result.all()
+
+        participants = [
+            UserPublicProfile(
+                id=row[0],
+                first_name=row[1],
+                last_name=row[2],
+                picture=row[3],
+                role=row[4],
+                bio=row[5],
+                is_active=row[6]
+            ) for row in results
+        ]
         return participants
 
     def get_gym_participants(
@@ -421,6 +507,42 @@ class UserRepository(BaseRepository[User, UserCreate, UserUpdate]):
         db.add(db_obj)
         db.commit()
         db.refresh(db_obj)
+        return db_obj
+
+    async def create_from_auth0_async(self, db: AsyncSession, *, auth0_user: Dict) -> User:
+        """
+        Crear un usuario a partir de datos de Auth0 (async).
+        """
+        auth0_id = auth0_user.get("sub")
+        email = auth0_user.get("email")
+        name = auth0_user.get("name") or auth0_user.get("nickname") or ""
+        picture = auth0_user.get("picture")
+        locale = auth0_user.get("locale")
+
+        # Si no hay email, crear uno temporal usando el auth0_id
+        if not email and auth0_id:
+            email = f"temp_{auth0_id.replace('|', '_')}@example.com"
+
+        # Procesar el nombre completo
+        name_parts = name.split(" ", 1) if name else ["", ""]
+        first_name = name_parts[0] if len(name_parts) > 0 else ""
+        last_name = name_parts[1] if len(name_parts) > 1 else ""
+
+        # Crear usuario con datos de Auth0
+        db_obj = User(
+            auth0_id=auth0_id,
+            email=email,
+            first_name=first_name,
+            last_name=last_name,
+            picture=picture,
+            locale=locale,
+            auth0_metadata=json.dumps(auth0_user),
+            role=UserRole.MEMBER
+        )
+
+        db.add(db_obj)
+        await db.flush()
+        await db.refresh(db_obj)
         return db_obj
 
     def authenticate(self, db: Session, *, email: str, password: str) -> Optional[User]:
