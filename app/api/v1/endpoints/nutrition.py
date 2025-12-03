@@ -5,8 +5,9 @@ Endpoints para el sistema de planes nutricionales.
 from typing import List, Optional, Any, Dict
 from fastapi import APIRouter, Depends, HTTPException, Query, Path, Header
 from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.session import get_db
+from app.db.session import get_db, get_async_db
 from app.core.auth0_fastapi import get_current_user, Auth0User
 from app.core.tenant import verify_gym_access
 from app.models.user import User
@@ -38,8 +39,8 @@ router = APIRouter(dependencies=[module_enabled("nutrition")])
 
 
 @router.get("/plans", response_model=NutritionPlanListResponse)
-def list_nutrition_plans(
-    db: Session = Depends(get_db),
+async def list_nutrition_plans(
+    db: AsyncSession = Depends(get_async_db),
     current_gym: Gym = Depends(verify_gym_access),
     current_user: Auth0User = Depends(get_current_user),
     page: int = Query(1, ge=1, description="Número de página para paginación"),
@@ -107,8 +108,8 @@ def list_nutrition_plans(
     }
     ```
     """
-    service = NutritionService(db)
-    
+    service = NutritionService(None)
+
     # Crear filtros
     filters = NutritionPlanFilters(
         goal=goal,
@@ -121,13 +122,14 @@ def list_nutrition_plans(
         status=status,
         is_live_active=is_live_active
     )
-    
+
     # Obtener usuario local
-    db_user = user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
+    db_user = await user_service.get_user_by_auth0_id_async(db, auth0_id=current_user.id)
     if not db_user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
-    
-    plans, total = service.list_nutrition_plans(
+
+    plans, total = await service.list_nutrition_plans_async(
+        db,
         gym_id=current_gym.id,
         filters=filters,
         page=page,
@@ -146,9 +148,9 @@ def list_nutrition_plans(
 
 
 @router.post("/plans", response_model=NutritionPlan)
-def create_nutrition_plan(
+async def create_nutrition_plan(
     plan_data: NutritionPlanCreate,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: Gym = Depends(verify_gym_access),
     current_user: Auth0User = Depends(get_current_user)
 ):
@@ -211,23 +213,23 @@ def create_nutrition_plan(
     - `403`: Sin permisos para crear planes
     - `404`: Usuario no encontrado
     """
-    service = NutritionService(db)
+    service = NutritionService(None)
     
     # Obtener usuario local
-    db_user = user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
+    db_user = await user_service.get_user_by_auth0_id_async(db, auth0_id=current_user.id)
     if not db_user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
     
     try:
         # Usar el método específico para planes live o el método base
         if plan_data.plan_type == PlanType.LIVE:
-            plan = service.create_live_nutrition_plan(
+            plan = await service.create_live_nutrition_plan_async(db, 
                 plan_data=plan_data,
                 creator_id=db_user.id,
                 gym_id=current_gym.id
             )
         else:
-            plan = service.create_nutrition_plan(
+            plan = await service.create_nutrition_plan_async(db, 
                 plan_data=plan_data,
                 creator_id=db_user.id,
                 gym_id=current_gym.id
@@ -240,9 +242,9 @@ def create_nutrition_plan(
 
 
 @router.get("/plans/{plan_id}", response_model=NutritionPlanWithDetails)
-def get_nutrition_plan(
+async def get_nutrition_plan(
     plan_id: int = Path(..., description="ID único del plan nutricional"),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: Gym = Depends(verify_gym_access),
     current_user: Auth0User = Depends(get_current_user)
 ):
@@ -314,15 +316,15 @@ def get_nutrition_plan(
     - `403`: Sin permisos para ver este plan privado
     - `404`: Plan no encontrado o no pertenece al gimnasio
     """
-    service = NutritionService(db)
+    service = NutritionService(None)
     
     # Obtener usuario local
-    db_user = user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
+    db_user = await user_service.get_user_by_auth0_id_async(db, auth0_id=current_user.id)
     if not db_user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
     
     try:
-        plan = service.get_nutrition_plan_with_details(plan_id, current_gym.id, db_user.id)
+        plan = await service.get_nutrition_plan_with_details_async(db, plan_id, current_gym.id, db_user.id)
         return plan
     except NotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -331,9 +333,9 @@ def get_nutrition_plan(
 
 
 @router.post("/plans/{plan_id}/follow", response_model=NutritionPlanFollower)
-def follow_nutrition_plan(
+async def follow_nutrition_plan(
     plan_id: int = Path(..., description="ID del plan nutricional a seguir"),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: Gym = Depends(verify_gym_access),
     current_user: Auth0User = Depends(get_current_user)
 ):
@@ -404,15 +406,15 @@ def follow_nutrition_plan(
     - `404`: Plan no encontrado
     - `403`: Sin acceso a plan privado
     """
-    service = NutritionService(db)
+    service = NutritionService(None)
     
     # Obtener usuario local
-    db_user = user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
+    db_user = await user_service.get_user_by_auth0_id_async(db, auth0_id=current_user.id)
     if not db_user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
     
     try:
-        follower = service.follow_nutrition_plan(
+        follower = await service.follow_nutrition_plan_async(db, 
             plan_id=plan_id,
             user_id=db_user.id,
             gym_id=current_gym.id
@@ -425,9 +427,9 @@ def follow_nutrition_plan(
 
 
 @router.delete("/plans/{plan_id}/follow")
-def unfollow_nutrition_plan(
+async def unfollow_nutrition_plan(
     plan_id: int = Path(..., description="ID del plan nutricional a dejar de seguir"),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: Gym = Depends(verify_gym_access),
     current_user: Auth0User = Depends(get_current_user)
 ):
@@ -491,15 +493,15 @@ def unfollow_nutrition_plan(
     - `404`: No estás siguiendo este plan actualmente
     - `404`: Plan no encontrado en este gimnasio
     """
-    service = NutritionService(db)
+    service = NutritionService(None)
     
     # Obtener usuario local
-    db_user = user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
+    db_user = await user_service.get_user_by_auth0_id_async(db, auth0_id=current_user.id)
     if not db_user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
     
     try:
-        success = service.unfollow_nutrition_plan(
+        success = await service.unfollow_nutrition_plan_async(db, 
             plan_id=plan_id,
             user_id=db_user.id,
             gym_id=current_gym.id
@@ -510,10 +512,10 @@ def unfollow_nutrition_plan(
 
 
 @router.post("/meals/{meal_id}/complete", response_model=UserMealCompletion)
-def complete_meal(
+async def complete_meal(
     completion_data: UserMealCompletionCreate,
     meal_id: int = Path(..., description="ID único de la comida a completar"),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: Gym = Depends(verify_gym_access),
     current_user: Auth0User = Depends(get_current_user)
 ):
@@ -596,15 +598,15 @@ def complete_meal(
     - `400`: No estás siguiendo el plan que contiene esta comida
     - `404`: Comida no encontrada o no pertenece al gimnasio
     """
-    service = NutritionService(db)
+    service = NutritionService(None)
     
     # Obtener usuario local
-    db_user = user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
+    db_user = await user_service.get_user_by_auth0_id_async(db, auth0_id=current_user.id)
     if not db_user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
     
     try:
-        completion = service.complete_meal(
+        completion = await service.complete_meal_async(db, 
             meal_id=meal_id,
             user_id=db_user.id,
             gym_id=current_gym.id,
@@ -620,8 +622,8 @@ def complete_meal(
 
 
 @router.get("/today", response_model=TodayMealPlan)
-def get_today_meal_plan(
-    db: Session = Depends(get_db),
+async def get_today_meal_plan(
+    db: AsyncSession = Depends(get_async_db),
     current_gym: Gym = Depends(verify_gym_access),
     current_user: Auth0User = Depends(get_current_user)
 ):
@@ -728,10 +730,10 @@ def get_today_meal_plan(
     - 🎯 Búsqueda inteligente de plan activo
     - ⚡ Cache-friendly para llamadas frecuentes
     """
-    service = NutritionService(db)
+    service = NutritionService(None)
     
     # Obtener usuario local
-    db_user = user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
+    db_user = await user_service.get_user_by_auth0_id_async(db, auth0_id=current_user.id)
     if not db_user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
     
@@ -745,8 +747,8 @@ def get_today_meal_plan(
 
 
 @router.get("/dashboard", response_model=NutritionDashboardHybrid)
-def get_nutrition_dashboard(
-    db: Session = Depends(get_db),
+async def get_nutrition_dashboard(
+    db: AsyncSession = Depends(get_async_db),
     current_gym: Gym = Depends(verify_gym_access),
     current_user: Auth0User = Depends(get_current_user)
 ):
@@ -859,10 +861,10 @@ def get_nutrition_dashboard(
     - Métricas adaptadas a objetivos del usuario
     - Filtros automáticos de contenido apropiado
     """
-    service = NutritionService(db)
+    service = NutritionService(None)
     
     # Obtener usuario local
-    db_user = user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
+    db_user = await user_service.get_user_by_auth0_id_async(db, auth0_id=current_user.id)
     if not db_user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
     
@@ -877,10 +879,10 @@ def get_nutrition_dashboard(
 # ===== ENDPOINTS PARA CREADORES DE CONTENIDO =====
 
 @router.post("/plans/{plan_id}/days", response_model=DailyNutritionPlan)
-def create_daily_plan(
+async def create_daily_plan(
     daily_plan_data: DailyNutritionPlanCreate,
     plan_id: int = Path(..., description="ID del plan nutricional al que agregar el día"),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: Gym = Depends(verify_gym_access),
     current_user: Auth0User = Depends(get_current_user)
 ):
@@ -970,10 +972,10 @@ def create_daily_plan(
     - `403`: Solo el creador puede agregar días al plan
     - `404`: Plan no encontrado o no pertenece al gimnasio
     """
-    service = NutritionService(db)
+    service = NutritionService(None)
     
     # Obtener usuario local
-    db_user = user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
+    db_user = await user_service.get_user_by_auth0_id_async(db, auth0_id=current_user.id)
     if not db_user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
     
@@ -982,7 +984,7 @@ def create_daily_plan(
         raise HTTPException(status_code=400, detail="El plan_id no coincide")
     
     try:
-        daily_plan = service.create_daily_plan(
+        daily_plan = await service.create_daily_plan_async(db, 
             daily_plan_data=daily_plan_data,
             user_id=db_user.id
         )
@@ -996,10 +998,10 @@ def create_daily_plan(
 
 
 @router.post("/days/{daily_plan_id}/meals", response_model=Meal)
-def create_meal(
+async def create_meal(
     meal_data: MealCreate,
     daily_plan_id: int = Path(..., description="ID del día al que agregar la comida"),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_user: Auth0User = Depends(get_current_user)
 ):
     """
@@ -1114,10 +1116,10 @@ def create_meal(
     - `403`: Solo el creador puede agregar comidas al plan
     - `404`: Día no encontrado o no pertenece al gimnasio
     """
-    service = NutritionService(db)
+    service = NutritionService(None)
     
     # Obtener usuario local
-    db_user = user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
+    db_user = await user_service.get_user_by_auth0_id_async(db, auth0_id=current_user.id)
     if not db_user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
     
@@ -1126,7 +1128,7 @@ def create_meal(
         raise HTTPException(status_code=400, detail="El daily_plan_id no coincide")
     
     try:
-        meal = service.create_meal(
+        meal = await service.create_meal_async(db, 
             meal_data=meal_data,
             user_id=db_user.id
         )
@@ -1140,10 +1142,10 @@ def create_meal(
 
 
 @router.post("/meals/{meal_id}/ingredients", response_model=MealIngredient)
-def add_ingredient_to_meal(
+async def add_ingredient_to_meal(
     ingredient_data: MealIngredientCreate,
     meal_id: int = Path(..., description="ID de la comida a la que agregar el ingrediente"),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_user: Auth0User = Depends(get_current_user)
 ):
     """
@@ -1261,10 +1263,10 @@ def add_ingredient_to_meal(
     - `403`: Solo el creador puede agregar ingredientes
     - `404`: Comida no encontrada o no pertenece al gimnasio
     """
-    service = NutritionService(db)
+    service = NutritionService(None)
     
     # Obtener usuario local
-    db_user = user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
+    db_user = await user_service.get_user_by_auth0_id_async(db, auth0_id=current_user.id)
     if not db_user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
     
@@ -1292,7 +1294,7 @@ def add_ingredient_to_meal(
 async def generate_ingredients_with_ai(
     request: AIIngredientRequest,
     meal_id: int = Path(..., description="ID de la comida para generar ingredientes"),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: Gym = Depends(verify_gym_access),
     current_user: Auth0User = Depends(get_current_user)
 ):
@@ -1391,7 +1393,7 @@ async def generate_ingredients_with_ai(
     - Considera el tipo de cocina para ingredientes auténticos
     """
     # Obtener usuario local
-    db_user = user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
+    db_user = await user_service.get_user_by_auth0_id_async(db, auth0_id=current_user.id)
     if not db_user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
     
@@ -1438,7 +1440,7 @@ async def generate_ingredients_with_ai(
 async def apply_generated_ingredients(
     request: ApplyGeneratedIngredientsRequest,
     meal_id: int = Path(..., description="ID de la comida donde aplicar ingredientes"),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: Gym = Depends(verify_gym_access),
     current_user: Auth0User = Depends(get_current_user)
 ):
@@ -1493,7 +1495,7 @@ async def apply_generated_ingredients(
     - `500`: Error interno en aplicación
     """
     # Obtener usuario local
-    db_user = user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
+    db_user = await user_service.get_user_by_auth0_id_async(db, auth0_id=current_user.id)
     if not db_user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
     
@@ -1518,7 +1520,7 @@ async def apply_generated_ingredients(
     try:
         # Importar servicios necesarios
         from app.services.nutrition import NutritionService
-        nutrition_service = NutritionService(db)
+        nutrition_service = NutritionService(None)
         
         # Si se debe reemplazar ingredientes existentes
         ingredients_replaced = 0
@@ -1658,9 +1660,9 @@ async def test_ai_connection(
 # ===== ENDPOINTS DE ANALYTICS =====
 
 @router.get("/plans/{plan_id}/analytics", response_model=NutritionAnalytics)
-def get_plan_analytics(
+async def get_plan_analytics(
     plan_id: int = Path(..., description="ID del plan nutricional para analytics"),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: Gym = Depends(verify_gym_access),
     current_user: Auth0User = Depends(get_current_user)
 ):
@@ -1781,15 +1783,15 @@ def get_plan_analytics(
     - `403`: Solo el creador puede ver analytics del plan
     - `404`: Plan no encontrado o no pertenece al gimnasio
     """
-    service = NutritionService(db)
+    service = NutritionService(None)
     
     # Obtener usuario local
-    db_user = user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
+    db_user = await user_service.get_user_by_auth0_id_async(db, auth0_id=current_user.id)
     if not db_user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
     
     try:
-        analytics = service.get_nutrition_analytics(
+        analytics = await service.get_nutrition_analytics_async(db, 
             plan_id=plan_id,
             user_id=db_user.id,
             gym_id=current_gym.id
@@ -1804,7 +1806,7 @@ def get_plan_analytics(
 # ===== ENDPOINTS DE UTILIDAD =====
 
 @router.get("/enums/goals")
-def get_nutrition_goals():
+async def get_nutrition_goals():
     """
     🎯 **Objetivos Nutricionales Disponibles**
     
@@ -1834,7 +1836,7 @@ def get_nutrition_goals():
 
 
 @router.get("/enums/difficulty-levels")
-def get_difficulty_levels():
+async def get_difficulty_levels():
     """
     ⚡ **Niveles de Dificultad Disponibles**
     
@@ -1860,7 +1862,7 @@ def get_difficulty_levels():
 
 
 @router.get("/enums/budget-levels")
-def get_budget_levels():
+async def get_budget_levels():
     """
     💰 **Niveles de Presupuesto Disponibles**
     
@@ -1886,7 +1888,7 @@ def get_budget_levels():
 
 
 @router.get("/enums/dietary-restrictions")
-def get_dietary_restrictions():
+async def get_dietary_restrictions():
     """
     🚫 **Restricciones Dietéticas Disponibles**
     
@@ -1918,7 +1920,7 @@ def get_dietary_restrictions():
 
 
 @router.get("/enums/meal-types")
-def get_meal_types():
+async def get_meal_types():
     """
     🍽️ **Tipos de Comidas Disponibles**
     
@@ -1948,7 +1950,7 @@ def get_meal_types():
 
 
 @router.get("/enums/plan-types")
-def get_plan_types():
+async def get_plan_types():
     """
     📋 **Tipos de Planes Disponibles (Sistema Híbrido)**
     
@@ -1974,7 +1976,7 @@ def get_plan_types():
 
 
 @router.get("/enums/plan-statuses")
-def get_plan_statuses():
+async def get_plan_statuses():
     """
     📊 **Estados de Planes Disponibles**
     
@@ -2004,8 +2006,8 @@ def get_plan_statuses():
 # ===== NUEVOS ENDPOINTS DEL SISTEMA HÍBRIDO =====
 
 @router.get("/plans/hybrid", response_model=NutritionPlanListResponseHybrid)
-def list_plans_by_type(
-    db: Session = Depends(get_db),
+async def list_plans_by_type(
+    db: AsyncSession = Depends(get_async_db),
     current_gym: Gym = Depends(verify_gym_access),
     current_user: Auth0User = Depends(get_current_user),
     page: int = Query(1, ge=1, description="Página para paginación general"),
@@ -2124,10 +2126,10 @@ def list_plans_by_type(
     - **GET /plans/hybrid:** Vista categorizada pre-organizada
     - **Uso recomendado:** Hybrid para dashboards, /plans para búsquedas
     """
-    service = NutritionService(db)
+    service = NutritionService(None)
     
     # Obtener usuario local
-    db_user = user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
+    db_user = await user_service.get_user_by_auth0_id_async(db, auth0_id=current_user.id)
     if not db_user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
     
@@ -2163,26 +2165,26 @@ def list_plans_by_type(
 
 
 @router.put("/plans/{plan_id}/live-status", response_model=NutritionPlan)
-def update_live_plan_status(
+async def update_live_plan_status(
     plan_id: int = Path(...),
     status_update: LivePlanStatusUpdate = ...,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: Gym = Depends(verify_gym_access),
     current_user: Auth0User = Depends(get_current_user)
 ):
     """
     Actualizar el estado de un plan live (solo creadores).
     """
-    service = NutritionService(db)
+    service = NutritionService(None)
     
     # Obtener usuario local
-    db_user = user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
+    db_user = await user_service.get_user_by_auth0_id_async(db, auth0_id=current_user.id)
     if not db_user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
     
     try:
         # Verificar permisos
-        plan = service.get_nutrition_plan(plan_id, current_gym.id)
+        plan = await service.get_nutrition_plan_async(db, plan_id, current_gym.id)
         if plan.creator_id != db_user.id:
             raise HTTPException(status_code=403, detail="Solo el creador puede actualizar el estado del plan")
         
@@ -2204,20 +2206,20 @@ def update_live_plan_status(
 
 
 @router.post("/plans/{plan_id}/archive", response_model=NutritionPlan)
-def archive_live_plan(
+async def archive_live_plan(
     plan_id: int = Path(...),
     archive_request: ArchivePlanRequest = ...,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: Gym = Depends(verify_gym_access),
     current_user: Auth0User = Depends(get_current_user)
 ):
     """
     Archivar un plan live terminado (solo creadores).
     """
-    service = NutritionService(db)
+    service = NutritionService(None)
     
     # Obtener usuario local
-    db_user = user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
+    db_user = await user_service.get_user_by_auth0_id_async(db, auth0_id=current_user.id)
     if not db_user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
     
@@ -2239,9 +2241,9 @@ def archive_live_plan(
 
 
 @router.get("/plans/{plan_id}/status")
-def get_plan_status(
+async def get_plan_status(
     plan_id: int = Path(..., description="ID del plan para obtener estado actual"),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: Gym = Depends(verify_gym_access),
     current_user: Auth0User = Depends(get_current_user)
 ):
@@ -2370,15 +2372,15 @@ def get_plan_status(
     - `403`: Sin acceso a plan privado
     - `404`: Plan no encontrado o no pertenece al gimnasio
     """
-    service = NutritionService(db)
+    service = NutritionService(None)
     
     # Obtener usuario local
-    db_user = user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
+    db_user = await user_service.get_user_by_auth0_id_async(db, auth0_id=current_user.id)
     if not db_user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
     
     try:
-        plan = service.get_nutrition_plan(plan_id, current_gym.id)
+        plan = await service.get_nutrition_plan_async(db, plan_id, current_gym.id)
         
         # Obtener información de seguimiento del usuario
         follower = None
@@ -2433,14 +2435,14 @@ def get_plan_status(
     - Usuario autenticado
     """
 )
-def get_notification_settings(
-    db: Session = Depends(get_db),
+async def get_notification_settings(
+    db: AsyncSession = Depends(get_async_db),
     current_user: Auth0User = Depends(get_current_user),
     current_gym: Gym = Depends(verify_gym_access)
 ) -> Dict[str, Any]:
     """Obtener configuración de notificaciones del usuario"""
     # Obtener usuario local
-    db_user = user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
+    db_user = await user_service.get_user_by_auth0_id_async(db, auth0_id=current_user.id)
     if not db_user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
 
@@ -2523,16 +2525,16 @@ def get_notification_settings(
     - Solo puede modificar sus propias notificaciones
     """
 )
-def update_notification_settings(
+async def update_notification_settings(
     settings: Dict[str, Any],
     plan_id: Optional[int] = None,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_user: Auth0User = Depends(get_current_user),
     current_gym: Gym = Depends(verify_gym_access)
 ) -> Dict[str, Any]:
     """Actualizar configuración de notificaciones"""
     # Obtener usuario local
-    db_user = user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
+    db_user = await user_service.get_user_by_auth0_id_async(db, auth0_id=current_user.id)
     if not db_user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
 
@@ -2655,9 +2657,9 @@ def update_notification_settings(
     - Usuario autenticado
     """
 )
-def send_test_notification(
+async def send_test_notification(
     notification_type: str = "meal_reminder",
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_user: Auth0User = Depends(get_current_user),
     current_gym: Gym = Depends(verify_gym_access)
 ) -> Dict[str, Any]:
@@ -2665,7 +2667,7 @@ def send_test_notification(
     from app.services.nutrition_notification_service import nutrition_notification_service
 
     # Obtener usuario local
-    db_user = user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
+    db_user = await user_service.get_user_by_auth0_id_async(db, auth0_id=current_user.id)
     if not db_user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
 
@@ -2752,9 +2754,9 @@ def send_test_notification(
     - Solo administradores y entrenadores
     """
 )
-def get_notifications_analytics(
+async def get_notifications_analytics(
     days: int = Query(default=7, ge=1, le=30, description="Número de días a analizar"),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_user: Auth0User = Depends(get_current_user),
     current_gym: Gym = Depends(verify_gym_access)
 ) -> Dict[str, Any]:
@@ -2783,8 +2785,8 @@ def get_notifications_analytics(
     - Usuario autenticado
     """
 )
-def get_my_notification_status(
-    db: Session = Depends(get_db),
+async def get_my_notification_status(
+    db: AsyncSession = Depends(get_async_db),
     current_user: Auth0User = Depends(get_current_user),
     current_gym: Gym = Depends(verify_gym_access)
 ) -> Dict[str, Any]:
@@ -2792,7 +2794,7 @@ def get_my_notification_status(
     from app.services.nutrition_notification_service import get_user_notification_status
 
     # Obtener usuario local
-    db_user = user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
+    db_user = await user_service.get_user_by_auth0_id_async(db, auth0_id=current_user.id)
     if not db_user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
 
@@ -2815,7 +2817,7 @@ def get_my_notification_status(
 async def get_audit_log(
     limit: int = Query(100, ge=1, le=500, description="Número máximo de entradas"),
     user_id: Optional[int] = Query(None, description="Filtrar por usuario específico"),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_user: Auth0User = Depends(get_current_user),
     current_gym: Gym = Depends(verify_gym_access)
 ) -> Dict[str, Any]:
@@ -2828,7 +2830,7 @@ async def get_audit_log(
     from app.services.nutrition_notification_service import get_notification_audit_log
 
     # Verificar permisos (admin o trainer)
-    db_user = user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
+    db_user = await user_service.get_user_by_auth0_id_async(db, auth0_id=current_user.id)
     if not db_user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
 
@@ -2857,7 +2859,7 @@ async def get_audit_log(
 )
 async def get_audit_summary(
     hours: int = Query(24, ge=1, le=168, description="Número de horas a analizar"),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_user: Auth0User = Depends(get_current_user),
     current_gym: Gym = Depends(verify_gym_access)
 ) -> Dict[str, Any]:
@@ -2873,7 +2875,7 @@ async def get_audit_summary(
     from app.services.nutrition_notification_service import get_notification_audit_summary
 
     # Verificar permisos (admin o trainer)
-    db_user = user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
+    db_user = await user_service.get_user_by_auth0_id_async(db, auth0_id=current_user.id)
     if not db_user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
 
