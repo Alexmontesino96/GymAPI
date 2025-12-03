@@ -813,7 +813,159 @@ class ClassSessionRepository(BaseRepository[ClassSession, ClassSessionCreate, Cl
         session.current_participants = registered_count
         db.commit()
         db.refresh(session)
-        
+
+        return session
+
+    # ==========================================
+    # Métodos async
+    # ==========================================
+
+    async def get_upcoming_sessions_async(
+        self, db: AsyncSession, *, skip: int = 0, limit: int = 100, gym_id: Optional[int] = None
+    ) -> List[ClassSession]:
+        """Obtener las próximas sesiones de clase (async)."""
+        now = datetime.now(timezone.utc)
+
+        stmt = select(ClassSession).where(
+            ClassSession.start_time >= now,
+            ClassSession.status == ClassSessionStatus.SCHEDULED
+        )
+
+        if gym_id is not None:
+            stmt = stmt.where(ClassSession.gym_id == gym_id)
+
+        stmt = stmt.order_by(ClassSession.start_time).offset(skip).limit(limit)
+        result = await db.execute(stmt)
+        return result.scalars().all()
+
+    async def get_by_date_range_async(
+        self, db: AsyncSession, *, start_date: datetime, end_date: datetime,
+        skip: int = 0, limit: int = 100, gym_id: Optional[int] = None
+    ) -> List[ClassSession]:
+        """Obtener sesiones en un rango de fechas (async)."""
+        # Asegurar datetimes aware en UTC
+        if start_date.tzinfo is None:
+            start_date = start_date.replace(tzinfo=timezone.utc)
+        if end_date.tzinfo is None:
+            end_date = end_date.replace(tzinfo=timezone.utc)
+
+        stmt = select(ClassSession).where(
+            ClassSession.start_time >= start_date,
+            ClassSession.start_time <= end_date
+        )
+
+        if gym_id is not None:
+            stmt = stmt.where(ClassSession.gym_id == gym_id)
+
+        stmt = stmt.order_by(ClassSession.start_time).offset(skip).limit(limit)
+        result = await db.execute(stmt)
+        return result.scalars().all()
+
+    async def get_by_trainer_async(
+        self, db: AsyncSession, *, trainer_id: int, skip: int = 0, limit: int = 100, gym_id: Optional[int] = None
+    ) -> List[ClassSession]:
+        """Obtener sesiones de un entrenador específico (async)."""
+        stmt = select(ClassSession).where(ClassSession.trainer_id == trainer_id)
+
+        if gym_id is not None:
+            stmt = stmt.where(ClassSession.gym_id == gym_id)
+
+        stmt = stmt.order_by(ClassSession.start_time).offset(skip).limit(limit)
+        result = await db.execute(stmt)
+        return result.scalars().all()
+
+    async def get_trainer_upcoming_sessions_async(
+        self, db: AsyncSession, *, trainer_id: int, skip: int = 0, limit: int = 100, gym_id: Optional[int] = None
+    ) -> List[ClassSession]:
+        """Obtener las próximas sesiones de un entrenador específico (async)."""
+        now = datetime.now(timezone.utc)
+
+        stmt = select(ClassSession).where(
+            ClassSession.trainer_id == trainer_id,
+            ClassSession.start_time >= now,
+            ClassSession.status == ClassSessionStatus.SCHEDULED
+        )
+
+        if gym_id is not None:
+            stmt = stmt.where(ClassSession.gym_id == gym_id)
+
+        stmt = stmt.order_by(ClassSession.start_time).offset(skip).limit(limit)
+        result = await db.execute(stmt)
+        return result.scalars().all()
+
+    async def get_by_class_async(
+        self, db: AsyncSession, *, class_id: int, skip: int = 0, limit: int = 100, gym_id: Optional[int] = None
+    ) -> List[ClassSession]:
+        """Obtener sesiones de una clase específica (async)."""
+        stmt = select(ClassSession).where(ClassSession.class_id == class_id)
+
+        if gym_id is not None:
+            stmt = stmt.where(ClassSession.gym_id == gym_id)
+
+        stmt = stmt.order_by(ClassSession.start_time).offset(skip).limit(limit)
+        result = await db.execute(stmt)
+        return result.scalars().all()
+
+    async def get_with_availability_async(
+        self, db: AsyncSession, *, session_id: int
+    ) -> Optional[Dict[str, Any]]:
+        """Obtener sesión con información de disponibilidad (async)."""
+        # Get session
+        session_stmt = select(ClassSession).where(ClassSession.id == session_id)
+        session_result = await db.execute(session_stmt)
+        session = session_result.scalar_one_or_none()
+        if not session:
+            return None
+
+        # Get class
+        class_stmt = select(Class).where(Class.id == session.class_id)
+        class_result = await db.execute(class_stmt)
+        class_obj = class_result.scalar_one_or_none()
+        if not class_obj:
+            return None
+
+        # Count registered participants
+        count_stmt = select(func.count(ClassParticipation.id)).where(
+            ClassParticipation.session_id == session_id,
+            ClassParticipation.status == ClassParticipationStatus.REGISTERED
+        )
+        count_result = await db.execute(count_stmt)
+        registered_count = count_result.scalar()
+
+        # Calculate availability
+        capacity = session.override_capacity if session.override_capacity is not None else class_obj.max_capacity
+        available_spots = capacity - registered_count
+        is_full = available_spots <= 0
+
+        return {
+            "session": session,
+            "class": class_obj,
+            "registered_count": registered_count,
+            "available_spots": available_spots,
+            "is_full": is_full
+        }
+
+    async def update_participant_count_async(self, db: AsyncSession, *, session_id: int) -> Optional[ClassSession]:
+        """Actualizar el contador de participantes de una sesión (async)."""
+        # Get session
+        session_stmt = select(ClassSession).where(ClassSession.id == session_id)
+        session_result = await db.execute(session_stmt)
+        session = session_result.scalar_one_or_none()
+        if not session:
+            return None
+
+        # Count registered participants
+        count_stmt = select(func.count(ClassParticipation.id)).where(
+            ClassParticipation.session_id == session_id,
+            ClassParticipation.status == ClassParticipationStatus.REGISTERED
+        )
+        count_result = await db.execute(count_stmt)
+        registered_count = count_result.scalar()
+
+        session.current_participants = registered_count
+        await db.flush()
+        await db.refresh(session)
+
         return session
 
 
