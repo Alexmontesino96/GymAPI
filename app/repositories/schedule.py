@@ -524,6 +524,39 @@ class ClassCategoryCustomRepository(BaseRepository[ClassCategoryCustom, ClassCat
             ClassCategoryCustom.gym_id == gym_id
         ).first()
 
+    # ==========================================
+    # Métodos async
+    # ==========================================
+
+    async def get_by_gym_async(self, db: AsyncSession, *, gym_id: int) -> List[ClassCategoryCustom]:
+        """Obtener categorías de clase personalizadas para un gimnasio específico (async)."""
+        stmt = select(ClassCategoryCustom).where(
+            ClassCategoryCustom.gym_id == gym_id
+        ).order_by(ClassCategoryCustom.name)
+
+        result = await db.execute(stmt)
+        return result.scalars().all()
+
+    async def get_active_categories_async(self, db: AsyncSession, *, gym_id: int) -> List[ClassCategoryCustom]:
+        """Obtener categorías activas para un gimnasio específico (async)."""
+        stmt = select(ClassCategoryCustom).where(
+            ClassCategoryCustom.gym_id == gym_id,
+            ClassCategoryCustom.is_active == True
+        ).order_by(ClassCategoryCustom.name)
+
+        result = await db.execute(stmt)
+        return result.scalars().all()
+
+    async def get_by_name_and_gym_async(self, db: AsyncSession, *, name: str, gym_id: int) -> Optional[ClassCategoryCustom]:
+        """Verificar si existe una categoría con el mismo nombre en el mismo gimnasio (async)."""
+        stmt = select(ClassCategoryCustom).where(
+            func.lower(ClassCategoryCustom.name) == func.lower(name),
+            ClassCategoryCustom.gym_id == gym_id
+        )
+
+        result = await db.execute(stmt)
+        return result.scalar_one_or_none()
+
 
 class ClassRepository(BaseRepository[Class, ClassCreate, ClassUpdate]):
     def get_active_classes(self, db: Session, *, skip: int = 0, limit: int = 100) -> List[Class]:
@@ -560,6 +593,56 @@ class ClassRepository(BaseRepository[Class, ClassCreate, ClassUpdate]):
             ),
             Class.is_active == True
         ).offset(skip).limit(limit).all()
+
+    # ==========================================
+    # Métodos async
+    # ==========================================
+
+    async def get_active_classes_async(self, db: AsyncSession, *, skip: int = 0, limit: int = 100) -> List[Class]:
+        """Obtener todas las clases activas (async)."""
+        stmt = select(Class).where(Class.is_active == True).offset(skip).limit(limit)
+        result = await db.execute(stmt)
+        return result.scalars().all()
+
+    async def get_by_category_async(
+        self, db: AsyncSession, *, category: str, skip: int = 0, limit: int = 100
+    ) -> List[Class]:
+        """Obtener clases por categoría (async)."""
+        stmt = select(Class).where(
+            Class.category == category,
+            Class.is_active == True
+        ).offset(skip).limit(limit)
+
+        result = await db.execute(stmt)
+        return result.scalars().all()
+
+    async def get_by_difficulty_async(
+        self, db: AsyncSession, *, difficulty: str, skip: int = 0, limit: int = 100
+    ) -> List[Class]:
+        """Obtener clases por nivel de dificultad (async)."""
+        stmt = select(Class).where(
+            Class.difficulty_level == difficulty,
+            Class.is_active == True
+        ).offset(skip).limit(limit)
+
+        result = await db.execute(stmt)
+        return result.scalars().all()
+
+    async def search_classes_async(
+        self, db: AsyncSession, *, search: str, skip: int = 0, limit: int = 100
+    ) -> List[Class]:
+        """Buscar clases por nombre o descripción (async)."""
+        search_pattern = f"%{search}%"
+        stmt = select(Class).where(
+            or_(
+                Class.name.ilike(search_pattern),
+                Class.description.ilike(search_pattern)
+            ),
+            Class.is_active == True
+        ).offset(skip).limit(limit)
+
+        result = await db.execute(stmt)
+        return result.scalars().all()
 
 
 class ClassSessionRepository(BaseRepository[ClassSession, ClassSessionCreate, ClassSessionUpdate]):
