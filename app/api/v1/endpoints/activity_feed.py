@@ -260,7 +260,7 @@ async def get_daily_stats_summary(
         Resumen con todas las estadísticas del día
     """
     try:
-        # Obtener todas las estadísticas diarias
+        # ✅ Optimización: Obtener todas las stats con un solo pipeline
         stats_keys = {
             "attendance": f"gym:{gym_id}:daily:attendance",
             "achievements": f"gym:{gym_id}:daily:achievements_count",
@@ -271,10 +271,18 @@ async def get_daily_stats_summary(
             "active_streaks": f"gym:{gym_id}:daily:active_streaks"
         }
 
+        pipe = redis.pipeline()
+        for key in stats_keys.values():
+            pipe.get(key)
+        values = await pipe.execute()
+
+        # Mapear resultados
         stats = {}
-        for stat_name, key in stats_keys.items():
-            value = await redis.get(key)
+        for (stat_name, key), value in zip(stats_keys.items(), values):
             if value:
+                # Decodificar bytes si es necesario
+                if isinstance(value, bytes):
+                    value = value.decode()
                 stats[stat_name] = float(value) if stat_name == "total_hours" else int(value)
             else:
                 stats[stat_name] = 0

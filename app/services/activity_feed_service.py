@@ -213,8 +213,17 @@ class ActivityFeedService:
             "last_update": datetime.utcnow().isoformat()
         }
 
+        # ✅ Optimización: Usar pipeline para obtener todos los valores de una vez
+        if not keys:
+            return summary
+
+        pipe = self.redis.pipeline()
         for key in keys:
-            value = await self.redis.get(key)
+            pipe.get(key)
+        values = await pipe.execute()
+
+        # Procesar resultados en un solo pass
+        for key, value in zip(keys, values):
             if value:
                 key_str = key.decode() if isinstance(key, bytes) else key
                 key_parts = key_str.split(":")
@@ -254,60 +263,67 @@ class ActivityFeedService:
         """
         insights = []
 
-        # Total de personas entrenando
-        training_count_key = f"gym:{gym_id}:realtime:training_count"
-        training_count = await self.redis.get(training_count_key)
+        # ✅ Optimización: Obtener todas las stats con un solo pipeline
+        stats_keys = {
+            "training_count": f"gym:{gym_id}:realtime:training_count",
+            "achievements": f"gym:{gym_id}:daily:achievements_count",
+            "prs": f"gym:{gym_id}:daily:personal_records",
+            "streak": f"gym:{gym_id}:daily:active_streaks",
+            "hours": f"gym:{gym_id}:daily:total_hours"
+        }
 
+        pipe = self.redis.pipeline()
+        for key in stats_keys.values():
+            pipe.get(key)
+        values = await pipe.execute()
+
+        # Mapear resultados
+        stats = dict(zip(stats_keys.keys(), values))
+
+        # Total de personas entrenando
+        training_count = stats["training_count"]
         if training_count and int(training_count) > 10:
             insights.append({
-                "message": f"🔥 ¡{training_count} guerreros activos ahora mismo!",
+                "message": f"🔥 ¡{training_count.decode() if isinstance(training_count, bytes) else training_count} guerreros activos ahora mismo!",
                 "type": "realtime",
                 "priority": 1
             })
         elif training_count and int(training_count) >= self.MIN_AGGREGATION_THRESHOLD:
             insights.append({
-                "message": f"💪 {training_count} personas construyendo su mejor versión",
+                "message": f"💪 {training_count.decode() if isinstance(training_count, bytes) else training_count} personas construyendo su mejor versión",
                 "type": "realtime",
                 "priority": 2
             })
 
         # Logros del día
-        achievements_key = f"gym:{gym_id}:daily:achievements_count"
-        achievements = await self.redis.get(achievements_key)
-
+        achievements = stats["achievements"]
         if achievements and int(achievements) > 5:
             insights.append({
-                "message": f"⭐ {achievements} logros desbloqueados hoy",
+                "message": f"⭐ {achievements.decode() if isinstance(achievements, bytes) else achievements} logros desbloqueados hoy",
                 "type": "achievement",
                 "priority": 2
             })
 
         # Récords personales
-        prs_key = f"gym:{gym_id}:daily:personal_records"
-        prs = await self.redis.get(prs_key)
-
+        prs = stats["prs"]
         if prs and int(prs) > 0:
             insights.append({
-                "message": f"💪 {prs} récords personales superados",
+                "message": f"💪 {prs.decode() if isinstance(prs, bytes) else prs} récords personales superados",
                 "type": "record",
                 "priority": 1
             })
 
         # Rachas activas
-        streak_key = f"gym:{gym_id}:daily:active_streaks"
-        streak_count = await self.redis.get(streak_key)
-
+        streak_count = stats["streak"]
         if streak_count and int(streak_count) > 10:
             insights.append({
-                "message": f"🔥 {streak_count} personas con racha activa",
+                "message": f"🔥 {streak_count.decode() if isinstance(streak_count, bytes) else streak_count} personas con racha activa",
                 "type": "consistency",
                 "priority": 2
             })
 
         # Horas totales entrenadas
-        hours_key = f"gym:{gym_id}:daily:total_hours"
-        total_hours = await self.redis.get(hours_key)
-
+        total_hours = stats["hours"]
         if total_hours and float(total_hours) > 100:
             insights.append({
                 "message": f"📊 {int(float(total_hours))} horas de esfuerzo colectivo hoy",
@@ -608,26 +624,27 @@ class ActivityFeedService:
         """
         activities = []
 
-        # Total entrenando hoy
+        # ✅ Optimización: Obtener ambas stats con pipeline
         attendance_key = f"gym:{gym_id}:daily:attendance"
-        attendance = await self.redis.get(attendance_key)
+        classes_key = f"gym:{gym_id}:daily:classes_completed"
+
+        pipe = self.redis.pipeline()
+        pipe.get(attendance_key)
+        pipe.get(classes_key)
+        attendance, classes = await pipe.execute()
 
         if attendance and int(attendance) > 0:
             activities.append({
                 "type": "daily_stat",
-                "message": f"📊 {attendance} personas han entrenado hoy",
+                "message": f"📊 {attendance.decode() if isinstance(attendance, bytes) else attendance} personas han entrenado hoy",
                 "timestamp": datetime.utcnow().isoformat(),
                 "icon": "📊"
             })
 
-        # Clases completadas
-        classes_key = f"gym:{gym_id}:daily:classes_completed"
-        classes = await self.redis.get(classes_key)
-
         if classes and int(classes) > 0:
             activities.append({
                 "type": "daily_stat",
-                "message": f"✅ {classes} clases completadas hoy",
+                "message": f"✅ {classes.decode() if isinstance(classes, bytes) else classes} clases completadas hoy",
                 "timestamp": datetime.utcnow().isoformat(),
                 "icon": "✅"
             })
