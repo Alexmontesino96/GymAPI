@@ -1,7 +1,8 @@
 from typing import List, Optional, Dict, Any, Union, Type
 from datetime import datetime, time, timedelta, date, timezone
 from sqlalchemy.orm import Session
-from sqlalchemy import and_, or_, func
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import and_, or_, func, select
 import datetime as dt
 
 from app.repositories.base import BaseRepository
@@ -89,6 +90,56 @@ class GymHoursRepository(BaseRepository[GymHours, GymHoursCreate, GymHoursUpdate
             gym_id=gym_id
         )
         return self.create(db, obj_in=obj_in)
+
+    # ==========================================
+    # Métodos async
+    # ==========================================
+
+    async def get_by_day_async(self, db: AsyncSession, *, day: int, gym_id: Optional[int] = None) -> Optional[GymHours]:
+        """Obtener los horarios para un día específico de la semana (async)."""
+        stmt = select(GymHours).where(GymHours.day_of_week == day)
+
+        if gym_id is not None:
+            stmt = stmt.where(GymHours.gym_id == gym_id)
+
+        result = await db.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def get_all_days_async(self, db: AsyncSession, *, gym_id: Optional[int] = None) -> List[GymHours]:
+        """Obtener los horarios para todos los días de la semana (async)."""
+        stmt = select(GymHours)
+
+        if gym_id is not None:
+            stmt = stmt.where(GymHours.gym_id == gym_id)
+
+        stmt = stmt.order_by(GymHours.day_of_week)
+        result = await db.execute(stmt)
+        return result.scalars().all()
+
+    async def get_or_create_default_async(self, db: AsyncSession, *, day: int, gym_id: int) -> GymHours:
+        """Obtener horarios para un día o crear con valores predeterminados (async)."""
+        hours = await self.get_by_day_async(db, day=day, gym_id=gym_id)
+        if hours:
+            return hours
+
+        # Crear horarios predeterminados
+        is_closed = day == 6  # Domingo
+        default_open = time(9, 0)  # 9:00 AM
+        default_close = time(21, 0)  # 9:00 PM
+
+        obj_in = GymHoursCreate(
+            day_of_week=day,
+            open_time=default_open,
+            close_time=default_close,
+            is_closed=is_closed,
+            gym_id=gym_id
+        )
+
+        db_obj = GymHours(**obj_in.model_dump())
+        db.add(db_obj)
+        await db.flush()
+        await db.refresh(db_obj)
+        return db_obj
 
 
 class GymSpecialHoursRepository(BaseRepository[GymSpecialHours, GymSpecialHoursCreate, GymSpecialHoursUpdate]):
