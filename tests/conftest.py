@@ -7,7 +7,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.core.config import get_settings
 from app.db.base import Base
-from app.db.session import get_db
+from app.db.session import get_db, get_async_db
 from main import app
 
 
@@ -184,4 +184,23 @@ def mock_auth0_user():
         "name": "Auth0 Test User",
         "picture": "https://example.com/picture.jpg",
         "email_verified": True
-    } 
+    }
+
+
+# Async DB fixture para tests async
+@pytest.fixture(scope="function")
+async def async_db_session():
+    """
+    Sesión de DB async para tests.
+    Usa el async engine real de la aplicación.
+    """
+    from app.db.session import AsyncSessionLocal
+
+    if AsyncSessionLocal is None:
+        pytest.skip("AsyncSessionLocal no disponible")
+
+    async with AsyncSessionLocal() as session:
+        try:
+            yield session
+        finally:
+            await session.close() 

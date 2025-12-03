@@ -5,6 +5,7 @@ Verifica que los métodos async del user_service funcionan correctamente.
 """
 
 import pytest
+import pytest_asyncio
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -108,20 +109,6 @@ class TestUserServiceAsync:
         # gyms debería estar cargado (aunque esté vacío)
         # No generará queries adicionales al acceder
         print(f"✅ get_user_async con eager_load=True OK - usuario {user_eager.id}")
-
-
-# Fixture para sesión async (si no existe en conftest.py)
-@pytest.fixture
-async def async_db_session():
-    """Sesión de DB async para tests."""
-    from app.db.session import AsyncSessionLocal
-
-    if AsyncSessionLocal is None:
-        pytest.skip("AsyncSessionLocal no disponible")
-
-    async with AsyncSessionLocal() as session:
-        yield session
-        # Cleanup se hace automáticamente al salir del context
 
 
 # Generar ID único por ejecución de test
