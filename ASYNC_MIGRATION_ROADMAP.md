@@ -699,23 +699,59 @@ stmt = select(Model).options(
 
 ---
 
-### 🔜 PRÓXIMO: SEMANA 4 - FASE 2
+### 📊 RESUMEN SEMANA 4 - FASE 2 (PARCIAL):
 
-**Servicios pendientes (~72+ métodos):**
+**Servicios migrados:**
 
-#### Prioridad ALTA:
-1. **user.py** - Service layer para usuarios (ya tiene métodos async, validar cobertura)
-2. **event.py** - Service layer para eventos (ya tiene métodos async, validar cobertura)
-3. **schedule.py** - 16 métodos sync pendientes en 6 clases
+#### 4. ✅ **health.py** - 15 métodos async agregados
+- **Commit**: `cb666df`
+- **Métodos migrados (públicos - 11)**:
+  - record_measurement_async, get_latest_measurement_async
+  - get_weight_history_async, create_goal_async
+  - update_goal_progress_async, get_active_goals_async
+  - get_goals_progress_async, check_and_create_achievements_async
+  - get_user_achievements_async, get_recent_achievement_async
+  - calculate_health_metrics_async
+- **Métodos helper (4)**:
+  - _create_goal_achievement_async
+  - _check_attendance_streak_achievements_async
+  - _check_class_milestone_achievements_async
+  - _calculate_weight_change_async
+- **Líneas**: +500
 
-#### Prioridad MEDIA:
-4. **health.py** - 21 métodos sync (100% por migrar)
-5. **nutrition.py** - 28 métodos sync (100% por migrar)
-6. **chat.py** - 23 métodos sync (5 async ya existentes)
-
-**Estimado Semana 4-5 Fase 2**: ~88 métodos async restantes
+#### 5. ✅ **nutrition.py** - 16 métodos async agregados
+- **Commit**: `6c28c0e`
+- **Métodos migrados**:
+  - Core: create_nutrition_plan_async, get_nutrition_plan_async, get_nutrition_plan_with_details_async, list_nutrition_plans_async, update_nutrition_plan_async, delete_nutrition_plan_async
+  - Daily/Meals: create_daily_plan_async, create_meal_async, get_today_meal_plan_async
+  - User interactions: follow_nutrition_plan_async, unfollow_nutrition_plan_async, complete_meal_async, get_nutrition_analytics_async
+  - Special: create_live_nutrition_plan_async
+- **Líneas**: +495
+- **Nota**: Métodos async reciben AsyncSession como parámetro (patrón diferente del constructor)
 
 ---
 
-**Última actualización**: 2025-12-02 - SEMANA 4 FASE 1 COMPLETADA ✅
-**Estado actual**: Semana 4 Fase 2 - Migración de servicios complejos (en progreso)
+### 📊 RESUMEN TOTAL SEMANA 4 (FASE 1 + FASE 2):
+- ✅ **5 servicios completados**
+- ✅ **55 métodos async agregados** (24 Fase 1 + 31 Fase 2)
+- ✅ **~1,800 líneas de código async**
+- ✅ **7 commits realizados**
+
+---
+
+### 🔜 PRÓXIMO: SEMANA 4 - FASE 2 RESTANTE
+
+**Servicios pendientes (~39 métodos):**
+
+#### Prioridad ALTA:
+1. **schedule.py** - 16 métodos sync pendientes en 6 clases (GymHoursService, GymSpecialHoursService, etc.)
+
+#### Prioridad MEDIA:
+2. **chat.py** - 23 métodos sync (5 async ya existentes)
+
+**Estimado restante**: ~39 métodos async
+
+---
+
+**Última actualización**: 2025-12-02 - SEMANA 4 FASE 2 PARCIAL COMPLETADA ✅
+**Estado actual**: Semana 4 Fase 2 - Migración de servicios complejos (5/7 servicios completados)
