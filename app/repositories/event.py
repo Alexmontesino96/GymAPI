@@ -1,6 +1,7 @@
 from typing import List, Optional, Dict, Any, Union
 from datetime import datetime, timezone
 from sqlalchemy.orm import Session, joinedload, selectinload
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import func, and_, or_, select, update
 
 from app.models.event import Event, EventParticipation, EventStatus, EventParticipationStatus
@@ -442,6 +443,258 @@ class EventRepository:
             db.rollback()
             print(f"Error al marcar evento como completado: {e}")
             return None
+
+    # ==========================================
+    # Métodos async - EventRepository
+    # ==========================================
+
+    async def create_event_async(self, db: AsyncSession, *, event_in: EventCreate, creator_id: int, gym_id: int = 1) -> Event:
+        """Crear un nuevo evento (async)."""
+        event_data = event_in.dict()
+
+        if 'first_message_chat' in event_data:
+            event_data.pop('first_message_chat')
+
+        db_event = Event(**event_data, creator_id=creator_id, gym_id=gym_id)
+        db.add(db_event)
+        await db.flush()
+        await db.refresh(db_event)
+        return db_event
+
+    async def get_events_async(
+        self,
+        db: AsyncSession,
+        *,
+        skip: int = 0,
+        limit: int = 100,
+        status: Optional[EventStatus] = None,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+        title_contains: Optional[str] = None,
+        location_contains: Optional[str] = None,
+        created_by: Optional[Union[int, str]] = None,
+        only_available: bool = False,
+        gym_id: Optional[int] = None
+    ) -> List[Event]:
+        """Obtener eventos con filtros opcionales (async)."""
+        stmt = select(Event).options(selectinload(Event.participants))
+
+        filters = []
+
+        if gym_id is not None:
+            filters.append(Event.gym_id == gym_id)
+
+        if status:
+            filters.append(Event.status == status)
+
+        if start_date:
+            filters.append(Event.end_time >= start_date)
+
+        if end_date:
+            filters.append(Event.start_time <= end_date)
+
+        if title_contains:
+            filters.append(Event.title.ilike(f"%{title_contains}%"))
+
+        if location_contains:
+            filters.append(Event.location.ilike(f"%{location_contains}%"))
+
+        if created_by:
+            if isinstance(created_by, str):
+                # Usar subconsulta para auth0_id
+                user_stmt = select(User.id).where(User.auth0_id == created_by)
+                user_result = await db.execute(user_stmt)
+                user_id = user_result.scalar_one_or_none()
+                if user_id:
+                    filters.append(Event.creator_id == user_id)
+                else:
+                    return []
+            else:
+                filters.append(Event.creator_id == created_by)
+
+        if filters:
+            stmt = stmt.where(and_(*filters))
+
+        if only_available:
+            # Filtrar eventos con disponibilidad
+            count_stmt = select(func.count(EventParticipation.id)).where(
+                EventParticipation.event_id == Event.id,
+                EventParticipation.status == EventParticipationStatus.REGISTERED
+            ).scalar_subquery()
+
+            stmt = stmt.where(
+                or_(
+                    Event.max_participants == 0,
+                    Event.max_participants > count_stmt
+                )
+            )
+
+        stmt = stmt.order_by(Event.start_time)
+
+        if limit > 0:
+            stmt = stmt.limit(limit)
+
+        if skip > 0:
+            stmt = stmt.offset(skip)
+
+        result = await db.execute(stmt)
+        return result.scalars().all()
+
+    async def get_event_async(self, db: AsyncSession, event_id: int) -> Optional[Event]:
+        """Obtener un evento por ID (async)."""
+        stmt = select(Event).options(
+            selectinload(Event.participants),
+            joinedload(Event.creator),
+            selectinload(Event.chat_rooms)
+        ).where(Event.id == event_id)
+
+        result = await db.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def update_event_async(
+        self, db: AsyncSession, *, event_id: int, event_in: EventUpdate
+    ) -> Optional[Event]:
+        """Actualizar un evento (async)."""
+        stmt = select(Event).where(Event.id == event_id)
+        result = await db.execute(stmt)
+        db_event = result.scalar_one_or_none()
+
+        if not db_event:
+            return None
+
+        update_data = jsonable_encoder(event_in, exclude_unset=True)
+
+        if not update_data:
+            return db_event
+
+        modified = False
+        for field, value in update_data.items():
+            if getattr(db_event, field) != value:
+                setattr(db_event, field, value)
+                modified = True
+
+        if modified:
+            db_event.updated_at = datetime.now(timezone.utc)
+            db.add(db_event)
+            await db.flush()
+
+        return db_event
+
+    async def delete_event_async(self, db: AsyncSession, *, event_id: int) -> bool:
+        """Eliminar un evento (async)."""
+        event = await self.get_event_async(db, event_id=event_id)
+        if not event:
+            return False
+
+        await db.delete(event)
+        await db.flush()
+        return True
+
+    async def get_events_by_creator_async(
+        self, db: AsyncSession, *, creator_id: Union[int, str], skip: int = 0, limit: int = 100, gym_id: Optional[int] = None
+    ) -> List[Event]:
+        """Obtener eventos creados por un usuario (async)."""
+        if isinstance(creator_id, str):
+            user_stmt = select(User.id).where(User.auth0_id == creator_id)
+            user_result = await db.execute(user_stmt)
+            user = user_result.scalar_one_or_none()
+            if user:
+                creator_id = user
+            else:
+                return []
+
+        stmt = select(Event).options(selectinload(Event.participants)).where(Event.creator_id == creator_id)
+
+        if gym_id is not None:
+            stmt = stmt.where(Event.gym_id == gym_id)
+
+        stmt = stmt.order_by(Event.start_time).offset(skip).limit(limit)
+        result = await db.execute(stmt)
+        return result.scalars().all()
+
+    async def is_event_creator_async(self, db: AsyncSession, *, event_id: int, user_id: Union[int, str]) -> bool:
+        """Verificar si un usuario es el creador de un evento (async)."""
+        if isinstance(user_id, str):
+            user_stmt = select(User.id).where(User.auth0_id == user_id)
+            user_result = await db.execute(user_stmt)
+            user = user_result.scalar_one_or_none()
+            if user:
+                user_id = user
+            else:
+                return False
+
+        event = await self.get_event_async(db, event_id=event_id)
+        if not event:
+            return False
+
+        return event.creator_id == user_id
+
+    async def mark_event_completed_async(self, db: AsyncSession, *, event_id: int) -> Optional[Event]:
+        """Marca un evento como COMPLETED (async)."""
+        try:
+            stmt = select(Event).where(
+                Event.id == event_id,
+                Event.status == EventStatus.SCHEDULED
+            )
+            result = await db.execute(stmt)
+            event = result.scalar_one_or_none()
+
+            if not event:
+                return None
+
+            event.status = EventStatus.COMPLETED
+            event.updated_at = datetime.now(timezone.utc)
+
+            db.add(event)
+            await db.flush()
+
+            return event
+        except Exception as e:
+            await db.rollback()
+            print(f"Error al marcar evento como completado: {e}")
+            return None
+
+    async def _promote_from_waiting_list_async(self, db: AsyncSession, event_id: int) -> Optional[EventParticipation]:
+        """Promover al primer miembro en lista de espera a registrado (async)."""
+        from app.models.event import PaymentStatusType
+        from datetime import timedelta
+
+        # Obtener evento
+        event_stmt = select(Event).where(Event.id == event_id)
+        event_result = await db.execute(event_stmt)
+        event = event_result.scalar_one_or_none()
+        if not event:
+            return None
+
+        # Obtener primer miembro en lista de espera
+        waiting_stmt = select(EventParticipation).where(
+            EventParticipation.event_id == event_id,
+            EventParticipation.status == EventParticipationStatus.WAITING_LIST
+        ).order_by(EventParticipation.registered_at)
+
+        waiting_result = await db.execute(waiting_stmt)
+        waiting = waiting_result.scalars().first()
+
+        if waiting:
+            waiting.status = EventParticipationStatus.REGISTERED
+
+            if event.is_paid and event.price_cents:
+                waiting.payment_status = PaymentStatusType.PENDING
+                waiting.payment_expiry = datetime.utcnow() + timedelta(hours=24)
+
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.info(
+                    f"Usuario {waiting.member_id} promovido de lista de espera "
+                    f"para evento de pago {event_id}. Fecha límite de pago: {waiting.payment_expiry}"
+                )
+
+            db.add(waiting)
+            await db.flush()
+            await db.refresh(waiting)
+            return waiting
+
+        return None
 
     def _promote_from_waiting_list(self, db: Session, event_id: int) -> Optional[EventParticipation]:
         """Promover al primer miembro en lista de espera a registrado."""
