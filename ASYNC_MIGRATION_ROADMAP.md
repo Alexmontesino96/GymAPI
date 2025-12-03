@@ -245,13 +245,13 @@ Antes de marcar como completo:
 ---
 
 **Última actualización**: 2025-12-02
-**Estado actual**: SEMANA 1 - user_repository en progreso (11/15 métodos async - 73%)
+**Estado actual**: SEMANA 1 - user_repository ✅ COMPLETADO → gym_repository en progreso
 
 ## 🚀 ACTUALIZACIÓN SEMANA 1 - DÍA 1
 
-### Progreso user_repository: 11/15 métodos async (73%)
+### ✅ user_repository: 15/15 métodos async (100% COMPLETADO)
 
-✅ **Métodos async completados:**
+✅ **Métodos async completados (11 específicos de User):**
 1. `get_by_email_async()` - Query simple por email
 2. `get_by_auth0_id_async()` - CRÍTICO - Autenticación
 3. `get_by_role_async()` - Filtrado por rol con paginación
@@ -264,15 +264,18 @@ Antes de marcar como completo:
 10. `create_from_auth0_async()` - Creación desde Auth0
 11. `get_all_gym_users_async()` - Todos los usuarios de un gym
 
-⏳ **Pendientes (estimado 4 métodos más):**
-- Métodos auxiliares o helpers si necesarios
-- Métodos de herencia de BaseRepository si no están async
+✅ **Métodos async de BaseRepository (4):**
+12. `get_async()` - Obtener usuario por ID con tenant filter
+13. `get_multi_async()` - Obtener múltiples usuarios con filtros
+14. `remove_async()` - Eliminar usuario con verificación tenant
+15. `exists_async()` - Verificar existencia con tenant filter
 
 **Commits realizados:**
 - `94c3ab0` - 7 primeros métodos async
 - `84cf526` - 4 métodos adicionales async
+- `dfd10b9` - 4 métodos BaseRepository async ✅ **COMPLETADO**
 
-**Siguiente:** Completar user_repository → Comenzar gym_repository
+**Siguiente:** gym_repository (12 métodos estimados)
 
 ---
 
