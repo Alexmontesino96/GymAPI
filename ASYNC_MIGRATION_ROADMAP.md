@@ -659,22 +659,63 @@ stmt = select(Model).options(
 
 ---
 
-### 🔜 PRÓXIMO: SEMANA 4-5 - SERVICIOS ASYNC
+### ✅ SEMANA 4 - FASE 1 COMPLETADA
 
-**Servicios pendientes de migración (~150+ métodos):**
-1. **user.py** - Service layer para usuarios
-2. **gym.py** - Service layer para gimnasios
-3. **event.py** - Service layer para eventos
-4. **chat.py** - Service layer para chat
-5. **billing_module.py** - Service layer para facturación
-6. **nutrition.py** - Service layer para nutrición con IA
-7. **health.py** - Service layer para métricas de salud
-8. **membership.py** - Service layer para membresías
-9. **Otros servicios** - Activity feed, surveys, etc.
+**Servicios migrados (Fase 1 - Servicios básicos):**
 
-**Estimado Semanas 4-5**: ~150-200 métodos async
+#### 1. ✅ **billing_module.py** - Ya 100% async
+- **Métodos sync**: 0 (solo constructor)
+- **Métodos async**: 8 (create, deactivate, get_status, helpers)
+- **Estado**: ✅ Verificado - Ya completamente async
+
+#### 2. ✅ **gym.py service** - 16 métodos async agregados
+- **Commit**: `68643fa`
+- **Métodos migrados**:
+  - create_gym_async, get_gym_async, get_gym_by_subdomain_async
+  - get_gyms_async, update_gym_async, update_gym_status_async
+  - delete_gym_async, add_user_to_gym_async, remove_user_from_gym_async
+  - update_user_role_async, get_user_gyms_async, get_gym_users_async
+  - get_gym_with_stats_async, check_user_in_gym_async
+  - check_user_role_in_gym_async, update_user_role_in_gym_async
+  - get_gym_details_public_async
+- **Líneas**: +530
+
+#### 3. ✅ **membership.py** - 8 métodos async agregados
+- **Commit**: `c27356e`
+- **Métodos migrados**:
+  - get_membership_plans_async, get_membership_plan_async
+  - get_user_membership_async, get_membership_status_async
+  - update_user_membership_async, deactivate_membership_async
+  - expire_memberships_async, get_gym_membership_summary_async
+- **Líneas**: +256
 
 ---
 
-**Última actualización**: 2025-12-02 - SEMANA 3 COMPLETADA ✅
-**Estado actual**: Semana 4 - Migración de servicios (pendiente)
+### 📊 RESUMEN SEMANA 4 - FASE 1:
+- ✅ **3 servicios completados**
+- ✅ **24 métodos async agregados**
+- ✅ **~800 líneas de código async**
+- ✅ **3 commits realizados**
+
+---
+
+### 🔜 PRÓXIMO: SEMANA 4 - FASE 2
+
+**Servicios pendientes (~72+ métodos):**
+
+#### Prioridad ALTA:
+1. **user.py** - Service layer para usuarios (ya tiene métodos async, validar cobertura)
+2. **event.py** - Service layer para eventos (ya tiene métodos async, validar cobertura)
+3. **schedule.py** - 16 métodos sync pendientes en 6 clases
+
+#### Prioridad MEDIA:
+4. **health.py** - 21 métodos sync (100% por migrar)
+5. **nutrition.py** - 28 métodos sync (100% por migrar)
+6. **chat.py** - 23 métodos sync (5 async ya existentes)
+
+**Estimado Semana 4-5 Fase 2**: ~88 métodos async restantes
+
+---
+
+**Última actualización**: 2025-12-02 - SEMANA 4 FASE 1 COMPLETADA ✅
+**Estado actual**: Semana 4 Fase 2 - Migración de servicios complejos (en progreso)
