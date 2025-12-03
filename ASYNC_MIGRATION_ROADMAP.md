@@ -245,7 +245,7 @@ Antes de marcar como completo:
 ---
 
 **Última actualización**: 2025-12-02
-**Estado actual**: SEMANA 1 - user_repository ✅ COMPLETADO → gym_repository en progreso
+**Estado actual**: SEMANA 1 - REPOSITORIOS CORE ✅ COMPLETADOS (user + gym) → Tests pendientes
 
 ## 🚀 ACTUALIZACIÓN SEMANA 1 - DÍA 1
 
@@ -270,12 +270,39 @@ Antes de marcar como completo:
 14. `remove_async()` - Eliminar usuario con verificación tenant
 15. `exists_async()` - Verificar existencia con tenant filter
 
-**Commits realizados:**
+**Commits:**
 - `94c3ab0` - 7 primeros métodos async
 - `84cf526` - 4 métodos adicionales async
 - `dfd10b9` - 4 métodos BaseRepository async ✅ **COMPLETADO**
 
-**Siguiente:** gym_repository (12 métodos estimados)
+---
+
+### ✅ gym_repository: 9/9 métodos async (100% COMPLETADO)
+
+✅ **Métodos async específicos de Gym (3):**
+1. `get_by_subdomain_async()` - Obtener gym por subdominio único
+2. `get_active_gyms_async()` - Listar gyms activos con paginación
+3. `search_gyms_async()` - Búsqueda por nombre o subdominio
+
+✅ **Métodos async de BaseRepository (6):**
+4. `get_async()` - Obtener gym por ID
+5. `get_multi_async()` - Obtener múltiples gyms con filtros
+6. `create_async()` - Crear nuevo gym
+7. `update_async()` - Actualizar gym existente
+8. `remove_async()` - Eliminar gym
+9. `exists_async()` - Verificar existencia de gym
+
+**Commits:**
+- `65e6701` - 9 métodos async ✅ **COMPLETADO**
+
+---
+
+### 📊 RESUMEN SEMANA 1 - DÍA 1:
+- ✅ **user_repository**: 15/15 métodos async (100%)
+- ✅ **gym_repository**: 9/9 métodos async (100%)
+- **Total**: 24 métodos async completados
+- **Commits**: 5 commits realizados
+- **Siguiente**: Tests y documentación de patrones
 
 ---
 
