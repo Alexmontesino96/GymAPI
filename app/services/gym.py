@@ -1,5 +1,6 @@
 from typing import List, Optional, Dict, Any, Union, cast
 from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import func, and_
 import logging
 
@@ -693,6 +694,535 @@ class GymService:
                     ))
         
         # Crear el schema detallado
+        return GymDetailedPublicSchema(
+            id=gym.id,
+            name=gym.name,
+            subdomain=gym.subdomain,
+            logo_url=gym.logo_url,
+            address=gym.address,
+            phone=gym.phone,
+            email=gym.email,
+            description=gym.description,
+            timezone=gym.timezone,
+            is_active=gym.is_active,
+            gym_hours=gym_hours,
+            membership_plans=membership_plans,
+            modules=modules
+        )
+
+    # ==========================================
+    # MÉTODOS ASYNC (FASE 2 - SEMANA 4)
+    # ==========================================
+
+    async def create_gym_async(
+        self, db: AsyncSession, *, gym_in: GymCreate
+    ) -> Gym:
+        """Crear un nuevo gimnasio (async)."""
+        return await gym_repository.create_async(db, obj_in=gym_in)
+
+    async def get_gym_async(
+        self, db: AsyncSession, gym_id: int
+    ) -> Optional[Gym]:
+        """Obtener un gimnasio por su ID (async)."""
+        return await gym_repository.get_async(db, id=gym_id)
+
+    async def get_gym_by_subdomain_async(
+        self, db: AsyncSession, subdomain: str
+    ) -> Optional[Gym]:
+        """Obtener un gimnasio por su subdominio (async)."""
+        from sqlalchemy import select
+        stmt = select(Gym).where(Gym.subdomain == subdomain)
+        result = await db.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def get_gyms_async(
+        self,
+        db: AsyncSession,
+        *,
+        skip: int = 0,
+        limit: int = 100,
+        is_active: Optional[bool] = None
+    ) -> List[Gym]:
+        """Obtener lista de gimnasios con filtros opcionales (async)."""
+        from sqlalchemy import select
+        query = select(Gym)
+
+        if is_active is not None:
+            query = query.where(Gym.is_active == is_active)
+
+        query = query.offset(skip).limit(limit)
+        result = await db.execute(query)
+        return result.scalars().all()
+
+    async def update_gym_async(
+        self,
+        db: AsyncSession,
+        *,
+        gym: Gym,
+        gym_in: Union[GymUpdate, Dict[str, Any]]
+    ) -> Gym:
+        """Actualizar un gimnasio (async)."""
+        return await gym_repository.update_async(db, db_obj=gym, obj_in=gym_in)
+
+    async def update_gym_status_async(
+        self, db: AsyncSession, *, gym_id: int, is_active: bool
+    ) -> Gym:
+        """Actualizar el estado de un gimnasio (async)."""
+        gym = await self.get_gym_async(db, gym_id=gym_id)
+        if not gym:
+            raise HTTPException(status_code=404, detail="Gimnasio no encontrado")
+
+        return await gym_repository.update_async(
+            db, db_obj=gym, obj_in={"is_active": is_active}
+        )
+
+    async def delete_gym_async(
+        self, db: AsyncSession, *, gym_id: int
+    ) -> Gym:
+        """Eliminar un gimnasio (async)."""
+        gym = await self.get_gym_async(db, gym_id=gym_id)
+        if not gym:
+            raise HTTPException(status_code=404, detail="Gimnasio no encontrado")
+
+        return await gym_repository.remove_async(db, id=gym_id)
+
+    async def add_user_to_gym_async(
+        self,
+        db: AsyncSession,
+        *,
+        gym_id: int,
+        user_id: int,
+        role: GymRoleType = GymRoleType.MEMBER
+    ) -> UserGym:
+        """Añade un usuario a un gimnasio con el rol especificado (async)."""
+        from sqlalchemy import select
+
+        # Verificar que el usuario no pertenece ya al gimnasio
+        stmt = select(UserGym).where(
+            and_(UserGym.user_id == user_id, UserGym.gym_id == gym_id)
+        )
+        result = await db.execute(stmt)
+        existing = result.scalar_one_or_none()
+
+        if existing:
+            raise ValueError(f"El usuario {user_id} ya pertenece al gimnasio {gym_id}")
+
+        # Crear la relación usuario-gimnasio
+        user_gym = UserGym(
+            user_id=user_id,
+            gym_id=gym_id,
+            role=role
+        )
+        db.add(user_gym)
+        await db.flush()
+        await db.refresh(user_gym)
+
+        # Hook: Agregar usuario al canal general del gimnasio
+        try:
+            from app.services.gym_chat import gym_chat_service
+
+            success = gym_chat_service.add_user_to_general_channel(db, gym_id, user_id)
+            if success:
+                logger.info(f"Usuario {user_id} agregado al canal general de gym {gym_id}")
+
+                try:
+                    gym_chat_service.send_welcome_message(db, gym_id, user_id)
+                    logger.info(f"Mensaje de bienvenida enviado para usuario {user_id} en gym {gym_id}")
+                except Exception as welcome_error:
+                    logger.warning(f"No se pudo enviar mensaje de bienvenida: {welcome_error}")
+            else:
+                logger.warning(f"No se pudo agregar usuario {user_id} al canal general de gym {gym_id}")
+        except Exception as chat_error:
+            logger.error(f"Error agregando usuario al canal general: {chat_error}")
+
+        return user_gym
+
+    async def remove_user_from_gym_async(
+        self, db: AsyncSession, *, gym_id: int, user_id: int
+    ) -> None:
+        """Eliminar un usuario de un gimnasio (async)."""
+        from sqlalchemy import select
+
+        # Verificar que el usuario a eliminar existe y NO es SUPER_ADMIN
+        stmt = select(User).where(User.id == user_id)
+        result = await db.execute(stmt)
+        user_to_remove = result.scalar_one_or_none()
+
+        if not user_to_remove:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Usuario con ID {user_id} no encontrado."
+            )
+
+        if user_to_remove.role == UserRole.SUPER_ADMIN:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="No se pueden eliminar administradores de plataforma de los gimnasios."
+            )
+
+        # Buscar la asociación
+        stmt = select(UserGym).where(
+            and_(UserGym.user_id == user_id, UserGym.gym_id == gym_id)
+        )
+        result = await db.execute(stmt)
+        user_gym = result.scalar_one_or_none()
+
+        if not user_gym:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"El usuario {user_id} no pertenece al gimnasio {gym_id}"
+            )
+
+        # Hook: Remover usuario del canal general
+        try:
+            from app.services.gym_chat import gym_chat_service
+            gym_chat_service.remove_user_from_general_channel(db, gym_id, user_id)
+            logger.info(f"Usuario {user_id} removido del canal general de gym {gym_id}")
+        except Exception as chat_error:
+            logger.error(f"Error removiendo usuario del canal general: {chat_error}")
+
+        # Eliminar la asociación
+        await db.delete(user_gym)
+
+    async def update_user_role_async(
+        self, db: AsyncSession, *, gym_id: int, user_id: int, role: GymRoleType
+    ) -> UserGym:
+        """Actualizar el rol de un usuario en un gimnasio (async)."""
+        from sqlalchemy import select
+
+        # Verificar que el usuario existe y NO es SUPER_ADMIN
+        stmt = select(User).where(User.id == user_id)
+        result = await db.execute(stmt)
+        user_to_update = result.scalar_one_or_none()
+
+        if not user_to_update:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Usuario con ID {user_id} no encontrado."
+            )
+
+        if user_to_update.role == UserRole.SUPER_ADMIN:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="No se puede modificar el rol de un administrador de plataforma."
+            )
+
+        # Buscar la asociación
+        stmt = select(UserGym).where(
+            and_(UserGym.user_id == user_id, UserGym.gym_id == gym_id)
+        )
+        result = await db.execute(stmt)
+        user_gym = result.scalar_one_or_none()
+
+        if not user_gym:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"El usuario {user_id} no pertenece al gimnasio {gym_id}"
+            )
+
+        # Actualizar el rol
+        user_gym.role = role
+        return user_gym
+
+    async def get_user_gyms_async(
+        self, db: AsyncSession, *, user_id: int, skip: int = 0, limit: int = 100
+    ) -> List[Dict[str, Any]]:
+        """Obtener todos los gimnasios a los que pertenece un usuario (async)."""
+        from sqlalchemy import select
+
+        # Obtener primero el usuario
+        stmt = select(User).where(User.id == user_id)
+        result = await db.execute(stmt)
+        user = result.scalar_one_or_none()
+
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Usuario con ID {user_id} no encontrado."
+            )
+
+        user_email = user.email
+
+        # Consultar asociaciones y gimnasios
+        stmt = (
+            select(UserGym, Gym)
+            .join(Gym, UserGym.gym_id == Gym.id)
+            .where(UserGym.user_id == user_id, Gym.is_active == True)
+            .order_by(Gym.name)
+            .offset(skip)
+            .limit(limit)
+        )
+        result = await db.execute(stmt)
+        user_gyms = result.all()
+
+        gym_list = []
+        for user_gym, gym in user_gyms:
+            gym_membership_dict = {
+                "id": gym.id,
+                "name": gym.name,
+                "subdomain": gym.subdomain,
+                "logo_url": gym.logo_url,
+                "address": gym.address,
+                "phone": gym.phone,
+                "email": gym.email,
+                "description": gym.description,
+                "timezone": gym.timezone,
+                "type": gym.type,
+                "trainer_specialties": gym.trainer_specialties,
+                "trainer_certifications": gym.trainer_certifications,
+                "max_clients": gym.max_clients,
+                "is_active": gym.is_active,
+                "created_at": gym.created_at,
+                "updated_at": gym.updated_at,
+                "user_email": user_email,
+                "user_role_in_gym": user_gym.role
+            }
+            gym_list.append(gym_membership_dict)
+
+        return gym_list
+
+    async def get_gym_users_async(
+        self,
+        db: AsyncSession,
+        *,
+        gym_id: int,
+        role: Optional[GymRoleType] = None,
+        skip: int = 0,
+        limit: int = 100
+    ) -> List[Dict[str, Any]]:
+        """Obtener todos los usuarios de un gimnasio (async)."""
+        from sqlalchemy import select
+
+        query = (
+            select(UserGym, User)
+            .join(User, UserGym.user_id == User.id)
+            .where(UserGym.gym_id == gym_id)
+        )
+
+        if role:
+            query = query.where(UserGym.role == role)
+
+        query = query.offset(skip).limit(limit)
+        result = await db.execute(query)
+        users = result.all()
+
+        user_list = []
+        for user_gym, user in users:
+            full_name = f"{user.first_name or ''} {user.last_name or ''}".strip()
+
+            user_dict = {
+                "id": user.id,
+                "email": user.email,
+                "full_name": full_name,
+                "role": user_gym.role.value,
+                "joined_at": user_gym.created_at
+            }
+            user_list.append(user_dict)
+
+        return user_list
+
+    async def get_gym_with_stats_async(
+        self, db: AsyncSession, *, gym_id: int
+    ) -> Optional[GymWithStats]:
+        """Obtener un gimnasio con estadísticas básicas (async)."""
+        from sqlalchemy import select
+
+        gym = await self.get_gym_async(db, gym_id=gym_id)
+        if not gym:
+            return None
+
+        # Contar usuarios por rol
+        stmt = (
+            select(UserGym.role, func.count(UserGym.id).label("count"))
+            .where(UserGym.gym_id == gym_id)
+            .group_by(UserGym.role)
+        )
+        result = await db.execute(stmt)
+        role_counts = result.all()
+
+        # Inicializar contadores
+        members_count = 0
+        trainers_count = 0
+        admins_count = 0
+
+        for role, count in role_counts:
+            if role == GymRoleType.MEMBER:
+                members_count = count
+            elif role == GymRoleType.TRAINER:
+                trainers_count = count
+            elif role in (GymRoleType.ADMIN, GymRoleType.OWNER):
+                admins_count += count
+
+        # Contar eventos
+        stmt = select(func.count(Event.id)).where(Event.gym_id == gym_id)
+        result = await db.execute(stmt)
+        events_count = result.scalar() or 0
+
+        # Contar clases
+        stmt = select(func.count(ClassSession.id)).where(ClassSession.gym_id == gym_id)
+        result = await db.execute(stmt)
+        classes_count = result.scalar() or 0
+
+        # Crear objeto con estadísticas
+        gym_dict = {
+            "id": gym.id,
+            "name": gym.name,
+            "subdomain": gym.subdomain,
+            "logo_url": gym.logo_url,
+            "address": gym.address,
+            "phone": gym.phone,
+            "email": gym.email,
+            "description": gym.description,
+            "timezone": gym.timezone,
+            "is_active": gym.is_active,
+            "created_at": gym.created_at,
+            "updated_at": gym.updated_at,
+            "members_count": members_count,
+            "trainers_count": trainers_count,
+            "admins_count": admins_count,
+            "events_count": events_count,
+            "classes_count": classes_count
+        }
+
+        return GymWithStats(**gym_dict)
+
+    async def check_user_in_gym_async(
+        self, db: AsyncSession, *, user_id: int, gym_id: int
+    ) -> Optional[UserGym]:
+        """Verificar si un usuario pertenece a un gimnasio (async)."""
+        from sqlalchemy import select
+
+        stmt = select(UserGym).where(
+            and_(UserGym.user_id == user_id, UserGym.gym_id == gym_id)
+        )
+        result = await db.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def check_user_role_in_gym_async(
+        self,
+        db: AsyncSession,
+        *,
+        user_id: int,
+        gym_id: int,
+        required_roles: List[GymRoleType]
+    ) -> bool:
+        """Verificar si un usuario tiene uno de los roles requeridos (async)."""
+        user_gym = await self.check_user_in_gym_async(db, user_id=user_id, gym_id=gym_id)
+        if not user_gym:
+            return False
+
+        return user_gym.role in required_roles
+
+    async def update_user_role_in_gym_async(
+        self, db: AsyncSession, *, gym_id: int, user_id: int, role: GymRoleType
+    ) -> UserGym:
+        """Actualizar el rol de un usuario DENTRO de un gimnasio específico (async)."""
+        from sqlalchemy import select
+
+        # Verificar que el usuario existe y NO es SUPER_ADMIN
+        stmt = select(User).where(User.id == user_id)
+        result = await db.execute(stmt)
+        user_to_update = result.scalar_one_or_none()
+
+        if not user_to_update:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Usuario con ID {user_id} no encontrado."
+            )
+
+        if user_to_update.role == UserRole.SUPER_ADMIN:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="No se puede modificar el rol de un administrador de plataforma."
+            )
+
+        # Buscar la asociación
+        stmt = select(UserGym).where(
+            and_(UserGym.user_id == user_id, UserGym.gym_id == gym_id)
+        )
+        result = await db.execute(stmt)
+        user_gym = result.scalar_one_or_none()
+
+        if not user_gym:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"El usuario {user_id} no pertenece al gimnasio {gym_id}"
+            )
+
+        # Actualizar el rol
+        user_gym.role = role
+        db.add(user_gym)
+
+        return user_gym
+
+    async def get_gym_details_public_async(
+        self, db: AsyncSession, *, gym_id: int
+    ):
+        """Obtener detalles completos de un gimnasio para discovery público (async)."""
+        from sqlalchemy import select
+        from app.schemas.gym import (
+            GymDetailedPublicSchema,
+            GymHoursPublic,
+            MembershipPlanPublic,
+            GymModulePublic
+        )
+
+        # Obtener gimnasio con relaciones
+        stmt = (
+            select(Gym)
+            .options(
+                joinedload(Gym.gym_hours),
+                joinedload(Gym.membership_planes),
+                joinedload(Gym.modules).joinedload(GymModule.module)
+            )
+            .where(Gym.id == gym_id, Gym.is_active == True)
+        )
+        result = await db.execute(stmt)
+        gym = result.scalar_one_or_none()
+
+        if not gym:
+            return None
+
+        # Convertir horarios
+        gym_hours = []
+        if gym.gym_hours:
+            for hour in gym.gym_hours:
+                gym_hours.append(GymHoursPublic(
+                    day_of_week=hour.day_of_week,
+                    open_time=hour.open_time,
+                    close_time=hour.close_time,
+                    is_closed=hour.is_closed
+                ))
+
+        # Convertir planes de membresía (solo activos)
+        membership_plans = []
+        if gym.membership_planes:
+            for plan in gym.membership_planes:
+                if plan.is_active:
+                    membership_plans.append(MembershipPlanPublic(
+                        id=plan.id,
+                        name=plan.name,
+                        description=plan.description,
+                        price_cents=plan.price_cents,
+                        currency=plan.currency,
+                        billing_interval=plan.billing_interval,
+                        duration_days=plan.duration_days,
+                        max_billing_cycles=plan.max_billing_cycles,
+                        features=plan.features,
+                        max_bookings_per_month=plan.max_bookings_per_month,
+                        price_amount=plan.price_cents / 100.0
+                    ))
+
+        # Convertir módulos (solo activos)
+        modules = []
+        if gym.modules:
+            for gym_module in gym.modules:
+                if gym_module.active:
+                    modules.append(GymModulePublic(
+                        module_name=gym_module.module.name,
+                        is_enabled=gym_module.active
+                    ))
+
         return GymDetailedPublicSchema(
             id=gym.id,
             name=gym.name,
