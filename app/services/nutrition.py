@@ -1099,4 +1099,499 @@ class NutritionService:
         """Enviar notificaciones a seguidores cuando se publica un nuevo día."""
         # TODO: Implementar sistema de notificaciones
         logger.info(f"Notificando seguidores del plan {daily_plan.nutrition_plan_id} sobre nuevo día")
-        pass 
+        pass
+
+    # ==========================================
+    # MÉTODOS ASYNC (FASE 2 - SEMANA 4)
+    # ==========================================
+    # Nota: Los métodos async reciben AsyncSession como parámetro
+    # en lugar de usar self.db
+
+    async def create_nutrition_plan_async(
+        self,
+        db,  # AsyncSession
+        plan_data: NutritionPlanCreate,
+        creator_id: int,
+        gym_id: int
+    ) -> NutritionPlan:
+        """Crea un nuevo plan nutricional (async)."""
+        from sqlalchemy.ext.asyncio import AsyncSession
+        from sqlalchemy import select
+
+        plan = NutritionPlan(
+            title=plan_data.title,
+            description=plan_data.description,
+            creator_id=creator_id,
+            gym_id=gym_id,
+            nutrition_goal=plan_data.nutrition_goal,
+            difficulty_level=plan_data.difficulty_level,
+            budget_level=plan_data.budget_level,
+            dietary_restrictions=plan_data.dietary_restrictions,
+            daily_calorie_target=plan_data.daily_calorie_target,
+            plan_type=plan_data.plan_type,
+            start_date=plan_data.start_date,
+            is_published=plan_data.is_published if hasattr(plan_data, 'is_published') else False
+        )
+
+        db.add(plan)
+        await db.flush()
+        await db.refresh(plan)
+
+        logger.info(f"Created nutrition plan: {plan.id} - {plan.title}")
+        return plan
+
+    async def get_nutrition_plan_async(
+        self, db, plan_id: int, gym_id: int  # AsyncSession
+    ) -> NutritionPlan:
+        """Obtiene un plan nutricional por ID (async)."""
+        from sqlalchemy.ext.asyncio import AsyncSession
+        from sqlalchemy import select
+
+        stmt = select(NutritionPlan).where(
+            and_(
+                NutritionPlan.id == plan_id,
+                NutritionPlan.gym_id == gym_id
+            )
+        )
+        result = await db.execute(stmt)
+        plan = result.scalar_one_or_none()
+
+        if not plan:
+            raise NotFoundError(f"Nutrition plan {plan_id} not found")
+
+        return plan
+
+    async def get_nutrition_plan_with_details_async(
+        self, db, plan_id: int, gym_id: int  # AsyncSession
+    ):
+        """Obtiene un plan con todos sus detalles (async)."""
+        from sqlalchemy.ext.asyncio import AsyncSession
+        from sqlalchemy import select
+        from sqlalchemy.orm import selectinload
+
+        stmt = (
+            select(NutritionPlan)
+            .options(
+                selectinload(NutritionPlan.daily_plans).selectinload(DailyNutritionPlan.meals),
+                selectinload(NutritionPlan.creator),
+                selectinload(NutritionPlan.followers)
+            )
+            .where(
+                and_(
+                    NutritionPlan.id == plan_id,
+                    NutritionPlan.gym_id == gym_id
+                )
+            )
+        )
+        result = await db.execute(stmt)
+        plan = result.scalar_one_or_none()
+
+        if not plan:
+            raise NotFoundError(f"Nutrition plan {plan_id} not found")
+
+        return plan
+
+    async def list_nutrition_plans_async(
+        self,
+        db,  # AsyncSession
+        gym_id: int,
+        filters: Optional[NutritionPlanFilters] = None,
+        skip: int = 0,
+        limit: int = 20
+    ) -> List[NutritionPlan]:
+        """Lista planes nutricionales con filtros (async)."""
+        from sqlalchemy.ext.asyncio import AsyncSession
+        from sqlalchemy import select
+
+        query = select(NutritionPlan).where(NutritionPlan.gym_id == gym_id)
+
+        if filters:
+            if filters.is_published is not None:
+                query = query.where(NutritionPlan.is_published == filters.is_published)
+            if filters.creator_id:
+                query = query.where(NutritionPlan.creator_id == filters.creator_id)
+            if filters.nutrition_goal:
+                query = query.where(NutritionPlan.nutrition_goal == filters.nutrition_goal)
+            if filters.difficulty_level:
+                query = query.where(NutritionPlan.difficulty_level == filters.difficulty_level)
+            if filters.plan_type:
+                query = query.where(NutritionPlan.plan_type == filters.plan_type)
+
+        query = query.order_by(desc(NutritionPlan.created_at)).offset(skip).limit(limit)
+        result = await db.execute(query)
+        return result.scalars().all()
+
+    async def update_nutrition_plan_async(
+        self,
+        db,  # AsyncSession
+        plan_id: int,
+        plan_update: NutritionPlanUpdate,
+        user_id: int,
+        gym_id: int
+    ) -> NutritionPlan:
+        """Actualiza un plan nutricional (async)."""
+        from sqlalchemy.ext.asyncio import AsyncSession
+
+        plan = await self.get_nutrition_plan_async(db, plan_id, gym_id)
+
+        if plan.creator_id != user_id:
+            raise PermissionError("Only the creator can update this plan")
+
+        update_data = plan_update.model_dump(exclude_unset=True)
+        for field, value in update_data.items():
+            setattr(plan, field, value)
+
+        plan.updated_at = datetime.utcnow()
+        await db.flush()
+        await db.refresh(plan)
+
+        logger.info(f"Updated nutrition plan: {plan_id}")
+        return plan
+
+    async def delete_nutrition_plan_async(
+        self, db, plan_id: int, user_id: int, gym_id: int  # AsyncSession
+    ) -> bool:
+        """Elimina un plan nutricional (async)."""
+        from sqlalchemy.ext.asyncio import AsyncSession
+
+        plan = await self.get_nutrition_plan_async(db, plan_id, gym_id)
+
+        if plan.creator_id != user_id:
+            raise PermissionError("Only the creator can delete this plan")
+
+        await db.delete(plan)
+        await db.flush()
+
+        logger.info(f"Deleted nutrition plan: {plan_id}")
+        return True
+
+    async def create_daily_plan_async(
+        self,
+        db,  # AsyncSession
+        daily_plan_data: DailyNutritionPlanCreate,
+        user_id: int,
+        gym_id: int
+    ) -> DailyNutritionPlan:
+        """Crea un plan diario (async)."""
+        from sqlalchemy.ext.asyncio import AsyncSession
+
+        plan = await self.get_nutrition_plan_async(db, daily_plan_data.nutrition_plan_id, gym_id)
+
+        if plan.creator_id != user_id:
+            raise PermissionError("Only the creator can add daily plans")
+
+        daily_plan = DailyNutritionPlan(
+            nutrition_plan_id=daily_plan_data.nutrition_plan_id,
+            day_number=daily_plan_data.day_number,
+            title=daily_plan_data.title,
+            notes=daily_plan_data.notes
+        )
+
+        db.add(daily_plan)
+        await db.flush()
+        await db.refresh(daily_plan)
+
+        return daily_plan
+
+    async def create_meal_async(
+        self, db, meal_data: MealCreate, user_id: int  # AsyncSession
+    ) -> Meal:
+        """Crea una comida (async)."""
+        from sqlalchemy.ext.asyncio import AsyncSession
+
+        meal = Meal(
+            daily_plan_id=meal_data.daily_plan_id,
+            meal_type=meal_data.meal_type,
+            name=meal_data.name,
+            description=meal_data.description,
+            calories=meal_data.calories,
+            protein=meal_data.protein,
+            carbs=meal_data.carbs,
+            fats=meal_data.fats,
+            image_url=meal_data.image_url,
+            preparation_time=meal_data.preparation_time,
+            instructions=meal_data.instructions
+        )
+
+        db.add(meal)
+        await db.flush()
+        await db.refresh(meal)
+
+        return meal
+
+    async def follow_nutrition_plan_async(
+        self,
+        db,  # AsyncSession
+        plan_id: int,
+        user_id: int,
+        gym_id: int,
+        custom_start_date: Optional[date] = None
+    ) -> NutritionPlanFollower:
+        """Usuario comienza a seguir un plan (async)."""
+        from sqlalchemy.ext.asyncio import AsyncSession
+        from sqlalchemy import select
+
+        plan = await self.get_nutrition_plan_async(db, plan_id, gym_id)
+
+        if not plan.is_published:
+            raise ValidationError("Cannot follow an unpublished plan")
+
+        # Verificar si ya sigue el plan
+        stmt = select(NutritionPlanFollower).where(
+            and_(
+                NutritionPlanFollower.nutrition_plan_id == plan_id,
+                NutritionPlanFollower.user_id == user_id,
+                NutritionPlanFollower.is_active == True
+            )
+        )
+        result = await db.execute(stmt)
+        existing = result.scalar_one_or_none()
+
+        if existing:
+            raise ValidationError("User is already following this plan")
+
+        start_date = custom_start_date or date.today()
+
+        follower = NutritionPlanFollower(
+            nutrition_plan_id=plan_id,
+            user_id=user_id,
+            start_date=start_date,
+            is_active=True
+        )
+
+        db.add(follower)
+        await db.flush()
+        await db.refresh(follower)
+
+        logger.info(f"User {user_id} started following plan {plan_id}")
+        return follower
+
+    async def unfollow_nutrition_plan_async(
+        self, db, plan_id: int, user_id: int, gym_id: int  # AsyncSession
+    ) -> bool:
+        """Usuario deja de seguir un plan (async)."""
+        from sqlalchemy.ext.asyncio import AsyncSession
+        from sqlalchemy import select
+
+        plan = await self.get_nutrition_plan_async(db, plan_id, gym_id)
+
+        stmt = select(NutritionPlanFollower).where(
+            and_(
+                NutritionPlanFollower.nutrition_plan_id == plan_id,
+                NutritionPlanFollower.user_id == user_id,
+                NutritionPlanFollower.is_active == True
+            )
+        )
+        result = await db.execute(stmt)
+        follower = result.scalar_one_or_none()
+
+        if not follower:
+            raise NotFoundError("User is not following this plan")
+
+        follower.is_active = False
+        follower.end_date = date.today()
+        await db.flush()
+
+        logger.info(f"User {user_id} unfollowed plan {plan_id}")
+        return True
+
+    async def complete_meal_async(
+        self,
+        db,  # AsyncSession
+        meal_id: int,
+        user_id: int,
+        gym_id: int,
+        rating: Optional[int] = None,
+        notes: Optional[str] = None
+    ) -> UserMealCompletion:
+        """Marca una comida como completada (async)."""
+        from sqlalchemy.ext.asyncio import AsyncSession
+        from sqlalchemy import select
+
+        # Verificar que la comida existe
+        stmt = select(Meal).where(Meal.id == meal_id)
+        result = await db.execute(stmt)
+        meal = result.scalar_one_or_none()
+
+        if not meal:
+            raise NotFoundError(f"Meal {meal_id} not found")
+
+        # Verificar si ya completó esta comida hoy
+        today = date.today()
+        stmt = select(UserMealCompletion).where(
+            and_(
+                UserMealCompletion.meal_id == meal_id,
+                UserMealCompletion.user_id == user_id,
+                func.date(UserMealCompletion.completed_at) == today
+            )
+        )
+        result = await db.execute(stmt)
+        existing = result.scalar_one_or_none()
+
+        if existing:
+            logger.warning(f"User {user_id} already completed meal {meal_id} today")
+            return existing
+
+        completion = UserMealCompletion(
+            meal_id=meal_id,
+            user_id=user_id,
+            completed_at=datetime.utcnow(),
+            rating=rating,
+            notes=notes
+        )
+
+        db.add(completion)
+        await db.flush()
+        await db.refresh(completion)
+
+        # Actualizar progreso diario (helper method - simplificado)
+        # await self._update_daily_progress_async(db, meal.daily_plan_id, user_id)
+
+        logger.info(f"User {user_id} completed meal {meal_id}")
+        return completion
+
+    async def get_today_meal_plan_async(
+        self, db, user_id: int, gym_id: int  # AsyncSession
+    ) -> TodayMealPlan:
+        """Obtiene el plan de comidas de hoy (async)."""
+        from sqlalchemy.ext.asyncio import AsyncSession
+        from sqlalchemy import select
+        from sqlalchemy.orm import selectinload
+
+        today = date.today()
+
+        # Obtener plan activo del usuario
+        stmt = (
+            select(NutritionPlanFollower)
+            .options(
+                selectinload(NutritionPlanFollower.nutrition_plan)
+                .selectinload(NutritionPlan.daily_plans)
+                .selectinload(DailyNutritionPlan.meals)
+            )
+            .where(
+                and_(
+                    NutritionPlanFollower.user_id == user_id,
+                    NutritionPlanFollower.is_active == True,
+                    NutritionPlanFollower.start_date <= today
+                )
+            )
+        )
+        result = await db.execute(stmt)
+        follower = result.scalar_one_or_none()
+
+        if not follower:
+            return TodayMealPlan(
+                date=today,
+                day_title="Sin plan activo",
+                meals=[],
+                total_calories=0,
+                total_protein=0,
+                total_carbs=0,
+                total_fats=0,
+                completion_percentage=0
+            )
+
+        # Calcular día actual
+        current_day, status = self.get_current_plan_day(follower.nutrition_plan, follower)
+
+        # Obtener plan diario
+        daily_plan = None
+        for dp in follower.nutrition_plan.daily_plans:
+            if dp.day_number == current_day:
+                daily_plan = dp
+                break
+
+        if not daily_plan:
+            return TodayMealPlan(
+                date=today,
+                day_title=f"Día {current_day}",
+                meals=[],
+                total_calories=0,
+                total_protein=0,
+                total_carbs=0,
+                total_fats=0,
+                completion_percentage=0
+            )
+
+        # Calcular totales y comidas completadas
+        total_calories = sum(meal.calories or 0 for meal in daily_plan.meals)
+        total_protein = sum(meal.protein or 0 for meal in daily_plan.meals)
+        total_carbs = sum(meal.carbs or 0 for meal in daily_plan.meals)
+        total_fats = sum(meal.fats or 0 for meal in daily_plan.meals)
+
+        # Obtener comidas completadas hoy
+        stmt = select(UserMealCompletion).where(
+            and_(
+                UserMealCompletion.user_id == user_id,
+                func.date(UserMealCompletion.completed_at) == today
+            )
+        )
+        result = await db.execute(stmt)
+        completions = result.scalars().all()
+        completed_meal_ids = {c.meal_id for c in completions}
+
+        completion_percentage = (
+            len(completed_meal_ids) / len(daily_plan.meals) * 100
+            if daily_plan.meals else 0
+        )
+
+        return TodayMealPlan(
+            date=today,
+            day_title=daily_plan.title or f"Día {current_day}",
+            meals=daily_plan.meals,
+            total_calories=total_calories,
+            total_protein=total_protein,
+            total_carbs=total_carbs,
+            total_fats=total_fats,
+            completion_percentage=completion_percentage,
+            completed_meal_ids=list(completed_meal_ids)
+        )
+
+    async def create_live_nutrition_plan_async(
+        self,
+        db,  # AsyncSession
+        plan_data: NutritionPlanCreate,
+        creator_id: int,
+        gym_id: int
+    ) -> NutritionPlan:
+        """Crea un plan nutricional LIVE (async)."""
+        from sqlalchemy.ext.asyncio import AsyncSession
+
+        plan_data.plan_type = PlanType.LIVE
+        plan_data.start_date = date.today()
+
+        return await self.create_nutrition_plan_async(db, plan_data, creator_id, gym_id)
+
+    async def get_nutrition_analytics_async(
+        self, db, plan_id: int, user_id: int, gym_id: int  # AsyncSession
+    ) -> NutritionAnalytics:
+        """Obtiene analíticas de un plan (async)."""
+        from sqlalchemy.ext.asyncio import AsyncSession
+        from sqlalchemy import select
+
+        plan = await self.get_nutrition_plan_async(db, plan_id, gym_id)
+
+        # Estadísticas básicas
+        stmt = select(func.count(NutritionPlanFollower.id)).where(
+            NutritionPlanFollower.nutrition_plan_id == plan_id
+        )
+        result = await db.execute(stmt)
+        total_followers = result.scalar() or 0
+
+        stmt = select(func.count(NutritionPlanFollower.id)).where(
+            and_(
+                NutritionPlanFollower.nutrition_plan_id == plan_id,
+                NutritionPlanFollower.is_active == True
+            )
+        )
+        result = await db.execute(stmt)
+        active_followers = result.scalar() or 0
+
+        # Estadísticas de progreso (simplificado)
+        return NutritionAnalytics(
+            plan_id=plan_id,
+            total_followers=total_followers,
+            active_followers=active_followers,
+            avg_completion_rate=0.0,  # Calcular con query adicional si necesario
+            total_days=len(plan.daily_plans) if hasattr(plan, 'daily_plans') else 0
+        ) 
