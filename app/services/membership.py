@@ -494,6 +494,262 @@ class MembershipService:
             new_members_this_month=new_members_this_month
         )
 
+    # ==========================================
+    # MÉTODOS ASYNC (FASE 2 - SEMANA 4)
+    # ==========================================
+
+    async def get_membership_plans_async(
+        self,
+        db,  # AsyncSession
+        gym_id: int,
+        active_only: bool = True,
+        skip: int = 0,
+        limit: int = 100
+    ) -> List[MembershipPlan]:
+        """Obtener planes de membresía de un gimnasio (async)."""
+        from sqlalchemy import select
+        from sqlalchemy.ext.asyncio import AsyncSession
+
+        query = select(MembershipPlan).where(MembershipPlan.gym_id == gym_id)
+
+        if active_only:
+            query = query.where(MembershipPlan.is_active == True)
+
+        query = query.offset(skip).limit(limit)
+        result = await db.execute(query)
+        return result.scalars().all()
+
+    async def get_membership_plan_async(
+        self, db, plan_id: int  # AsyncSession
+    ) -> Optional[MembershipPlan]:
+        """Obtener un plan específico (async)."""
+        from sqlalchemy import select
+        from sqlalchemy.ext.asyncio import AsyncSession
+
+        stmt = select(MembershipPlan).where(MembershipPlan.id == plan_id)
+        result = await db.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def get_user_membership_async(
+        self,
+        db,  # AsyncSession
+        user_id: int,
+        gym_id: int
+    ) -> Optional[UserGym]:
+        """Obtener membresía de un usuario en un gimnasio específico (async)."""
+        from sqlalchemy import select
+        from sqlalchemy.ext.asyncio import AsyncSession
+
+        stmt = select(UserGym).where(
+            and_(
+                UserGym.user_id == user_id,
+                UserGym.gym_id == gym_id
+            )
+        )
+        result = await db.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def get_membership_status_async(
+        self,
+        db,  # AsyncSession
+        user_id: int,
+        gym_id: int
+    ) -> MembershipStatus:
+        """Obtener estado detallado de membresía (async)."""
+        from sqlalchemy import select
+        from sqlalchemy.ext.asyncio import AsyncSession
+
+        user_gym = await self.get_user_membership_async(db, user_id, gym_id)
+
+        stmt = select(Gym).where(Gym.id == gym_id)
+        result = await db.execute(stmt)
+        gym = result.scalar_one_or_none()
+
+        if not user_gym or not gym:
+            return MembershipStatus(
+                user_id=user_id,
+                gym_id=gym_id,
+                gym_name=gym.name if gym else "Desconocido",
+                is_active=False,
+                membership_type="none",
+                can_access=False
+            )
+
+        # Verificar si está expirada
+        is_expired = False
+        days_remaining = None
+
+        if user_gym.membership_expires_at:
+            now = datetime.now()
+            is_expired = user_gym.membership_expires_at < now
+            if not is_expired:
+                days_remaining = (user_gym.membership_expires_at - now).days
+
+        can_access = user_gym.is_active and not is_expired
+
+        return MembershipStatus(
+            user_id=user_id,
+            gym_id=gym_id,
+            gym_name=gym.name,
+            is_active=user_gym.is_active,
+            membership_type=user_gym.membership_type,
+            expires_at=user_gym.membership_expires_at,
+            days_remaining=days_remaining,
+            can_access=can_access
+        )
+
+    async def update_user_membership_async(
+        self,
+        db,  # AsyncSession
+        user_id: int,
+        gym_id: int,
+        membership_update: UserMembershipUpdate
+    ) -> Optional[UserGym]:
+        """Actualizar membresía de usuario (async)."""
+        from sqlalchemy.ext.asyncio import AsyncSession
+
+        user_gym = await self.get_user_membership_async(db, user_id, gym_id)
+        if not user_gym:
+            return None
+
+        update_data = membership_update.model_dump(exclude_unset=True)
+        for field, value in update_data.items():
+            setattr(user_gym, field, value)
+
+        await db.flush()
+        await db.refresh(user_gym)
+
+        logger.info(f"Membresía actualizada para user {user_id} en gym {gym_id}")
+        return user_gym
+
+    async def deactivate_membership_async(
+        self,
+        db,  # AsyncSession
+        user_id: int,
+        gym_id: int,
+        reason: str = "expired"
+    ) -> bool:
+        """Desactivar membresía de usuario (async)."""
+        from sqlalchemy.ext.asyncio import AsyncSession
+
+        user_gym = await self.get_user_membership_async(db, user_id, gym_id)
+        if not user_gym:
+            return False
+
+        user_gym.is_active = False
+        user_gym.notes = f"Desactivada: {reason} - {datetime.now().isoformat()}"
+
+        await db.flush()
+
+        logger.info(f"Membresía desactivada para user {user_id} en gym {gym_id}. Razón: {reason}")
+        return True
+
+    async def expire_memberships_async(self, db) -> int:  # AsyncSession
+        """Expirar membresías vencidas (async - para tarea programada)."""
+        from sqlalchemy import select
+        from sqlalchemy.ext.asyncio import AsyncSession
+
+        now = datetime.now()
+
+        stmt = select(UserGym).where(
+            and_(
+                UserGym.is_active == True,
+                UserGym.membership_expires_at < now,
+                UserGym.membership_type.in_(["paid", "trial"])
+            )
+        )
+        result = await db.execute(stmt)
+        expired_memberships = result.scalars().all()
+
+        count = 0
+        for membership in expired_memberships:
+            membership.is_active = False
+            membership.notes = f"Expirada automáticamente: {now.isoformat()}"
+            count += 1
+
+        if count > 0:
+            await db.flush()
+            logger.info(f"Expiradas {count} membresías automáticamente")
+
+        return count
+
+    async def get_gym_membership_summary_async(
+        self,
+        db,  # AsyncSession
+        gym_id: int
+    ) -> MembershipSummary:
+        """Obtener resumen de membresías para un gimnasio (async)."""
+        from sqlalchemy import select, func
+        from sqlalchemy.ext.asyncio import AsyncSession
+
+        # Total de miembros
+        stmt = select(func.count(UserGym.id)).where(UserGym.gym_id == gym_id)
+        result = await db.execute(stmt)
+        total_members = result.scalar() or 0
+
+        # Miembros activos
+        stmt = select(func.count(UserGym.id)).where(
+            and_(
+                UserGym.gym_id == gym_id,
+                UserGym.is_active == True
+            )
+        )
+        result = await db.execute(stmt)
+        active_members = result.scalar() or 0
+
+        # Miembros con membresía paga
+        stmt = select(func.count(UserGym.id)).where(
+            and_(
+                UserGym.gym_id == gym_id,
+                UserGym.membership_type == "paid",
+                UserGym.is_active == True
+            )
+        )
+        result = await db.execute(stmt)
+        paid_members = result.scalar() or 0
+
+        # Miembros en trial
+        stmt = select(func.count(UserGym.id)).where(
+            and_(
+                UserGym.gym_id == gym_id,
+                UserGym.membership_type == "trial",
+                UserGym.is_active == True
+            )
+        )
+        result = await db.execute(stmt)
+        trial_members = result.scalar() or 0
+
+        # Miembros expirados
+        stmt = select(func.count(UserGym.id)).where(
+            and_(
+                UserGym.gym_id == gym_id,
+                UserGym.is_active == False
+            )
+        )
+        result = await db.execute(stmt)
+        expired_members = result.scalar() or 0
+
+        # Miembros nuevos este mes
+        start_of_month = datetime.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        stmt = select(func.count(UserGym.id)).where(
+            and_(
+                UserGym.gym_id == gym_id,
+                UserGym.created_at >= start_of_month
+            )
+        )
+        result = await db.execute(stmt)
+        new_members_this_month = result.scalar() or 0
+
+        return MembershipSummary(
+            total_members=total_members,
+            active_members=active_members,
+            paid_members=paid_members,
+            trial_members=trial_members,
+            expired_members=expired_members,
+            revenue_current_month=0.0,  # Se calculará con Stripe en Fase 2
+            new_members_this_month=new_members_this_month
+        )
+
 
 # Instancia global del servicio
 membership_service = MembershipService() 
