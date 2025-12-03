@@ -5,19 +5,27 @@ Este módulo proporciona acceso a Redis utilizando redis.asyncio y connection po
 para optimizar el rendimiento en arquitectura completamente asíncrona.
 
 Beneficios implementados:
-1. Reducción de latencia: Elimina los 1-5ms por operación al reutilizar conexiones
-2. Mayor throughput: Puede servir más solicitudes por segundo
-3. Menor uso de recursos: Reduce la presión sobre descriptores de archivo y memoria
-4. Mayor estabilidad: Menos probabilidades de agotar conexiones durante picos de tráfico
-5. Keepalive: Las conexiones se mantienen activas para evitar reconexiones frecuentes
-6. Async nativo: Integración perfecta con asyncio y FastAPI async
+1. Cliente por request: Cada request tiene su propio cliente aislado (evita blocking)
+2. Connection pool compartido: Reutiliza conexiones eficientemente (150 max por defecto)
+3. Sin ping overhead: No verificamos conexión en cada request (usa health_check_interval)
+4. Reducción de latencia: Elimina los 1-5ms por operación al reutilizar conexiones
+5. Mayor throughput: Puede servir más solicitudes por segundo sin blocking
+6. Menor uso de recursos: Reduce la presión sobre descriptores de archivo y memoria
+7. Mayor estabilidad: Pool grande evita exhaustion durante picos de tráfico (150 vs 50)
+8. Keepalive: Las conexiones se mantienen activas para evitar reconexiones frecuentes
+9. Async nativo: Integración perfecta con asyncio y FastAPI async
 
 Configuración ajustable mediante variables de entorno:
-- REDIS_POOL_MAX_CONNECTIONS: Número máximo de conexiones en el pool (default: 50)
+- REDIS_POOL_MAX_CONNECTIONS: Número máximo de conexiones en el pool (default: 150)
 - REDIS_POOL_SOCKET_TIMEOUT: Timeout para operaciones de socket (default: 5 segundos)
 - REDIS_POOL_HEALTH_CHECK_INTERVAL: Intervalo para verificar salud de conexiones (default: 30 segundos)
 - REDIS_POOL_RETRY_ON_TIMEOUT: Si se debe reintentar automáticamente en timeout (default: True)
 - REDIS_POOL_SOCKET_KEEPALIVE: Si se debe mantener la conexión TCP viva (default: True)
+
+Optimizaciones de performance (2024-12-03):
+- Cliente por request: Evita que un request lento bloquee a otros
+- Pool aumentado: 50 → 150 conexiones para manejar bursts de tráfico
+- Sin ping(): Elimina overhead de 1-2ms por request
 
 Para usar en endpoints:
 ```python
@@ -83,47 +91,54 @@ async def initialize_redis_pool():
             REDIS_POOL = None
             raise
 
-# Variable global para mantener la conexión compartida para compatibilidad
-redis_client = None
-
 async def get_redis_client() -> Redis:
     """
     Dependencia FastAPI para obtener una instancia del cliente Redis asíncrono
     usando el connection pool.
-    
+
+    IMPORTANTE: Crea un cliente NUEVO por request para evitar blocking entre requests.
+    El connection pool se reutiliza para eficiencia, pero cada request tiene su propio
+    cliente aislado. Esto previene que un request lento bloquee a otros.
+
     Returns:
         Redis: Cliente Redis usando el connection pool compartido
     """
-    global REDIS_POOL, redis_client
-    
+    global REDIS_POOL
+
     # Inicializar el pool si no existe
     if REDIS_POOL is None:
         await initialize_redis_pool()
-        
+
     if REDIS_POOL is None:
         # Si aún es None después de intentar inicializar, hay un problema
         logger.error("No se pudo establecer el connection pool de Redis")
         raise HTTPException(status_code=503, detail="No se pudo conectar a Redis")
-    
+
     try:
-        # Para mantener compatibilidad con código existente que usa la variable redis_client
-        if redis_client is None:
-            redis_client = Redis(connection_pool=REDIS_POOL)
-            
-        # Verificar conexión
-        await redis_client.ping()
-        return redis_client
+        # ✅ FIX: Crear cliente NUEVO por request (no compartido globalmente)
+        # Esto evita que un cliente bloqueado afecte a otros requests
+        # El pool de conexiones se reutiliza para eficiencia
+        client = Redis(connection_pool=REDIS_POOL)
+
+        # ✅ FIX: No hacer ping() por request - overhead innecesario
+        # El health_check_interval del pool ya verifica las conexiones
+        # Solo hacemos ping si hay un error explícito
+
+        return client
     except Exception as e:
         logger.error(f"Error al obtener conexión del pool de Redis: {e}", exc_info=True)
-        
+
         # Reintentar inicializando de nuevo el pool
         try:
             logger.info("Intentando reinicializar el connection pool...")
             REDIS_POOL = None
             await initialize_redis_pool()
-            redis_client = Redis(connection_pool=REDIS_POOL)
-            await redis_client.ping()
-            return redis_client
+            client = Redis(connection_pool=REDIS_POOL)
+
+            # Ping solo en caso de error para verificar conectividad
+            await client.ping()
+            logger.info("Reconexión a Redis exitosa")
+            return client
         except Exception as retry_e:
             logger.error(f"Error al reintentar conexión con Redis: {retry_e}", exc_info=True)
             raise HTTPException(status_code=503, detail=f"No se pudo conectar a Redis: {retry_e}")
@@ -132,12 +147,8 @@ async def close_redis_client():
     """
     Cierra el pool de conexiones Redis al finalizar la aplicación.
     """
-    global REDIS_POOL, redis_client
-    if redis_client:
-        logger.info("Cerrando cliente Redis...")
-        await redis_client.close()
-        redis_client = None
-    
+    global REDIS_POOL
+
     if REDIS_POOL:
         logger.info("Cerrando connection pool de Redis...")
         await REDIS_POOL.disconnect()

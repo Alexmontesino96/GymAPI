@@ -208,7 +208,7 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://localhost:6379/0"
     
     # Configuración del pool de conexiones Redis
-    REDIS_POOL_MAX_CONNECTIONS: int = int(os.getenv("REDIS_POOL_MAX_CONNECTIONS", "50"))  # Aumentado de 20 a 50
+    REDIS_POOL_MAX_CONNECTIONS: int = int(os.getenv("REDIS_POOL_MAX_CONNECTIONS", "150"))  # ✅ Aumentado a 150 para evitar pool exhaustion
     REDIS_POOL_SOCKET_TIMEOUT: int = int(os.getenv("REDIS_POOL_SOCKET_TIMEOUT", "5"))  # Aumentado de 2 a 5 segundos
     REDIS_POOL_HEALTH_CHECK_INTERVAL: int = int(os.getenv("REDIS_POOL_HEALTH_CHECK_INTERVAL", "30"))
     REDIS_POOL_RETRY_ON_TIMEOUT: bool = os.getenv("REDIS_POOL_RETRY_ON_TIMEOUT", "True").lower() in ("true", "1", "t")
