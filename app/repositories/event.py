@@ -1087,6 +1087,287 @@ class EventParticipationRepository:
 
         return promoted
 
+    # ==========================================
+    # Métodos async - EventParticipationRepository
+    # ==========================================
+
+    async def create_participation_async(
+        self, db: AsyncSession, *, participation_in: EventParticipationCreate, member_id: Union[int, str]
+    ) -> Optional[EventParticipation]:
+        """Crear una nueva participación en un evento (async)."""
+        try:
+            event_id = participation_in.event_id
+
+            # Subconsulta para contar participantes registrados
+            registered_count_subq = (
+                select(func.count(EventParticipation.id))
+                .where(
+                    and_(
+                        EventParticipation.event_id == event_id,
+                        EventParticipation.status == EventParticipationStatus.REGISTERED
+                    )
+                )
+                .scalar_subquery()
+            )
+
+            # Consulta optimizada: obtiene evento y cuenta participantes
+            query = select(
+                Event,
+                registered_count_subq.label('registered_count')
+            ).where(Event.id == event_id)
+
+            result = await db.execute(query)
+            query_result = result.first()
+
+            if not query_result:
+                return None
+
+            event, registered_count = query_result
+            gym_id = event.gym_id
+
+            # Convertir member_id si es auth0_id
+            user_id = None
+            if isinstance(member_id, str):
+                user_stmt = select(User.id).where(User.auth0_id == member_id)
+                user_result = await db.execute(user_stmt)
+                user_id = user_result.scalar_one_or_none()
+
+                if not user_id:
+                    # Crear usuario temporal
+                    user = User(
+                        auth0_id=member_id,
+                        email=f"temp_{member_id}@example.com",
+                        role=UserRole.MEMBER
+                    )
+                    db.add(user)
+                    await db.flush()
+                    user_id = user.id
+            else:
+                user_id = member_id
+
+            # Verificar participación existente
+            existing_stmt = select(EventParticipation).where(
+                EventParticipation.event_id == event_id,
+                EventParticipation.member_id == user_id
+            )
+            existing_result = await db.execute(existing_stmt)
+            existing = existing_result.scalar_one_or_none()
+
+            if existing:
+                if existing.status == EventParticipationStatus.CANCELLED:
+                    # Reactivar participación cancelada
+                    if event.is_paid and event.price_cents:
+                        existing.status = EventParticipationStatus.PENDING_PAYMENT
+                    elif event.max_participants == 0 or registered_count < event.max_participants:
+                        existing.status = EventParticipationStatus.REGISTERED
+                    else:
+                        existing.status = EventParticipationStatus.WAITING_LIST
+
+                    db.add(existing)
+                    await db.flush()
+                    return existing
+                else:
+                    return existing
+
+            # Determinar estado inicial
+            if event.is_paid and event.price_cents:
+                participation_status = EventParticipationStatus.PENDING_PAYMENT
+            else:
+                participation_status = EventParticipationStatus.REGISTERED
+                if event.max_participants > 0 and registered_count >= event.max_participants:
+                    participation_status = EventParticipationStatus.WAITING_LIST
+
+            # Crear nueva participación
+            now = datetime.now(timezone.utc)
+            db_participation = EventParticipation(
+                event_id=event_id,
+                member_id=user_id,
+                gym_id=gym_id,
+                status=participation_status,
+                registered_at=now,
+                updated_at=now,
+                attended=False
+            )
+
+            db.add(db_participation)
+            await db.flush()
+
+            return db_participation
+
+        except Exception as e:
+            await db.rollback()
+            print(f"Error al crear participación: {e}")
+            raise
+
+    async def get_participation_async(
+        self, db: AsyncSession, *, participation_id: int
+    ) -> Optional[EventParticipation]:
+        """Obtener una participación por ID (async)."""
+        stmt = select(EventParticipation).where(EventParticipation.id == participation_id)
+        result = await db.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def get_participation_by_member_and_event_async(
+        self, db: AsyncSession, *, member_id: Union[int, str], event_id: int
+    ) -> Optional[EventParticipation]:
+        """Obtener participación por miembro y evento (async)."""
+        if isinstance(member_id, str):
+            user_stmt = select(User.id).where(User.auth0_id == member_id)
+            user_result = await db.execute(user_stmt)
+            user = user_result.scalar_one_or_none()
+            if user:
+                member_id = user
+            else:
+                return None
+
+        stmt = select(EventParticipation).where(
+            EventParticipation.event_id == event_id,
+            EventParticipation.member_id == member_id
+        )
+        result = await db.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def update_participation_async(
+        self, db: AsyncSession, *, db_obj: EventParticipation, participation_in: EventParticipationUpdate
+    ) -> Optional[EventParticipation]:
+        """Actualizar una participación (async)."""
+        db_participation = db_obj
+
+        update_data = jsonable_encoder(participation_in, exclude_unset=True)
+
+        updated = False
+        for field, value in update_data.items():
+            if hasattr(db_participation, field) and getattr(db_participation, field) != value:
+                setattr(db_participation, field, value)
+                updated = True
+
+        if updated:
+            db_participation.updated_at = datetime.now(timezone.utc)
+            db.add(db_participation)
+            await db.flush()
+            await db.refresh(db_participation)
+
+        return db_participation
+
+    async def delete_participation_async(
+        self, db: AsyncSession, *, participation_id: int
+    ) -> bool:
+        """Eliminar una participación (async)."""
+        participation = await self.get_participation_async(db, participation_id=participation_id)
+        if not participation:
+            return False
+
+        await db.delete(participation)
+        await db.flush()
+        return True
+
+    async def get_event_participants_async(
+        self, db: AsyncSession, *, event_id: int, status: Optional[EventParticipationStatus] = None
+    ) -> List[EventParticipation]:
+        """Obtener participantes de un evento (async)."""
+        stmt = select(EventParticipation).where(EventParticipation.event_id == event_id)
+
+        if status:
+            stmt = stmt.where(EventParticipation.status == status)
+
+        result = await db.execute(stmt)
+        return result.scalars().all()
+
+    async def get_member_events_async(
+        self, db: AsyncSession, *, member_id: Union[int, str], status: Optional[EventParticipationStatus] = None
+    ) -> List[EventParticipation]:
+        """Obtener eventos de un miembro (async)."""
+        if isinstance(member_id, str):
+            user_stmt = select(User.id).where(User.auth0_id == member_id)
+            user_result = await db.execute(user_stmt)
+            user = user_result.scalar_one_or_none()
+            if user:
+                member_id = user
+            else:
+                return []
+
+        stmt = select(EventParticipation).where(EventParticipation.member_id == member_id)
+
+        if status:
+            stmt = stmt.where(EventParticipation.status == status)
+
+        result = await db.execute(stmt)
+        return result.scalars().all()
+
+    async def cancel_participation_async(
+        self, db: AsyncSession, *, member_id: Union[int, str], event_id: int
+    ) -> Optional[EventParticipation]:
+        """Cancelar participación y promover de lista de espera (async)."""
+        if isinstance(member_id, str):
+            user_stmt = select(User.id).where(User.auth0_id == member_id)
+            user_result = await db.execute(user_stmt)
+            user = user_result.scalar_one_or_none()
+            if user:
+                member_id = user
+            else:
+                return None
+
+        participation = await self.get_participation_by_member_and_event_async(
+            db=db, member_id=member_id, event_id=event_id
+        )
+
+        if not participation or participation.status == EventParticipationStatus.CANCELLED:
+            return None
+
+        was_registered = participation.status == EventParticipationStatus.REGISTERED
+
+        participation.status = EventParticipationStatus.CANCELLED
+        db.add(participation)
+        await db.flush()
+        await db.refresh(participation)
+
+        if was_registered:
+            await self._promote_from_waiting_list_async(db, event_id)
+
+        return participation
+
+    async def fill_vacancies_from_waiting_list_async(self, db: AsyncSession, event_id: int) -> List[EventParticipation]:
+        """Promueve usuarios de WAITING_LIST hasta cubrir plazas libres (async)."""
+        promoted: List[EventParticipation] = []
+
+        event_stmt = select(Event).where(Event.id == event_id)
+        event_result = await db.execute(event_stmt)
+        event = event_result.scalar_one_or_none()
+
+        if not event or event.max_participants == 0:
+            return promoted
+
+        # Contar registrados
+        count_stmt = select(func.count(EventParticipation.id)).where(
+            EventParticipation.event_id == event_id,
+            EventParticipation.status == EventParticipationStatus.REGISTERED
+        )
+        count_result = await db.execute(count_stmt)
+        registered_count = count_result.scalar()
+
+        available = max(event.max_participants - registered_count, 0)
+        if available == 0:
+            return promoted
+
+        # Obtener waiting list
+        waiting_stmt = select(EventParticipation).where(
+            EventParticipation.event_id == event_id,
+            EventParticipation.status == EventParticipationStatus.WAITING_LIST
+        ).order_by(EventParticipation.registered_at).limit(available)
+
+        waiting_result = await db.execute(waiting_stmt)
+        waiting_list = waiting_result.scalars().all()
+
+        for part in waiting_list:
+            part.status = EventParticipationStatus.REGISTERED
+            db.add(part)
+            promoted.append(part)
+
+        if promoted:
+            await db.flush()
+
+        return promoted
+
 
 event_repository = EventRepository()
 event_participation_repository = EventParticipationRepository() 
