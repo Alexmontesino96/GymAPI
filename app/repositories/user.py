@@ -606,5 +606,119 @@ class UserRepository(BaseRepository[User, UserCreate, UserUpdate]):
         result = await db.execute(stmt)
         return result.scalars().all()
 
+    # ==========================================
+    # Métodos async heredados de BaseRepository
+    # ==========================================
+
+    async def get_async(self, db: AsyncSession, id: Any, gym_id: Optional[int] = None) -> Optional[User]:
+        """
+        Obtener un usuario por ID con filtro opcional de tenant (async).
+
+        Args:
+            db: Sesión de base de datos async
+            id: ID del usuario a obtener
+            gym_id: ID opcional del gimnasio (tenant) para filtrar
+
+        Returns:
+            El usuario solicitado o None si no existe
+        """
+        stmt = select(User).where(User.id == id)
+
+        # Filtrar por gimnasio si se proporciona (User no tiene gym_id directo,
+        # pero se puede filtrar via UserGym)
+        if gym_id is not None:
+            stmt = stmt.join(UserGym, User.id == UserGym.user_id)
+            stmt = stmt.where(UserGym.gym_id == gym_id)
+
+        result = await db.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def get_multi_async(
+        self,
+        db: AsyncSession,
+        *,
+        skip: int = 0,
+        limit: int = 100,
+        gym_id: Optional[int] = None,
+        filters: Optional[Dict[str, Any]] = None
+    ) -> List[User]:
+        """
+        Obtener múltiples usuarios con filtros opcionales (async).
+
+        Args:
+            db: Sesión de base de datos async
+            skip: Número de registros a omitir (paginación)
+            limit: Número máximo de registros a devolver
+            gym_id: ID opcional del gimnasio para filtrar resultados
+            filters: Diccionario de filtros adicionales {campo: valor}
+
+        Returns:
+            Lista de usuarios que coinciden con los criterios
+        """
+        stmt = select(User)
+
+        # Filtrar por gimnasio si se proporciona
+        if gym_id is not None:
+            stmt = stmt.join(UserGym, User.id == UserGym.user_id)
+            stmt = stmt.where(UserGym.gym_id == gym_id)
+
+        # Aplicar filtros adicionales si se proporcionan
+        if filters:
+            for field, value in filters.items():
+                if hasattr(User, field):
+                    stmt = stmt.where(getattr(User, field) == value)
+
+        stmt = stmt.offset(skip).limit(limit)
+
+        result = await db.execute(stmt)
+        return result.scalars().all()
+
+    async def remove_async(self, db: AsyncSession, *, id: int, gym_id: Optional[int] = None) -> User:
+        """
+        Eliminar un usuario con verificación opcional de tenant (async).
+
+        Args:
+            db: Sesión de base de datos async
+            id: ID del usuario a eliminar
+            gym_id: ID opcional del gimnasio para verificar pertenencia
+
+        Returns:
+            El usuario eliminado
+
+        Raises:
+            ValueError: Si el usuario no existe o no pertenece al gimnasio especificado
+        """
+        user = await self.get_async(db, id=id, gym_id=gym_id)
+        if not user:
+            if gym_id:
+                raise ValueError(f"Usuario con ID {id} no encontrado en el gimnasio {gym_id}")
+            else:
+                raise ValueError(f"Usuario con ID {id} no encontrado")
+
+        await db.delete(user)
+        await db.flush()
+        return user
+
+    async def exists_async(self, db: AsyncSession, id: int, gym_id: Optional[int] = None) -> bool:
+        """
+        Verificar si un usuario existe con verificación opcional de tenant (async).
+
+        Args:
+            db: Sesión de base de datos async
+            id: ID del usuario a verificar
+            gym_id: ID opcional del gimnasio para verificar pertenencia
+
+        Returns:
+            True si el usuario existe, False en caso contrario
+        """
+        stmt = select(User.id).where(User.id == id)
+
+        if gym_id is not None:
+            stmt = stmt.join(UserGym, User.id == UserGym.user_id)
+            stmt = stmt.where(UserGym.gym_id == gym_id)
+
+        result = await db.execute(stmt)
+        return result.scalar_one_or_none() is not None
+
 
 user_repository = UserRepository(User) 
