@@ -499,5 +499,182 @@ stmt = select(Model).options(
 
 ---
 
-**Última actualización**: 2025-12-02 - SEMANA 2 COMPLETADA ✅
-**Estado actual**: Semana 3 - Repositorios restantes (pendiente)
+## 🚀 ACTUALIZACIÓN SEMANA 3 - REPOSITORIOS DE SERVICIOS ESPECIALIZADOS
+
+### ✅ trainer_member_repository: 6/6 métodos async (100% COMPLETADO)
+
+**Archivo**: `app/repositories/trainer_member.py` (96 → 187 líneas)
+
+✅ **TrainerMemberRepository (6 métodos):**
+1. `get_by_trainer_and_member_async()` - Get specific trainer-member relationship
+2. `get_by_trainer_async()` - Get all relationships for a trainer
+3. `get_by_member_async()` - Get all relationships for a member
+4. `get_active_by_trainer_async()` - Get active relationships by trainer
+5. `get_active_by_member_async()` - Get active relationships by member
+6. `get_pending_relationships_async()` - Get pending relationships for user
+
+**Commits realizados:** 1 commit
+
+---
+
+### ✅ notification_repository: 7/7 métodos async (100% COMPLETADO)
+
+**Archivo**: `app/repositories/notification_repository.py` (98 → 229 líneas)
+
+✅ **NotificationRepository (7 métodos):**
+1. `create_device_token_async()` - Create or update device token
+2. `get_active_tokens_by_user_ids_async()` - Get active tokens for multiple users
+3. `get_user_device_tokens_async()` - Get all active tokens for a user
+4. `deactivate_token_async()` - Deactivate specific token
+5. `deactivate_user_tokens_async()` - Deactivate all user tokens (logout)
+6. `update_last_used_async()` - Update last used timestamp for tokens
+7. `cleanup_old_tokens_async()` - Delete inactive old tokens
+
+**Commits realizados:** 1 commit
+
+---
+
+### ✅ chat_repository: 9/9 métodos async (100% COMPLETADO)
+
+**Archivo**: `app/repositories/chat.py` (163 → 357 líneas)
+
+✅ **ChatRepository (9 métodos):**
+1. `create_room_async()` - Create chat room with Stream integration
+2. `get_room_async()` - Get room by ID
+3. `get_room_by_stream_id_async()` - Get room by Stream channel ID
+4. `get_direct_chat_async()` - Get direct chat between two users
+5. `get_user_rooms_async()` - Get all rooms for a user
+6. `get_event_room_async()` - Get room associated with an event
+7. `update_room_async()` - Update chat room
+8. `add_member_to_room_async()` - Add member to chat room
+9. `remove_member_from_room_async()` - Remove member from chat room
+
+**Commits realizados:** 1 commit
+
+---
+
+### ✅ survey_repository: 15/15 métodos async (100% COMPLETADO)
+
+**Archivo**: `app/repositories/survey.py` (753 → 1420 líneas)
+
+✅ **Survey CRUD (9 métodos):**
+1. `create_survey_async()` - Create survey with questions and choices
+2. `get_survey_async()` - Get survey by ID with eager loading
+3. `get_surveys_async()` - Get surveys list with filters
+4. `get_surveys_with_response_count_async()` - Get surveys with response counts
+5. `get_active_surveys_async()` - Get active surveys for user
+6. `update_survey_async()` - Update survey
+7. `delete_survey_async()` - Delete survey (draft only)
+8. `publish_survey_async()` - Publish survey
+9. `close_survey_async()` - Close published survey
+
+✅ **Response CRUD (3 métodos):**
+10. `create_response_async()` - Create survey response with validation
+11. `get_survey_responses_async()` - Get responses for a survey
+12. `get_user_responses_async()` - Get user's survey responses
+
+✅ **Template CRUD (3 métodos):**
+13. `create_template_async()` - Create survey template
+14. `get_templates_async()` - Get available templates
+15. `create_survey_from_template_async()` - Create survey from template
+
+**Helper async methods:**
+- `_create_question_async()` - Helper to create question with choices
+- `_validate_and_create_answers_async()` - Validate and create survey answers
+
+**Commits realizados:** 1 commit
+
+---
+
+### ✅ post_repository: 6/6 métodos async (100% COMPLETADO)
+
+**Archivo**: `app/repositories/post_repository.py` (189 → 343 líneas)
+
+✅ **PostRepository (6 métodos):**
+1. `get_by_location_async()` - Get posts by location
+2. `get_by_event_async()` - Get posts tagged with event
+3. `get_by_session_async()` - Get posts tagged with session
+4. `get_trending_async()` - Get trending posts (engagement score)
+5. `get_user_mentions_async()` - Get posts where user was mentioned
+6. `count_user_posts_async()` - Count total user posts
+
+**Commits realizados:** 1 commit
+
+---
+
+### ✅ feed_ranking_repo: 10/10 métodos async (100% COMPLETADO)
+
+**Archivo**: `app/repositories/feed_ranking_repo.py` (502 → 909 líneas)
+
+✅ **Content Affinity (3 métodos):**
+1. `get_user_primary_category_async()` - Get user's primary fitness category
+2. `get_user_category_distribution_async()` - Get category distribution
+3. `get_post_categories_async()` - Get post tags/categories
+
+✅ **Social Affinity (2 métodos):**
+4. `get_user_relationship_type_async()` - Determine user-author relationship
+5. `get_past_interactions_count_async()` - Count past interactions
+
+✅ **Past Engagement (1 método):**
+6. `get_user_engagement_patterns_async()` - Analyze engagement patterns
+
+✅ **Timing (1 método):**
+7. `get_user_active_hours_async()` - Detect user active hours
+
+✅ **Popularity (2 métodos):**
+8. `get_post_engagement_metrics_async()` - Get post engagement metrics
+9. `get_gym_engagement_percentiles_async()` - Calculate engagement percentiles
+
+✅ **Utility (1 método):**
+10. `get_viewed_post_ids_async()` - Get viewed post IDs
+
+**Commits realizados:** 1 commit
+
+---
+
+### 📝 Repositorios ya async (no requieren migración):
+- ✅ **post_feed_repository.py** - 4 métodos ya async
+- ✅ **story_feed_repository.py** - 8 métodos ya async
+
+---
+
+### 📊 RESUMEN SEMANA 3 COMPLETA:
+- ✅ **trainer_member_repository**: 6/6 métodos async (100%)
+- ✅ **notification_repository**: 7/7 métodos async (100%)
+- ✅ **chat_repository**: 9/9 métodos async (100%)
+- ✅ **survey_repository**: 15/15 métodos async (100%)
+- ✅ **post_repository**: 6/6 métodos async (100%)
+- ✅ **feed_ranking_repo**: 10/10 métodos async (100%)
+- **Total Semana 3**: 53 métodos async completados
+- **Commits Semana 3**: 6 commits realizados
+- **Líneas añadidas**: ~1900 líneas de código async
+
+### 🎯 PROGRESO ACUMULADO SEMANAS 1-3:
+- ✅ **Semana 1**: 24 métodos (user_repository: 15, gym_repository: 9)
+- ✅ **Semana 2**: 50 métodos (schedule_repository: 32, event_repository: 18)
+- ✅ **Semana 3**: 53 métodos (6 repositorios especializados)
+- **Total**: 127 métodos async migrados
+- **Total commits**: 22 commits
+- **Repositorios completados**: 16 repositorios
+
+---
+
+### 🔜 PRÓXIMO: SEMANA 4-5 - SERVICIOS ASYNC
+
+**Servicios pendientes de migración (~150+ métodos):**
+1. **user.py** - Service layer para usuarios
+2. **gym.py** - Service layer para gimnasios
+3. **event.py** - Service layer para eventos
+4. **chat.py** - Service layer para chat
+5. **billing_module.py** - Service layer para facturación
+6. **nutrition.py** - Service layer para nutrición con IA
+7. **health.py** - Service layer para métricas de salud
+8. **membership.py** - Service layer para membresías
+9. **Otros servicios** - Activity feed, surveys, etc.
+
+**Estimado Semanas 4-5**: ~150-200 métodos async
+
+---
+
+**Última actualización**: 2025-12-02 - SEMANA 3 COMPLETADA ✅
+**Estado actual**: Semana 4 - Migración de servicios (pendiente)
