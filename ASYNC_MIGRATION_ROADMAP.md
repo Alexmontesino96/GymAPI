@@ -375,5 +375,129 @@ stmt = select(Model).options(
 
 ---
 
-**Última actualización**: 2025-12-02 - DÍA 1 COMPLETADO ✅
-**Estado anterior**: Sprint 1 - Día 2 (users.py en progreso)
+## 🚀 ACTUALIZACIÓN SEMANA 2 - REPOSITORIOS DE NEGOCIO CORE
+
+### ✅ schedule_repository: 32/32 métodos async (100% COMPLETADO)
+
+**Archivo**: `app/repositories/schedule.py` (714 → 1323 líneas)
+
+✅ **GymHoursRepository (3 métodos):**
+1. `get_by_day_async()` - Horarios por día de semana
+2. `get_all_async()` - Todos los horarios de un gym
+3. `bulk_create_or_update_async()` - Operación bulk de horarios
+
+✅ **GymSpecialHoursRepository (5 métodos):**
+1. `get_by_date_async()` - Horario especial por fecha
+2. `get_date_range_async()` - Rango de fechas especiales
+3. `bulk_create_or_update_async()` - Operación bulk de días especiales
+4. `delete_by_date_async()` - Eliminar día especial
+5. `get_upcoming_special_hours_async()` - Próximos días especiales
+
+✅ **ClassCategoryCustomRepository (3 métodos):**
+1. `get_active_categories_async()` - Categorías activas de un gym
+2. `get_by_name_async()` - Categoría por nombre
+3. `toggle_status_async()` - Activar/desactivar categoría
+
+✅ **ClassRepository (4 métodos):**
+1. `get_by_name_async()` - Clase por nombre
+2. `get_by_category_async()` - Clases de una categoría
+3. `get_by_instructor_async()` - Clases de un instructor
+4. `search_classes_async()` - Búsqueda avanzada de clases
+
+✅ **ClassSessionRepository (9 métodos):**
+1. `get_by_date_range_async()` - Sesiones en rango de fechas
+2. `get_upcoming_sessions_async()` - Próximas sesiones
+3. `get_by_class_async()` - Sesiones de una clase
+4. `get_by_instructor_async()` - Sesiones de un instructor
+5. `get_with_availability_async()` - Sesión con info de disponibilidad
+6. `update_session_status_async()` - Actualizar estado de sesión
+7. `bulk_create_sessions_async()` - Crear múltiples sesiones
+8. `cancel_session_async()` - Cancelar sesión
+9. `get_sessions_with_participants_async()` - Sesiones con lista de participantes
+
+✅ **ClassParticipationRepository (8 métodos):**
+1. `get_by_session_and_member_async()` - Participación específica
+2. `get_session_participants_async()` - Participantes de una sesión
+3. `get_member_upcoming_classes_async()` - Próximas clases de un miembro
+4. `cancel_participation_async()` - Cancelar participación
+5. `update_attendance_async()` - Marcar asistencia
+6. `get_attendance_stats_async()` - Estadísticas de asistencia
+7. `get_waitlist_async()` - Lista de espera de una sesión
+8. `promote_from_waitlist_async()` - Promover desde lista de espera
+
+**Commits realizados:** 6 commits
+- Commit 1: GymHoursRepository (3 métodos)
+- Commit 2: GymSpecialHoursRepository (5 métodos)
+- Commit 3: ClassCategoryCustomRepository (3 métodos)
+- Commit 4: ClassRepository (4 métodos)
+- Commit 5: ClassSessionRepository (9 métodos)
+- Commit 6: ClassParticipationRepository (8 métodos)
+
+---
+
+### ✅ event_repository: 18/18 métodos async (100% COMPLETADO)
+
+**Archivo**: `app/repositories/event.py` (839 → 1373 líneas)
+
+✅ **EventRepository (9 métodos):**
+1. `get_by_title_async()` - Evento por título
+2. `get_events_async()` - Lista de eventos con filtros complejos
+3. `get_upcoming_events_async()` - Próximos eventos
+4. `get_past_events_async()` - Eventos pasados
+5. `get_events_by_creator_async()` - Eventos de un creador
+6. `get_events_with_availability_async()` - Eventos con disponibilidad
+7. `update_event_status_async()` - Actualizar estado de evento
+8. `cancel_event_async()` - Cancelar evento
+9. `get_event_with_participants_async()` - Evento con lista de participantes
+
+✅ **EventParticipationRepository (9 métodos):**
+1. `create_participation_async()` - Crear participación con validaciones
+2. `get_participation_async()` - Participación por ID
+3. `get_participation_by_member_and_event_async()` - Participación específica
+4. `update_participation_async()` - Actualizar participación
+5. `delete_participation_async()` - Eliminar participación
+6. `get_event_participants_async()` - Participantes de un evento
+7. `get_member_events_async()` - Eventos de un miembro
+8. `cancel_participation_async()` - Cancelar y promover desde lista de espera
+9. `fill_vacancies_from_waiting_list_async()` - Promover múltiples desde lista de espera
+
+**Commits realizados:** 2 commits
+- Commit 1: EventRepository (9 métodos)
+- Commit 2: EventParticipationRepository (9 métodos)
+
+---
+
+### 📊 RESUMEN SEMANA 2 COMPLETA:
+- ✅ **schedule_repository**: 32/32 métodos async (100%) - 6 repositorios migrados
+- ✅ **event_repository**: 18/18 métodos async (100%) - 2 repositorios migrados
+- **Total Semana 2**: 50 métodos async completados
+- **Commits Semana 2**: 8 commits realizados
+- **Líneas añadidas**: ~900 líneas de código async
+
+### 🎯 PROGRESO ACUMULADO SEMANAS 1-2:
+- ✅ **Semana 1**: 24 métodos (user_repository: 15, gym_repository: 9)
+- ✅ **Semana 2**: 50 métodos (schedule_repository: 32, event_repository: 18)
+- **Total**: 74 métodos async migrados
+- **Total commits**: 16 commits
+- **Repositorios completados**: 10 repositorios
+
+---
+
+### 🔜 PRÓXIMO: SEMANA 3 - REPOSITORIOS RESTANTES
+
+**Repositorios identificados pendientes (~6-8 repositorios):**
+1. **trainer_member_repository** - Relaciones entrenador-miembro
+2. **membership_repository** - Membresías y facturación
+3. **attendance_repository** - Check-ins y asistencia
+4. **nutrition_repository** - Planes nutricionales y análisis
+5. **survey_repository** - Encuestas y feedback
+6. **activity_feed_repository** - Feed de actividades
+7. **notification_repository** - Notificaciones
+8. **Otros repositorios menores** - Posts, stories, health, etc.
+
+**Estimado Semana 3**: ~80-100 métodos async
+
+---
+
+**Última actualización**: 2025-12-02 - SEMANA 2 COMPLETADA ✅
+**Estado actual**: Semana 3 - Repositorios restantes (pendiente)
