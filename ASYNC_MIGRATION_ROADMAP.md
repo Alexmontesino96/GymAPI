@@ -300,11 +300,80 @@ Antes de marcar como completo:
 ### 📊 RESUMEN SEMANA 1 - DÍA 1:
 - ✅ **user_repository**: 15/15 métodos async (100%)
 - ✅ **gym_repository**: 9/9 métodos async (100%)
+- ✅ **Test Infrastructure**: pytest.ini + async fixtures configurados
+- ✅ **pytest-asyncio**: Actualizado a 1.3.0
 - **Total**: 24 métodos async completados
-- **Commits**: 5 commits realizados
-- **Siguiente**: Tests y documentación de patrones
+- **Commits**: 8 commits realizados
+
+### 🧪 Testing Setup Completado:
+- ✅ **pytest.ini** creado con `asyncio_mode=auto`
+- ✅ **async_db_session** fixture en conftest.py
+- ✅ **test_user_service_async.py** con 6 tests
+- ✅ 1/6 tests passing (infraestructura funciona correctamente)
+- ⏳ Event loop scoping pendiente para tests restantes
 
 ---
 
-**Última actualización**: 2025-12-02
+### 📝 PATRÓN DE CONVERSIÓN SYNC → ASYNC DOCUMENTADO:
+
+**1. Imports necesarios:**
+```python
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, or_, and_
+from sqlalchemy.orm import selectinload  # Para eager loading
+```
+
+**2. Firma del método:**
+```python
+# SYNC
+def method_name(self, db: Session, ...) -> ReturnType:
+
+# ASYNC
+async def method_name_async(self, db: AsyncSession, ...) -> ReturnType:
+```
+
+**3. Queries simples:**
+```python
+# SYNC: db.query(Model).filter(...).first()
+# ASYNC:
+stmt = select(Model).where(...)
+result = await db.execute(stmt)
+return result.scalar_one_or_none()  # o .scalars().all()
+```
+
+**4. CRUD operations:**
+```python
+# CREATE
+db.add(obj)
+await db.flush()  # NO commit (se hace en endpoint)
+await db.refresh(obj)
+
+# UPDATE
+db.add(updated_obj)
+await db.flush()
+await db.refresh(updated_obj)
+
+# DELETE
+await db.delete(obj)
+await db.flush()
+```
+
+**5. Joins:**
+```python
+stmt = select(Model)
+stmt = stmt.join(RelatedModel, Model.id == RelatedModel.fk_id)
+stmt = stmt.where(RelatedModel.field == value)
+```
+
+**6. Eager loading:**
+```python
+stmt = select(Model).options(
+    selectinload(Model.relationship1),
+    selectinload(Model.relationship2)
+)
+```
+
+---
+
+**Última actualización**: 2025-12-02 - DÍA 1 COMPLETADO ✅
 **Estado anterior**: Sprint 1 - Día 2 (users.py en progreso)
