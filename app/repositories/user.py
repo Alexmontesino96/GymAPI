@@ -3,7 +3,9 @@ from typing import Any, Dict, Optional, Union, List
 from datetime import datetime
 
 from sqlalchemy.orm import Session
-from sqlalchemy import or_, and_
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import or_, and_, select
+from sqlalchemy.orm import selectinload
 from fastapi.encoders import jsonable_encoder
 
 from app.models.user import User, UserRole
@@ -20,12 +22,28 @@ class UserRepository(BaseRepository[User, UserCreate, UserUpdate]):
         """
         return db.query(User).filter(User.email == email).first()
 
+    async def get_by_email_async(self, db: AsyncSession, *, email: str) -> Optional[User]:
+        """
+        Obtener un usuario por email (async).
+        """
+        stmt = select(User).where(User.email == email)
+        result = await db.execute(stmt)
+        return result.scalar_one_or_none()
+
     def get_by_auth0_id(self, db: Session, *, auth0_id: str) -> Optional[User]:
         """
         Obtener un usuario por ID de Auth0.
         """
         print(f"DEBUG: Inside repo get_by_auth0_id, type(db) = {type(db)}, db = {repr(db)}")
         return db.query(User).filter(User.auth0_id == auth0_id).first()
+
+    async def get_by_auth0_id_async(self, db: AsyncSession, *, auth0_id: str) -> Optional[User]:
+        """
+        Obtener un usuario por ID de Auth0 (async).
+        """
+        stmt = select(User).where(User.auth0_id == auth0_id)
+        result = await db.execute(stmt)
+        return result.scalar_one_or_none()
 
     def get_by_role(self, db: Session, *, role: UserRole, skip: int = 0, limit: int = 100) -> List[User]:
         """
@@ -108,6 +126,61 @@ class UserRepository(BaseRepository[User, UserCreate, UserUpdate]):
 
         # Aplicar paginación
         return query.offset(skip).limit(limit).all()
+
+    async def search_async(
+        self,
+        db: AsyncSession,
+        *,
+        name: Optional[str] = None,
+        email: Optional[str] = None,
+        role: Optional[UserRole] = None,
+        is_active: Optional[bool] = None,
+        created_before: Optional[datetime] = None,
+        created_after: Optional[datetime] = None,
+        gym_id: Optional[int] = None,
+        skip: int = 0,
+        limit: int = 100
+    ) -> List[User]:
+        """
+        Búsqueda avanzada de usuarios con múltiples criterios (async).
+        Si se proporciona gym_id, filtra solo usuarios de ese gimnasio.
+        """
+        stmt = select(User)
+
+        # Join con UserGym si necesitamos filtrar por gimnasio
+        if gym_id is not None:
+            stmt = stmt.join(UserGym, User.id == UserGym.user_id)
+            stmt = stmt.where(UserGym.gym_id == gym_id)
+
+        # Aplicar filtros si están presentes
+        if name:
+            stmt = stmt.where(
+                or_(
+                    User.first_name.ilike(f"%{name}%"),
+                    User.last_name.ilike(f"%{name}%")
+                )
+            )
+
+        if email:
+            stmt = stmt.where(User.email.ilike(f"%{email}%"))
+
+        if role:
+            stmt = stmt.where(User.role == role)
+
+        if is_active is not None:
+            stmt = stmt.where(User.is_active == is_active)
+
+        if created_before:
+            stmt = stmt.where(User.created_at <= created_before)
+
+        if created_after:
+            stmt = stmt.where(User.created_at >= created_after)
+
+        # Aplicar paginación
+        stmt = stmt.offset(skip).limit(limit)
+
+        result = await db.execute(stmt)
+        return result.scalars().all()
 
     def get_public_participants(
         self,
@@ -202,6 +275,37 @@ class UserRepository(BaseRepository[User, UserCreate, UserUpdate]):
             users_with_roles.append(user)
         return users_with_roles
 
+    async def get_gym_participants_async(
+        self,
+        db: AsyncSession,
+        *,
+        gym_id: int,
+        roles: List[UserRole],
+        skip: int = 0,
+        limit: int = 100
+    ) -> List[User]:
+        """
+        Obtiene usuarios completos (modelo User) de un gym, filtrados por rol
+        *dentro* del gimnasio y paginados (async).
+        """
+        role_values = [r.value if hasattr(r, "value") else str(r) for r in roles]
+
+        stmt = select(User, UserGym.role.label('gym_role'))
+        stmt = stmt.join(UserGym, User.id == UserGym.user_id)
+        stmt = stmt.where(UserGym.gym_id == gym_id)
+        stmt = stmt.where(UserGym.role.in_(role_values))
+        stmt = stmt.order_by(User.first_name, User.last_name, User.id)
+        stmt = stmt.offset(skip).limit(limit)
+
+        result = await db.execute(stmt)
+        results = result.all()
+
+        users_with_roles = []
+        for user, gym_role in results:
+            user.gym_role = gym_role
+            users_with_roles.append(user)
+        return users_with_roles
+
     def create(self, db: Session, *, obj_in: UserCreate) -> User:
         """
         Crear un usuario.
@@ -210,11 +314,26 @@ class UserRepository(BaseRepository[User, UserCreate, UserUpdate]):
             obj_in_data = obj_in
         else:
             obj_in_data = obj_in.model_dump(exclude_unset=True)
-            
+
         db_obj = User(**obj_in_data)
         db.add(db_obj)
         db.commit()
         db.refresh(db_obj)
+        return db_obj
+
+    async def create_async(self, db: AsyncSession, *, obj_in: UserCreate) -> User:
+        """
+        Crear un usuario (async).
+        """
+        if isinstance(obj_in, dict):
+            obj_in_data = obj_in
+        else:
+            obj_in_data = obj_in.model_dump(exclude_unset=True)
+
+        db_obj = User(**obj_in_data)
+        db.add(db_obj)
+        await db.flush()
+        await db.refresh(db_obj)
         return db_obj
 
     def update(
@@ -232,14 +351,39 @@ class UserRepository(BaseRepository[User, UserCreate, UserUpdate]):
             update_data = obj_in
         else:
             update_data = obj_in.model_dump(exclude_unset=True)
-            
+
         for field in obj_data:
             if field in update_data:
                 setattr(db_obj, field, update_data[field])
-                
+
         db.add(db_obj)
         db.commit()
         db.refresh(db_obj)
+        return db_obj
+
+    async def update_async(
+        self,
+        db: AsyncSession,
+        *,
+        db_obj: User,
+        obj_in: Union[UserUpdate, Dict[str, Any]]
+    ) -> User:
+        """
+        Actualizar un usuario (async).
+        """
+        obj_data = jsonable_encoder(db_obj)
+        if isinstance(obj_in, dict):
+            update_data = obj_in
+        else:
+            update_data = obj_in.model_dump(exclude_unset=True)
+
+        for field in obj_data:
+            if field in update_data:
+                setattr(db_obj, field, update_data[field])
+
+        db.add(db_obj)
+        await db.flush()
+        await db.refresh(db_obj)
         return db_obj
 
     def create_from_auth0(self, db: Session, *, auth0_user: Dict) -> User:
@@ -320,6 +464,25 @@ class UserRepository(BaseRepository[User, UserCreate, UserUpdate]):
         
         # No aplicamos paginación para obtener todos los usuarios
         return query.all()
+
+    async def get_all_gym_users_async(self, db: AsyncSession, gym_id: int) -> List[User]:
+        """
+        Obtiene todos los usuarios asociados a un gimnasio específico (async).
+
+        Args:
+            db: Sesión de base de datos async
+            gym_id: ID del gimnasio
+
+        Returns:
+            Lista de usuarios del gimnasio
+        """
+        stmt = select(User)
+        stmt = stmt.join(UserGym, User.id == UserGym.user_id)
+        stmt = stmt.where(UserGym.gym_id == gym_id)
+        stmt = stmt.where(User.is_active == True)
+
+        result = await db.execute(stmt)
+        return result.scalars().all()
 
 
 user_repository = UserRepository(User) 
