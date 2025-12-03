@@ -337,7 +337,169 @@ class GymSpecialHoursRepository(BaseRepository[GymSpecialHours, GymSpecialHoursC
         
         # Ordenar por fecha antes de devolver
         all_results.sort(key=lambda x: x.date)
-        
+
+        return all_results
+
+    # ==========================================
+    # Métodos async
+    # ==========================================
+
+    async def get_by_date_async(self, db: AsyncSession, *, date_value: date, gym_id: Optional[int] = None) -> Optional[GymSpecialHours]:
+        """Obtener horarios especiales para una fecha específica (async)."""
+        stmt = select(GymSpecialHours).where(GymSpecialHours.date == date_value)
+
+        if gym_id is not None:
+            stmt = stmt.where(GymSpecialHours.gym_id == gym_id)
+
+        result = await db.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def get_by_date_range_async(
+        self, db: AsyncSession, *, start_date: date, end_date: date, gym_id: Optional[int] = None
+    ) -> List[GymSpecialHours]:
+        """Obtener horarios especiales para un rango de fechas (async)."""
+        stmt = select(GymSpecialHours).where(
+            GymSpecialHours.date >= start_date,
+            GymSpecialHours.date <= end_date
+        )
+
+        if gym_id is not None:
+            stmt = stmt.where(GymSpecialHours.gym_id == gym_id)
+
+        stmt = stmt.order_by(GymSpecialHours.date)
+        result = await db.execute(stmt)
+        return result.scalars().all()
+
+    async def get_upcoming_special_days_async(
+        self, db: AsyncSession, *, limit: int = 10, gym_id: Optional[int] = None
+    ) -> List[GymSpecialHours]:
+        """Obtener los próximos días especiales (async)."""
+        today = dt.date.today()
+
+        stmt = select(GymSpecialHours).where(GymSpecialHours.date >= today)
+
+        if gym_id is not None:
+            stmt = stmt.where(GymSpecialHours.gym_id == gym_id)
+
+        stmt = stmt.order_by(GymSpecialHours.date).limit(limit)
+        result = await db.execute(stmt)
+        return result.scalars().all()
+
+    async def get_or_create_by_date_async(
+        self, db: AsyncSession, *, gym_id: int, date_value: date, defaults: Optional[Dict] = None
+    ) -> GymSpecialHours:
+        """Obtiene un registro por fecha y gym_id, o lo crea si no existe (async)."""
+        obj = await self.get_by_date_async(db=db, gym_id=gym_id, date_value=date_value)
+        if obj:
+            return obj
+
+        if defaults is None:
+            defaults = {}
+
+        # Asegurar que los datos incluyan fecha y gym_id
+        create_data = defaults.copy()
+        create_data['date'] = date_value
+        create_data['gym_id'] = gym_id
+
+        try:
+            validated_data = GymSpecialHoursCreate(**create_data)
+        except Exception as e:
+            print(f"Error validating data for GymSpecialHours creation: {e}")
+            raise
+
+        # Crear objeto SQLAlchemy
+        db_obj = self.model(**validated_data.model_dump(), gym_id=gym_id)
+        db.add(db_obj)
+        await db.flush()
+        await db.refresh(db_obj)
+        return db_obj
+
+    async def bulk_create_or_update_async(
+        self, db: AsyncSession, *, gym_id: int, schedule_data: Dict[date, Dict]
+    ) -> List[GymSpecialHours]:
+        """Crea o actualiza múltiples registros de GymSpecialHours (async)."""
+        dates = list(schedule_data.keys())
+        if not dates:
+            return []
+
+        start_date = min(dates)
+        end_date = max(dates)
+
+        # 1. Obtener registros existentes
+        stmt = select(GymSpecialHours).where(
+            GymSpecialHours.gym_id == gym_id,
+            GymSpecialHours.date.between(start_date, end_date)
+        )
+        result = await db.execute(stmt)
+        existing_records = result.scalars().all()
+        existing_map = {record.date: record for record in existing_records}
+
+        objects_to_add = []
+        updated_objects = []
+
+        for date_value, data in schedule_data.items():
+            defaults = {
+                "open_time": data.get('open_time'),
+                "close_time": data.get('close_time'),
+                "is_closed": data.get('is_closed', False),
+                "description": data.get('description')
+            }
+
+            if date_value in existing_map:
+                # Actualizar existente
+                db_obj = existing_map[date_value]
+                update_needed = False
+                update_schema_data = {}
+                for key, value in defaults.items():
+                    if getattr(db_obj, key) != value:
+                        setattr(db_obj, key, value)
+                        update_schema_data[key] = value
+                        update_needed = True
+
+                if update_needed:
+                    try:
+                        GymSpecialHoursUpdate(**update_schema_data)
+                    except Exception as e:
+                        print(f"Validation error during update for date {date_value}: {e}")
+                        continue
+                    db_obj.updated_at = dt.datetime.now(dt.timezone.utc)
+                    updated_objects.append(db_obj)
+            else:
+                # Crear nuevo
+                create_data = defaults.copy()
+                create_data['date'] = date_value
+                create_data['gym_id'] = gym_id
+                try:
+                    validated_data = GymSpecialHoursCreate(**create_data)
+                    db_obj = self.model(**validated_data.model_dump(), gym_id=gym_id)
+                    objects_to_add.append(db_obj)
+                except Exception as e:
+                    print(f"Validation error during create for date {date_value}: {e}")
+                    continue
+
+        # 2. Añadir nuevos registros
+        if objects_to_add:
+            for obj in objects_to_add:
+                db.add(obj)
+
+        # 3. Commit todos los cambios
+        try:
+            await db.flush()
+        except Exception as e:
+            await db.rollback()
+            print(f"Error during bulk commit: {e}")
+            raise
+
+        # 4. Refresh y combinar resultados
+        all_results = []
+        for obj in objects_to_add:
+            await db.refresh(obj)
+            all_results.append(obj)
+        all_results.extend(updated_objects)
+
+        # Ordenar por fecha
+        all_results.sort(key=lambda x: x.date)
+
         return all_results
 
 
