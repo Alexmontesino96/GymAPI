@@ -244,5 +244,37 @@ Antes de marcar como completo:
 
 ---
 
-**Última actualización**: 2025-12-01
-**Estado actual**: Sprint 1 - Día 2 (users.py en progreso)
+**Última actualización**: 2025-12-02
+**Estado actual**: SEMANA 1 - user_repository en progreso (11/15 métodos async - 73%)
+
+## 🚀 ACTUALIZACIÓN SEMANA 1 - DÍA 1
+
+### Progreso user_repository: 11/15 métodos async (73%)
+
+✅ **Métodos async completados:**
+1. `get_by_email_async()` - Query simple por email
+2. `get_by_auth0_id_async()` - CRÍTICO - Autenticación
+3. `get_by_role_async()` - Filtrado por rol con paginación
+4. `get_by_role_and_gym_async()` - Filtrado por rol y gym
+5. `search_async()` - Búsqueda avanzada con múltiples filtros
+6. `get_public_participants_async()` - Perfiles públicos de participantes
+7. `get_gym_participants_async()` - Usuarios completos de un gym
+8. `create_async()` - CRUD - Creación de usuarios
+9. `update_async()` - CRUD - Actualización de usuarios
+10. `create_from_auth0_async()` - Creación desde Auth0
+11. `get_all_gym_users_async()` - Todos los usuarios de un gym
+
+⏳ **Pendientes (estimado 4 métodos más):**
+- Métodos auxiliares o helpers si necesarios
+- Métodos de herencia de BaseRepository si no están async
+
+**Commits realizados:**
+- `94c3ab0` - 7 primeros métodos async
+- `84cf526` - 4 métodos adicionales async
+
+**Siguiente:** Completar user_repository → Comenzar gym_repository
+
+---
+
+**Última actualización**: 2025-12-02
+**Estado anterior**: Sprint 1 - Día 2 (users.py en progreso)
