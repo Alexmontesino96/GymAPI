@@ -1148,7 +1148,171 @@ class ClassParticipationRepository(BaseRepository[ClassParticipation, ClassParti
         # Actualizar el conteo de participantes en la sesión
         session_repo = ClassSessionRepository(ClassSession)
         session_repo.update_participant_count(db, session_id=session_id)
-        
+
+        return participation
+
+    # ==========================================
+    # Métodos async
+    # ==========================================
+
+    async def get_by_session_and_member_async(
+        self, db: AsyncSession, *, session_id: int, member_id: int, gym_id: Optional[int] = None
+    ) -> Optional[ClassParticipation]:
+        """Obtener la participación de un miembro en una sesión específica (async)."""
+        stmt = select(ClassParticipation).where(
+            ClassParticipation.session_id == session_id,
+            ClassParticipation.member_id == member_id
+        )
+
+        if gym_id is not None:
+            stmt = stmt.where(ClassParticipation.gym_id == gym_id)
+
+        result = await db.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def get_by_session_async(
+        self, db: AsyncSession, *, session_id: int, skip: int = 0, limit: int = 100, gym_id: Optional[int] = None
+    ) -> List[ClassParticipation]:
+        """Obtener todas las participaciones para una sesión específica (async)."""
+        stmt = select(ClassParticipation).where(
+            ClassParticipation.session_id == session_id
+        )
+
+        if gym_id is not None:
+            stmt = stmt.where(ClassParticipation.gym_id == gym_id)
+
+        stmt = stmt.offset(skip).limit(limit)
+        result = await db.execute(stmt)
+        return result.scalars().all()
+
+    async def get_by_member_async(
+        self, db: AsyncSession, *, member_id: int, skip: int = 0, limit: int = 100, gym_id: Optional[int] = None
+    ) -> List[ClassParticipation]:
+        """Obtener todas las participaciones de un miembro específico (async)."""
+        stmt = select(ClassParticipation).where(
+            ClassParticipation.member_id == member_id
+        )
+
+        if gym_id is not None:
+            stmt = stmt.where(ClassParticipation.gym_id == gym_id)
+
+        stmt = stmt.offset(skip).limit(limit)
+        result = await db.execute(stmt)
+        return result.scalars().all()
+
+    async def get_member_upcoming_classes_async(
+        self, db: AsyncSession, *, member_id: int, skip: int = 0, limit: int = 100, gym_id: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
+        """Obtener las próximas clases de un miembro (async)."""
+        now = datetime.now(timezone.utc)
+
+        stmt = select(
+            ClassParticipation, ClassSession, Class
+        ).join(
+            ClassSession, ClassParticipation.session_id == ClassSession.id
+        ).join(
+            Class, ClassSession.class_id == Class.id
+        ).where(
+            ClassParticipation.member_id == member_id,
+            ClassParticipation.status == ClassParticipationStatus.REGISTERED,
+            ClassSession.start_time >= now,
+            ClassSession.status == ClassSessionStatus.SCHEDULED
+        )
+
+        if gym_id is not None:
+            stmt = stmt.where(ClassParticipation.gym_id == gym_id)
+
+        stmt = stmt.order_by(ClassSession.start_time).offset(skip).limit(limit)
+        result = await db.execute(stmt)
+        participations = result.all()
+
+        return [
+            {
+                "participation": participation,
+                "session": session,
+                "class": class_obj
+            }
+            for participation, session, class_obj in participations
+        ]
+
+    async def mark_attendance_async(
+        self, db: AsyncSession, *, session_id: int, member_id: int, gym_id: Optional[int] = None
+    ) -> Optional[ClassParticipation]:
+        """Marcar la asistencia de un miembro a una sesión (async)."""
+        participation = await self.get_by_session_and_member_async(
+            db, session_id=session_id, member_id=member_id, gym_id=gym_id
+        )
+
+        if not participation:
+            return None
+
+        # Actualizar estado y tiempo de asistencia
+        participation.status = ClassParticipationStatus.ATTENDED
+        participation.attendance_time = datetime.now(timezone.utc)
+
+        await db.flush()
+        await db.refresh(participation)
+
+        return participation
+
+    async def get_member_participation_status_async(
+        self, db: AsyncSession, *, member_id: int, start_date: datetime, end_date: datetime,
+        gym_id: Optional[int] = None, session_ids: Optional[List[int]] = None
+    ) -> List[ClassParticipation]:
+        """Obtener estados de participación de un miembro (query optimizada) (async)."""
+        stmt = select(ClassParticipation).where(
+            ClassParticipation.member_id == member_id
+        )
+
+        if gym_id is not None:
+            stmt = stmt.where(ClassParticipation.gym_id == gym_id)
+
+        if session_ids:
+            stmt = stmt.where(ClassParticipation.session_id.in_(session_ids))
+        else:
+            # Asegurar datetimes aware (UTC)
+            if start_date.tzinfo is None:
+                start_date = start_date.replace(tzinfo=timezone.utc)
+            if end_date.tzinfo is None:
+                end_date = end_date.replace(tzinfo=timezone.utc)
+
+            # Join con session para filtrar por fechas
+            stmt = stmt.join(
+                ClassSession, ClassParticipation.session_id == ClassSession.id
+            ).where(
+                ClassSession.start_time >= start_date,
+                ClassSession.start_time <= end_date
+            )
+
+        stmt = stmt.order_by(ClassParticipation.registration_time.desc())
+        result = await db.execute(stmt)
+        return result.scalars().all()
+
+    async def cancel_participation_async(
+        self, db: AsyncSession, *, session_id: int, member_id: int, reason: Optional[str] = None,
+        gym_id: Optional[int] = None
+    ) -> Optional[ClassParticipation]:
+        """Cancelar la participación de un miembro en una sesión (async)."""
+        participation = await self.get_by_session_and_member_async(
+            db, session_id=session_id, member_id=member_id, gym_id=gym_id
+        )
+
+        if not participation:
+            return None
+
+        # Actualizar estado, razón y hora de cancelación
+        participation.status = ClassParticipationStatus.CANCELLED
+        participation.cancellation_time = datetime.now(timezone.utc)
+        if reason:
+            participation.cancellation_reason = reason
+
+        await db.flush()
+        await db.refresh(participation)
+
+        # Actualizar conteo de participantes en la sesión
+        session_repo = ClassSessionRepository(ClassSession)
+        await session_repo.update_participant_count_async(db, session_id=session_id)
+
         return participation
 
 
