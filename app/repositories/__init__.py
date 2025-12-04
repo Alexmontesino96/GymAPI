@@ -21,6 +21,7 @@ from app.repositories.async_gym import async_gym_repository
 from app.repositories.async_event import async_event_repository
 from app.repositories.async_event_participation import async_event_participation_repository
 from app.repositories.async_trainer_member import async_trainer_member_repository
+from app.repositories.async_chat import async_chat_repository
 
 __all__ = [
     # Base repositories
@@ -43,4 +44,5 @@ __all__ = [
     "async_event_repository",
     "async_event_participation_repository",
     "async_trainer_member_repository",
+    "async_chat_repository",
 ] 
