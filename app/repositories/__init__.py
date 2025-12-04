@@ -22,6 +22,14 @@ from app.repositories.async_event import async_event_repository
 from app.repositories.async_event_participation import async_event_participation_repository
 from app.repositories.async_trainer_member import async_trainer_member_repository
 from app.repositories.async_chat import async_chat_repository
+from app.repositories.async_schedule import (
+    async_gym_hours_repository,
+    async_gym_special_hours_repository,
+    async_class_category_repository,
+    async_class_repository,
+    async_class_session_repository,
+    async_class_participation_repository
+)
 
 __all__ = [
     # Base repositories
@@ -45,4 +53,10 @@ __all__ = [
     "async_event_participation_repository",
     "async_trainer_member_repository",
     "async_chat_repository",
+    "async_gym_hours_repository",
+    "async_gym_special_hours_repository",
+    "async_class_category_repository",
+    "async_class_repository",
+    "async_class_session_repository",
+    "async_class_participation_repository",
 ] 
