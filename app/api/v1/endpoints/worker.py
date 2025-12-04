@@ -347,7 +347,7 @@ async def process_event_completion(
         # Update event status to completed
         # Get the real SQLAlchemy object for the update
         result = await db.execute(select(Event).where(Event.id == event_id))
-    db_event = result.scalar_one_or_none()
+        db_event = result.scalar_one_or_none()
         if not db_event:
              # This shouldn't happen if get_event_cached was successful, but it's a safe check
              raise HTTPException(
@@ -360,7 +360,7 @@ async def process_event_completion(
         # Close associated chat if it exists
         if db_event.chat_room_id:
             result = await db.execute(select(ChatRoom).where(ChatRoom.id == db_event.chat_room_id))
-    chat_room = result.scalar_one_or_none()
+            chat_room = result.scalar_one_or_none()
             if chat_room:
                 chat_room.status = ChatRoomStatus.CLOSED
                 logger.info(f"Chat {chat_room.id} closed for event {event_id}")
@@ -393,7 +393,7 @@ async def process_event_completion(
         try:
             # Get the DB object to increment attempts
             result = await db.execute(select(Event).where(Event.id == event_id))
-    db_event_fail = result.scalar_one_or_none()
+            db_event_fail = result.scalar_one_or_none()
             if db_event_fail:
                 db_event_fail.completion_attempts = db_event_fail.completion_attempts + 1
                 db.add(db_event_fail)

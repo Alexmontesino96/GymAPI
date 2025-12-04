@@ -475,7 +475,7 @@ async def get_workspace_stats(
                 UserGym.role == GymRoleType.MEMBER,
                 UserGym.is_active == True
             ))
-    active_clients = result.scalar()
+            active_clients = result.scalar()
 
             # Sesiones de esta semana
             week_start = datetime.utcnow() - timedelta(days=datetime.utcnow().weekday())
@@ -483,7 +483,7 @@ async def get_workspace_stats(
                 Event.gym_id == current_gym.id,
                 Event.start_time >= week_start
             ))
-    week_sessions = result.scalar()
+            week_sessions = result.scalar()
 
             stats = {
                 "type": "trainer",
@@ -508,21 +508,21 @@ async def get_workspace_stats(
                 UserGym.role == GymRoleType.MEMBER,
                 UserGym.is_active == True
             ))
-    members_count = result.scalar()
+            members_count = result.scalar()
 
             result = await db.execute(select(func.count()).select_from(UserGym).where(
                 UserGym.gym_id == current_gym.id,
                 UserGym.role == GymRoleType.TRAINER,
                 UserGym.is_active == True
             ))
-    trainers_count = result.scalar()
+            trainers_count = result.scalar()
 
             # Contar clases activas
             result = await db.execute(select(func.count()).select_from(Class).where(
                 Class.gym_id == current_gym.id,
                 Class.is_active == True
             ))
-    classes_count = result.scalar()
+            classes_count = result.scalar()
 
             stats = {
                 "type": "gym",

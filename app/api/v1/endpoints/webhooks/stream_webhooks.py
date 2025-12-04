@@ -154,14 +154,14 @@ async def handle_new_message(
                 
                 # Verificar que el usuario existe
                 result = await db.execute(select(User).where(User.id == sender_internal_id))
-    sender = result.scalar_one_or_none()
+                sender = result.scalar_one_or_none()
                 if not sender:
                     logger.warning(f"Usuario con ID interno {sender_internal_id} no encontrado en la BD. Posible inconsistencia.")
                     return {"status": "success", "message": "Message processed, user not found in DB"}
             elif is_legacy_id_format(stream_user_id):
                 # Formato legacy (auth0_id) - intentar migración automática
                 result = await db.execute(select(User).where(User.auth0_id == stream_user_id))
-    sender = result.scalar_one_or_none()
+                sender = result.scalar_one_or_none()
                 if not sender:
                     logger.warning(f"Usuario remitente legacy no encontrado en la BD: {stream_user_id}")
                     return {"status": "success", "message": "Message processed, legacy user not found"}
@@ -191,7 +191,7 @@ async def handle_new_message(
         try:
             # Obtener la sala de chat
             result = await db.execute(select(ChatRoom).where(ChatRoom.stream_channel_id == channel_id))
-    chat_room = result.scalar_one_or_none()
+            chat_room = result.scalar_one_or_none()
             if not chat_room:
                 logger.warning(f"Sala de chat no encontrada para canal {channel_id}")
                 return {"status": "success", "message": "Message processed, chat room not found in DB"}
@@ -260,7 +260,7 @@ async def handle_new_message(
 
 # Funciones asíncronas para procesamiento en segundo plano
 async def send_smart_notifications_with_role_logic_async(
-    db: Session, 
+    db: AsyncSession, 
     sender_id: int, 
     chat_room: ChatRoom, 
     message_text: str,
@@ -348,7 +348,7 @@ async def send_smart_notifications_with_role_logic_async(
 
 
 async def send_smart_chat_notifications_async(
-    db: Session, 
+    db: AsyncSession, 
     sender_id: int, 
     chat_room: ChatRoom, 
     message_text: str,
@@ -471,7 +471,7 @@ def determine_content_type(chat_room: ChatRoom, message_text: str) -> str:
         return "chat"
 
 
-async def check_user_authority_in_gym(db: Session, user_id: int, gym_id: int) -> bool:
+async def check_user_authority_in_gym(db: AsyncSession, user_id: int, gym_id: int) -> bool:
     """
     Verifica si un usuario tiene autoridad en el gimnasio (TRAINER, ADMIN, o OWNER).
     
@@ -491,8 +491,8 @@ async def check_user_authority_in_gym(db: Session, user_id: int, gym_id: int) ->
             UserGym.gym_id == gym_id,
             UserGym.is_active == True
         ))
-    user_gym = result.scalar_one_or_none()
-        
+        user_gym = result.scalar_one_or_none()
+
         if not user_gym:
             logger.info(f"👤 Usuario {user_id} no encontrado en gym {gym_id}")
             return False
@@ -508,7 +508,7 @@ async def check_user_authority_in_gym(db: Session, user_id: int, gym_id: int) ->
 
 
 async def send_targeted_notifications(
-    db: Session,
+    db: AsyncSession,
     users_to_notify: list,
     chat_room: ChatRoom,
     message_text: str,
@@ -525,8 +525,8 @@ async def send_targeted_notifications(
         # Obtener información del remitente
         from app.models.user import User
         result = await db.execute(select(User).where(User.id == sender_id))
-    sender = result.scalar_one_or_none()
-        
+        sender = result.scalar_one_or_none()
+
         # Construir nombre completo del remitente
         if sender:
             if sender.first_name and sender.last_name:
@@ -602,7 +602,7 @@ async def send_targeted_notifications(
 
 
 async def send_chat_notifications_async(
-    db: Session, 
+    db: AsyncSession, 
     sender_id: int, 
     chat_room: ChatRoom, 
     message_text: str
@@ -631,7 +631,7 @@ async def send_chat_notifications_async(
 
 
 async def process_mentions_async(
-    db: Session,
+    db: AsyncSession,
     message_text: str,
     chat_room: ChatRoom,
     sender_id: int
@@ -660,7 +660,7 @@ async def process_mentions_async(
 
 
 async def update_chat_activity_async(
-    db: Session,
+    db: AsyncSession,
     chat_room: ChatRoom,
     sender_id: int
 ):
@@ -686,7 +686,7 @@ async def update_chat_activity_async(
 
 
 async def process_special_events_async(
-    db: Session,
+    db: AsyncSession,
     message: Dict[Any, Any],
     chat_room: ChatRoom,
     sender_id: int
@@ -721,7 +721,7 @@ async def process_special_events_async(
 
 
 async def process_chat_commands_async(
-    db: Session,
+    db: AsyncSession,
     message_text: str,
     chat_room: ChatRoom,
     sender_id: int
@@ -747,7 +747,7 @@ async def process_chat_commands_async(
 
 
 async def migrate_legacy_user_async(
-    db: Session,
+    db: AsyncSession,
     user: User,
     legacy_stream_id: str,
     channel_id: str = None
@@ -821,7 +821,7 @@ async def handle_channel_deleted(
         
         # Buscar y limpiar la sala en la base de datos local
         result = await db.execute(select(ChatRoom).where(ChatRoom.stream_channel_id == channel_id))
-    chat_room = result.scalar_one_or_none()
+        chat_room = result.scalar_one_or_none()
         if chat_room:
             # Eliminar miembros y la sala
             from app.repositories.chat import chat_repository

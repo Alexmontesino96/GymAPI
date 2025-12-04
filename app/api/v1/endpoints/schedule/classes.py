@@ -163,7 +163,7 @@ async def create_class(
             ClassCategoryCustom.id == class_data.category_id,
             ClassCategoryCustom.gym_id == current_gym.id
         ))
-    category = result.scalar_one_or_none()
+        category = result.scalar_one_or_none()
 
         if not category:
             raise HTTPException(

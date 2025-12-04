@@ -212,7 +212,7 @@ async def check_email_availability(
 
         # Buscar usuario por email
         result = await db.execute(select(User).where(User.email == email))
-    user = result.scalar_one_or_none()
+        user = result.scalar_one_or_none()
 
         if not user:
             return {
@@ -226,7 +226,7 @@ async def check_email_availability(
             UserGym.role == "OWNER",
             Gym.type == GymType.personal_trainer
         ))
-    has_workspace = result.scalar_one_or_none() is not None
+        has_workspace = result.scalar_one_or_none() is not None
 
         return {
             "available": False,
@@ -280,7 +280,7 @@ async def validate_subdomain(
 
         # Verificar disponibilidad
         result = await db.execute(select(Gym).where(Gym.subdomain == subdomain))
-    exists = result.scalar_one_or_none() is not None
+        exists = result.scalar_one_or_none() is not None
 
         return {
             "valid": True,

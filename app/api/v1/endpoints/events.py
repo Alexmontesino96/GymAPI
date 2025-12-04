@@ -328,7 +328,7 @@ async def read_my_events(
     try:
         # Buscar el usuario en la BD por auth0_id
         result = await db.execute(select(User).where(User.auth0_id == auth0_id))
-    user = result.scalar_one_or_none()
+        user = result.scalar_one_or_none()
         if not user:
             # Si no hay usuario, devolvemos lista vacía
             logger.warning(f"Usuario con Auth0 ID {auth0_id} no encontrado para read_my_events")
@@ -354,7 +354,7 @@ async def read_my_events(
         
         # Fallback a la implementación original en caso de error
         result = await db.execute(select(User).where(User.auth0_id == auth0_id))
-    user = result.scalar_one_or_none()
+        user = result.scalar_one_or_none()
         if not user:
             return []
             
@@ -598,8 +598,8 @@ async def update_event(
     # Para usuarios normales, verificar si son el creador en una sola consulta
     # Este enfoque evita cargar todo el evento si el usuario no es el creador
     result = await db.execute(select(Event.creator_id).where(Event.id == event_id))
- creator_id = result.scalar()
-    
+    creator_id = result.scalar()
+
     if not creator_id:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -613,7 +613,7 @@ async def update_event(
     if isinstance(user_id, str):
         # Consulta optimizada que verifica la relación en una sola operación
         result = await db.execute(select(User.auth0_id).where(User.id == creator_id))
- creator_auth0_id = result.scalar()
+        creator_auth0_id = result.scalar()
         is_creator = creator_auth0_id == user_id
     else:
         is_creator = creator_id == user_id
@@ -822,7 +822,7 @@ async def admin_delete_event(
 
             # Obtener ID interno del usuario admin
             result = await db.execute(select(User).where(User.auth0_id == current_user.id))
-    admin_user = result.scalar_one_or_none()
+            admin_user = result.scalar_one_or_none()
             if not admin_user:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
@@ -918,13 +918,13 @@ async def admin_delete_event(
 
             # Marcar participaciones como canceladas antes de eliminar
             result = await db.execute(select(func.count()).select_from(EventParticipation).where(
-    EventParticipation.event_id == event_id
-    ))
- participant_count = result.scalar()
+                EventParticipation.event_id == event_id
+            ))
+            participant_count = result.scalar()
 
             await db.execute(update(EventParticipation).where(
-    EventParticipation.event_id == event_id
-    ).values({"status": EventParticipationStatus.CANCELLED}))
+                EventParticipation.event_id == event_id
+            ).values({"status": EventParticipationStatus.CANCELLED}))
 
             # Eliminar evento (comportamiento anterior)
             await event_service.delete_event(
@@ -1039,7 +1039,7 @@ async def register_for_event(
                     result = await db.execute(select(GymStripeAccount).where(
                         GymStripeAccount.gym_id == event.gym_id
                     ))
-    stripe_account = result.scalar_one_or_none()
+                    stripe_account = result.scalar_one_or_none()
 
                     if stripe_account:
                         # Cancelar Payment Intent en Stripe
@@ -1075,7 +1075,7 @@ async def register_for_event(
                 EventParticipation.event_id == event.id,
                 EventParticipation.status == EventParticipationStatus.REGISTERED
             ))
- registered_count = result.scalar()
+            registered_count = result.scalar()
 
             if event.max_participants == 0 or registered_count < event.max_participants:
                 existing.status = EventParticipationStatus.REGISTERED
@@ -1183,7 +1183,7 @@ async def register_for_event(
                 result = await db.execute(select(GymStripeAccount).where(
                     GymStripeAccount.gym_id == current_gym.id
                 ))
-    stripe_account = result.scalar_one_or_none()
+                stripe_account = result.scalar_one_or_none()
 
                 # Usar función idempotente para obtener o crear Payment Intent
                 payment_info = await event_payment_service.get_or_create_payment_intent_for_event(
@@ -1468,7 +1468,7 @@ async def get_payment_intent_for_waitlist(
         result = await db.execute(select(GymStripeAccount).where(
             GymStripeAccount.gym_id == current_gym.id
         ))
-    stripe_account = result.scalar_one_or_none()
+        stripe_account = result.scalar_one_or_none()
 
         # Manejar oportunidad de pago para lista de espera
         payment_info = await event_payment_service.handle_waitlist_payment_opportunity(
@@ -1539,8 +1539,8 @@ async def read_my_participations(
     
     # 1. Optimización: Obtener ID interno con consulta eficiente
     result = await db.execute(select(User.id).where(User.auth0_id == user_id))
- internal_user_id = result.scalar()
-    
+    internal_user_id = result.scalar()
+
     if not internal_user_id:
         logger.warning(f"Usuario no encontrado: {user_id}")
         return []
@@ -1876,8 +1876,8 @@ async def update_attendance(
     
     # Obtener el ID interno del usuario que hace la solicitud para comparar con el creador
     result = await db.execute(select(User.id).where(User.auth0_id == requesting_user_auth0_id))
- requesting_internal_user_id = result.scalar()
-    
+    requesting_internal_user_id = result.scalar()
+
     # Only the event creator or an admin can update participation
     if not (is_admin or event.creator_id == requesting_internal_user_id):
         raise HTTPException(
@@ -1931,12 +1931,12 @@ async def bulk_register_for_event(
 
     # Verificar rol OWNER/ADMIN en el gimnasio actual
     result = await db.execute(select(User.id).where(User.auth0_id == current_user.id))
- internal_user_id = result.scalar()
+    internal_user_id = result.scalar()
     result = await db.execute(select(UserGym.role).where(
         UserGym.user_id == internal_user_id,
         UserGym.gym_id == current_gym.id
     ))
- role_in_gym = result.scalar()
+    role_in_gym = result.scalar()
 
     if role_in_gym not in [GymRoleType.ADMIN, GymRoleType.OWNER]:
         raise HTTPException(status_code=403, detail="Solo ADMIN u OWNER del gimnasio pueden usar este endpoint")

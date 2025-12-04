@@ -2489,10 +2489,9 @@ async def get_notification_settings(
     plans_config = []
     for follower in active_followers:
         result = await db.execute(select(NutritionPlan).where(
-    NutritionPlan.id == follower.plan_id
-        
-    ))
-    plan = result.scalar_one_or_none()
+            NutritionPlan.id == follower.plan_id
+        ))
+        plan = result.scalar_one_or_none()
 
         plans_config.append({
             "plan_id": plan.id,
@@ -2570,23 +2569,21 @@ async def update_notification_settings(
     if plan_id:
         # Verificar que el plan existe y pertenece al gimnasio
         result = await db.execute(select(NutritionPlan).where(
-    NutritionPlan.id == plan_id,
+            NutritionPlan.id == plan_id,
             NutritionPlan.gym_id == current_gym.id
-        
-    ))
-    plan = result.scalar_one_or_none()
+        ))
+        plan = result.scalar_one_or_none()
 
         if not plan:
             raise HTTPException(status_code=404, detail="Plan no encontrado")
 
         # Obtener la relación follower
         result = await db.execute(select(NutritionPlanFollower).where(
-    NutritionPlanFollower.plan_id == plan_id,
+            NutritionPlanFollower.plan_id == plan_id,
             NutritionPlanFollower.user_id == db_user.id,
             NutritionPlanFollower.is_active == True
-        
-    ))
-    follower = result.scalar_one_or_none()
+        ))
+        follower = result.scalar_one_or_none()
 
         if not follower:
             raise HTTPException(status_code=404, detail="No estás siguiendo este plan")
@@ -2629,7 +2626,7 @@ async def update_notification_settings(
             NutritionPlanFollower.is_active == True,
             NutritionPlan.gym_id == current_gym.id
         ))
-    active_followers = result.scalars().all()
+        active_followers = result.scalars().all()
 
         if not active_followers:
             raise HTTPException(status_code=404, detail="No tienes planes activos")

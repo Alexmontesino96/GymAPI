@@ -268,10 +268,10 @@ async def get_membership_plans_stats(
     
     # Usuarios activos por tipo de membresía
     result = await db.execute(select(func.count()).select_from(UserGym).where(
-    UserGym.gym_id == current_gym.id
+        UserGym.gym_id == current_gym.id
     ))
- total_users = result.scalar()
-    
+    total_users = result.scalar()
+
     # ✅ MIGRADO A ASYNC: count con filtros complejos
     result_active = await db.execute(
         select(func.count())
@@ -288,8 +288,8 @@ async def get_membership_plans_stats(
         UserGym.gym_id == current_gym.id,
         UserGym.membership_expires_at < now
     ))
- expired_users = result.scalar()
-    
+    expired_users = result.scalar()
+
     # Usuarios por tipo de membresía
     # ✅ MIGRADO A ASYNC: query con group_by y aggregates
     result_types = await db.execute(
@@ -963,8 +963,8 @@ async def admin_create_payment_link(
         logger.info(f"🔍 Validando usuario {payment_data.user_id}")
         from app.models.user import User
         result = await db.execute(select(User).where(User.id == payment_data.user_id))
-    target_user = result.scalar_one_or_none()
-        
+        target_user = result.scalar_one_or_none()
+
         if not target_user:
             logger.error(f"❌ Usuario {payment_data.user_id} no encontrado")
             raise HTTPException(
@@ -978,8 +978,8 @@ async def admin_create_payment_link(
             UserGym.user_id == payment_data.user_id,
             UserGym.gym_id == current_gym.id
         ))
-    user_gym_relation = result.scalar_one_or_none()
-        
+        user_gym_relation = result.scalar_one_or_none()
+
         if not user_gym_relation:
             logger.info(f"ℹ️ Usuario {payment_data.user_id} no está registrado en gym {current_gym.id} - creando link para nuevo miembro")
         

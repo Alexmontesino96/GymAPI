@@ -293,8 +293,8 @@ async def get_stripe_dashboard(
             UserGymStripeProfile.gym_id == current_gym.id,
             UserGymStripeProfile.is_active == True
         ))
- total_customers = result.scalar()
-        
+        total_customers = result.scalar()
+
         result2 = await db.execute(select(func.count()).select_from(UserGymStripeProfile).where(
             UserGymStripeProfile.gym_id == current_gym.id,
             UserGymStripeProfile.is_active == True,

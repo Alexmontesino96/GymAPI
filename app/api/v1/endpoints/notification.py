@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List
 
-from app.db.session import SessionLocal
+from app.db.session import SessionLocal, get_async_db
 from app.schemas.notification import DeviceTokenCreate, DeviceTokenResponse, NotificationSend, NotificationResponse, GymNotificationRequest
 from app.repositories.notification_repository import notification_repository
 from app.services.notification_service import notification_service
