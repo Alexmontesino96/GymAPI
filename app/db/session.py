@@ -52,7 +52,8 @@ try:
             "sslmode": "require",  # ✅ NUEVO: Forzar SSL desde inicio
             "keepalives": 1,  # ✅ NUEVO: Mantener conexiones vivas
             "keepalives_idle": 30,  # ✅ NUEVO: Intervalo keepalive (30s)
-            "prepare_threshold": 0,  # ✅ NUEVO: Desactivar prepared statements para pgbouncer
+            # NOTA: prepare_threshold es solo para psycopg3, no psycopg2
+            # Para pgbouncer con psycopg2, las prepared statements se manejan automáticamente
         },
         execution_options={
             "isolation_level": "READ COMMITTED",  # ✅ NUEVO: Evitar checks extras

@@ -495,7 +495,25 @@ async def get_current_user(
         }
 
         # Llama al servicio para crear o actualizar el usuario localmente (con QR)
-        db_user = await user_service.create_or_update_auth0_user_async(db, auth0_user_data)
+        # Usar run_sync_in_async para ejecutar con sesión síncrona
+        from app.core.async_utils import run_sync_in_async
+        from app.db.session import SessionLocal
+
+        @run_sync_in_async
+        def _create_or_update_user(data):
+            sync_db = SessionLocal()
+            try:
+                import asyncio
+                loop = asyncio.new_event_loop()
+                result = loop.run_until_complete(
+                    user_service.create_or_update_auth0_user_async(sync_db, data)
+                )
+                loop.close()
+                return result
+            finally:
+                sync_db.close()
+
+        db_user = await _create_or_update_user(auth0_user_data)
         
         # Opcional: Podríamos enriquecer el objeto 'user' (Auth0User)
         # con el ID interno de la BD si fuera necesario en los endpoints.

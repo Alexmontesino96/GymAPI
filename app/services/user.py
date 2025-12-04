@@ -464,28 +464,30 @@ class UserService:
             limit=search_params.limit
         )
 
-    async def create_user(self, db: Session, user_data: UserCreate, redis_client: Optional[Redis] = None) -> UserModel:
+    def create_user(self, db: Session, user_data: UserCreate, redis_client: Optional[Redis] = None) -> UserModel:
         """
         Crea un nuevo usuario y genera su código QR único.
         """
+        import asyncio
+
         # Crear el usuario
         db_user = UserModel(**user_data.model_dump())
         db.add(db_user)
         db.commit()
         db.refresh(db_user)
-        
-        # Generar código QR único para el usuario
-        qr_code = await attendance_service.generate_qr_code(db_user.id)
+
+        # Generar código QR único para el usuario (async envuelto)
+        qr_code = asyncio.run(attendance_service.generate_qr_code(db_user.id))
         db_user.qr_code = qr_code
-        
+
         db.add(db_user)
         db.commit()
         db.refresh(db_user)
-        
-        # Invalidar caché si existe
+
+        # Invalidar caché si existe (async envuelto)
         if redis_client:
-            await self._invalidate_user_cache(redis_client, db_user.id, db_user.auth0_id)
-        
+            asyncio.run(self._invalidate_user_cache(redis_client, db_user.id, db_user.auth0_id))
+
         return db_user
 
     def create_or_update_auth0_user(self, db: Session, auth0_user: Dict) -> UserModel:
@@ -529,26 +531,29 @@ class UserService:
         
         return new_user
     
-    async def create_or_update_auth0_user_async(self, db: Session, auth0_user: Dict) -> UserModel:
+    def create_or_update_auth0_user_async(self, db: Session, auth0_user: Dict) -> UserModel:
         """
         Versión async de create_or_update_auth0_user que incluye generación de QR.
+        NOTA: Nombre con _async se corregirá en fase de cleanup (mantener por compatibilidad).
         """
+        import asyncio
+
         auth0_id = auth0_user.get("sub")
         if not auth0_id:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Los datos de Auth0 no contienen un ID (sub)",
             )
-        
+
         auth0_email = auth0_user.get("email")
-        
+
         user = self.get_user_by_auth0_id(db, auth0_id=auth0_id)
         if user:
             if auth0_email and auth0_email != user.email:
                 logger.info(f"Actualizando email del usuario {user.id} de '{user.email}' a '{auth0_email}' vía sync Auth0")
                 return user_repository.update(db, db_obj=user, obj_in={"email": auth0_email})
             return user
-        
+
         if auth0_email:
             user = self.get_user_by_email(db, email=auth0_email)
             if user:
@@ -560,7 +565,7 @@ class UserService:
                     if not updated_user.qr_code:
                         try:
                             from app.services.attendance import attendance_service
-                            qr_code = await attendance_service.generate_qr_code(updated_user.id)
+                            qr_code = asyncio.run(attendance_service.generate_qr_code(updated_user.id))
                             updated_user.qr_code = qr_code
                             db.add(updated_user)
                             db.commit()
@@ -573,15 +578,15 @@ class UserService:
                     # Conflicto: usuario encontrado por email pero ya tiene otro Auth0 ID
                     logger.error(f"Conflicto de sincronización Auth0: Email {auth0_email} ya está asociado al usuario {user.id} (Auth0 ID local: {user.auth0_id}), pero se intentó asociar con {auth0_id}")
                     return user
-            
+
         # Si no se encuentra, crear nuevo usuario
         logger.info(f"Creando nuevo usuario local para Auth0 ID {auth0_id} con email {auth0_email}")
         new_user = user_repository.create_from_auth0(db, auth0_user=auth0_user)
-        
+
         # Generar código QR para el nuevo usuario
         try:
             from app.services.attendance import attendance_service
-            qr_code = await attendance_service.generate_qr_code(new_user.id)
+            qr_code = asyncio.run(attendance_service.generate_qr_code(new_user.id))
             new_user.qr_code = qr_code
             db.add(new_user)
             db.commit()
@@ -589,7 +594,7 @@ class UserService:
             logger.info(f"Usuario {new_user.id} creado desde Auth0 con QR code: {qr_code}")
         except Exception as e:
             logger.error(f"Error generando QR para nuevo usuario {new_user.id}: {e}")
-        
+
         return new_user
 
     async def update_user(
@@ -1281,8 +1286,8 @@ class UserService:
 
     # <<< NUEVO MÉTODO CACHEADO PARA BUSCAR USER POR AUTH0_ID >>>
     async def get_user_by_auth0_id_cached(
-        self, 
-        db: Session, 
+        self,
+        db: AsyncSession,
         auth0_id: str,
         redis_client: Optional[Redis] = None
     ) -> Optional[UserSchema]:
@@ -1290,9 +1295,9 @@ class UserService:
         Versión cacheada para obtener un usuario por su Auth0 ID.
         """
         if not redis_client:
-            # Si no hay Redis disponible, usar método directo
+            # Si no hay Redis disponible, usar método directo async
             logger.warning(f"Redis no disponible para get_user_by_auth0_id {auth0_id}")
-            user = self.get_user_by_auth0_id(db, auth0_id=auth0_id)
+            user = await user_repository.get_by_auth0_id_async(db, auth0_id=auth0_id)
             return UserSchema.model_validate(user) if user else None
         
         cache_key = f"user_by_auth0_id:{auth0_id}"
@@ -1319,11 +1324,11 @@ class UserService:
             else:
                 # Caché miss
                 register_cache_miss(cache_key)
-                
+
                 # Función para obtener de la BD
                 async def db_fetch():
                     async with async_db_query_timer():
-                        user = self.get_user_by_auth0_id(db, auth0_id=auth0_id)
+                        user = await user_repository.get_by_auth0_id_async(db, auth0_id=auth0_id)
                         return user
 
                 user = await db_fetch()
@@ -1347,13 +1352,13 @@ class UserService:
                 
         except Exception as e:
             logger.error(f"Error al obtener usuario cacheado por auth0_id {auth0_id}: {str(e)}", exc_info=True)
-            
+
             # Fallback a consulta directa
             async def db_fallback():
                 async with async_db_query_timer():
-                    user = self.get_user_by_auth0_id(db, auth0_id=auth0_id)
+                    user = await user_repository.get_by_auth0_id_async(db, auth0_id=auth0_id)
                     return UserSchema.model_validate(user) if user else None
-                    
+
             return await db_fallback()
             
     # Nuevo método para verificar membresía de gimnasio con caché

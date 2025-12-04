@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List
 
-from app.db.session import SessionLocal, get_async_db
+from app.db.session import get_async_db
 from app.schemas.notification import DeviceTokenCreate, DeviceTokenResponse, NotificationSend, NotificationResponse, GymNotificationRequest
 from app.repositories.notification_repository import notification_repository
 from app.services.notification_service import notification_service
@@ -15,16 +15,8 @@ from app.services.user import user_service
 
 router = APIRouter()
 
-# Dependencia para obtener la sesión de la base de datos
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
 @router.post("/devices", response_model=DeviceTokenResponse)
-def register_device(
+async def register_device(
     token_data: DeviceTokenCreate,
     db: AsyncSession = Depends(get_async_db),
     current_user: Auth0User = Security(auth.get_user),
@@ -33,7 +25,7 @@ def register_device(
     """
     Registra un nuevo dispositivo para recibir notificaciones push
     """
-    return notification_repository.create_device_token(
+    return await notification_repository.create_device_token_async(
         db=db,
         user_id=current_user.id,
         device_token=token_data.device_token,
@@ -41,7 +33,7 @@ def register_device(
     )
 
 @router.get("/devices", response_model=List[DeviceTokenResponse])
-def get_user_devices(
+async def get_user_devices(
     db: AsyncSession = Depends(get_async_db),
     current_user: Auth0User = Security(auth.get_user),
     gym: Gym = Depends(verify_gym_access),
@@ -49,10 +41,10 @@ def get_user_devices(
     """
     Obtiene todos los dispositivos registrados del usuario actual
     """
-    return notification_repository.get_user_device_tokens(db, current_user.id)
+    return await notification_repository.get_user_device_tokens_async(db, current_user.id)
 
 @router.delete("/devices")
-def logout_all_devices(
+async def logout_all_devices(
     db: AsyncSession = Depends(get_async_db),
     current_user: Auth0User = Security(auth.get_user),
     gym: Gym = Depends(verify_gym_access),
@@ -60,7 +52,7 @@ def logout_all_devices(
     """
     Desactiva todos los dispositivos del usuario (para logout)
     """
-    count = notification_repository.deactivate_user_tokens(db, current_user.id)
+    count = await notification_repository.deactivate_user_tokens_async(db, current_user.id)
     return {"message": f"Successfully deactivated {count} devices"}
 
 @router.post("/send", response_model=NotificationResponse)
