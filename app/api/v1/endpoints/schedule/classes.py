@@ -238,7 +238,7 @@ async def update_class(
         result = await db.execute(select(ClassCategoryCustom).where(
             ClassCategoryCustom.id == class_data.category_id
         ))
-    category = result.scalar_one_or_none()
+        category = result.scalar_one_or_none()
 
         if not category or category.gym_id != current_gym.id:
             raise HTTPException(
