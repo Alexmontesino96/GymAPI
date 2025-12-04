@@ -30,6 +30,8 @@ from app.repositories.async_schedule import (
     async_class_session_repository,
     async_class_participation_repository
 )
+from app.repositories.async_notification import async_notification_repository
+from app.repositories.async_post import async_post_repository
 
 __all__ = [
     # Base repositories
@@ -59,4 +61,6 @@ __all__ = [
     "async_class_repository",
     "async_class_session_repository",
     "async_class_participation_repository",
+    "async_notification_repository",
+    "async_post_repository",
 ] 
