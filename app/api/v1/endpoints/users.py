@@ -390,8 +390,8 @@ async def get_user_profile_by_id(
                     UserGym.user_id == user_id,
                     UserGym.gym_id == gym_id
                 ))
-    user_gym = result.scalar_one_or_none()
-                
+                user_gym = result.scalar_one_or_none()
+
                 if user_gym:
                     target_belongs_to_gym = True
                     # Actualizar caché
@@ -413,7 +413,7 @@ async def get_user_profile_by_id(
                 UserGym.user_id == user_id,
                 UserGym.gym_id == gym_id
             ))
-    user_gym = result.scalar_one_or_none()
+            user_gym = result.scalar_one_or_none()
             target_belongs_to_gym = user_gym is not None
         
         if not target_belongs_to_gym:
@@ -700,7 +700,7 @@ async def read_public_gym_participant_by_id(
             # Cache miss o redis no disponible ⇒ consultar BD
             from app.models.user_gym import UserGym
             result = await db.execute(select(UserGym).where(UserGym.user_id == user_id, UserGym.gym_id == gym_id))
-    membership = result.scalar_one_or_none()
+            membership = result.scalar_one_or_none()
             belongs = membership is not None
             # Guardar en caché si es posible
             if redis_client:
@@ -716,7 +716,7 @@ async def read_public_gym_participant_by_id(
         # Fallback BD sin caché
         from app.models.user_gym import UserGym
         result = await db.execute(select(UserGym).where(UserGym.user_id == user_id, UserGym.gym_id == gym_id))
-    membership = result.scalar_one_or_none()
+        membership = result.scalar_one_or_none()
         if not membership:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario no encontrado en este gimnasio (BD Fallback)")
 
@@ -806,8 +806,8 @@ async def search_user_by_email(
             UserGym.user_id == target_user.id,
             UserGym.gym_id == current_gym.id
         ))
-    membership = result.scalar_one_or_none()
-        
+        membership = result.scalar_one_or_none()
+
         if membership:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
@@ -889,7 +889,7 @@ async def remove_user_from_gym(
     is_gym_admin = False
     if not is_super_admin:
         result = await db.execute(select(UserGym).where(UserGym.user_id == local_caller.id, UserGym.gym_id == current_gym.id, UserGym.role == GymRoleType.ADMIN))
-    caller_gym_membership = result.scalar_one_or_none()
+        caller_gym_membership = result.scalar_one_or_none()
         if not caller_gym_membership:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permisos insuficientes para eliminar usuarios de este gimnasio")
         is_gym_admin = True
@@ -898,7 +898,7 @@ async def remove_user_from_gym(
     target_user_membership = result.scalar_one_or_none()
     if not target_user_membership:
         result = await db.execute(select(User.id).where(User.id == user_id))
- target_user_exists = result.scalar() is not None
+        target_user_exists = result.scalar() is not None
         if not target_user_exists:
              raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Usuario {user_id} no encontrado")
         else:
