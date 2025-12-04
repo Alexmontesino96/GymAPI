@@ -44,7 +44,7 @@ try:
         pool_size=10,  # Aumentado de 5 a 10 para manejar más concurrencia
         max_overflow=20,  # Aumentado de 10 a 20 para picos de tráfico
         pool_timeout=30,
-        pool_recycle=280,  # Reciclar conexiones cada 4m40s (antes del timeout de pgbouncer ~5min)
+        pool_recycle=180,  # ✅ Reducido a 3min para prevenir SSL connection closed (era 280s/4.6min)
         connect_args={
             "connect_timeout": 10,  # Timeout de conexión explícito
             "options": "-c statement_timeout=30000"  # 30s timeout por query

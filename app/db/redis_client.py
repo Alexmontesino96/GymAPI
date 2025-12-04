@@ -41,6 +41,7 @@ from redis.asyncio import ConnectionPool, Redis
 from app.core.config import get_settings # Importar get_settings
 import logging
 from fastapi import HTTPException
+from contextlib import asynccontextmanager
 
 logger = logging.getLogger(__name__)
 
@@ -91,7 +92,7 @@ async def initialize_redis_pool():
             REDIS_POOL = None
             raise
 
-async def get_redis_client() -> Redis:
+async def get_redis_client():
     """
     Dependencia FastAPI para obtener una instancia del cliente Redis asíncrono
     usando el connection pool.
@@ -99,6 +100,11 @@ async def get_redis_client() -> Redis:
     IMPORTANTE: Crea un cliente NUEVO por request para evitar blocking entre requests.
     El connection pool se reutiliza para eficiencia, pero cada request tiene su propio
     cliente aislado. Esto previene que un request lento bloquee a otros.
+
+    Usa pattern de generator con yield para cleanup automático - esto es CRÍTICO
+    para devolver las conexiones al pool y evitar exhaustion.
+
+    ⚠️ SOLO para uso con FastAPI Depends(). Para background jobs, usar get_redis_for_jobs()
 
     Returns:
         Redis: Cliente Redis usando el connection pool compartido
@@ -114,34 +120,68 @@ async def get_redis_client() -> Redis:
         logger.error("No se pudo establecer el connection pool de Redis")
         raise HTTPException(status_code=503, detail="No se pudo conectar a Redis")
 
-    try:
-        # ✅ FIX: Crear cliente NUEVO por request (no compartido globalmente)
-        # Esto evita que un cliente bloqueado afecte a otros requests
-        # El pool de conexiones se reutiliza para eficiencia
-        client = Redis(connection_pool=REDIS_POOL)
+    # ✅ CRITICAL FIX: Crear cliente NUEVO por request (no compartido globalmente)
+    # Esto evita que un cliente bloqueado afecte a otros requests
+    # El pool de conexiones se reutiliza para eficiencia
+    client = Redis(connection_pool=REDIS_POOL)
 
+    try:
         # ✅ FIX: No hacer ping() por request - overhead innecesario
         # El health_check_interval del pool ya verifica las conexiones
-        # Solo hacemos ping si hay un error explícito
-
-        return client
+        yield client
     except Exception as e:
-        logger.error(f"Error al obtener conexión del pool de Redis: {e}", exc_info=True)
-
-        # Reintentar inicializando de nuevo el pool
+        logger.error(f"Error durante uso del cliente Redis: {e}", exc_info=True)
+        raise
+    finally:
+        # ✅ CRITICAL: Cerrar cliente para devolver conexión al pool
+        # Sin esto, las conexiones se agotan y causa timeouts acumulativos
         try:
-            logger.info("Intentando reinicializar el connection pool...")
-            REDIS_POOL = None
-            await initialize_redis_pool()
-            client = Redis(connection_pool=REDIS_POOL)
+            await client.close()
+        except Exception as e:
+            logger.warning(f"Error cerrando cliente Redis: {e}")
 
-            # Ping solo en caso de error para verificar conectividad
-            await client.ping()
-            logger.info("Reconexión a Redis exitosa")
-            return client
-        except Exception as retry_e:
-            logger.error(f"Error al reintentar conexión con Redis: {retry_e}", exc_info=True)
-            raise HTTPException(status_code=503, detail=f"No se pudo conectar a Redis: {retry_e}")
+@asynccontextmanager
+async def get_redis_for_jobs():
+    """
+    Context manager para obtener cliente Redis en background jobs y scheduled tasks.
+
+    ⚠️ SOLO para background jobs (APScheduler, tasks, etc). Para endpoints FastAPI usar get_redis_client() con Depends().
+
+    Uso:
+        async with get_redis_for_jobs() as redis:
+            await redis.get("key")
+
+    CRÍTICO: Usa async context manager para garantizar que la conexión se devuelve al pool,
+    evitando connection exhaustion y timeouts acumulativos.
+
+    Yields:
+        Redis: Cliente Redis con conexión del pool
+    """
+    global REDIS_POOL
+
+    # Inicializar el pool si no existe
+    if REDIS_POOL is None:
+        await initialize_redis_pool()
+
+    if REDIS_POOL is None:
+        raise RuntimeError("No se pudo establecer el connection pool de Redis")
+
+    # Crear cliente nuevo usando el pool compartido
+    client = Redis(connection_pool=REDIS_POOL)
+
+    try:
+        yield client
+    except Exception as e:
+        logger.error(f"Error en background job usando Redis: {e}", exc_info=True)
+        raise
+    finally:
+        # ✅ CRÍTICO: Cerrar cliente para devolver conexión al pool
+        try:
+            await client.close()
+            logger.debug("Cliente Redis cerrado correctamente en background job")
+        except Exception as e:
+            logger.warning(f"Error cerrando cliente Redis en background job: {e}")
+
 
 async def close_redis_client():
     """
