@@ -34,6 +34,8 @@ from app.repositories.async_notification import async_notification_repository
 from app.repositories.async_post import async_post_repository
 from app.repositories.async_survey import async_survey_repository
 from app.repositories.async_feed_ranking import async_feed_ranking_repository
+from app.repositories.async_post_feed import async_post_feed_repository
+from app.repositories.async_story_feed import async_story_feed_repository
 
 __all__ = [
     # Base repositories
@@ -67,4 +69,6 @@ __all__ = [
     "async_post_repository",
     "async_survey_repository",
     "async_feed_ranking_repository",
+    "async_post_feed_repository",
+    "async_story_feed_repository",
 ] 
