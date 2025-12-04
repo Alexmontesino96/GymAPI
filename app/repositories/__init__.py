@@ -18,6 +18,8 @@ from app.repositories.schedule import (
 # FASE 2: Async repositories
 from app.repositories.async_user import async_user_repository
 from app.repositories.async_gym import async_gym_repository
+from app.repositories.async_event import async_event_repository
+from app.repositories.async_event_participation import async_event_participation_repository
 
 __all__ = [
     # Base repositories
@@ -37,4 +39,6 @@ __all__ = [
     # FASE 2: Async repository instances
     "async_user_repository",
     "async_gym_repository",
+    "async_event_repository",
+    "async_event_participation_repository",
 ] 
