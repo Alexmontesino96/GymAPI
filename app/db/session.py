@@ -40,23 +40,28 @@ try:
     engine = create_engine(
         str(db_url), # Asegurarse de que es string
         echo=False, # SIEMPRE False en producción para mejor rendimiento
-        pool_pre_ping=True,
+        pool_pre_ping=False,  # ✅ DESACTIVADO para pgbouncer (igual que async)
         pool_size=10,  # Aumentado de 5 a 10 para manejar más concurrencia
         max_overflow=20,  # Aumentado de 10 a 20 para picos de tráfico
         pool_timeout=30,
-        pool_recycle=180,  # ✅ Reducido a 3min para prevenir SSL connection closed (era 280s/4.6min)
+        pool_recycle=180,  # ✅ Reducido a 3min para prevenir SSL connection closed
         connect_args={
             "connect_timeout": 10,  # Timeout de conexión explícito
-            "options": "-c statement_timeout=30000"  # 30s timeout por query
+            "options": "-c statement_timeout=30000 -c search_path=public",  # ✅ search_path configurado aquí
+            "sslmode": "require",  # ✅ NUEVO: Forzar SSL desde inicio
+            "keepalives": 1,  # ✅ NUEVO: Mantener conexiones vivas
+            "keepalives_idle": 30,  # ✅ NUEVO: Intervalo keepalive (30s)
+            "prepare_threshold": 0,  # ✅ NUEVO: Desactivar prepared statements para pgbouncer
+        },
+        execution_options={
+            "isolation_level": "READ COMMITTED",  # ✅ NUEVO: Evitar checks extras
         }
     )
 
-    # Verificar la conexión al crear el engine y establecer search_path para Supabase
-    with engine.connect() as conn:
-        # Establecer search_path para Supabase
-        from sqlalchemy import text
-        conn.execute(text("SET search_path TO public"))
-        logger.info(f"Verificación de conexión inicial EXITOSA con search_path=public: {display_url}")
+    # ✅ ELIMINADO: Verificación inicial con engine.connect()
+    # La verificación causaba error SSL con type introspection (hstore)
+    # El engine se valida automáticamente en el primer uso real
+    logger.info(f"✅ Sync engine creado correctamente (psycopg2) - sin verificación inicial: {display_url}")
 
 except Exception as e:
     logger.critical(f"¡¡¡FALLO CRÍTICO AL CREAR ENGINE CON URL: {display_url}!!! Error: {e}", exc_info=True)
@@ -111,10 +116,8 @@ AsyncSessionLocal = async_sessionmaker(
 def get_db():
     db = SessionLocal()
     try:
-        # Establecer search_path para cada sesión en Supabase
-        from sqlalchemy import text
-        db.execute(text("SET search_path TO public"))
-        db.commit()  # Commit para que el SET tenga efecto
+        # ✅ search_path ya está configurado en connect_args options
+        # No es necesario ejecutar SET en cada sesión (optimización)
         yield db
     except SQLAlchemyError as e:
         logger.error(f"Error de SQLAlchemy en la sesión: {e}", exc_info=True)
