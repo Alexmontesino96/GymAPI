@@ -311,14 +311,13 @@ async def get_event_chat(
         if not (is_trainer_or_admin or is_event_creator):
             # Para miembros regulares, verificar inscripción
             result = await db.execute(select(EventParticipation).where(
-    EventParticipation.event_id == event_id,
+                EventParticipation.event_id == event_id,
                 EventParticipation.member_id == internal_user.id,
                 EventParticipation.gym_id == current_gym.id,
                 EventParticipation.status == EventParticipationStatus.REGISTERED
-            
-    ))
-    participation = result.scalar_one_or_none()
-            
+            ))
+            participation = result.scalar_one_or_none()
+
             if not participation:
                 logger.warning(f"Member {internal_user.id} attempted to access event {event_id} chat without registration")
                 raise HTTPException(
@@ -512,7 +511,7 @@ async def get_user_chat_activity(
         
         # Obtener usuario actual
         result = await db.execute(select(User).where(User.auth0_id == current_user.id))
-    internal_user = result.scalar_one_or_none()
+        internal_user = result.scalar_one_or_none()
         if not internal_user:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario no encontrado")
         
@@ -657,7 +656,7 @@ async def get_room_statistics(
     try:
         # Verificar usuario
         result = await db.execute(select(User).where(User.auth0_id == current_user.id))
-    internal_user = result.scalar_one_or_none()
+        internal_user = result.scalar_one_or_none()
         if not internal_user:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario no encontrado")
         
@@ -920,7 +919,7 @@ async def get_user_chat_rooms(
     try:
         # Obtener usuario interno
         result = await db.execute(select(User).where(User.auth0_id == current_user.id))
-    internal_user = result.scalar_one_or_none()
+        internal_user = result.scalar_one_or_none()
         if not internal_user:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -982,7 +981,7 @@ async def get_all_user_chat_rooms(
     try:
         # Obtener usuario interno
         result = await db.execute(select(User).where(User.auth0_id == current_user.id))
-    internal_user = result.scalar_one_or_none()
+        internal_user = result.scalar_one_or_none()
         if not internal_user:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,

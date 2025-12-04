@@ -142,8 +142,8 @@ async def create_event(
             UserGym.user_id == internal_user_id,
             UserGym.gym_id == gym_id
         ))
-    user_gym = result.scalar_one_or_none()
-            
+        user_gym = result.scalar_one_or_none()
+
         is_trainer = user_gym and user_gym.role == GymRoleType.TRAINER
             
         # Si es entrenador, registrarlo automáticamente como participante
