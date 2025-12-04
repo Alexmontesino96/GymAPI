@@ -906,7 +906,7 @@ async def update_user_gym_role(
         if old_role != role_in.role:
             # Obtener usuario para invalidar la caché de su rol global
             result = await db.execute(select(User).where(User.id == user_id))
-    target_user = result.scalar_one_or_none()
+            target_user = result.scalar_one_or_none()
             if target_user:
                 # Invalidar caché del usuario individual
                 await cache_service.invalidate_user_caches(redis_client, user_id=user_id)
