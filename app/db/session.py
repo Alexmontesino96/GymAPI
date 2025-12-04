@@ -2,6 +2,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.exc import SQLAlchemyError
+from contextlib import asynccontextmanager
 import re
 import logging
 import os
@@ -169,4 +170,47 @@ async def get_async_db():
             logger.error(f"Error inesperado en get_async_db: {e}", exc_info=True)
             raise
         finally:
-            await session.close() 
+            await session.close()
+
+
+# Async DB context manager for background jobs (NUEVO - Fase 2)
+@asynccontextmanager
+async def get_async_db_for_jobs():
+    """
+    Context manager async para background jobs y scheduled tasks.
+
+    ⚠️ SOLO para background jobs (APScheduler, tasks, etc).
+    Para endpoints FastAPI usar get_async_db() con Depends().
+
+    Uso:
+        async with get_async_db_for_jobs() as db:
+            result = await db.execute(select(User))
+            users = result.scalars().all()
+
+    CRÍTICO: Usa async context manager para garantizar que la sesión se cierra,
+    evitando session leaks y connection exhaustion.
+
+    Yields:
+        AsyncSession: Sesión async de base de datos
+    """
+    if async_engine is None:
+        raise RuntimeError("Async engine no inicializado")
+
+    if AsyncSessionLocal is None:
+        raise RuntimeError("AsyncSessionLocal no inicializado")
+
+    async with AsyncSessionLocal() as session:
+        try:
+            yield session
+        except SQLAlchemyError as e:
+            logger.error(f"Error SQLAlchemy en background job async DB: {e}", exc_info=True)
+            await session.rollback()
+            raise
+        except Exception as e:
+            logger.error(f"Error inesperado en background job async DB: {e}", exc_info=True)
+            await session.rollback()
+            raise
+        finally:
+            # ✅ CRÍTICO: Cerrar sesión para devolver conexión al pool
+            await session.close()
+            logger.debug("Sesión async DB cerrada correctamente en background job") 
