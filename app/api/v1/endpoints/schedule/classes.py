@@ -11,7 +11,7 @@ async def get_classes(
     skip: int = 0,
     limit: int = 100,
     active_only: bool = True,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: Gym = Depends(verify_gym_access),
     user: Auth0User = Security(auth.get_user, scopes=["resource:read"]),
     redis_client: Redis = Depends(get_redis_client)
@@ -54,7 +54,7 @@ async def get_classes(
 @router.get("/classes/{class_id}", response_model=ClassWithSessions)
 async def get_class(
     class_id: int = Path(..., description="ID of the class definition"),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: Gym = Depends(verify_gym_access),
     user: Auth0User = Security(auth.get_user, scopes=["resource:read"]),
     redis_client: Redis = Depends(get_redis_client)
@@ -104,7 +104,7 @@ async def get_class(
 @router.post("/classes", response_model=Class, status_code=status.HTTP_201_CREATED)
 async def create_class(
     class_data: ClassCreate = Body(...),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: Gym = Depends(verify_gym_access),
     user: Auth0User = Security(auth.get_user, scopes=["resource:write"]),
     redis_client: Redis = Depends(get_redis_client)
@@ -159,10 +159,11 @@ async def create_class(
     # Verify custom category belongs to the gym if provided
     if class_data.category_id:
         from app.models.schedule import ClassCategoryCustom
-        category = db.query(ClassCategoryCustom).filter(
+        result = await db.execute(select(ClassCategoryCustom).where(
             ClassCategoryCustom.id == class_data.category_id,
             ClassCategoryCustom.gym_id == current_gym.id
-        ).first()
+        ))
+    category = result.scalar_one_or_none()
 
         if not category:
             raise HTTPException(
@@ -185,7 +186,7 @@ async def create_class(
 async def update_class(
     class_id: int = Path(..., description="ID of the class definition"),
     class_data: ClassUpdate = Body(...),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: Gym = Depends(verify_gym_access),
     user: Auth0User = Security(auth.get_user, scopes=["resource:write"]),
     redis_client: Redis = Depends(get_redis_client)
@@ -234,9 +235,10 @@ async def update_class(
     # Verify new category_id belongs to the gym if it's being updated
     if class_data.category_id is not None and class_data.category_id != class_obj.category_id:
         from app.models.schedule import ClassCategoryCustom
-        category = db.query(ClassCategoryCustom).filter(
+        result = await db.execute(select(ClassCategoryCustom).where(
             ClassCategoryCustom.id == class_data.category_id
-        ).first()
+        ))
+    category = result.scalar_one_or_none()
 
         if not category or category.gym_id != current_gym.id:
             raise HTTPException(
@@ -250,7 +252,7 @@ async def update_class(
 @router.delete("/classes/{class_id}", response_model=Class)
 async def delete_class(
     class_id: int = Path(..., description="ID of the class definition"),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: Gym = Depends(verify_gym_access),
     user: Auth0User = Security(auth.get_user, scopes=["resource:admin"]),
     redis_client: Redis = Depends(get_redis_client)
@@ -290,7 +292,7 @@ async def get_classes_by_category(
     category: ClassCategory = Path(..., description="Standard class category enum"),
     skip: int = 0,
     limit: int = 100,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: Gym = Depends(verify_gym_access),
     user: Auth0User = Security(auth.get_user, scopes=["resource:read"]),
     redis_client: Redis = Depends(get_redis_client)
@@ -345,7 +347,7 @@ async def get_classes_by_difficulty(
     difficulty: ClassDifficultyLevel = Path(..., description="Class difficulty level"),
     skip: int = 0,
     limit: int = 100,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: Gym = Depends(verify_gym_access),
     user: Auth0User = Security(auth.get_user, scopes=["resource:read"]),
     redis_client: Redis = Depends(get_redis_client)
@@ -393,7 +395,7 @@ async def search_classes(
     query: str = Query(..., description="Search term for name or description"),
     skip: int = 0,
     limit: int = 100,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: Gym = Depends(verify_gym_access),
     user: Auth0User = Security(auth.get_user, scopes=["resource:read"]),
     redis_client: Redis = Depends(get_redis_client)

@@ -1,8 +1,8 @@
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException, Path, Security, status, Request
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.session import get_db
+from app.db.session import get_async_db
 from app.core.auth0_fastapi import get_current_user, Auth0User, auth
 from app.services.module import module_service
 from app.services.billing_module import billing_module_service
@@ -18,7 +18,7 @@ router = APIRouter()
 @router.get("", response_model=GymModuleList)
 async def get_active_modules(
     *,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     gym_id: int = Depends(get_tenant_id),
     current_user: Auth0User = Security(auth.get_user),
     current_gym: GymSchema = Depends(verify_gym_access_cached),
@@ -52,7 +52,7 @@ async def get_active_modules(
 @router.patch("/{module_code}/activate", status_code=status.HTTP_200_OK)
 async def activate_module(
     *,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     gym_id: int = Depends(get_tenant_id),
     module_code: str = Path(..., title="Código del módulo a activar"),
     current_user: Auth0User = Security(auth.get_user)
@@ -82,7 +82,7 @@ async def activate_module(
 @router.patch("/{module_code}/deactivate", status_code=status.HTTP_200_OK)
 async def deactivate_module(
     *,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     gym_id: int = Depends(get_tenant_id),
     module_code: str = Path(..., title="Código del módulo a desactivar"),
     current_user: Auth0User = Security(auth.get_user, scopes=["admin:modules"])
@@ -115,7 +115,7 @@ async def deactivate_module(
 @router.post("/billing/activate", status_code=status.HTTP_200_OK)
 async def activate_billing_module(
     *,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     gym_id: int = Depends(get_tenant_id),
     current_user: Auth0User = Security(auth.get_user, scopes=["admin:modules"]),
     current_gym: GymSchema = Depends(verify_gym_admin_access)
@@ -146,7 +146,7 @@ async def activate_billing_module(
 @router.post("/billing/deactivate", status_code=status.HTTP_200_OK)
 async def deactivate_billing_module(
     *,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     gym_id: int = Depends(get_tenant_id),
     preserve_data: bool = True,
     current_user: Auth0User = Security(auth.get_user, scopes=["admin:modules"]),
@@ -176,7 +176,7 @@ async def deactivate_billing_module(
 @router.get("/billing/status", status_code=status.HTTP_200_OK)
 async def get_billing_module_status(
     *,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     gym_id: int = Depends(get_tenant_id),
     current_user: Auth0User = Security(auth.get_user, scopes=["resource:read"]),
     current_gym: GymSchema = Depends(verify_gym_access_cached)

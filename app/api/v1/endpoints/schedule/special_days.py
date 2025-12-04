@@ -1,9 +1,10 @@
 from typing import Any, List, Optional
 from datetime import date, datetime
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Path, Body, Security
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 
-from app.db.session import get_db
+from app.db.session import get_async_db
 from app.core.auth0_fastapi import auth, get_current_user, Auth0User
 from app.models.gym import Gym
 from app.core.tenant import verify_gym_access
@@ -24,7 +25,7 @@ router = APIRouter()
 @router.get("/", response_model=List[GymSpecialHours])
 async def get_special_days(
     *,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     skip: int = 0,
     limit: int = 100,
     upcoming_only: bool = Query(True, description="If True, only returns future special days"),
@@ -78,7 +79,7 @@ async def get_special_days(
 @router.get("/{special_day_id}", response_model=GymSpecialHours)
 async def get_special_day(
     *,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     special_day_id: int = Path(..., description="ID of the special day entry"),
     current_user: Auth0User = Depends(get_current_user),
     current_gym: Gym = Depends(verify_gym_access),
@@ -130,7 +131,7 @@ async def get_special_day(
 @router.get("/date/{date}", response_model=GymSpecialHours)
 async def get_special_day_by_date(
     *,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     date: date = Path(..., description="Date (YYYY-MM-DD)"),
     current_user: Auth0User = Depends(get_current_user),
     current_gym: Gym = Depends(verify_gym_access),
@@ -178,7 +179,7 @@ async def get_special_day_by_date(
 @router.post("/", response_model=GymSpecialHours, status_code=status.HTTP_201_CREATED)
 async def create_special_day(
     *,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     special_day_in: GymSpecialHoursCreate,
     overwrite: bool = Query(False, description="If True, overwrites existing entry for this date"),
     current_user: Auth0User = Depends(get_current_user),
@@ -224,13 +225,15 @@ async def create_special_day(
         HTTPException 422: Validation error in request body.
     """
     # Verify admin privileges
-    local_user = db.query(User).filter(User.auth0_id == current_user.id).first()
+    result = await db.execute(select(User).where(User.auth0_id == current_user.id))
+    local_user = result.scalar_one_or_none()
     if not local_user or (local_user.role != UserRole.ADMIN and local_user.role != UserRole.SUPER_ADMIN):
-        user_gym = db.query(UserGym).filter(
+        result = await db.execute(select(UserGym).where(
             UserGym.user_id == local_user.id,
             UserGym.gym_id == current_gym.id,
             UserGym.role.in_([GymRoleType.ADMIN, GymRoleType.OWNER])
-        ).first()
+        ))
+        user_gym = result.scalar_one_or_none()
 
         if not user_gym:
             raise HTTPException(
@@ -293,7 +296,7 @@ async def create_special_day(
 @router.put("/{special_day_id}", response_model=GymSpecialHours)
 async def update_special_day(
     *,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     special_day_id: int = Path(..., description="ID of the special day entry"),
     special_day_in: GymSpecialHoursUpdate,
     current_user: Auth0User = Depends(get_current_user),
@@ -336,13 +339,15 @@ async def update_special_day(
         HTTPException 422: Validation error in request body.
     """
     # Verify admin privileges
-    local_user = db.query(User).filter(User.auth0_id == current_user.id).first()
+    result = await db.execute(select(User).where(User.auth0_id == current_user.id))
+    local_user = result.scalar_one_or_none()
     if not local_user or (local_user.role != UserRole.ADMIN and local_user.role != UserRole.SUPER_ADMIN):
-        user_gym = db.query(UserGym).filter(
+        result = await db.execute(select(UserGym).where(
             UserGym.user_id == local_user.id,
             UserGym.gym_id == current_gym.id,
             UserGym.role.in_([GymRoleType.ADMIN, GymRoleType.OWNER])
-        ).first()
+        ))
+        user_gym = result.scalar_one_or_none()
 
         if not user_gym:
             raise HTTPException(
@@ -373,7 +378,7 @@ async def update_special_day(
 @router.put("/date/{date}", response_model=GymSpecialHours)
 async def update_special_day_by_date(
     *,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     date: date = Path(..., description="Date (YYYY-MM-DD)"),
     special_day_in: GymSpecialHoursUpdate,
     current_user: Auth0User = Depends(get_current_user),
@@ -417,13 +422,15 @@ async def update_special_day_by_date(
         HTTPException 422: Validation error in request body or invalid date format.
     """
     # Verify admin privileges
-    local_user = db.query(User).filter(User.auth0_id == current_user.id).first()
+    result = await db.execute(select(User).where(User.auth0_id == current_user.id))
+    local_user = result.scalar_one_or_none()
     if not local_user or (local_user.role != UserRole.ADMIN and local_user.role != UserRole.SUPER_ADMIN):
-        user_gym = db.query(UserGym).filter(
+        result = await db.execute(select(UserGym).where(
             UserGym.user_id == local_user.id,
             UserGym.gym_id == current_gym.id,
             UserGym.role.in_([GymRoleType.ADMIN, GymRoleType.OWNER])
-        ).first()
+        ))
+        user_gym = result.scalar_one_or_none()
 
         if not user_gym:
             raise HTTPException(
@@ -453,7 +460,7 @@ async def update_special_day_by_date(
 @router.delete("/{special_day_id}", response_model=GymSpecialHours)
 async def delete_special_day(
     *,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     special_day_id: int = Path(..., description="ID of the special day entry"),
     current_user: Auth0User = Depends(get_current_user),
     current_gym: Gym = Depends(verify_gym_access),
@@ -483,13 +490,15 @@ async def delete_special_day(
         HTTPException 404: Gym or Special Day entry not found, or entry doesn't belong to this gym.
     """
     # Verify admin privileges
-    local_user = db.query(User).filter(User.auth0_id == current_user.id).first()
+    result = await db.execute(select(User).where(User.auth0_id == current_user.id))
+    local_user = result.scalar_one_or_none()
     if not local_user or (local_user.role != UserRole.ADMIN and local_user.role != UserRole.SUPER_ADMIN):
-        user_gym = db.query(UserGym).filter(
+        result = await db.execute(select(UserGym).where(
             UserGym.user_id == local_user.id,
             UserGym.gym_id == current_gym.id,
             UserGym.role.in_([GymRoleType.ADMIN, GymRoleType.OWNER])
-        ).first()
+        ))
+        user_gym = result.scalar_one_or_none()
 
         if not user_gym:
             raise HTTPException(

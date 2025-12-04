@@ -25,7 +25,7 @@ router = APIRouter()
 @router.post("/register/{session_id}", response_model=ClassParticipationSchema)
 async def register_for_class(
     session_id: int = Path(..., description="ID of the session"),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: Gym = Depends(verify_gym_access),
     user: Auth0User = Security(auth.get_user, scopes=["resource:write"]),
     redis_client: Redis = Depends(get_redis_client)
@@ -75,7 +75,7 @@ async def register_for_class(
 async def register_member_for_class(
     session_id: int = Path(..., description="ID of the session"),
     member_id: int = Path(..., description="ID of the member to register"),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: Gym = Depends(verify_gym_access),
     user: Auth0User = Security(auth.get_user, scopes=["resource:admin"]),
     redis_client: Redis = Depends(get_redis_client)
@@ -129,7 +129,7 @@ async def register_member_for_class(
 async def cancel_my_registration(
     session_id: int = Path(..., description="ID of the session"),
     reason: Optional[str] = Query(None, description="Reason for cancellation"),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: Gym = Depends(verify_gym_access),
     user: Auth0User = Security(auth.get_user, scopes=["resource:write"]),
     redis_client: Redis = Depends(get_redis_client)
@@ -180,7 +180,7 @@ async def cancel_member_registration(
     session_id: int = Path(..., description="ID of the session"),
     member_id: int = Path(..., description="ID of the member whose registration to cancel"),
     reason: Optional[str] = Query(None, description="Reason for cancellation"),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: Gym = Depends(verify_gym_access),
     user: Auth0User = Security(auth.get_user, scopes=["resource:admin"]),
     redis_client: Redis = Depends(get_redis_client)
@@ -232,7 +232,7 @@ async def cancel_member_registration(
 async def mark_attendance(
     session_id: int = Path(..., description="ID of the session"),
     member_id: int = Path(..., description="ID of the member who attended"),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: Gym = Depends(verify_gym_access),
     current_user: Auth0User = Security(auth.get_user, scopes=["resource:admin"]),
     redis_client: Redis = Depends(get_redis_client)
@@ -283,7 +283,7 @@ async def mark_attendance(
 async def mark_no_show(
     session_id: int = Path(..., description="ID of the session"),
     member_id: int = Path(..., description="ID of the member who was a no-show"),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: Gym = Depends(verify_gym_access),
     user: Auth0User = Security(auth.get_user, scopes=["resource:admin"]),
     redis_client: Redis = Depends(get_redis_client)
@@ -331,7 +331,7 @@ async def get_session_participants(
     session_id: int = Path(..., description="ID of the session"),
     skip: int = 0,
     limit: int = 100,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: Gym = Depends(verify_gym_access),
     current_user: Auth0User = Security(auth.get_user, scopes=["resource:admin"]),
     redis_client: Redis = Depends(get_redis_client)
@@ -390,7 +390,7 @@ async def get_session_participants(
 async def get_my_upcoming_classes(
     skip: int = 0,
     limit: int = 100,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: Gym = Depends(verify_gym_access),
     user: Auth0User = Security(auth.get_user, scopes=["resource:read"]),
     redis_client: Redis = Depends(get_redis_client)
@@ -460,7 +460,7 @@ async def get_my_upcoming_classes(
 async def get_my_upcoming_classes_simple(
     skip: int = 0,
     limit: int = 100,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: Gym = Depends(verify_gym_access),
     user: Auth0User = Security(auth.get_user, scopes=["resource:read"]),
     redis_client: Redis = Depends(get_redis_client)
@@ -545,7 +545,7 @@ async def get_member_upcoming_classes(
     member_id: int = Path(..., description="ID of the member"),
     skip: int = 0,
     limit: int = 100,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: Gym = Depends(verify_gym_access),
     user: Auth0User = Security(auth.get_user, scopes=["resource:admin"]),
     redis_client: Redis = Depends(get_redis_client)
@@ -613,7 +613,7 @@ async def get_member_attendance_history(
     end_date: Optional[date] = Query(None, description="End date for filtering (inclusive). Format: YYYY-MM-DD (e.g., 2025-08-15)"),
     skip: int = Query(0, ge=0, description="Number of records to skip for pagination"),
     limit: int = Query(20, ge=1, le=100, description="Maximum number of records to return (1-100)"),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: Gym = Depends(verify_gym_access),
     current_user: Auth0User = Security(auth.get_user, scopes=["resource:admin"]),
     redis_client: Redis = Depends(get_redis_client)
@@ -730,7 +730,8 @@ async def get_member_attendance_history(
     ```
     """
     # Verificar que el miembro pertenece al gimnasio actual
-    member = db.query(Member).filter(Member.id == member_id, Member.gym_id == current_gym.id).first()
+    result = await db.execute(select(Member).where(Member.id == member_id, Member.gym_id == current_gym.id))
+    member = result.scalar_one_or_none()
     if not member:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -774,7 +775,7 @@ async def get_my_attendance_history(
     end_date: Optional[date] = Query(None, description="End date for filtering (inclusive). Format: YYYY-MM-DD (e.g., 2025-08-15)"),
     skip: int = Query(0, ge=0, description="Number of records to skip for pagination"),
     limit: int = Query(20, ge=1, le=100, description="Maximum number of records to return (1-100)"),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: Gym = Depends(verify_gym_access),
     current_user: Auth0User = Security(auth.get_user, scopes=["resource:read"]),
     redis_client: Redis = Depends(get_redis_client)
@@ -924,7 +925,7 @@ async def get_my_participation_status(
     start_date: date = Query(..., description="Start date for filtering (required). Format: YYYY-MM-DD (e.g., 2025-01-15)"),
     end_date: date = Query(..., description="End date for filtering (required). Format: YYYY-MM-DD (e.g., 2025-08-15)"),
     session_ids: Optional[str] = Query(None, description="Comma-separated list of specific session IDs to filter (optional)"),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: Gym = Depends(verify_gym_access),
     user: Auth0User = Security(auth.get_user, scopes=["resource:read"]),
     redis_client: Redis = Depends(get_redis_client)

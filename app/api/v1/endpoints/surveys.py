@@ -8,10 +8,10 @@ from typing import List, Optional
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query, Body, Path, status, Security, BackgroundTasks, Response
 from fastapi.responses import StreamingResponse
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 from redis.asyncio import Redis
 
-from app.db.session import get_db
+from app.db.session import get_async_db
 from app.db.redis_client import get_redis_client
 from app.core.auth0_fastapi import get_current_user, Auth0User, auth
 from app.core.tenant import verify_gym_access, GymSchema
@@ -45,7 +45,7 @@ router = APIRouter()
 @router.get("/available", response_model=List[SurveySchema])
 async def get_available_surveys(
     *,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: GymSchema = Depends(verify_gym_access),
     current_user: Auth0User = Security(auth.get_user, scopes=["resource:read"]),
     redis_client: Redis = Depends(get_redis_client)
@@ -61,7 +61,8 @@ async def get_available_surveys(
     """
     # Get internal user ID
     auth0_id = current_user.id
-    user = db.query(User).filter(User.auth0_id == auth0_id).first()
+    result = await db.execute(select(User).where(User.auth0_id == auth0_id))
+    user = result.scalar_one_or_none()
     user_id = user.id if user else None
     
     surveys = await survey_service.get_available_surveys(
@@ -77,7 +78,7 @@ async def get_available_surveys(
 @router.post("/responses", response_model=ResponseSchema, status_code=status.HTTP_201_CREATED)
 async def submit_survey_response(
     *,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     response_in: ResponseCreate,
     current_gym: GymSchema = Depends(verify_gym_access),
     current_user: Auth0User = Security(auth.get_user, scopes=["resource:write"]),
@@ -98,7 +99,8 @@ async def submit_survey_response(
     """
     # Get internal user ID
     auth0_id = current_user.id
-    user = db.query(User).filter(User.auth0_id == auth0_id).first()
+    result = await db.execute(select(User).where(User.auth0_id == auth0_id))
+    user = result.scalar_one_or_none()
     
     if not user:
         raise HTTPException(
@@ -120,7 +122,7 @@ async def submit_survey_response(
 @router.get("/my-responses", response_model=List[ResponseWithAnswers])
 async def get_my_survey_responses(
     *,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=100),
     current_gym: GymSchema = Depends(verify_gym_access),
@@ -136,7 +138,8 @@ async def get_my_survey_responses(
     """
     # Get internal user ID
     auth0_id = current_user.id
-    user = db.query(User).filter(User.auth0_id == auth0_id).first()
+    result = await db.execute(select(User).where(User.auth0_id == auth0_id))
+    user = result.scalar_one_or_none()
     
     if not user:
         return []
@@ -157,7 +160,7 @@ async def get_my_survey_responses(
 @router.get("/templates", response_model=List[TemplateSchema])
 async def get_survey_templates(
     *,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     category: Optional[str] = Query(None),
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=100),
@@ -191,7 +194,7 @@ async def get_survey_templates(
 @router.post("/from-template", response_model=SurveySchema, status_code=status.HTTP_201_CREATED)
 async def create_survey_from_template(
     *,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     template_data: CreateFromTemplate,
     current_gym: GymSchema = Depends(verify_gym_access),
     current_user: Auth0User = Security(auth.get_user, scopes=["resource:write"]),
@@ -224,7 +227,8 @@ async def create_survey_from_template(
     
     # Get internal user ID
     auth0_id = current_user.id
-    user = db.query(User).filter(User.auth0_id == auth0_id).first()
+    result = await db.execute(select(User).where(User.auth0_id == auth0_id))
+    user = result.scalar_one_or_none()
     
     if not user:
         raise HTTPException(
@@ -254,7 +258,7 @@ async def create_survey_from_template(
 @router.get("/my-surveys", response_model=List[SurveySchema])
 async def get_gym_surveys(
     *,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     status_filter: Optional[SurveyStatus] = Query(None),
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=100),
@@ -302,7 +306,7 @@ async def get_gym_surveys(
 @router.get("/{survey_id}", response_model=SurveyWithQuestions)
 async def get_survey_details(
     *,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     survey_id: int = Path(..., ge=1),
     current_gym: GymSchema = Depends(verify_gym_access),
     current_user: Auth0User = Security(auth.get_user, scopes=["resource:read"])
@@ -329,7 +333,8 @@ async def get_survey_details(
     
     # Check permissions
     auth0_id = current_user.id
-    user = db.query(User).filter(User.auth0_id == auth0_id).first()
+    result = await db.execute(select(User).where(User.auth0_id == auth0_id))
+    user = result.scalar_one_or_none()
     
     # Regular users can only see published surveys
     if survey.status != SurveyStatus.PUBLISHED:
@@ -358,7 +363,7 @@ async def get_survey_details(
 @router.post("/", response_model=SurveySchema, status_code=status.HTTP_201_CREATED)
 async def create_survey(
     *,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     survey_in: SurveyCreate,
     current_gym: GymSchema = Depends(verify_gym_access),
     current_user: Auth0User = Security(auth.get_user, scopes=["resource:write"]),
@@ -392,7 +397,8 @@ async def create_survey(
     
     # Get internal user ID
     auth0_id = current_user.id
-    user = db.query(User).filter(User.auth0_id == auth0_id).first()
+    result = await db.execute(select(User).where(User.auth0_id == auth0_id))
+    user = result.scalar_one_or_none()
     
     if not user:
         raise HTTPException(
@@ -414,7 +420,7 @@ async def create_survey(
 @router.put("/{survey_id}", response_model=SurveySchema)
 async def update_survey(
     *,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     survey_id: int = Path(..., ge=1),
     survey_in: SurveyUpdate,
     current_gym: GymSchema = Depends(verify_gym_access),
@@ -447,7 +453,8 @@ async def update_survey(
     
     # Get internal user ID
     auth0_id = current_user.id
-    user = db.query(User).filter(User.auth0_id == auth0_id).first()
+    result = await db.execute(select(User).where(User.auth0_id == auth0_id))
+    user = result.scalar_one_or_none()
     
     # Check permissions
     user_permissions = getattr(current_user, "permissions", []) or []
@@ -481,7 +488,7 @@ async def update_survey(
 @router.post("/{survey_id}/publish", response_model=SurveySchema)
 async def publish_survey(
     *,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     survey_id: int = Path(..., ge=1),
     current_gym: GymSchema = Depends(verify_gym_access),
     current_user: Auth0User = Security(auth.get_user, scopes=["resource:write"]),
@@ -514,7 +521,8 @@ async def publish_survey(
     
     # Get internal user ID and check permissions
     auth0_id = current_user.id
-    user = db.query(User).filter(User.auth0_id == auth0_id).first()
+    result = await db.execute(select(User).where(User.auth0_id == auth0_id))
+    user = result.scalar_one_or_none()
     
     user_permissions = getattr(current_user, "permissions", []) or []
     is_admin = "resource:admin" in user_permissions
@@ -539,7 +547,7 @@ async def publish_survey(
 @router.post("/{survey_id}/close", response_model=SurveySchema)
 async def close_survey(
     *,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     survey_id: int = Path(..., ge=1),
     current_gym: GymSchema = Depends(verify_gym_access),
     current_user: Auth0User = Security(auth.get_user, scopes=["resource:write"]),
@@ -568,7 +576,8 @@ async def close_survey(
     
     # Get internal user ID and check permissions
     auth0_id = current_user.id
-    user = db.query(User).filter(User.auth0_id == auth0_id).first()
+    result = await db.execute(select(User).where(User.auth0_id == auth0_id))
+    user = result.scalar_one_or_none()
     
     user_permissions = getattr(current_user, "permissions", []) or []
     is_admin = "resource:admin" in user_permissions
@@ -593,7 +602,7 @@ async def close_survey(
 @router.delete("/{survey_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_survey(
     *,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     survey_id: int = Path(..., ge=1),
     current_gym: GymSchema = Depends(verify_gym_access),
     current_user: Auth0User = Security(auth.get_user, scopes=["resource:admin"]),
@@ -619,7 +628,8 @@ async def delete_survey(
     
     # Get internal user ID and check permissions
     auth0_id = current_user.id
-    user = db.query(User).filter(User.auth0_id == auth0_id).first()
+    result = await db.execute(select(User).where(User.auth0_id == auth0_id))
+    user = result.scalar_one_or_none()
     
     user_permissions = getattr(current_user, "permissions", []) or []
     is_admin = "resource:admin" in user_permissions
@@ -652,7 +662,7 @@ async def delete_survey(
 @router.get("/{survey_id}/statistics", response_model=SurveyStatistics)
 async def get_survey_statistics(
     *,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     survey_id: int = Path(..., ge=1),
     current_gym: GymSchema = Depends(verify_gym_access),
     current_user: Auth0User = Security(auth.get_user, scopes=["resource:read"]),
@@ -684,7 +694,8 @@ async def get_survey_statistics(
     
     # Get internal user ID and check permissions
     auth0_id = current_user.id
-    user = db.query(User).filter(User.auth0_id == auth0_id).first()
+    result = await db.execute(select(User).where(User.auth0_id == auth0_id))
+    user = result.scalar_one_or_none()
     
     user_permissions = getattr(current_user, "permissions", []) or []
     is_admin = "resource:admin" in user_permissions
@@ -709,7 +720,7 @@ async def get_survey_statistics(
 @router.get("/{survey_id}/responses", response_model=List[ResponseWithAnswers])
 async def get_survey_responses(
     *,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     survey_id: int = Path(..., ge=1),
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=100),
@@ -745,7 +756,8 @@ async def get_survey_responses(
     
     # Get internal user ID and check permissions
     auth0_id = current_user.id
-    user = db.query(User).filter(User.auth0_id == auth0_id).first()
+    result = await db.execute(select(User).where(User.auth0_id == auth0_id))
+    user = result.scalar_one_or_none()
     
     user_permissions = getattr(current_user, "permissions", []) or []
     is_admin = "resource:admin" in user_permissions
@@ -772,7 +784,7 @@ async def get_survey_responses(
 @router.get("/{survey_id}/export")
 async def export_survey_results(
     *,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     survey_id: int = Path(..., ge=1),
     format: str = Query("csv", regex="^(csv|excel)$"),
     current_gym: GymSchema = Depends(verify_gym_access),
@@ -804,7 +816,8 @@ async def export_survey_results(
     
     # Get internal user ID and check permissions
     auth0_id = current_user.id
-    user = db.query(User).filter(User.auth0_id == auth0_id).first()
+    result = await db.execute(select(User).where(User.auth0_id == auth0_id))
+    user = result.scalar_one_or_none()
     
     user_permissions = getattr(current_user, "permissions", []) or []
     is_admin = "resource:admin" in user_permissions

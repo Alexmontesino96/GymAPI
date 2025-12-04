@@ -11,11 +11,11 @@ from fastapi.openapi.models import OAuthFlows, OAuthFlowImplicit
 from jose import jwt, JWTError
 from pydantic import BaseModel, Field, ValidationError
 from typing_extensions import TypedDict
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.services.user import user_service
-from app.db.session import get_db
+from app.db.session import get_async_db
 from app.db.redis_client import get_redis_client, redis
 
 # Import circular seguro - solo para type hints
@@ -457,13 +457,13 @@ auth = initialize_auth0()
 
 # Función de ayuda para obtener usuario sin permisos específicos
 async def get_current_user(
-    db: Session = Depends(get_db), 
+    db: AsyncSession = Depends(get_async_db),
     user: Auth0User = Security(auth.get_user, scopes=[]),
     redis_client: redis.Redis = Depends(get_redis_client)
 ):
     """
     Obtiene el usuario actual autenticado y asegura la sincronización con la BD local.
-    
+
     Esta función actúa como la dependencia principal para obtener el usuario.
     Después de validar el token con Auth0, llama a user_service para crear
     o actualizar el usuario en la base de datos local (sincronización Just-in-Time).
@@ -471,13 +471,13 @@ async def get_current_user(
     if user is None:
         raise Auth0UnauthenticatedException(detail="No se pudieron validar las credenciales")
 
-    # --- Sincronización Just-in-Time ---    
+    # --- Sincronización Just-in-Time ---
     try:
         # Primero verificar si el usuario ya existe en caché
         if redis_client:
             cached_user = await user_service.get_user_by_auth0_id_cached(
-                db=db, 
-                auth0_id=user.id, 
+                db=db,
+                auth0_id=user.id,
                 redis_client=redis_client
             )
             if cached_user:
@@ -493,7 +493,7 @@ async def get_current_user(
             "picture": getattr(user, "picture", None),
             "email_verified": getattr(user, "email_verified", None)
         }
-        
+
         # Llama al servicio para crear o actualizar el usuario localmente (con QR)
         db_user = await user_service.create_or_update_auth0_user_async(db, auth0_user_data)
         
@@ -514,7 +514,7 @@ async def get_current_user(
 
 
 async def get_current_db_user(
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_user: Auth0User = Depends(get_current_user)
 ) -> "User":
     """
@@ -530,7 +530,7 @@ async def get_current_db_user(
     Raises:
         HTTPException: Si el usuario no existe en la BD local
     """
-    db_user = user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
+    db_user = await user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
 
     if not db_user:
         raise Auth0UnauthenticatedException(

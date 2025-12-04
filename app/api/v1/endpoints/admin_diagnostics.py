@@ -5,9 +5,10 @@ Permite verificar el estado de Stream Chat y detectar inconsistencias.
 
 from typing import Dict, Any, List
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, func
 
-from app.db.session import get_db
+from app.db.session import get_async_db
 from app.core.auth import get_current_user
 from app.models.user import User
 from app.models.chat import ChatRoom
@@ -20,7 +21,7 @@ router = APIRouter()
 async def get_stream_health(
     gym_id: int,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_async_db)
 ):
     """
     Obtiene el estado de salud de la integración con Stream Chat.
@@ -37,13 +38,15 @@ async def get_stream_health(
         chat_service = ChatService()
         
         # Estadísticas básicas de BD local
-        total_rooms = db.query(ChatRoom).filter(ChatRoom.gym_id == gym_id).count()
-        direct_rooms = db.query(ChatRoom).filter(
-            ChatRoom.gym_id == gym_id, 
+        result = await db.execute(select(func.count()).select_from(ChatRoom).where(ChatRoom.gym_id == gym_id))
+        total_rooms = result.scalar() or 0
+        result = await db.execute(select(func.count()).select_from(ChatRoom).where(
+            ChatRoom.gym_id == gym_id,
             ChatRoom.is_direct == True
-        ).count()
+        ))
+        direct_rooms = result.scalar() or 0
         group_rooms = total_rooms - direct_rooms
-        
+
         # Verificar conectividad con Stream
         stream_connected = False
         stream_error = None
@@ -53,16 +56,17 @@ async def get_stream_health(
             stream_connected = bool(test_response)
         except Exception as e:
             stream_error = str(e)
-        
+
         # Estadísticas de caché
         from app.services.chat import channel_cache, user_token_cache
         cache_stats = {
             "channel_cache_size": len(channel_cache),
             "token_cache_size": len(user_token_cache)
         }
-        
+
         # Verificar algunas salas para inconsistencias
-        sample_rooms = db.query(ChatRoom).filter(ChatRoom.gym_id == gym_id).limit(5).all()
+        result = await db.execute(select(ChatRoom).where(ChatRoom.gym_id == gym_id).limit(5))
+        sample_rooms = result.scalars().all()
         inconsistencies = []
         
         for room in sample_rooms:
@@ -115,7 +119,7 @@ async def trigger_stream_cleanup(
     gym_id: int,
     dry_run: bool = True,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_async_db)
 ):
     """
     Ejecuta limpieza de inconsistencias de Stream Chat.

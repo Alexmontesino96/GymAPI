@@ -9,7 +9,7 @@ la gestión de miembros asociados a cada gimnasio.
 from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Security, Path, status, Request, Body
 from pydantic import EmailStr
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.user import User, UserRole
 from app.models.gym import Gym
 from app.models.user_gym import UserGym, GymRoleType
@@ -18,7 +18,7 @@ from app.services.user import user_service
 from app.schemas.gym import Gym as GymSchema, GymCreate, GymUpdate, GymStatusUpdate, GymWithStats, UserGymMembershipSchema, UserGymRoleUpdate, UserGymSchema, GymPublicSchema, GymDetailedPublicSchema
 from app.core.auth0_fastapi import auth, get_current_user, Auth0User
 from app.core.tenant import verify_gym_access, verify_admin_role
-from app.db.session import get_db
+from app.db.session import get_async_db
 from app.db.redis_client import get_redis_client, redis
 from app.services.cache_service import cache_service
 import logging
@@ -36,7 +36,7 @@ router = APIRouter()
 @router.post("/", response_model=GymSchema, status_code=status.HTTP_201_CREATED)
 async def create_gym(
     *,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     gym_in: GymCreate,
     current_user: Auth0User = Security(auth.get_user, scopes=["tenant:admin"])
 ) -> Any:
@@ -77,7 +77,7 @@ async def create_gym(
 @router.get("/", response_model=List[GymPublicSchema])
 async def read_gyms_public(
     *,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     skip: int = 0,
     limit: int = 100,
     is_active: Optional[bool] = True  # Por defecto solo gimnasios activos para público
@@ -107,7 +107,7 @@ async def read_gyms_public(
 @router.get("/{gym_id}/details", response_model=GymDetailedPublicSchema)
 async def get_gym_details_public(
     *,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     gym_id: int = Path(..., title="ID del gimnasio")
 ) -> Any:
     """
@@ -142,7 +142,7 @@ async def get_gym_details_public(
 @router.get("/my", response_model=List[UserGymMembershipSchema])
 async def read_my_gyms(
     *,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     skip: int = 0,
     limit: int = 100,
     current_user: Auth0User = Depends(auth.get_user)
@@ -184,7 +184,7 @@ async def read_my_gyms(
 @router.get("/users", response_model=List[dict])
 async def read_current_gym_users(
     *,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     role: Optional[GymRoleType] = Query(None, title="Filtrar por rol específico"),
     skip: int = 0,
     limit: int = 100,
@@ -232,7 +232,7 @@ async def read_current_gym_users(
 @router.post("/users/{user_id}", status_code=status.HTTP_201_CREATED)
 async def add_user_to_current_gym(
     *,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     user_id: int = Path(..., title="ID del usuario a añadir"),
     # Inyectar redis_client
     redis_client: redis.Redis = Depends(get_redis_client), 
@@ -318,7 +318,7 @@ async def add_user_to_current_gym(
 @router.post("/users/by-email", status_code=status.HTTP_201_CREATED)
 async def add_user_to_current_gym_by_email(
     *,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     email: EmailStr = Body(..., title="Email del usuario a añadir"),
     # Inyectar redis_client
     redis_client: redis.Redis = Depends(get_redis_client), 
@@ -407,7 +407,7 @@ async def add_user_to_current_gym_by_email(
 @router.delete("/users/{user_id}", status_code=status.HTTP_200_OK)
 async def remove_user_from_current_gym(
     *,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     user_id: int = Path(..., title="ID del usuario a eliminar"),
     # Inyectar redis_client
     redis_client: redis.Redis = Depends(get_redis_client),
@@ -502,7 +502,7 @@ async def remove_user_from_current_gym(
     # Eliminar usuario del gimnasio
     try:
         gym_service.remove_user_from_gym(db, gym_id=gym_id, user_id=user_id)
-        db.commit()
+        await db.commit()
         
         # Invalidar cachés relevantes (usando el redis_client inyectado)
         if redis_client and target_role:
@@ -525,7 +525,7 @@ async def remove_user_from_current_gym(
             "gym_id": gym_id
         }
     except HTTPException as http_exc:
-        db.rollback()
+        await db.rollback()
         raise http_exc
     except Exception as e:
          raise HTTPException(
@@ -540,7 +540,7 @@ async def remove_user_from_current_gym(
 @router.get("/{gym_id}", response_model=GymWithStats)
 async def read_gym(
     *,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     gym_id: int = Path(..., title="ID del gimnasio"),
     current_user: Auth0User = Security(auth.get_user, scopes=["tenant:read"])
 ) -> Any:
@@ -578,7 +578,7 @@ async def read_gym(
 @router.put("/{gym_id}", response_model=GymSchema)
 async def update_gym(
     *,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     gym_id: int = Path(..., title="ID del gimnasio"),
     gym_in: GymUpdate,
     current_user: Auth0User = Security(auth.get_user, scopes=["tenant:admin"])
@@ -623,7 +623,7 @@ async def update_gym(
 @router.patch("/{gym_id}/status", response_model=GymSchema)
 async def update_gym_status(
     *,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     gym_id: int = Path(..., title="ID del gimnasio"),
     status_in: GymStatusUpdate,
     current_user: Auth0User = Security(auth.get_user, scopes=["tenant:admin"])
@@ -665,7 +665,7 @@ async def update_gym_status(
 @router.delete("/{gym_id}/users/{user_id}", status_code=status.HTTP_200_OK)
 async def remove_user_from_gym_by_superadmin(
     *,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     gym_id: int = Path(..., title="ID del gimnasio"),
     user_id: int = Path(..., title="ID del usuario a eliminar"),
     # Verificar que quien llama es SUPER_ADMIN
@@ -710,7 +710,7 @@ async def remove_user_from_gym_by_superadmin(
     # Eliminar usuario del gimnasio (el servicio maneja la lógica de no eliminar SUPER_ADMIN)
     try:
         gym_service.remove_user_from_gym(db, gym_id=gym_id, user_id=user_id)
-        db.commit()
+        await db.commit()
         
         # Obtener redis_client para poder invalidar
         redis_client = await get_redis_client()
@@ -725,10 +725,10 @@ async def remove_user_from_gym_by_superadmin(
             "gym_id": gym_id
         }
     except HTTPException as http_exc:
-        db.rollback()
+        await db.rollback()
         raise http_exc
     except Exception as e:
-        db.rollback()
+        await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error interno al eliminar usuario del gimnasio: {e}"
@@ -738,7 +738,7 @@ async def remove_user_from_gym_by_superadmin(
 @router.get("/{gym_id}/users", response_model=List[dict])
 async def read_gym_users_by_superadmin(
     *,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     gym_id: int = Path(..., title="ID del gimnasio"),
     role: Optional[GymRoleType] = Query(None, title="Filtrar por rol específico"),
     skip: int = 0,
@@ -795,7 +795,7 @@ async def read_gym_users_by_superadmin(
 @router.put("/users/{user_id}/role", response_model=UserGymSchema)
 async def update_user_gym_role(
     *,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     user_id: int = Path(..., title="ID del usuario a modificar"),
     role_in: UserGymRoleUpdate,
     # Inyectar redis_client
@@ -875,8 +875,8 @@ async def update_user_gym_role(
     )
 
     # Commit del cambio de rol en la base de datos
-    db.commit()
-    db.refresh(updated_user_gym)
+    await db.commit()
+    await db.refresh(updated_user_gym)
 
     # Si el rol cambió, actualizar en Auth0
     if old_role != role_in.role:
@@ -905,7 +905,8 @@ async def update_user_gym_role(
         # Si cambió el rol, invalidar cachés adicionales
         if old_role != role_in.role:
             # Obtener usuario para invalidar la caché de su rol global
-            target_user = db.query(User).filter(User.id == user_id).first()
+            result = await db.execute(select(User).where(User.id == user_id))
+    target_user = result.scalar_one_or_none()
             if target_user:
                 # Invalidar caché del usuario individual
                 await cache_service.invalidate_user_caches(redis_client, user_id=user_id)
@@ -919,7 +920,7 @@ async def update_user_gym_role(
 @router.put("/{gym_id}/owner", response_model=UserGymSchema)
 async def assign_gym_owner(
     *,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     gym_id: int = Path(..., title="ID del gimnasio"),
     user_id: int = Query(..., title="ID del usuario a asignar como OWNER"),
     redis_client: redis.Redis = Depends(get_redis_client),
@@ -996,8 +997,8 @@ async def assign_gym_owner(
             db.add(user_gym)
             logger.info(f"Añadiendo usuario {user_id} como OWNER al gimnasio {gym_id}")
         
-        db.commit()
-        db.refresh(user_gym)
+        await db.commit()
+        await db.refresh(user_gym)
         
         # Actualizar caché
         if redis_client:
@@ -1013,7 +1014,7 @@ async def assign_gym_owner(
         return user_gym
         
     except Exception as e:
-        db.rollback()
+        await db.rollback()
         logger.error(f"Error al asignar OWNER: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

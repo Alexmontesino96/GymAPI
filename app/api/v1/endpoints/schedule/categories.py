@@ -7,7 +7,7 @@ from app.core.tenant import verify_gym_access, verify_trainer_role, verify_admin
 from fastapi import APIRouter, Depends, Body, Path, Security, HTTPException, status, Request
 from typing import List, Optional, Any
 from app.services.schedule import category_service
-from app.db.session import get_db
+from app.db.session import get_async_db
 from app.core.auth0_fastapi import Auth0User, auth
 from app.services.user import user_service
 from app.db.redis_client import get_redis_client
@@ -19,7 +19,7 @@ router = APIRouter()
 async def get_categories(
     request: Request,
     active_only: bool = True,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: GymSchema = Depends(verify_gym_access),
     user: Auth0User = Security(auth.get_user, scopes=["resource:read"]),
     redis_client: Redis = Depends(get_redis_client)
@@ -57,7 +57,7 @@ async def get_categories(
 async def get_category(
     request: Request,
     category_id: int = Path(..., description="ID of the category"),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: GymSchema = Depends(verify_gym_access),
     user: Auth0User = Security(auth.get_user, scopes=["resource:read"]),
     redis_client: Redis = Depends(get_redis_client)
@@ -95,7 +95,7 @@ async def get_category(
 async def create_category(
     request: Request,
     category_data: ClassCategoryCustomCreate = Body(...),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: GymSchema = Depends(verify_trainer_role), # Requires TRAINER or higher
     user: Auth0User = Security(auth.get_user, scopes=["resource:write"]),
     redis_client: Redis = Depends(get_redis_client)
@@ -152,7 +152,7 @@ async def update_category(
     request: Request,
     category_id: int = Path(..., description="ID of the category"),
     category_data: ClassCategoryCustomUpdate = Body(...),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: GymSchema = Depends(verify_trainer_role), # Requires TRAINER or higher
     user: Auth0User = Security(auth.get_user, scopes=["resource:write"]),
     redis_client: Redis = Depends(get_redis_client)
@@ -206,7 +206,7 @@ async def update_category(
 async def delete_category(
     request: Request,
     category_id: int = Path(..., description="ID of the category"),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: GymSchema = Depends(verify_admin_role), # Requires ADMIN role
     user: Auth0User = Security(auth.get_user, scopes=["resource:admin"]),
     redis_client: Redis = Depends(get_redis_client)

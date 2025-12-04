@@ -14,11 +14,11 @@ for secure access. Each endpoint is protected with appropriate permission scopes
 
 from typing import List, Dict, Any, Optional
 from fastapi import APIRouter, Depends, HTTPException, Body, Path, Query, status, Security, Request, Header
-from sqlalchemy.orm import Session
-from sqlalchemy import and_
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import and_, select
 import logging # Import logging
 
-from app.db.session import get_db
+from app.db.session import get_async_db
 from app.core.auth0_fastapi import get_current_user, Auth0User, auth
 from app.core.config import get_settings
 from app.core.tenant import verify_gym_admin_access, verify_gym_access, verify_gym_trainer_access, get_current_gym, get_tenant_id
@@ -43,7 +43,7 @@ logger = logging.getLogger("chat_api") # Initialize logger at the module level
 @router.get("/token", response_model=StreamTokenResponse)
 async def get_stream_token(
     *,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: GymSchema = Depends(verify_gym_access),
     current_user: Auth0User = Security(auth.get_user, scopes=["resource:read"])
 ):
@@ -75,7 +75,8 @@ async def get_stream_token(
         HTTPException 404: User profile not found in the local database.
     """
     # Get local user from auth0_id
-    internal_user = db.query(User).filter(User.auth0_id == current_user.id).first()
+    result = await db.execute(select(User).where(User.auth0_id == current_user.id))
+    internal_user = result.scalar_one_or_none()
     if not internal_user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -104,7 +105,7 @@ async def get_stream_token(
 async def create_chat_room(
     request: Request,
     *,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     room_data: ChatRoomCreate,
     current_gym: GymSchema = Depends(verify_gym_trainer_access),
     current_user: Auth0User = Security(auth.get_user, scopes=["resource:write"])
@@ -140,7 +141,8 @@ async def create_chat_room(
         HTTPException 500: Internal error during room creation (e.g., Stream API error).
     """
     # Get local user from auth0_id
-    internal_user = db.query(User).filter(User.auth0_id == current_user.id).first()
+    result = await db.execute(select(User).where(User.auth0_id == current_user.id))
+    internal_user = result.scalar_one_or_none()
     if not internal_user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -158,7 +160,7 @@ async def create_chat_room(
 async def get_direct_chat(
     request: Request,
     *,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     other_user_id: int = Path(..., title="Internal user ID for direct chat"),
     current_gym: GymSchema = Depends(verify_gym_access),
     current_user: Auth0User = Security(auth.get_user, scopes=["resource:read"])
@@ -190,7 +192,8 @@ async def get_direct_chat(
         HTTPException 500: Internal error during room creation/retrieval.
     """
     # Get local user from auth0_id
-    internal_user = db.query(User).filter(User.auth0_id == current_user.id).first()
+    result = await db.execute(select(User).where(User.auth0_id == current_user.id))
+    internal_user = result.scalar_one_or_none()
     if not internal_user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -205,10 +208,11 @@ async def get_direct_chat(
 
     # Verificar que el otro usuario también pertenece al mismo gimnasio
     from app.models.user_gym import UserGym
-    other_user_membership = db.query(UserGym).filter(
+    result = await db.execute(select(UserGym).where(
         UserGym.user_id == other_user_id,
         UserGym.gym_id == current_gym.id
-    ).first()
+    ))
+    other_user_membership = result.scalar_one_or_none()
     
     if not other_user_membership:
         raise HTTPException(
@@ -226,7 +230,7 @@ async def get_direct_chat(
 async def get_event_chat(
     request: Request,
     *,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     event_id: int = Path(..., title="Event ID"),
     current_gym: GymSchema = Depends(verify_gym_access),
     current_user: Auth0User = Security(auth.get_user, scopes=["resource:read"])
@@ -262,7 +266,8 @@ async def get_event_chat(
     start_time = time.time()
 
     # Get local user from auth0_id
-    internal_user = db.query(User).filter(User.auth0_id == current_user.id).first()
+    result = await db.execute(select(User).where(User.auth0_id == current_user.id))
+    internal_user = result.scalar_one_or_none()
     if not internal_user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -274,7 +279,8 @@ async def get_event_chat(
     try:
         # Check if event exists and belongs to current gym
         from app.models.event import Event
-        event = db.query(Event).filter(Event.id == event_id).first()
+        result = await db.execute(select(Event).where(Event.id == event_id))
+        event = result.scalar_one_or_none()
 
         if not event:
             logger.warning(f"Event {event_id} not found")
@@ -291,10 +297,11 @@ async def get_event_chat(
         from app.models.event import EventParticipation, EventParticipationStatus
         
         # Obtener membresía del usuario para verificar su rol
-        user_membership = db.query(UserGym).filter(
+        result = await db.execute(select(UserGym).where(
             UserGym.user_id == internal_user.id,
             UserGym.gym_id == current_gym.id
-        ).first()
+        ))
+        user_membership = result.scalar_one_or_none()
         
         # Si es trainer, admin, o creador del evento, permitir acceso
         is_trainer_or_admin = (user_membership and 
@@ -303,12 +310,14 @@ async def get_event_chat(
         
         if not (is_trainer_or_admin or is_event_creator):
             # Para miembros regulares, verificar inscripción
-            participation = db.query(EventParticipation).filter(
-                EventParticipation.event_id == event_id,
+            result = await db.execute(select(EventParticipation).where(
+    EventParticipation.event_id == event_id,
                 EventParticipation.member_id == internal_user.id,
                 EventParticipation.gym_id == current_gym.id,
                 EventParticipation.status == EventParticipationStatus.REGISTERED
-            ).first()
+            
+    ))
+    participation = result.scalar_one_or_none()
             
             if not participation:
                 logger.warning(f"Member {internal_user.id} attempted to access event {event_id} chat without registration")
@@ -357,7 +366,7 @@ async def get_event_chat(
 async def add_member_to_room(
     request: Request,
     *,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     room_id: int = Path(..., title="Local Chat room ID from DB"),
     user_id: int = Path(..., title="Internal user ID to add"),
     current_gym: GymSchema = Depends(verify_gym_admin_access),
@@ -401,7 +410,7 @@ async def add_member_to_room(
 async def remove_member_from_room(
     request: Request,
     *,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     room_id: int = Path(..., title="Local Chat room ID from DB"),
     user_id: int = Path(..., title="Internal user ID to remove"),
     current_gym: GymSchema = Depends(verify_gym_admin_access),
@@ -450,7 +459,7 @@ async def remove_member_from_room(
 async def get_gym_chat_summary(
     request: Request,
     *,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: GymSchema = Depends(verify_gym_admin_access),
     current_user: Auth0User = Security(auth.get_user, scopes=["resource:admin"])
 ):
@@ -487,7 +496,7 @@ async def get_gym_chat_summary(
 async def get_user_chat_activity(
     request: Request,
     *,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     user_id: Optional[int] = Query(None, description="ID del usuario (opcional, por defecto el usuario actual)"),
     current_gym: GymSchema = Depends(verify_gym_access),
     current_user: Auth0User = Security(auth.get_user, scopes=["resource:read"])
@@ -502,7 +511,8 @@ async def get_user_chat_activity(
         from app.services.chat_analytics import chat_analytics_service
         
         # Obtener usuario actual
-        internal_user = db.query(User).filter(User.auth0_id == current_user.id).first()
+        result = await db.execute(select(User).where(User.auth0_id == current_user.id))
+    internal_user = result.scalar_one_or_none()
         if not internal_user:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario no encontrado")
         
@@ -512,10 +522,11 @@ async def get_user_chat_activity(
         # Si consulta otro usuario, verificar que también pertenece al mismo gimnasio
         if target_user_id != internal_user.id:
             from app.models.user_gym import UserGym
-            target_membership = db.query(UserGym).filter(
+            result = await db.execute(select(UserGym).where(
                 UserGym.user_id == target_user_id,
                 UserGym.gym_id == current_gym.id
-            ).first()
+            ))
+            target_membership = result.scalar_one_or_none()
             
             if not target_membership:
                 raise HTTPException(
@@ -536,7 +547,7 @@ async def get_user_chat_activity(
 async def get_popular_chat_times(
     request: Request,
     *,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: GymSchema = Depends(verify_gym_admin_access),
     days: int = Query(30, description="Días hacia atrás para analizar", ge=1, le=90),
     current_user: Auth0User = Security(auth.get_user, scopes=["resource:admin"])
@@ -565,7 +576,7 @@ async def get_popular_chat_times(
 async def get_event_chat_effectiveness(
     request: Request,
     *,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     event_id: int = Path(..., description="ID del evento"),
     current_gym: GymSchema = Depends(verify_gym_access),
     current_user: Auth0User = Security(auth.get_user, scopes=["resource:read"])
@@ -580,7 +591,8 @@ async def get_event_chat_effectiveness(
         
         # Verificar que el evento pertenece al gimnasio actual
         from app.models.event import Event
-        event = db.query(Event).filter(Event.id == event_id).first()
+        result = await db.execute(select(Event).where(Event.id == event_id))
+        event = result.scalar_one_or_none()
         if not event:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Evento no encontrado")
         
@@ -603,7 +615,7 @@ async def get_event_chat_effectiveness(
 async def get_chat_health_metrics(
     request: Request,
     *,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: GymSchema = Depends(verify_gym_admin_access),
     current_user: Auth0User = Security(auth.get_user, scopes=["resource:admin"])
 ):
@@ -632,7 +644,7 @@ async def get_chat_health_metrics(
 async def get_room_statistics(
     request: Request,
     *,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     room_id: int = Path(..., description="ID de la sala de chat"),
     current_gym: GymSchema = Depends(verify_gym_access),
     current_user: Auth0User = Security(auth.get_user, scopes=["resource:read"])
@@ -644,13 +656,15 @@ async def get_room_statistics(
     """
     try:
         # Verificar usuario
-        internal_user = db.query(User).filter(User.auth0_id == current_user.id).first()
+        result = await db.execute(select(User).where(User.auth0_id == current_user.id))
+    internal_user = result.scalar_one_or_none()
         if not internal_user:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario no encontrado")
         
         # Verificar que la sala pertenece al gimnasio actual
         from app.models.chat import ChatMember, ChatRoom
-        chat_room = db.query(ChatRoom).filter(ChatRoom.id == room_id).first()
+        result = await db.execute(select(ChatRoom).where(ChatRoom.id == room_id))
+        chat_room = result.scalar_one_or_none()
         
         if not chat_room:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, 
@@ -661,10 +675,11 @@ async def get_room_statistics(
                               detail="No tienes acceso a esta sala de chat - pertenece a otro gimnasio")
         
         # Verificar que el usuario es miembro de la sala
-        is_member = db.query(ChatMember).filter(
+        result = await db.execute(select(ChatMember).where(
             ChatMember.room_id == room_id,
             ChatMember.user_id == internal_user.id
-        ).first()
+        ))
+        is_member = result.scalar_one_or_none()
         
         if not is_member:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, 
@@ -684,7 +699,7 @@ async def get_room_statistics(
 async def get_general_channel_info(
     request: Request,
     *,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: GymSchema = Depends(verify_gym_access),
     current_user: Auth0User = Security(auth.get_user, scopes=["resource:read"])
 ):
@@ -710,7 +725,7 @@ async def get_general_channel_info(
 async def join_general_channel(
     request: Request,
     *,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: GymSchema = Depends(verify_gym_access),
     current_user: Auth0User = Security(auth.get_user, scopes=["resource:read"])
 ):
@@ -723,7 +738,8 @@ async def join_general_channel(
     from app.services.gym_chat import gym_chat_service
     
     # Obtener usuario interno
-    internal_user = db.query(User).filter(User.auth0_id == current_user.id).first()
+    result = await db.execute(select(User).where(User.auth0_id == current_user.id))
+    internal_user = result.scalar_one_or_none()
     if not internal_user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -744,7 +760,7 @@ async def join_general_channel(
 async def leave_general_channel(
     request: Request,
     *,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: GymSchema = Depends(verify_gym_access),
     current_user: Auth0User = Security(auth.get_user, scopes=["resource:read"])
 ):
@@ -757,7 +773,8 @@ async def leave_general_channel(
     from app.services.gym_chat import gym_chat_service
     
     # Obtener usuario interno
-    internal_user = db.query(User).filter(User.auth0_id == current_user.id).first()
+    result = await db.execute(select(User).where(User.auth0_id == current_user.id))
+    internal_user = result.scalar_one_or_none()
     if not internal_user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -778,7 +795,7 @@ async def leave_general_channel(
 async def add_member_to_general_channel(
     request: Request,
     *,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     user_id: int = Path(..., title="ID del usuario a agregar"),
     current_gym: GymSchema = Depends(verify_gym_admin_access),
     current_user: Auth0User = Security(auth.get_user, scopes=["resource:admin"])
@@ -792,10 +809,11 @@ async def add_member_to_general_channel(
     from app.models.user_gym import UserGym
     
     # Verificar que el usuario pertenece al gimnasio
-    membership = db.query(UserGym).filter(
+    result = await db.execute(select(UserGym).where(
         UserGym.user_id == user_id,
         UserGym.gym_id == current_gym.id
-    ).first()
+    ))
+    membership = result.scalar_one_or_none()
     
     if not membership:
         raise HTTPException(
@@ -817,7 +835,7 @@ async def add_member_to_general_channel(
 async def remove_member_from_general_channel(
     request: Request,
     *,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     user_id: int = Path(..., title="ID del usuario a remover"),
     current_gym: GymSchema = Depends(verify_gym_admin_access),
     current_user: Auth0User = Security(auth.get_user, scopes=["resource:admin"])
@@ -843,7 +861,7 @@ async def remove_member_from_general_channel(
 async def debug_headers(
     request: Request,
     x_gym_id_raw: Optional[str] = Header(None, alias="X-Gym-ID"),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_user: Auth0User = Security(auth.get_user, scopes=["resource:read"])
 ):
     """
@@ -875,7 +893,7 @@ async def debug_headers(
 async def get_user_chat_rooms(
     request: Request,
     *,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: GymSchema = Depends(verify_gym_access),
     current_user: Auth0User = Security(auth.get_user, scopes=["resource:read"])
 ):
@@ -901,7 +919,8 @@ async def get_user_chat_rooms(
     """
     try:
         # Obtener usuario interno
-        internal_user = db.query(User).filter(User.auth0_id == current_user.id).first()
+        result = await db.execute(select(User).where(User.auth0_id == current_user.id))
+    internal_user = result.scalar_one_or_none()
         if not internal_user:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -910,13 +929,15 @@ async def get_user_chat_rooms(
         
         # Obtener salas del usuario en el gimnasio actual
         from app.models.chat import ChatRoom, ChatMember
-        user_rooms = db.query(ChatRoom).join(ChatMember).filter(
+        stmt = select(ChatRoom).join(ChatMember).where(
             and_(
                 ChatMember.user_id == internal_user.id,
                 ChatRoom.gym_id == current_gym.id,
                 ChatRoom.status == "ACTIVE"  # Solo salas activas
             )
-        ).all()
+        )
+        result = await db.execute(stmt)
+        user_rooms = result.scalars().all()
         
         logger.info(f"Usuario {internal_user.id} tiene {len(user_rooms)} salas en gimnasio {current_gym.id}")
         
@@ -936,7 +957,7 @@ async def get_user_chat_rooms(
 async def get_all_user_chat_rooms(
     request: Request,
     *,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_user: Auth0User = Security(auth.get_user, scopes=["resource:read"])
 ):
     """
@@ -960,7 +981,8 @@ async def get_all_user_chat_rooms(
     """
     try:
         # Obtener usuario interno
-        internal_user = db.query(User).filter(User.auth0_id == current_user.id).first()
+        result = await db.execute(select(User).where(User.auth0_id == current_user.id))
+    internal_user = result.scalar_one_or_none()
         if not internal_user:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -991,7 +1013,7 @@ async def get_all_user_chat_rooms(
 async def cleanup_expired_event_channels_endpoint(
     hours: int = Query(48, description="Horas desde finalización del evento para considerar expirado"),
     dry_run: bool = Query(False, description="Solo mostrar canales que se eliminarían sin eliminarlos"),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: GymSchema = Depends(verify_gym_admin_access),
     current_user: Auth0User = Security(auth.get_user, scopes=["resource:admin"])
 ):
@@ -1037,12 +1059,14 @@ async def cleanup_expired_event_channels_endpoint(
         cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
         
         # Buscar eventos expirados con chats activos en este gimnasio
-        expired_events = db.query(Event).join(ChatRoomModel).filter(
+        stmt = select(Event).join(ChatRoomModel).where(
             Event.gym_id == gym_id,  # Filtrar por gimnasio
             Event.end_time < cutoff_time,
             ChatRoomModel.event_id == Event.id,
             ChatRoomModel.status == ChatRoomStatus.ACTIVE
-        ).distinct().all()
+        ).distinct()
+        result = await db.execute(stmt)
+        expired_events = result.scalars().all()
         
         logger.info(f"Found {len(expired_events)} expired events with active chats in gym {gym_id}")
         
@@ -1054,10 +1078,11 @@ async def cleanup_expired_event_channels_endpoint(
         for event in expired_events:
             try:
                 # Obtener todas las chat_rooms del evento
-                chat_rooms = db.query(ChatRoomModel).filter(
+                result = await db.execute(select(ChatRoomModel).where(
                     ChatRoomModel.event_id == event.id,
                     ChatRoomModel.status == ChatRoomStatus.ACTIVE
-                ).all()
+                ))
+                chat_rooms = result.scalars().all()
                 
                 event_channels = []
                 event_channels_cleaned = 0
@@ -1117,7 +1142,7 @@ async def cleanup_expired_event_channels_endpoint(
         
         # Commit cambios solo si no es dry_run
         if not dry_run:
-            db.commit()
+            await db.commit()
             logger.info(f"Manual cleanup completed. Events processed: {events_processed}, Channels cleaned: {channels_cleaned}")
         else:
             logger.info(f"Dry run completed. Events would be processed: {events_processed}, Channels would be cleaned: {channels_cleaned}")
@@ -1135,7 +1160,7 @@ async def cleanup_expired_event_channels_endpoint(
         
     except Exception as e:
         logger.error(f"Error in manual cleanup endpoint: {e}")
-        db.rollback()
+        await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error durante la limpieza de canales: {str(e)}"

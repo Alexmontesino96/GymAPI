@@ -1,9 +1,9 @@
 from fastapi import APIRouter, Depends, Security, HTTPException, status, Body
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Dict, Any, Optional
 from pydantic import BaseModel
 
-from app.db.session import get_db
+from app.db.session import get_async_db
 from app.core.auth0_fastapi import Auth0User, auth
 from app.core.tenant import verify_gym_access
 from app.models.gym import Gym
@@ -21,7 +21,7 @@ class QRCheckInRequest(BaseModel):
 @router.post("/check-in", response_model=Dict[str, Any])
 async def check_in(
     check_in_data: QRCheckInRequest,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: Gym = Depends(verify_gym_access),
     user: Auth0User = Security(auth.get_user, scopes=["resource:write"]),
     redis_client: Redis = Depends(get_redis_client)

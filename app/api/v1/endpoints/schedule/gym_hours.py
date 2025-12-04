@@ -1,9 +1,10 @@
 from typing import Any, List, Optional, Dict
 from datetime import date, datetime, timedelta, time
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Path, Body, Security
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 
-from app.db.session import get_db
+from app.db.session import get_async_db
 from app.core.auth0_fastapi import auth, get_current_user, Auth0User
 from app.models.gym import Gym
 from app.core.tenant import verify_gym_access
@@ -24,7 +25,7 @@ router = APIRouter()
 
 @router.get("/regular", response_model=List[GymHours])
 async def get_all_gym_hours(
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: Gym = Depends(verify_gym_access),
     user: Auth0User = Security(auth.get_user, scopes=["resource:read"]),
     redis_client: Redis = Depends(get_redis_client)
@@ -57,7 +58,7 @@ async def get_all_gym_hours(
 @router.get("/regular/{day}", response_model=GymHours)
 async def get_gym_hours_by_day(
     day: int = Path(..., ge=0, le=6, description="Day of the week (0=Monday, 6=Sunday)"),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: Gym = Depends(verify_gym_access),
     user: Auth0User = Security(auth.get_user, scopes=["resource:read"]),
     redis_client: Redis = Depends(get_redis_client)
@@ -95,7 +96,7 @@ async def get_gym_hours_by_day(
 async def update_gym_hours(
     day: int = Path(..., ge=0, le=6, description="Day of the week (0=Monday, 6=Sunday)"),
     gym_hours_data: GymHoursUpdate = Body(...),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: Gym = Depends(verify_gym_access),
     current_user: Auth0User = Depends(get_current_user),
     redis_client: Redis = Depends(get_redis_client)
@@ -135,13 +136,15 @@ async def update_gym_hours(
         HTTPException 422: Invalid input data (e.g., day out of range, invalid time format, close_time before open_time).
     """
     # Verify admin privileges
-    local_user = db.query(User).filter(User.auth0_id == current_user.id).first()
+    result = await db.execute(select(User).where(User.auth0_id == current_user.id))
+    local_user = result.scalar_one_or_none()
     if not local_user or (local_user.role != UserRole.ADMIN and local_user.role != UserRole.SUPER_ADMIN):
-        user_gym = db.query(UserGym).filter(
+        result = await db.execute(select(UserGym).where(
             UserGym.user_id == local_user.id,
             UserGym.gym_id == current_gym.id,
             UserGym.role.in_([GymRoleType.ADMIN, GymRoleType.OWNER])
-        ).first()
+        ))
+        user_gym = result.scalar_one_or_none()
         if not user_gym:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -162,7 +165,7 @@ async def update_gym_hours(
 @router.get("/date/{date}", response_model=Dict[str, Any])
 async def get_gym_hours_by_date(
     date: date = Path(..., description="Date (YYYY-MM-DD)"),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: Gym = Depends(verify_gym_access),
     user: Auth0User = Security(auth.get_user, scopes=["resource:read"]),
     redis_client: Redis = Depends(get_redis_client)
@@ -204,7 +207,7 @@ async def get_gym_hours_by_date(
 @router.post("/apply-defaults", response_model=List[GymSpecialHours])
 async def apply_defaults_to_range(
     *,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     apply_request: ApplyDefaultsRequest,
     current_user: Auth0User = Depends(get_current_user),
     current_gym: Gym = Depends(verify_gym_access),
@@ -245,13 +248,15 @@ async def apply_defaults_to_range(
         HTTPException 422: Validation error in request body.
     """
     # Verify admin privileges
-    local_user = db.query(User).filter(User.auth0_id == current_user.id).first()
+    result = await db.execute(select(User).where(User.auth0_id == current_user.id))
+    local_user = result.scalar_one_or_none()
     if not local_user or (local_user.role != UserRole.ADMIN and local_user.role != UserRole.SUPER_ADMIN):
-        user_gym = db.query(UserGym).filter(
+        result = await db.execute(select(UserGym).where(
             UserGym.user_id == local_user.id,
             UserGym.gym_id == current_gym.id,
             UserGym.role.in_([GymRoleType.ADMIN, GymRoleType.OWNER])
-        ).first()
+        ))
+        user_gym = result.scalar_one_or_none()
         if not user_gym:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -279,7 +284,7 @@ async def apply_defaults_to_range(
 @router.get("/date-range", response_model=List[DailyScheduleResponse])
 async def get_schedule_for_date_range(
     *,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     start_date: date = Query(..., description="Start date (YYYY-MM-DD)"),
     end_date: date = Query(..., description="End date (YYYY-MM-DD)"),
     current_user: Auth0User = Depends(get_current_user), # Requires authentication, any role

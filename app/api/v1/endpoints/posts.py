@@ -5,13 +5,13 @@ Endpoints para el sistema de posts.
 import logging
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form, Query
-from sqlalchemy.orm import Session
-from sqlalchemy import and_
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import and_, select, delete
 from datetime import datetime, timedelta, timezone
 import json
 
 from app.core.dependencies import module_enabled
-from app.db.session import get_db
+from app.db.session import get_async_db
 from app.core.tenant import get_tenant_id
 from app.core.auth0_fastapi import get_current_db_user
 from app.models.user import User
@@ -51,7 +51,7 @@ async def create_post(
     tagged_session_id: Optional[int] = Form(None),
     mentioned_user_ids_json: Optional[str] = Form(None),
     files: List[UploadFile] = File(None),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     gym_id: int = Depends(get_tenant_id),
     db_user: User = Depends(get_current_db_user)
 ):
@@ -127,7 +127,7 @@ async def create_post(
 @router.get("/{post_id}", response_model=Post)
 async def get_post(
     post_id: int,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     gym_id: int = Depends(get_tenant_id),
     db_user: User = Depends(get_current_db_user)
 ):
@@ -143,7 +143,7 @@ async def get_user_posts(
     user_id: int,
     limit: int = 20,
     offset: int = 0,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     gym_id: int = Depends(get_tenant_id),
     db_user: User = Depends(get_current_db_user)
 ):
@@ -176,7 +176,7 @@ async def get_user_posts(
 async def update_post(
     post_id: int,
     update_data: PostUpdate,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     gym_id: int = Depends(get_tenant_id),
     db_user: User = Depends(get_current_db_user)
 ):
@@ -195,7 +195,7 @@ async def update_post(
 @router.delete("/{post_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_post(
     post_id: int,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     gym_id: int = Depends(get_tenant_id),
     db_user: User = Depends(get_current_db_user)
 ):
@@ -213,7 +213,7 @@ async def delete_post(
 async def get_timeline_feed(
     limit: int = 20,
     offset: int = 0,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     gym_id: int = Depends(get_tenant_id),
     db_user: User = Depends(get_current_db_user)
 ):
@@ -243,7 +243,7 @@ async def get_timeline_feed(
 async def get_explore_feed(
     limit: int = 20,
     offset: int = 0,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     gym_id: int = Depends(get_tenant_id),
     db_user: User = Depends(get_current_db_user)
 ):
@@ -271,7 +271,7 @@ async def get_explore_feed(
 
 @router.get("/feed/ranked", response_model=RankedFeedResponse)
 async def get_ranked_feed(
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     gym_id: int = Depends(get_tenant_id),
     db_user: User = Depends(get_current_db_user),
     page: int = Query(1, ge=1, description="Número de página (1-indexed)"),
@@ -298,7 +298,7 @@ async def get_ranked_feed(
     # 1. Obtener posts candidatos (últimas 7 días, no borrados)
     offset = (page - 1) * page_size
 
-    query = db.query(PostModel).filter(
+    stmt = select(PostModel).where(
         and_(
             PostModel.gym_id == gym_id,
             PostModel.is_deleted == False,
@@ -310,20 +310,22 @@ async def get_ranked_feed(
     if exclude_seen:
         from app.models.post_interaction import PostView
 
-        viewed_post_ids_query = db.query(PostView.post_id).filter(
+        viewed_post_ids_stmt = select(PostView.post_id).where(
             and_(
                 PostView.user_id == db_user.id,
                 PostView.gym_id == gym_id,
                 PostView.viewed_at >= datetime.now(timezone.utc) - timedelta(days=7)
             )
-        ).subquery()
+        )
+        viewed_subquery = viewed_post_ids_stmt.subquery()
 
-        query = query.filter(~PostModel.id.in_(viewed_post_ids_query))
+        stmt = stmt.where(~PostModel.id.in_(select(viewed_subquery.c.post_id)))
 
     # 3. Obtener posts candidatos (tomamos 5x más para rankear)
     # Ej: si pide 20, traemos 100 para rankear y quedarnos con top 20
     candidate_limit = min(page_size * 5, 500)  # Max 500 candidatos
-    candidate_posts = query.order_by(PostModel.created_at.desc()).limit(candidate_limit).all()
+    result = await db.execute(stmt.order_by(PostModel.created_at.desc()).limit(candidate_limit))
+    candidate_posts = result.scalars().all()
 
     if not candidate_posts:
         return RankedFeedResponse(
@@ -346,7 +348,7 @@ async def get_ranked_feed(
     except Exception as e:
         logger.error(f"Error calculando scores de ranking: {e}", exc_info=True)
         # Rollback de la transacción fallida
-        db.rollback()
+        await db.rollback()
         # Si hay error en ranking, devolver feed cronológico simple
         feed_scores = []
         for post in candidate_posts[:page_size]:
@@ -376,12 +378,13 @@ async def get_ranked_feed(
 
         # Verificar si el usuario dio like
         from app.models.post_interaction import PostLike
-        is_liked = db.query(PostLike).filter(
+        result = await db.execute(select(PostLike).where(
             and_(
                 PostLike.post_id == post.id,
                 PostLike.user_id == db_user.id
             )
-        ).first() is not None
+        ))
+        is_liked = result.scalar_one_or_none() is not None
 
         # Construir post data
         ranked_post = RankedPost(
@@ -437,7 +440,7 @@ async def get_posts_by_location(
     location: str,
     limit: int = 20,
     offset: int = 0,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     gym_id: int = Depends(get_tenant_id),
     db_user: User = Depends(get_current_db_user)
 ):
@@ -472,7 +475,7 @@ async def get_posts_by_location(
 @router.post("/{post_id}/like", response_model=LikeToggleResponse)
 async def toggle_post_like(
     post_id: int,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     gym_id: int = Depends(get_tenant_id),
     db_user: User = Depends(get_current_db_user)
 ):
@@ -499,7 +502,7 @@ async def get_post_likes(
     post_id: int,
     limit: int = 20,
     offset: int = 0,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     gym_id: int = Depends(get_tenant_id)
 ):
     """
@@ -528,7 +531,7 @@ async def get_post_likes(
 async def add_comment(
     post_id: int,
     comment_data: CommentCreate,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     gym_id: int = Depends(get_tenant_id),
     db_user: User = Depends(get_current_db_user)
 ):
@@ -554,7 +557,7 @@ async def get_post_comments(
     post_id: int,
     limit: int = 20,
     offset: int = 0,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     gym_id: int = Depends(get_tenant_id)
 ):
     """
@@ -581,7 +584,7 @@ async def get_post_comments(
 async def update_comment(
     comment_id: int,
     update_data: CommentUpdate,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     gym_id: int = Depends(get_tenant_id),
     db_user: User = Depends(get_current_db_user)
 ):
@@ -600,7 +603,7 @@ async def update_comment(
 @router.delete("/comments/{comment_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_comment(
     comment_id: int,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     gym_id: int = Depends(get_tenant_id),
     db_user: User = Depends(get_current_db_user)
 ):
@@ -619,7 +622,7 @@ async def delete_comment(
 @router.post("/comments/{comment_id}/like", response_model=LikeToggleResponse)
 async def toggle_comment_like(
     comment_id: int,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     gym_id: int = Depends(get_tenant_id),
     db_user: User = Depends(get_current_db_user)
 ):
@@ -647,7 +650,7 @@ async def toggle_comment_like(
 async def report_post(
     post_id: int,
     report_data: PostReportCreate,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     gym_id: int = Depends(get_tenant_id),
     db_user: User = Depends(get_current_db_user)
 ):
@@ -675,7 +678,7 @@ async def get_posts_by_event(
     event_id: int,
     limit: int = 20,
     offset: int = 0,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     gym_id: int = Depends(get_tenant_id),
     db_user: User = Depends(get_current_db_user)
 ):
@@ -710,7 +713,7 @@ async def get_posts_by_session(
     session_id: int,
     limit: int = 20,
     offset: int = 0,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     gym_id: int = Depends(get_tenant_id),
     db_user: User = Depends(get_current_db_user)
 ):
@@ -744,7 +747,7 @@ async def get_posts_by_session(
 async def get_my_mentions(
     limit: int = 20,
     offset: int = 0,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     gym_id: int = Depends(get_tenant_id),
     db_user: User = Depends(get_current_db_user)
 ):

@@ -21,10 +21,10 @@ and proper access control based on user roles.
 from typing import Any, Dict, List
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Security, Request
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth0_fastapi import auth, get_current_user, get_current_user_with_permissions, Auth0User
-from app.db.session import get_db
+from app.db.session import get_async_db
 from app.models.user import User, UserRole
 from app.services.trainer_member import trainer_member_service
 from app.services.user import user_service
@@ -44,7 +44,7 @@ router = APIRouter()
 async def create_trainer_member_relationship(
     request: Request,
     relationship_in: TrainerMemberRelationshipCreate,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     user: Auth0User = Security(auth.get_user, scopes=["resource:write"]),
     current_gym: GymSchema = Depends(verify_gym_access)
 ) -> Any:
@@ -96,7 +96,7 @@ async def create_trainer_member_relationship(
 async def read_relationships(
     skip: int = 0,
     limit: int = 100,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     user: Auth0User = Security(auth.get_user, scopes=["resource:admin"]),
 ) -> Any:
     """
@@ -127,7 +127,7 @@ async def read_members_by_trainer(
     trainer_id: int,
     skip: int = 0,
     limit: int = 100,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     user: Auth0User = Security(auth.get_user, scopes=["resource:read"]),
     current_gym: GymSchema = Depends(verify_gym_access)
 ) -> Any:
@@ -184,7 +184,7 @@ async def read_trainers_by_member(
     member_id: int,
     skip: int = 0,
     limit: int = 100,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     user: Auth0User = Security(auth.get_user, scopes=["resource:read"]),
 ) -> Any:
     """
@@ -238,7 +238,7 @@ async def read_trainers_by_member(
 async def read_my_trainers(
     skip: int = 0,
     limit: int = 100,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     user: Auth0User = Security(auth.get_user, scopes=["resource:read"]),
 ) -> Any:
     """
@@ -290,7 +290,7 @@ async def read_my_trainers(
 async def read_my_members(
     skip: int = 0,
     limit: int = 100,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     user: Auth0User = Security(auth.get_user, scopes=["resource:read"]),
 ) -> Any:
     """
@@ -342,7 +342,7 @@ async def read_my_members(
 async def read_relationship(
     request: Request,
     relationship_id: int,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     user: Auth0User = Security(auth.get_user, scopes=["resource:read"]),
     current_gym: GymSchema = Depends(verify_gym_access)
 ) -> Any:
@@ -399,7 +399,7 @@ async def read_relationship(
 async def update_relationship(
     relationship_id: int,
     relationship_update: TrainerMemberRelationshipUpdate,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     user: Auth0User = Security(auth.get_user, scopes=["resource:write"]),
 ) -> Any:
     """
@@ -460,7 +460,7 @@ async def update_relationship(
 @router.delete("/{relationship_id}", response_model=TrainerMemberRelationship)
 async def delete_relationship(
     relationship_id: int,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     user: Auth0User = Security(auth.get_user, scopes=["resource:admin"]),
 ) -> Any:
     """

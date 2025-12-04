@@ -1,12 +1,13 @@
 from fastapi import Header, HTTPException, Depends, Request, status, Query
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy import select
 from typing import Optional, List, Dict, Tuple, Set
 from functools import wraps
 import time
 import asyncio
 
-from app.db.session import get_db
+from app.db.session import get_async_db
 from app.models.gym import Gym
 from app.models.user_gym import UserGym, GymRoleType
 from app.models.user import User, UserRole
@@ -37,7 +38,7 @@ async def get_tenant_id(
     return None
 
 async def get_current_gym(
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     tenant_id: Optional[int] = Depends(get_tenant_id),
     redis_client: redis.Redis = Depends(get_redis_client)
 ) -> Optional[GymSchema]:
@@ -46,52 +47,55 @@ async def get_current_gym(
     Devuelve None si no se proporciona tenant_id o si el gym no existe.
     """
     logger = logging.getLogger("tenant_verification")
-    
+
     if not tenant_id:
         return None
-        
+
     gym_schema: Optional[GymSchema] = None
 
     if not redis_client:
         logger.warning(f"Redis no disponible, obteniendo gym {tenant_id} desde BD")
         @time_db_query
-        def _direct_db_fetch(): 
-            return db.query(Gym).filter(Gym.id == tenant_id).first()
-        gym_db = _direct_db_fetch()
+        async def _direct_db_fetch():
+            result = await db.execute(select(Gym).where(Gym.id == tenant_id))
+            return result.scalar_one_or_none()
+        gym_db = await _direct_db_fetch()
         if gym_db:
             gym_schema = GymSchema.from_orm(gym_db)
     else:
         cache_key = f"gym_details:{tenant_id}"
-        
-        @time_db_query 
+
+        @time_db_query
         async def db_fetch():
             # Registro del cache miss
             register_cache_miss(cache_key)
-            
+
             logger.info(f"DB Fetch for gym details cache miss: key={cache_key}")
-            gym_db = db.query(Gym).filter(Gym.id == tenant_id).first()
+            result = await db.execute(select(Gym).where(Gym.id == tenant_id))
+            gym_db = result.scalar_one_or_none()
             return GymSchema.from_orm(gym_db) if gym_db else None
-            
+
         try:
             # El registro de cache hit/miss se realiza dentro de la función get_or_set
             gym_schema = await cache_service.get_or_set(
                 redis_client=redis_client,
                 cache_key=cache_key,
-                db_fetch_func=db_fetch, 
+                db_fetch_func=db_fetch,
                 model_class=GymSchema,
-                expiry_seconds=get_settings().CACHE_TTL_GYM_DETAILS, 
+                expiry_seconds=get_settings().CACHE_TTL_GYM_DETAILS,
                 is_list=False
             )
         except Exception as e:
             logger.error(f"Error obteniendo gym {tenant_id} desde caché/DB: {e}", exc_info=True)
             @time_db_query
-            def _fallback_db_fetch(): 
-                return db.query(Gym).filter(Gym.id == tenant_id).first()
-            gym_db_fallback = _fallback_db_fetch()
+            async def _fallback_db_fetch():
+                result = await db.execute(select(Gym).where(Gym.id == tenant_id))
+                return result.scalar_one_or_none()
+            gym_db_fallback = await _fallback_db_fetch()
             gym_schema = GymSchema.from_orm(gym_db_fallback) if gym_db_fallback else None
 
     if not gym_schema:
-         if tenant_id: 
+         if tenant_id:
              logger.warning(f"El gimnasio con ID {tenant_id} no existe o no está activo.")
          return None
 
@@ -100,7 +104,7 @@ async def get_current_gym(
 async def _verify_user_role_in_gym(
     request: Request,
     required_roles: Optional[Set[GymRoleType]],
-    db: Session,
+    db: AsyncSession,
     current_gym_schema: Optional[GymSchema],
     current_user: Auth0User,
     redis_client: redis.Redis
@@ -196,10 +200,11 @@ async def _verify_user_role_in_gym(
                     register_cache_miss(cache_key)
                     cache_hit_status = "MISS"
                     @time_db_query
-                    def _fetch_membership(): 
-                         return db.query(UserGym).filter(UserGym.user_id == user_id, UserGym.gym_id == gym_id).first()
-                    user_gym_db = _fetch_membership()
-                    
+                    async def _fetch_membership():
+                         result = await db.execute(select(UserGym).where(UserGym.user_id == user_id, UserGym.gym_id == gym_id))
+                         return result.scalar_one_or_none()
+                    user_gym_db = await _fetch_membership()
+
                     if user_gym_db:
                         user_role_in_gym = user_gym_db.role.value
                         @time_redis_operation
@@ -214,9 +219,10 @@ async def _verify_user_role_in_gym(
                 logger.error(f"Error durante verificación de rol en gym con Redis: {e}", exc_info=True)
                 cache_hit_status = "REDIS_ERROR_FALLBACK"
                 @time_db_query
-                def _fallback_fetch(): 
-                     return db.query(UserGym).filter(UserGym.user_id == user_id, UserGym.gym_id == gym_id).first()
-                user_gym_db_fallback = _fallback_fetch()
+                async def _fallback_fetch():
+                     result = await db.execute(select(UserGym).where(UserGym.user_id == user_id, UserGym.gym_id == gym_id))
+                     return result.scalar_one_or_none()
+                user_gym_db_fallback = await _fallback_fetch()
                 user_role_in_gym = user_gym_db_fallback.role.value if user_gym_db_fallback else None
 
     if user_role_in_gym is None:
@@ -245,7 +251,7 @@ async def _verify_user_role_in_gym(
 
 async def verify_gym_access(
     request: Request,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym_schema: Optional[GymSchema] = Depends(get_current_gym),
     current_user: Auth0User = Depends(get_current_user),
     redis_client: redis.Redis = Depends(get_redis_client)
@@ -255,7 +261,7 @@ async def verify_gym_access(
 
 async def verify_gym_admin_access(
     request: Request,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym_schema: Optional[GymSchema] = Depends(get_current_gym),
     current_user: Auth0User = Depends(get_current_user),
     redis_client: redis.Redis = Depends(get_redis_client)
@@ -265,7 +271,7 @@ async def verify_gym_admin_access(
 
 async def verify_gym_trainer_access(
     request: Request,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym_schema: Optional[GymSchema] = Depends(get_current_gym),
     current_user: Auth0User = Depends(get_current_user),
     redis_client: redis.Redis = Depends(get_redis_client)
@@ -275,7 +281,7 @@ async def verify_gym_trainer_access(
 
 async def verify_gym_ownership(
     request: Request,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym_schema: Optional[GymSchema] = Depends(get_current_gym),
     current_user: Auth0User = Depends(get_current_user),
     redis_client: redis.Redis = Depends(get_redis_client)

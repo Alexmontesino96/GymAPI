@@ -1,13 +1,13 @@
 from app.api.v1.endpoints.auth.common import *
 from app.repositories.user import user_repository
 from fastapi import APIRouter, Depends, HTTPException, Security, BackgroundTasks, status
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Any, Dict
 
 from app.core.auth0_fastapi import auth
 from app.models.user import UserRole
 from app.services.auth0_sync import auth0_sync_service
-from app.db.session import get_db
+from app.db.session import get_async_db
 from app.services.user import user_service
 from app.services.cache_service import cache_service
 from app.core.security import verify_auth0_webhook_secret
@@ -23,7 +23,7 @@ router = APIRouter()
 @limiter.limit("50 per minute")
 async def webhook_user_created(
     request: Request,
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_async_db)
 ):
     """
     Webhook that receives notifications from Auth0 when a new user registers.
@@ -182,7 +182,7 @@ async def webhook_user_created(
 @limiter.limit("50 per minute")
 async def webhook_user_updated(
     request: Request,
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_async_db)
 ):
     """
     Webhook that receives notifications from Auth0 when a user is updated.
@@ -358,7 +358,7 @@ class CreateAdminRequest(BaseModel):
 @router.post("/create-platform-admin", status_code=201)
 async def create_platform_admin(
     request_data: CreateAdminRequest,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_user: Auth0User = Security(auth.get_user, scopes=["user:write"]),
 ):
     """
@@ -456,7 +456,7 @@ async def create_platform_admin(
 @router.post("/sync-roles-to-auth0", response_model=Dict[str, Any])
 async def migrate_roles_to_auth0(
     *,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     background_tasks: BackgroundTasks,
     current_user: Auth0User = Security(auth.get_user, scopes=["tenant:admin"])
 ) -> Any:

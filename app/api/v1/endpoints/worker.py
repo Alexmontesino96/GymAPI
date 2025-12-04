@@ -12,9 +12,9 @@ from typing import Dict, Any, Optional, List
 from datetime import datetime, timezone
 from pydantic import BaseModel, Field
 from fastapi import APIRouter, Depends, HTTPException, Body, Path, status
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.session import get_db
+from app.db.session import get_async_db
 from app.core.worker_auth import verify_worker_api_key
 from app.services.chat import chat_service
 from app.repositories.event import event_repository
@@ -60,7 +60,7 @@ class WorkerResponse(BaseModel):
 @router.post("/event-chat", response_model=WorkerResponse)
 async def create_event_chat(
     request: EventChatRequest,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     _: bool = Depends(verify_worker_api_key)  # Security dependency
 ):
     """
@@ -190,7 +190,7 @@ async def create_event_chat(
 @router.post("/event-completion", response_model=WorkerResponse)
 async def process_event_completion(
     request: EventCompletionRequest,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     _: bool = Depends(verify_worker_api_key)  # Security dependency
 ):
     """
@@ -266,7 +266,7 @@ async def process_event_completion(
 
 @router.get("/events/due-completion", response_model=List[EventWorkerResponse])
 async def get_events_due_for_completion(
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     _: bool = Depends(verify_worker_api_key)
 ) -> List[EventWorkerResponse]:
     """
@@ -287,13 +287,14 @@ async def get_events_due_for_completion(
     try:
         now_utc = datetime.now(timezone.utc)
         
-        events = db.query(Event).filter(
+        result = await db.execute(select(Event).where(
             Event.status == EventStatus.SCHEDULED,
             Event.end_time <= now_utc,  # Solo eventos cuyo end_time ya pasó
             Event.completion_attempts <= 10  # Exclude events with more than 10 attempts
         ).order_by(
             Event.end_time.asc()
-        ).limit(100).all()
+        ).limit(100))
+        events = result.scalars().all()
         
         logger.info(f"Found {len(events)} events with pending completion.")
         
@@ -311,7 +312,7 @@ async def get_events_due_for_completion(
 @router.post("/events/{event_id}/complete", response_model=EventWorkerResponse)
 async def process_event_completion(
     event_id: int,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     redis_client: Redis = Depends(get_redis_client),
     _: bool = Depends(verify_worker_api_key)
 ) -> EventWorkerResponse:
@@ -345,7 +346,8 @@ async def process_event_completion(
         
         # Update event status to completed
         # Get the real SQLAlchemy object for the update
-        db_event = db.query(Event).filter(Event.id == event_id).first()
+        result = await db.execute(select(Event).where(Event.id == event_id))
+    db_event = result.scalar_one_or_none()
         if not db_event:
              # This shouldn't happen if get_event_cached was successful, but it's a safe check
              raise HTTPException(
@@ -357,14 +359,15 @@ async def process_event_completion(
         
         # Close associated chat if it exists
         if db_event.chat_room_id:
-            chat_room = db.query(ChatRoom).filter(ChatRoom.id == db_event.chat_room_id).first()
+            result = await db.execute(select(ChatRoom).where(ChatRoom.id == db_event.chat_room_id))
+    chat_room = result.scalar_one_or_none()
             if chat_room:
                 chat_room.status = ChatRoomStatus.CLOSED
                 logger.info(f"Chat {chat_room.id} closed for event {event_id}")
         
         # Save changes
         db.add(db_event) # Ensure the DB object is added
-        db.commit()
+        await db.commit()
         logger.info(f"Event {event_id} successfully marked as completed")
         
         # Get gym_id and creator_id for cache invalidation
@@ -385,19 +388,20 @@ async def process_event_completion(
         return EventWorkerResponse.from_orm(db_event)
         
     except Exception as e:
-        db.rollback()
+        await db.rollback()
         # Increment failed attempts counter
         try:
             # Get the DB object to increment attempts
-            db_event_fail = db.query(Event).filter(Event.id == event_id).first()
+            result = await db.execute(select(Event).where(Event.id == event_id))
+    db_event_fail = result.scalar_one_or_none()
             if db_event_fail:
                 db_event_fail.completion_attempts = db_event_fail.completion_attempts + 1
                 db.add(db_event_fail)
-                db.commit()
+                await db.commit()
                 logger.warning(f"Incremented attempts counter for event {event_id}: {db_event_fail.completion_attempts}")
         except Exception as inner_e:
             logger.error(f"Error incrementing attempts counter: {inner_e}", exc_info=True)
-            db.rollback()
+            await db.rollback()
             
         logger.error(f"Error completing event {event_id}: {e}", exc_info=True)
         raise HTTPException(

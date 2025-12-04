@@ -4,12 +4,12 @@ Endpoints de API para el sistema de historias.
 
 from typing import List, Optional
 from fastapi import APIRouter, Depends, File, UploadFile, Form, HTTPException, status, Query
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import (
     module_enabled
 )
-from app.db.session import get_db
+from app.db.session import get_async_db
 from app.core.tenant import get_tenant_id
 from app.core.auth0_fastapi import get_current_user, get_current_db_user, Auth0User
 from app.models.user import User
@@ -48,7 +48,7 @@ async def create_story(
     media: Optional[UploadFile] = File(None),
     current_user: Auth0User = Depends(get_current_user),
     db_user: User = Depends(get_current_db_user),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     gym_id: int = Depends(get_tenant_id)
 ):
     """
@@ -133,7 +133,7 @@ async def get_stories_feed(
     offset: int = Query(0, ge=0),
     filter_type: Optional[str] = Query(None, regex="^(all|following|close_friends)$"),
     story_types: Optional[List[str]] = Query(None),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     gym_id: int = Depends(get_tenant_id),
     db_user: User = Depends(get_current_db_user)  # Usar db_user en vez de current_user
 ):
@@ -161,7 +161,7 @@ async def get_stories_feed(
 async def get_user_stories(
     user_id: int,
     include_expired: bool = Query(False),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     gym_id: int = Depends(get_tenant_id),
     db_user: User = Depends(get_current_db_user)  # Usar db_user
 ):
@@ -213,7 +213,7 @@ async def get_user_stories(
 @router.get("/{story_id}", response_model=StoryResponse)
 async def get_story(
     story_id: int,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     gym_id: int = Depends(get_tenant_id),
     db_user: User = Depends(get_current_db_user)
 ):
@@ -248,7 +248,7 @@ async def get_story(
 async def mark_story_viewed(
     story_id: int,
     view_data: Optional[StoryViewCreate] = None,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     gym_id: int = Depends(get_tenant_id),
     db_user: User = Depends(get_current_db_user)
 ):
@@ -269,7 +269,7 @@ async def mark_story_viewed(
 @router.get("/{story_id}/viewers", response_model=List[StoryViewerResponse])
 async def get_story_viewers(
     story_id: int,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     gym_id: int = Depends(get_tenant_id),
     db_user: User = Depends(get_current_db_user)
 ):
@@ -311,7 +311,7 @@ async def get_story_viewers(
 async def add_story_reaction(
     story_id: int,
     reaction_data: StoryReactionCreate,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     gym_id: int = Depends(get_tenant_id),
     db_user: User = Depends(get_current_db_user)
 ):
@@ -336,7 +336,7 @@ async def add_story_reaction(
 @router.delete("/{story_id}")
 async def delete_story(
     story_id: int,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     gym_id: int = Depends(get_tenant_id),
     db_user: User = Depends(get_current_db_user)
 ):
@@ -357,7 +357,7 @@ async def delete_story(
 async def update_story(
     story_id: int,
     story_update: StoryUpdate,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     gym_id: int = Depends(get_tenant_id),
     db_user: User = Depends(get_current_db_user)
 ):
@@ -384,8 +384,8 @@ async def update_story(
     if story_update.privacy is not None:
         story.privacy = story_update.privacy
 
-    db.commit()
-    db.refresh(story)
+    await db.commit()
+    await db.refresh(story)
 
     # Obtener información del usuario
     story_user = db.get(User, story.user_id)
@@ -408,7 +408,7 @@ async def update_story(
 async def report_story(
     story_id: int,
     report_data: StoryReportCreate,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     gym_id: int = Depends(get_tenant_id),
     db_user: User = Depends(get_current_db_user)
 ):
@@ -433,7 +433,7 @@ async def report_story(
 @router.post("/highlights", response_model=dict)
 async def create_story_highlight(
     highlight_data: StoryHighlightCreate,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     gym_id: int = Depends(get_tenant_id),
     db_user: User = Depends(get_current_db_user)
 ):

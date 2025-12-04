@@ -8,10 +8,10 @@ permitiendo que el frontend adapte la UI según el tipo de gimnasio
 
 from typing import List, Dict, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, Security, status
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 from redis.asyncio import Redis
 
-from app.db.session import get_db
+from app.db.session import get_async_db
 from app.db.redis_client import get_redis_client
 from app.core.auth0_fastapi import Auth0User, auth
 from app.core.tenant import verify_gym_access, get_current_gym
@@ -266,7 +266,7 @@ def get_quick_actions(gym_type: GymTypeSchema, user_role: str) -> List[Dict]:
 @router.get("/workspace")
 async def get_workspace_context(
     request: Request,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: GymSchema = Depends(get_current_gym),
     current_user: Auth0User = Security(auth.get_user),
     redis_client: Redis = Depends(get_redis_client)
@@ -441,7 +441,7 @@ def get_user_permissions(role: str) -> List[str]:
 @router.get("/workspace/stats")
 async def get_workspace_stats(
     request: Request,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: GymSchema = Depends(verify_gym_access),
     current_user: Auth0User = Security(auth.get_user),
     redis_client: Redis = Depends(get_redis_client)
@@ -470,18 +470,20 @@ async def get_workspace_stats(
             from datetime import datetime, timedelta
 
             # Contar clientes activos
-            active_clients = db.query(UserGym).filter(
+            result = await db.execute(select(func.count()).select_from(UserGym).where(
                 UserGym.gym_id == current_gym.id,
                 UserGym.role == GymRoleType.MEMBER,
                 UserGym.is_active == True
-            ).count()
+            ))
+    active_clients = result.scalar()
 
             # Sesiones de esta semana
             week_start = datetime.utcnow() - timedelta(days=datetime.utcnow().weekday())
-            week_sessions = db.query(Event).filter(
+            result = await db.execute(select(func.count()).select_from(Event).where(
                 Event.gym_id == current_gym.id,
                 Event.start_time >= week_start
-            ).count()
+            ))
+    week_sessions = result.scalar()
 
             stats = {
                 "type": "trainer",
@@ -501,23 +503,26 @@ async def get_workspace_stats(
             from app.models.schedule import Class
 
             # Contar miembros por rol
-            members_count = db.query(UserGym).filter(
+            result = await db.execute(select(func.count()).select_from(UserGym).where(
                 UserGym.gym_id == current_gym.id,
                 UserGym.role == GymRoleType.MEMBER,
                 UserGym.is_active == True
-            ).count()
+            ))
+    members_count = result.scalar()
 
-            trainers_count = db.query(UserGym).filter(
+            result = await db.execute(select(func.count()).select_from(UserGym).where(
                 UserGym.gym_id == current_gym.id,
                 UserGym.role == GymRoleType.TRAINER,
                 UserGym.is_active == True
-            ).count()
+            ))
+    trainers_count = result.scalar()
 
             # Contar clases activas
-            classes_count = db.query(Class).filter(
+            result = await db.execute(select(func.count()).select_from(Class).where(
                 Class.gym_id == current_gym.id,
                 Class.is_active == True
-            ).count()
+            ))
+    classes_count = result.scalar()
 
             stats = {
                 "type": "gym",

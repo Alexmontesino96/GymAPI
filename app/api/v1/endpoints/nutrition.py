@@ -6,6 +6,8 @@ from typing import List, Optional, Any, Dict
 from fastapi import APIRouter, Depends, HTTPException, Query, Path, Header
 from sqlalchemy.orm import Session
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 
 from app.db.session import get_db, get_async_db
 from app.core.auth0_fastapi import get_current_user, Auth0User
@@ -1398,9 +1400,12 @@ async def generate_ingredients_with_ai(
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
     
     # Validar que la comida existe y pertenece al gimnasio
-    meal = db.query(MealModel).options(
-        joinedload(MealModel.daily_plan).joinedload(DailyNutritionPlanModel.nutrition_plan)
-    ).filter(MealModel.id == meal_id).first()
+    result = await db.execute(
+        select(MealModel).options(
+            selectinload(MealModel.daily_plan).selectinload(DailyNutritionPlanModel.nutrition_plan)
+        ).where(MealModel.id == meal_id)
+    )
+    meal = result.scalar_one_or_none()
     
     if not meal:
         raise HTTPException(status_code=404, detail="Comida no encontrada")
@@ -1500,10 +1505,13 @@ async def apply_generated_ingredients(
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
     
             # Validar comida y permisos (mismo código que endpoint anterior)
-        meal = db.query(MealModel).options(
-            joinedload(MealModel.daily_plan).joinedload(DailyNutritionPlanModel.nutrition_plan),
-            joinedload(MealModel.ingredients)
-        ).filter(MealModel.id == meal_id).first()
+        result = await db.execute(
+            select(MealModel).options(
+                selectinload(MealModel.daily_plan).selectinload(DailyNutritionPlanModel.nutrition_plan),
+                selectinload(MealModel.ingredients)
+            ).where(MealModel.id == meal_id)
+        )
+        meal = result.scalar_one_or_none()
     
     if not meal:
         raise HTTPException(status_code=404, detail="Comida no encontrada")
@@ -2386,11 +2394,14 @@ async def get_plan_status(
         follower = None
         if db_user.id != plan.creator_id:
             from app.models.nutrition import NutritionPlanFollower
-            follower = service.db.query(NutritionPlanFollower).filter(
-                NutritionPlanFollower.plan_id == plan_id,
-                NutritionPlanFollower.user_id == db_user.id,
-                NutritionPlanFollower.is_active == True
-            ).first()
+            result = await db.execute(
+                select(NutritionPlanFollower).where(
+                    NutritionPlanFollower.plan_id == plan_id,
+                    NutritionPlanFollower.user_id == db_user.id,
+                    NutritionPlanFollower.is_active == True
+                )
+            )
+            follower = result.scalar_one_or_none()
         
         # Calcular estado
         current_day, status = service.get_current_plan_day(plan, follower)
@@ -2449,13 +2460,14 @@ async def get_notification_settings(
     # Obtener planes activos del usuario
     from app.models.nutrition import NutritionPlanFollower, NutritionPlan
 
-    active_followers = db.query(NutritionPlanFollower).join(
+    result = await db.execute(select(NutritionPlanFollower).select_from(NutritionPlanFollower).join(
         NutritionPlan
-    ).filter(
+    ).where(
         NutritionPlanFollower.user_id == db_user.id,
         NutritionPlanFollower.is_active == True,
         NutritionPlan.gym_id == current_gym.id
-    ).all()
+    ))
+    active_followers = result.scalars().all()
 
     # Si no hay planes activos, devolver configuración por defecto
     if not active_followers:
@@ -2476,9 +2488,11 @@ async def get_notification_settings(
     # Listar todos los planes con su configuración
     plans_config = []
     for follower in active_followers:
-        plan = db.query(NutritionPlan).filter(
-            NutritionPlan.id == follower.plan_id
-        ).first()
+        result = await db.execute(select(NutritionPlan).where(
+    NutritionPlan.id == follower.plan_id
+        
+    ))
+    plan = result.scalar_one_or_none()
 
         plans_config.append({
             "plan_id": plan.id,
@@ -2555,20 +2569,24 @@ async def update_notification_settings(
     # Si se especifica un plan, actualizar solo ese
     if plan_id:
         # Verificar que el plan existe y pertenece al gimnasio
-        plan = db.query(NutritionPlan).filter(
-            NutritionPlan.id == plan_id,
+        result = await db.execute(select(NutritionPlan).where(
+    NutritionPlan.id == plan_id,
             NutritionPlan.gym_id == current_gym.id
-        ).first()
+        
+    ))
+    plan = result.scalar_one_or_none()
 
         if not plan:
             raise HTTPException(status_code=404, detail="Plan no encontrado")
 
         # Obtener la relación follower
-        follower = db.query(NutritionPlanFollower).filter(
-            NutritionPlanFollower.plan_id == plan_id,
+        result = await db.execute(select(NutritionPlanFollower).where(
+    NutritionPlanFollower.plan_id == plan_id,
             NutritionPlanFollower.user_id == db_user.id,
             NutritionPlanFollower.is_active == True
-        ).first()
+        
+    ))
+    follower = result.scalar_one_or_none()
 
         if not follower:
             raise HTTPException(status_code=404, detail="No estás siguiendo este plan")
@@ -2604,13 +2622,14 @@ async def update_notification_settings(
 
     else:
         # Actualizar todos los planes activos del usuario
-        active_followers = db.query(NutritionPlanFollower).join(
+        result = await db.execute(select(NutritionPlanFollower).select_from(NutritionPlanFollower).join(
             NutritionPlan
-        ).filter(
+        ).where(
             NutritionPlanFollower.user_id == db_user.id,
             NutritionPlanFollower.is_active == True,
             NutritionPlan.gym_id == current_gym.id
-        ).all()
+        ))
+    active_followers = result.scalars().all()
 
         if not active_followers:
             raise HTTPException(status_code=404, detail="No tienes planes activos")

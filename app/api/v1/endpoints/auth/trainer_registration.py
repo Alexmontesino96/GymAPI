@@ -6,11 +6,11 @@ creando automáticamente su workspace y configuración inicial.
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status, Request
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 from redis.asyncio import Redis
 import logging
 
-from app.db.session import get_db
+from app.db.session import get_async_db
 from app.db.redis_client import get_redis_client
 from app.schemas.trainer import (
     TrainerRegistrationRequest,
@@ -88,7 +88,7 @@ router = APIRouter()
 async def register_trainer(
     request: Request,
     trainer_data: TrainerRegistrationRequest,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     redis_client: Redis = Depends(get_redis_client)
 ) -> TrainerRegistrationResponse:
     """
@@ -200,7 +200,7 @@ async def register_trainer(
 async def check_email_availability(
     request: Request,
     email: str,
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_async_db)
 ) -> dict:
     """
     Verificar si un email está disponible para registro
@@ -211,7 +211,8 @@ async def check_email_availability(
         from app.models.gym import Gym, GymType
 
         # Buscar usuario por email
-        user = db.query(User).filter(User.email == email).first()
+        result = await db.execute(select(User).where(User.email == email))
+    user = result.scalar_one_or_none()
 
         if not user:
             return {
@@ -220,11 +221,12 @@ async def check_email_availability(
             }
 
         # Usuario existe, verificar si tiene workspace de entrenador
-        has_workspace = db.query(UserGym).join(Gym).filter(
+        result = await db.execute(select(UserGym).join(Gym).where(
             UserGym.user_id == user.id,
             UserGym.role == "OWNER",
             Gym.type == GymType.personal_trainer
-        ).first() is not None
+        ))
+    has_workspace = result.scalar_one_or_none() is not None
 
         return {
             "available": False,
@@ -259,7 +261,7 @@ async def check_email_availability(
 async def validate_subdomain(
     request: Request,
     subdomain: str,
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_async_db)
 ) -> dict:
     """
     Validar disponibilidad de subdomain
@@ -277,7 +279,8 @@ async def validate_subdomain(
             }
 
         # Verificar disponibilidad
-        exists = db.query(Gym).filter(Gym.subdomain == subdomain).first() is not None
+        result = await db.execute(select(Gym).where(Gym.subdomain == subdomain))
+    exists = result.scalar_one_or_none() is not None
 
         return {
             "valid": True,

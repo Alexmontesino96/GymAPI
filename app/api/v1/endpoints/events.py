@@ -17,10 +17,11 @@ All endpoints are protected with appropriate permission scopes.
 from typing import List, Optional, Any, Dict
 from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Query, Body, Path, status, Security, BackgroundTasks, Request
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, func, and_, update
 from redis.asyncio import Redis
 
-from app.db.session import get_db
+from app.db.session import get_async_db
 from app.db.redis_client import get_redis_client
 from app.core.auth0_fastapi import get_current_user, get_current_user_with_permissions, Auth0User, auth
 from app.core.tenant import verify_gym_access, get_current_gym, GymSchema
@@ -68,7 +69,7 @@ CREATE_EVENT_CHAT = "create_event_chat"
 async def create_event(
     *,
     request: Request,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     event_in: EventCreate,
     background_tasks: BackgroundTasks,
     current_gym: GymSchema = Depends(verify_gym_access_cached),
@@ -105,7 +106,8 @@ async def create_event(
     
     # --- Optimización: Buscar usuario interno UNA SOLA VEZ --- 
     auth0_user_id = current_user.id
-    internal_user = db.query(User).filter(User.auth0_id == auth0_user_id).first()
+    result = await db.execute(select(User).where(User.auth0_id == auth0_user_id))
+    internal_user = result.scalar_one_or_none()
     if not internal_user:
          logger.error(f"Perfil de usuario no encontrado para Auth0 ID: {auth0_user_id}")
          raise HTTPException(status_code=404, detail="User profile not found")
@@ -136,10 +138,11 @@ async def create_event(
         # Verificar si el usuario es un entrenador para registrarlo automáticamente
         from app.models.user_gym import UserGym, GymRoleType
         
-        user_gym = db.query(UserGym).filter(
+        result = await db.execute(select(UserGym).where(
             UserGym.user_id == internal_user_id,
             UserGym.gym_id == gym_id
-        ).first()
+        ))
+    user_gym = result.scalar_one_or_none()
             
         is_trainer = user_gym and user_gym.role == GymRoleType.TRAINER
             
@@ -228,7 +231,7 @@ async def create_event(
 async def read_events(
     *,
     request: Request,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     skip: int = 0,
     limit: int = 100,
     status: Optional[EventStatus] = None,
@@ -301,7 +304,7 @@ async def read_events(
 async def read_my_events(
     *,
     request: Request,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     skip: int = 0,
     limit: int = 100,
     current_gym: GymSchema = Depends(verify_gym_access_cached),
@@ -324,7 +327,8 @@ async def read_my_events(
     
     try:
         # Buscar el usuario en la BD por auth0_id
-        user = db.query(User).filter(User.auth0_id == auth0_id).first()
+        result = await db.execute(select(User).where(User.auth0_id == auth0_id))
+    user = result.scalar_one_or_none()
         if not user:
             # Si no hay usuario, devolvemos lista vacía
             logger.warning(f"Usuario con Auth0 ID {auth0_id} no encontrado para read_my_events")
@@ -349,7 +353,8 @@ async def read_my_events(
         logger.error(f"Error obteniendo eventos del usuario {auth0_id}: {e}", exc_info=True)
         
         # Fallback a la implementación original en caso de error
-        user = db.query(User).filter(User.auth0_id == auth0_id).first()
+        result = await db.execute(select(User).where(User.auth0_id == auth0_id))
+    user = result.scalar_one_or_none()
         if not user:
             return []
             
@@ -371,7 +376,7 @@ async def read_my_events(
 async def read_event(
     *,
     request: Request,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     event_id: int = Path(..., title="ID del evento a obtener", ge=1),
     current_gym: GymSchema = Depends(verify_gym_access_cached),
     redis_client: Redis = Depends(get_redis_client),
@@ -456,7 +461,7 @@ async def read_event(
 async def update_event(
     *,
     request: Request,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     event_id: int = Path(..., title="Event ID"),
     event_in: EventUpdate,
     current_gym: GymSchema = Depends(verify_gym_access),  # Usar GymSchema
@@ -500,7 +505,10 @@ async def update_event(
         )
     
     # Verificar que el evento pertenezca al gimnasio actual y obtener su estado
-    event_data = db.query(Event.gym_id, Event.status).filter(Event.id == event_id).first()
+    result = await db.execute(
+        select(Event.gym_id, Event.status).where(Event.id == event_id)
+    )
+    event_data = result.first()
     if not event_data or event_data.gym_id != current_gym.id:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -589,7 +597,8 @@ async def update_event(
     
     # Para usuarios normales, verificar si son el creador en una sola consulta
     # Este enfoque evita cargar todo el evento si el usuario no es el creador
-    creator_id = db.query(Event.creator_id).filter(Event.id == event_id).scalar()
+    result = await db.execute(select(Event.creator_id).where(Event.id == event_id))
+ creator_id = result.scalar()
     
     if not creator_id:
         raise HTTPException(
@@ -603,7 +612,8 @@ async def update_event(
     # Si el ID de Auth0 del usuario corresponde al creador
     if isinstance(user_id, str):
         # Consulta optimizada que verifica la relación en una sola operación
-        creator_auth0_id = db.query(User.auth0_id).filter(User.id == creator_id).scalar()
+        result = await db.execute(select(User.auth0_id).where(User.id == creator_id))
+ creator_auth0_id = result.scalar()
         is_creator = creator_auth0_id == user_id
     else:
         is_creator = creator_id == user_id
@@ -677,7 +687,7 @@ async def update_event(
 async def delete_event(
     *,
     request: Request,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     event_id: int = Path(..., title="Event ID"),
     reason: Optional[str] = Query(None, max_length=500, description="Razón de la cancelación del evento"),
     current_gym: GymSchema = Depends(verify_gym_access),
@@ -727,7 +737,7 @@ async def delete_event(
 async def admin_delete_event(
     *,
     request: Request,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     event_id: int = Path(..., title="Event ID"),
     reason: Optional[str] = Query(None, max_length=500, description="Razón de la cancelación del evento"),
     current_gym: GymSchema = Depends(verify_gym_access),  # Usar GymSchema
@@ -767,10 +777,11 @@ async def admin_delete_event(
         HTTPException: 404 if event not found, 400 if already cancelled, 500 for other errors
     """
     # Obtener evento completo con validación de gimnasio
-    event = db.query(Event).filter(
+    result = await db.execute(select(Event).where(
         Event.id == event_id,
         Event.gym_id == current_gym.id
-    ).first()
+    ))
+    event = result.scalar_one_or_none()
 
     if not event:
         raise HTTPException(
@@ -810,7 +821,8 @@ async def admin_delete_event(
             )
 
             # Obtener ID interno del usuario admin
-            admin_user = db.query(User).filter(User.auth0_id == current_user.id).first()
+            result = await db.execute(select(User).where(User.auth0_id == current_user.id))
+    admin_user = result.scalar_one_or_none()
             if not admin_user:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
@@ -905,13 +917,14 @@ async def admin_delete_event(
             )
 
             # Marcar participaciones como canceladas antes de eliminar
-            participant_count = db.query(EventParticipation).filter(
-                EventParticipation.event_id == event_id
-            ).count()
+            result = await db.execute(select(func.count()).select_from(EventParticipation).where(
+    EventParticipation.event_id == event_id
+    ))
+ participant_count = result.scalar()
 
-            db.query(EventParticipation).filter(
-                EventParticipation.event_id == event_id
-            ).update({"status": EventParticipationStatus.CANCELLED})
+            await db.execute(update(EventParticipation).where(
+    EventParticipation.event_id == event_id
+    ).values({"status": EventParticipationStatus.CANCELLED}))
 
             # Eliminar evento (comportamiento anterior)
             await event_service.delete_event(
@@ -951,7 +964,7 @@ async def admin_delete_event(
 async def register_for_event(
     *,
     request: Request,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     participation_in: EventParticipationCreate = Body(...),
     current_gym: GymSchema = Depends(verify_gym_access),  # Usar GymSchema
     current_user: Auth0User = Security(auth.get_user, scopes=["resource:write"]),
@@ -970,7 +983,8 @@ async def register_for_event(
     auth0_id = current_user.id
     
     # Verificar que el usuario existe en la BD
-    user = db.query(User).filter(User.auth0_id == auth0_id).first()
+    result = await db.execute(select(User).where(User.auth0_id == auth0_id))
+    user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(
             status_code=404,
@@ -1022,9 +1036,10 @@ async def register_for_event(
                     f"[Reactivación] Cancelando Payment Intent antiguo: {existing.stripe_payment_intent_id}"
                 )
                 try:
-                    stripe_account = db.query(GymStripeAccount).filter(
+                    result = await db.execute(select(GymStripeAccount).where(
                         GymStripeAccount.gym_id == event.gym_id
-                    ).first()
+                    ))
+    stripe_account = result.scalar_one_or_none()
 
                     if stripe_account:
                         # Cancelar Payment Intent en Stripe
@@ -1056,10 +1071,11 @@ async def register_for_event(
                 existing.payment_expiry = None
 
             # Verificar capacidad de nuevo
-            registered_count = db.query(EventParticipation).filter(
+            result = await db.execute(select(func.count()).select_from(EventParticipation).where(
                 EventParticipation.event_id == event.id,
                 EventParticipation.status == EventParticipationStatus.REGISTERED
-            ).count()
+            ))
+ registered_count = result.scalar()
 
             if event.max_participants == 0 or registered_count < event.max_participants:
                 existing.status = EventParticipationStatus.REGISTERED
@@ -1068,8 +1084,8 @@ async def register_for_event(
 
             existing.updated_at = datetime.now(timezone.utc)
             db.add(existing)
-            db.commit()
-            db.refresh(existing)
+            await db.commit()
+            await db.refresh(existing)
             participation = existing # Asignar el objeto actualizado a participation
             
             # Añadir usuario al canal de Stream Chat del evento para reactivación
@@ -1148,7 +1164,7 @@ async def register_for_event(
         if not stripe_enabled:
             # Si Stripe no está habilitado, cancelar el registro
             db.delete(participation)
-            db.commit()
+            await db.commit()
             raise HTTPException(
                 status_code=400,
                 detail="El evento requiere pago pero el sistema de pagos no está configurado para este gimnasio"
@@ -1164,9 +1180,10 @@ async def register_for_event(
                 )
 
                 # Obtener cuenta de Stripe del gym para incluir en respuesta
-                stripe_account = db.query(GymStripeAccount).filter(
+                result = await db.execute(select(GymStripeAccount).where(
                     GymStripeAccount.gym_id == current_gym.id
-                ).first()
+                ))
+    stripe_account = result.scalar_one_or_none()
 
                 # Usar función idempotente para obtener o crear Payment Intent
                 payment_info = await event_payment_service.get_or_create_payment_intent_for_event(
@@ -1182,8 +1199,8 @@ async def register_for_event(
                 participation.stripe_payment_intent_id = payment_info["payment_intent_id"]
 
                 try:
-                    db.commit()
-                    db.refresh(participation)
+                    await db.commit()
+                    await db.refresh(participation)
 
                     logger.info(
                         f"[Registro] ✅ Payment Intent {payment_info['payment_intent_id']} "
@@ -1229,7 +1246,7 @@ async def register_for_event(
             except Exception as e:
                 # Si hay error creando el Payment Intent, cancelar el registro
                 db.delete(participation)
-                db.commit()
+                await db.commit()
                 logger.error(f"[Registro] Error procesando Payment Intent para evento {event.id}: {e}")
                 raise HTTPException(
                     status_code=400,
@@ -1238,7 +1255,7 @@ async def register_for_event(
         elif participation.status == EventParticipationStatus.WAITING_LIST:
             # Para lista de espera, solo marcar como pendiente pero no crear Payment Intent aún
             participation.payment_status = PaymentStatusType.PENDING
-            db.commit()
+            await db.commit()
             logger.info(f"Usuario {user.id} en lista de espera para evento de pago {event.id}")
 
     # Añadir usuario al canal de Stream Chat del evento
@@ -1276,7 +1293,7 @@ async def confirm_event_payment(
     *,
     participation_id: int = Path(..., description="ID de la participación"),
     payment_intent_id: str = Body(None, embed=True, description="ID del Payment Intent de Stripe (opcional, se usa el de la participación si no se proporciona)"),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: GymSchema = Depends(verify_gym_access),
     current_user: Auth0User = Security(auth.get_user, scopes=["resource:write"]),
     redis_client: Redis = Depends(get_redis_client)
@@ -1295,15 +1312,17 @@ async def confirm_event_payment(
         EventParticipation actualizada con estado de pago confirmado
     """
     # Obtener el usuario actual
-    user = db.query(User).filter(User.auth0_id == current_user.id).first()
+    result = await db.execute(select(User).where(User.auth0_id == current_user.id))
+    user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
 
     # Obtener la participación
-    participation = db.query(EventParticipation).filter(
+    result = await db.execute(select(EventParticipation).where(
         EventParticipation.id == participation_id,
         EventParticipation.member_id == user.id
-    ).first()
+    ))
+    participation = result.scalar_one_or_none()
 
     if not participation:
         raise HTTPException(
@@ -1312,7 +1331,8 @@ async def confirm_event_payment(
         )
 
     # Verificar que la participación pertenece al gimnasio actual
-    event = db.query(Event).filter(Event.id == participation.event_id).first()
+    result = await db.execute(select(Event).where(Event.id == participation.event_id))
+    event = result.scalar_one_or_none()
     if not event or event.gym_id != current_gym.id:
         raise HTTPException(
             status_code=403,
@@ -1381,7 +1401,7 @@ async def confirm_event_payment(
 async def get_payment_intent_for_waitlist(
     *,
     participation_id: int = Path(..., description="ID de la participación"),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: GymSchema = Depends(verify_gym_access),
     current_user: Auth0User = Security(auth.get_user, scopes=["resource:write"]),
     redis_client: Redis = Depends(get_redis_client)
@@ -1396,16 +1416,18 @@ async def get_payment_intent_for_waitlist(
         Información del Payment Intent incluyendo client_secret, monto y fecha límite
     """
     # Obtener el usuario actual
-    user = db.query(User).filter(User.auth0_id == current_user.id).first()
+    result = await db.execute(select(User).where(User.auth0_id == current_user.id))
+    user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
 
     # Obtener la participación
-    participation = db.query(EventParticipation).filter(
+    result = await db.execute(select(EventParticipation).where(
         EventParticipation.id == participation_id,
         EventParticipation.member_id == user.id,
         EventParticipation.status == EventParticipationStatus.REGISTERED
-    ).first()
+    ))
+    participation = result.scalar_one_or_none()
 
     if not participation:
         raise HTTPException(
@@ -1414,7 +1436,8 @@ async def get_payment_intent_for_waitlist(
         )
 
     # Verificar que el evento pertenece al gimnasio actual y es de pago
-    event = db.query(Event).filter(Event.id == participation.event_id).first()
+    result = await db.execute(select(Event).where(Event.id == participation.event_id))
+    event = result.scalar_one_or_none()
     if not event or event.gym_id != current_gym.id:
         raise HTTPException(
             status_code=403,
@@ -1442,9 +1465,10 @@ async def get_payment_intent_for_waitlist(
 
     try:
         # Obtener cuenta de Stripe del gym para incluir en respuesta
-        stripe_account = db.query(GymStripeAccount).filter(
+        result = await db.execute(select(GymStripeAccount).where(
             GymStripeAccount.gym_id == current_gym.id
-        ).first()
+        ))
+    stripe_account = result.scalar_one_or_none()
 
         # Manejar oportunidad de pago para lista de espera
         payment_info = await event_payment_service.handle_waitlist_payment_opportunity(
@@ -1474,7 +1498,7 @@ async def get_payment_intent_for_waitlist(
 async def read_my_participations(
     *,
     request: Request,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     participation_status: Optional[EventParticipationStatus] = None,
     current_gym: GymSchema = Depends(verify_gym_access),  # Usar GymSchema
     current_user: Auth0User = Security(auth.get_user, scopes=["resource:read"])
@@ -1514,29 +1538,32 @@ async def read_my_participations(
     from sqlalchemy.orm import joinedload
     
     # 1. Optimización: Obtener ID interno con consulta eficiente
-    internal_user_id = db.query(User.id).filter(User.auth0_id == user_id).scalar()
+    result = await db.execute(select(User.id).where(User.auth0_id == user_id))
+ internal_user_id = result.scalar()
     
     if not internal_user_id:
         logger.warning(f"Usuario no encontrado: {user_id}")
         return []
     
     # 2. Optimización: Consulta eficiente con eager loading para evitar N+1 queries
-    query = db.query(EventParticipation).options(
-        joinedload(EventParticipation.event)  # Precarga los datos del evento
-    ).filter(
+    from sqlalchemy.orm import selectinload
+    stmt = select(EventParticipation).options(
+        selectinload(EventParticipation.event)  # Precarga los datos del evento
+    ).where(
         EventParticipation.member_id == internal_user_id,
         EventParticipation.gym_id == current_gym.id  # Filtrar por gimnasio actual
     )
-    
+
     # Filtrar por estado si es necesario
     if participation_status:
-        query = query.filter(EventParticipation.status == participation_status)
-    
+        stmt = stmt.where(EventParticipation.status == participation_status)
+
     # 3. Optimización: Ordenar por fecha de registro para obtener las más recientes primero
-    query = query.order_by(EventParticipation.registered_at.desc())
-    
+    stmt = stmt.order_by(EventParticipation.registered_at.desc())
+
     # Ejecutar consulta
-    participations = query.all()
+    result = await db.execute(stmt)
+    participations = result.scalars().all()
     
     elapsed_time = time.time() - start_time
     logger.info(f"Participaciones obtenidas: {len(participations)}, tiempo: {elapsed_time:.2f}s")
@@ -1548,7 +1575,7 @@ async def read_my_participations(
 async def read_event_participations(
     *,
     request: Request,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     event_id: int = Path(..., title="Event ID"),
     participation_status: Optional[EventParticipationStatus] = None,
     current_gym: GymSchema = Depends(verify_gym_access),  # Usar GymSchema
@@ -1593,22 +1620,23 @@ async def read_event_participations(
     
     # Optimización 1: Obtener información del evento y usuario en una sola consulta
     from app.models.user import User
-    from sqlalchemy import select, text
-    
+    from sqlalchemy import select, text, update, delete
+
     # Obtener usuario interno y creador del evento en una consulta
-    query = db.query(
+    stmt = select(
         Event.id.label('event_id'),
         Event.gym_id.label('gym_id'),
         Event.creator_id.label('creator_id'),
         User.id.label('user_id')
     ).outerjoin(
         User, User.auth0_id == user_id
-    ).filter(
+    ).where(
         Event.id == event_id,
         Event.gym_id == current_gym.id  # Verificar pertenencia al gimnasio actual
     )
-    
-    result = query.first()
+
+    result_obj = await db.execute(stmt)
+    result = result_obj.first()
     
     if not result or not result.event_id:
         logger.warning(f"Evento no encontrado: {event_id}")
@@ -1630,34 +1658,35 @@ async def read_event_participations(
         )
     
     # Optimización 2: Consulta eficiente con eager loading para evitar N+1 queries
-    from sqlalchemy.orm import joinedload
-    
-    query = db.query(EventParticipation).options(
-        joinedload(EventParticipation.member)  # Precarga datos del miembro
-    ).filter(
+    from sqlalchemy.orm import selectinload
+
+    stmt = select(EventParticipation).options(
+        selectinload(EventParticipation.member)  # Precarga datos del miembro
+    ).where(
         EventParticipation.event_id == event_id,
         EventParticipation.gym_id == current_gym.id  # Filtrar por gimnasio actual
     )
-    
+
     # Aplicar filtro por estado si es necesario
     if participation_status:
-        query = query.filter(EventParticipation.status == participation_status)
-    
+        stmt = stmt.where(EventParticipation.status == participation_status)
+
     # Ordenar por estado y fecha de registro para mejor usabilidad
     # (primero registrados, luego lista de espera, al final cancelados)
     order_case = text("""
-        CASE 
+        CASE
             WHEN status = 'REGISTERED' THEN 1
             WHEN status = 'WAITING_LIST' THEN 2
             WHEN status = 'CANCELLED' THEN 3
             ELSE 4
         END
     """)
-    
-    query = query.order_by(order_case, EventParticipation.registered_at)
-    
+
+    stmt = stmt.order_by(order_case, EventParticipation.registered_at)
+
     # Ejecutar consulta
-    participations = query.all()
+    result_obj = await db.execute(stmt)
+    participations = result_obj.scalars().all()
     
     elapsed_time = time.time() - start_time
     logger.info(f"Participaciones obtenidas: {len(participations)}, tiempo: {elapsed_time:.2f}s")
@@ -1669,7 +1698,7 @@ async def read_event_participations(
 async def cancel_participation(
     *,
     request: Request,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     event_id: int = Path(..., title="Event ID"),
     current_gym: GymSchema = Depends(verify_gym_access),  # Usar GymSchema
     current_user: Auth0User = Security(auth.get_user, scopes=["resource:write"]),
@@ -1688,7 +1717,8 @@ async def cancel_participation(
     auth0_id = current_user.id
     
     # Verificar que el usuario existe en la BD
-    user = db.query(User).filter(User.auth0_id == auth0_id).first()
+    result = await db.execute(select(User).where(User.auth0_id == auth0_id))
+    user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(
             status_code=404,
@@ -1776,7 +1806,7 @@ async def cancel_participation(
 async def update_attendance(
     *,
     request: Request,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     event_id: int = Path(..., title="Event ID"),
     user_id: int = Path(..., title="Internal User ID of the participant"),
     attendance_data: EventParticipationUpdate = Body(...),
@@ -1828,10 +1858,11 @@ async def update_attendance(
         )
 
     # Obtener evento para verificar creador (si no es admin)
-    event = db.query(Event).filter(
+    result = await db.execute(select(Event).where(
         Event.id == event_id, 
         Event.gym_id == current_gym.id # Doble check por si acaso
-    ).first()
+    ))
+    event = result.scalar_one_or_none()
     if not event: # Esto no debería ocurrir si la participación existe, pero por seguridad
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -1844,7 +1875,8 @@ async def update_attendance(
     is_admin = any(p in user_permissions for p in ["admin:all", "admin:events"])
     
     # Obtener el ID interno del usuario que hace la solicitud para comparar con el creador
-    requesting_internal_user_id = db.query(User.id).filter(User.auth0_id == requesting_user_auth0_id).scalar()
+    result = await db.execute(select(User.id).where(User.auth0_id == requesting_user_auth0_id))
+ requesting_internal_user_id = result.scalar()
     
     # Only the event creator or an admin can update participation
     if not (is_admin or event.creator_id == requesting_internal_user_id):
@@ -1884,7 +1916,7 @@ async def update_attendance(
 async def bulk_register_for_event(
     *,
     request: Request,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     payload: EventBulkParticipationCreate = Body(...),
     current_gym: GymSchema = Depends(verify_gym_access),
     current_user: Auth0User = Security(auth.get_user, scopes=["resource:admin"]),
@@ -1898,11 +1930,13 @@ async def bulk_register_for_event(
     from app.models.user_gym import UserGym, GymRoleType
 
     # Verificar rol OWNER/ADMIN en el gimnasio actual
-    internal_user_id = db.query(User.id).filter(User.auth0_id == current_user.id).scalar()
-    role_in_gym = db.query(UserGym.role).filter(
+    result = await db.execute(select(User.id).where(User.auth0_id == current_user.id))
+ internal_user_id = result.scalar()
+    result = await db.execute(select(UserGym.role).where(
         UserGym.user_id == internal_user_id,
         UserGym.gym_id == current_gym.id
-    ).scalar()
+    ))
+ role_in_gym = result.scalar()
 
     if role_in_gym not in [GymRoleType.ADMIN, GymRoleType.OWNER]:
         raise HTTPException(status_code=403, detail="Solo ADMIN u OWNER del gimnasio pueden usar este endpoint")
@@ -1914,11 +1948,13 @@ async def bulk_register_for_event(
 
     # --- Validar que los IDs pertenecen al gimnasio ---
     from sqlalchemy import select
-    gym_user_ids = db.query(UserGym.user_id).filter(
-        UserGym.gym_id == current_gym.id,
-        UserGym.user_id.in_(payload.user_ids)
-    ).all()
-    gym_user_ids = {uid for (uid,) in gym_user_ids}
+    result = await db.execute(
+        select(UserGym.user_id).where(
+            UserGym.gym_id == current_gym.id,
+            UserGym.user_id.in_(payload.user_ids)
+        )
+    )
+    gym_user_ids = {uid for (uid,) in result.all()}
 
     invalid_ids = set(payload.user_ids) - gym_user_ids
     if invalid_ids:
@@ -1952,7 +1988,7 @@ async def bulk_register_for_event(
 @router.get("/admin/payments/events", response_model=List[EventSchema])
 async def get_paid_events(
     *,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: GymSchema = Depends(verify_gym_access),
     current_user: Auth0User = Security(auth.get_user, scopes=["resource:admin"]),
     only_active: bool = Query(True, description="Filtrar solo eventos activos")
@@ -1966,15 +2002,16 @@ async def get_paid_events(
     Permissions:
         - Requires 'resource:admin' scope (admin only)
     """
-    query = db.query(Event).filter(
+    stmt = select(Event).where(
         Event.gym_id == current_gym.id,
         Event.is_paid == True
     )
 
     if only_active:
-        query = query.filter(Event.status != EventStatus.CANCELLED)
+        stmt = stmt.where(Event.status != EventStatus.CANCELLED)
 
-    events = query.order_by(Event.start_time.desc()).all()
+    result = await db.execute(stmt.order_by(Event.start_time.desc()))
+    events = result.scalars().all()
 
     logger.info(f"Admin {current_user.id} consultó {len(events)} eventos de pago")
     return events
@@ -1984,7 +2021,7 @@ async def get_paid_events(
 async def get_event_payment_status(
     *,
     event_id: int = Path(..., description="ID del evento"),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: GymSchema = Depends(verify_gym_access),
     current_user: Auth0User = Security(auth.get_user, scopes=["resource:admin"]),
     payment_status: Optional[PaymentStatusType] = Query(None, description="Filtrar por estado de pago")
@@ -1999,10 +2036,11 @@ async def get_event_payment_status(
         - Requires 'resource:admin' scope (admin only)
     """
     # Verificar que el evento existe y pertenece al gimnasio
-    event = db.query(Event).filter(
+    result = await db.execute(select(Event).where(
         Event.id == event_id,
         Event.gym_id == current_gym.id
-    ).first()
+    ))
+    event = result.scalar_one_or_none()
 
     if not event:
         raise HTTPException(
@@ -2017,14 +2055,15 @@ async def get_event_payment_status(
         )
 
     # Obtener participaciones con filtro opcional
-    query = db.query(EventParticipation).filter(
+    stmt = select(EventParticipation).where(
         EventParticipation.event_id == event_id
     )
 
     if payment_status:
-        query = query.filter(EventParticipation.payment_status == payment_status)
+        stmt = stmt.where(EventParticipation.payment_status == payment_status)
 
-    participations = query.all()
+    result = await db.execute(stmt)
+    participations = result.scalars().all()
 
     logger.info(f"Admin {current_user.id} consultó pagos del evento {event_id}: {len(participations)} participaciones")
     return participations
@@ -2035,7 +2074,7 @@ async def admin_process_refund(
     *,
     participation_id: int = Path(..., description="ID de la participación"),
     reason: str = Body(..., embed=True, description="Razón del reembolso"),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: GymSchema = Depends(verify_gym_access),
     current_user: Auth0User = Security(auth.get_user, scopes=["resource:admin"])
 ) -> Dict[str, Any]:
@@ -2049,9 +2088,10 @@ async def admin_process_refund(
         - Requires 'resource:admin' scope (admin only)
     """
     # Obtener la participación
-    participation = db.query(EventParticipation).filter(
+    result = await db.execute(select(EventParticipation).where(
         EventParticipation.id == participation_id
-    ).first()
+    ))
+    participation = result.scalar_one_or_none()
 
     if not participation:
         raise HTTPException(
@@ -2060,7 +2100,8 @@ async def admin_process_refund(
         )
 
     # Verificar que el evento pertenece al gimnasio
-    event = db.query(Event).filter(Event.id == participation.event_id).first()
+    result = await db.execute(select(Event).where(Event.id == participation.event_id))
+    event = result.scalar_one_or_none()
     if not event or event.gym_id != current_gym.id:
         raise HTTPException(
             status_code=403,
@@ -2098,7 +2139,7 @@ async def admin_update_payment_status(
     *,
     participation_id: int = Path(..., description="ID de la participación"),
     new_status: PaymentStatusType = Body(..., embed=True, description="Nuevo estado de pago"),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: GymSchema = Depends(verify_gym_access),
     current_user: Auth0User = Security(auth.get_user, scopes=["resource:admin"])
 ) -> EventParticipationSchema:
@@ -2112,9 +2153,10 @@ async def admin_update_payment_status(
         - Requires 'resource:admin' scope (admin only)
     """
     # Obtener la participación
-    participation = db.query(EventParticipation).filter(
+    result = await db.execute(select(EventParticipation).where(
         EventParticipation.id == participation_id
-    ).first()
+    ))
+    participation = result.scalar_one_or_none()
 
     if not participation:
         raise HTTPException(
@@ -2123,7 +2165,8 @@ async def admin_update_payment_status(
         )
 
     # Verificar que el evento pertenece al gimnasio
-    event = db.query(Event).filter(Event.id == participation.event_id).first()
+    result = await db.execute(select(Event).where(Event.id == participation.event_id))
+    event = result.scalar_one_or_none()
     if not event or event.gym_id != current_gym.id:
         raise HTTPException(
             status_code=403,
@@ -2139,8 +2182,8 @@ async def admin_update_payment_status(
         participation.payment_date = datetime.now(timezone.utc)
         participation.amount_paid_cents = event.price_cents
 
-    db.commit()
-    db.refresh(participation)
+    await db.commit()
+    await db.refresh(participation)
 
     logger.info(
         f"Admin {current_user.id} cambió estado de pago de participación {participation_id} "

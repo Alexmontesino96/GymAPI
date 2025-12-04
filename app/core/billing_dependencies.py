@@ -4,34 +4,34 @@ Verifica que el módulo esté activo antes de permitir operaciones de facturaci�
 """
 
 from fastapi import Depends, HTTPException, status
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional
 
-from app.db.session import get_db
+from app.db.session import get_async_db
 from app.services.module import module_service
 from app.core.tenant import get_tenant_id
 from app.schemas.gym import GymSchema
 from app.core.tenant import verify_gym_access
 
 
-def billing_module_required(
-    db: Session = Depends(get_db),
+async def billing_module_required(
+    db: AsyncSession = Depends(get_async_db),
     gym_id: int = Depends(get_tenant_id),
     current_gym: GymSchema = Depends(verify_gym_access)
 ) -> None:
     """
     Dependencia que verifica si el módulo de billing está activo para el gimnasio.
-    
+
     Args:
         db: Sesión de base de datos
         gym_id: ID del gimnasio actual
         current_gym: Datos del gimnasio actual
-        
+
     Raises:
         HTTPException 403: Si el módulo billing no está activo
         HTTPException 404: Si el módulo billing no existe
     """
-    is_active = module_service.get_gym_module_status(db, gym_id, "billing")
+    is_active = await module_service.get_gym_module_status(db, gym_id, "billing")
     
     if is_active is None:
         raise HTTPException(
@@ -47,21 +47,21 @@ def billing_module_required(
         )
 
 
-def billing_module_optional(
-    db: Session = Depends(get_db),
+async def billing_module_optional(
+    db: AsyncSession = Depends(get_async_db),
     gym_id: int = Depends(get_tenant_id)
 ) -> bool:
     """
     Dependencia que verifica si el módulo de billing está activo, pero no falla si no lo está.
-    
+
     Args:
         db: Sesión de base de datos
         gym_id: ID del gimnasio actual
-        
+
     Returns:
         bool: True si el módulo está activo, False en caso contrario
     """
-    is_active = module_service.get_gym_module_status(db, gym_id, "billing")
+    is_active = await module_service.get_gym_module_status(db, gym_id, "billing")
     return is_active is True
 
 

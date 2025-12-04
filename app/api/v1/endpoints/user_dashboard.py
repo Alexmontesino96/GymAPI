@@ -10,10 +10,10 @@ y diseñados para soportar alta concurrencia sin saturar la base de datos.
 
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Security, status, Request
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 from redis.asyncio import Redis
 
-from app.db.session import get_db
+from app.db.session import get_async_db
 from app.db.redis_client import get_redis_client
 from app.core.auth0_fastapi import Auth0User, auth
 from app.core.tenant import verify_gym_access, GymSchema
@@ -35,7 +35,7 @@ router = APIRouter()
 @limiter.limit("30/minute")  # Rate limit más alto para endpoint crítico
 async def get_dashboard_summary(
     request: Request,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: GymSchema = Depends(verify_gym_access),
     current_user: Auth0User = Security(auth.get_user, scopes=["resource:read"]),
     redis_client: Redis = Depends(get_redis_client)
@@ -99,7 +99,7 @@ async def get_comprehensive_stats(
     request: Request,
     period: PeriodType = Query(PeriodType.month, description="Período de análisis"),
     include_goals: bool = Query(True, description="Incluir progreso de objetivos"),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: GymSchema = Depends(verify_gym_access),
     current_user: Auth0User = Security(auth.get_user, scopes=["resource:read"]),
     redis_client: Redis = Depends(get_redis_client)
@@ -177,7 +177,7 @@ async def get_comprehensive_stats(
 async def get_fitness_stats(
     request: Request,
     period: PeriodType = Query(PeriodType.month, description="Período de análisis"),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: GymSchema = Depends(verify_gym_access),
     current_user: Auth0User = Security(auth.get_user, scopes=["resource:read"]),
     redis_client: Redis = Depends(get_redis_client)
@@ -244,7 +244,7 @@ async def get_fitness_stats(
 async def get_social_stats(
     request: Request,
     period: PeriodType = Query(PeriodType.month, description="Período de análisis"),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: GymSchema = Depends(verify_gym_access),
     current_user: Auth0User = Security(auth.get_user, scopes=["resource:read"]),
     redis_client: Redis = Depends(get_redis_client)
@@ -313,7 +313,7 @@ async def get_social_stats(
 async def get_health_stats(
     request: Request,
     include_goals: bool = Query(True, description="Incluir progreso de objetivos"),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: GymSchema = Depends(verify_gym_access),
     current_user: Auth0User = Security(auth.get_user, scopes=["resource:read"]),
     redis_client: Redis = Depends(get_redis_client)
@@ -380,7 +380,7 @@ async def get_health_stats(
 @limiter.limit("3/minute")  # Límite muy estricto para refresh manual
 async def refresh_user_stats(
     request: Request,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: GymSchema = Depends(verify_gym_access),
     current_user: Auth0User = Security(auth.get_user, scopes=["resource:write"]),
     redis_client: Redis = Depends(get_redis_client)

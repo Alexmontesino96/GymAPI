@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List
 
 from app.db.session import SessionLocal
@@ -26,7 +26,7 @@ def get_db():
 @router.post("/devices", response_model=DeviceTokenResponse)
 def register_device(
     token_data: DeviceTokenCreate,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_user: Auth0User = Security(auth.get_user),
     gym: Gym = Depends(verify_gym_access),
 ):
@@ -42,7 +42,7 @@ def register_device(
 
 @router.get("/devices", response_model=List[DeviceTokenResponse])
 def get_user_devices(
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_user: Auth0User = Security(auth.get_user),
     gym: Gym = Depends(verify_gym_access),
 ):
@@ -53,7 +53,7 @@ def get_user_devices(
 
 @router.delete("/devices")
 def logout_all_devices(
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_user: Auth0User = Security(auth.get_user),
     gym: Gym = Depends(verify_gym_access),
 ):
@@ -67,7 +67,7 @@ def logout_all_devices(
 async def send_notification(
     notification_data: NotificationSend,
     background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     gym: Gym = Depends(verify_admin_role)
 ):
     """
@@ -92,7 +92,7 @@ async def send_notification(
 async def send_notification_to_gym_users(
     notification_data: GymNotificationRequest,
     background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     gym_id: int = Depends(get_tenant_id),
     gym: Gym = Depends(verify_admin_role)
 ):

@@ -10,9 +10,9 @@ Este módulo proporciona endpoints para:
 
 from typing import Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, status, Request
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.session import get_db
+from app.db.session import get_async_db
 from app.core.auth0_fastapi import Auth0User, auth
 from app.core.tenant import verify_gym_admin_access
 from app.schemas.gym import GymSchema
@@ -29,7 +29,7 @@ async def create_stripe_account(
     request: Request,
     country: str = "US",
     account_type: str = "express",
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_user: Auth0User = Depends(auth.get_user),
     current_gym: GymSchema = Depends(verify_gym_admin_access)
 ) -> Dict[str, Any]:
@@ -95,7 +95,7 @@ async def create_stripe_account(
 @router.get("/accounts/status")
 async def get_stripe_account_status(
     request: Request,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_user: Auth0User = Depends(auth.get_user),
     current_gym: GymSchema = Depends(verify_gym_admin_access)
 ) -> Dict[str, Any]:
@@ -152,7 +152,7 @@ async def create_onboarding_link(
     request: Request,
     refresh_url: str = None,
     return_url: str = None,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_user: Auth0User = Depends(auth.get_user),
     current_gym: GymSchema = Depends(verify_gym_admin_access)
 ) -> Dict[str, Any]:
@@ -215,7 +215,7 @@ async def create_onboarding_link(
 @router.get("/customers/{user_id}")
 async def get_user_stripe_info(
     user_id: int,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_user: Auth0User = Depends(auth.get_user),
     current_gym: GymSchema = Depends(verify_gym_admin_access)
 ) -> Dict[str, Any]:
@@ -267,7 +267,7 @@ async def get_user_stripe_info(
 
 @router.get("/dashboard")
 async def get_stripe_dashboard(
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_user: Auth0User = Depends(auth.get_user),
     current_gym: GymSchema = Depends(verify_gym_admin_access)
 ) -> Dict[str, Any]:
@@ -289,16 +289,18 @@ async def get_stripe_dashboard(
         gym_account = stripe_connect_service.get_gym_stripe_account(db, current_gym.id)
         
         # Estadísticas de customers
-        total_customers = db.query(UserGymStripeProfile).filter(
+        result = await db.execute(select(func.count()).select_from(UserGymStripeProfile).where(
             UserGymStripeProfile.gym_id == current_gym.id,
             UserGymStripeProfile.is_active == True
-        ).count()
+        ))
+ total_customers = result.scalar()
         
-        active_subscriptions = db.query(UserGymStripeProfile).filter(
+        result2 = await db.execute(select(func.count()).select_from(UserGymStripeProfile).where(
             UserGymStripeProfile.gym_id == current_gym.id,
             UserGymStripeProfile.is_active == True,
             UserGymStripeProfile.stripe_subscription_id.isnot(None)
-        ).count()
+        ))
+        active_subscriptions = result2.scalar()
         
         return {
             "stripe_configured": gym_account is not None,

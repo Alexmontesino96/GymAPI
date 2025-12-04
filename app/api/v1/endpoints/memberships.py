@@ -9,9 +9,10 @@ Este módulo proporciona todas las rutas relacionadas con la gestión de:
 
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status, Request, Path
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, func, and_, delete
 
-from app.db.session import get_db
+from app.db.session import get_async_db
 from app.core.auth0_fastapi import Auth0User, auth
 from app.core.tenant import verify_gym_access, verify_gym_admin_access, get_current_gym
 from app.core.billing_dependencies import billing_module_required, billing_module_optional, get_billing_capabilities
@@ -49,7 +50,7 @@ stripe_service = StripeService(membership_service)
 @router.get("/billing/capabilities")
 async def get_billing_capabilities_endpoint(
     request: Request,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_user: Auth0User = Depends(auth.get_user),
     current_gym: GymSchema = Depends(verify_gym_access),
     capabilities: dict = Depends(get_billing_capabilities)
@@ -99,7 +100,7 @@ async def get_billing_capabilities_endpoint(
 async def create_membership_plan(
     request: Request,
     plan_data: MembershipPlanCreate,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_user: Auth0User = Depends(auth.get_user),
     current_gym: GymSchema = Depends(verify_gym_admin_access)
 ) -> MembershipPlan:
@@ -136,7 +137,7 @@ async def list_membership_plans(
     active_only: bool = Query(True, description="Solo planes activos"),
     skip: int = Query(0, ge=0, description="Registros a omitir"),
     limit: int = Query(100, ge=1, le=1000, description="Límite de registros"),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_user: Auth0User = Depends(auth.get_user),
     current_gym: GymSchema = Depends(verify_gym_access)
 ) -> MembershipPlanList:
@@ -177,7 +178,7 @@ async def list_membership_plans(
 async def get_membership_plan(
     request: Request,
     plan_id: int,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_user: Auth0User = Depends(auth.get_user),
     current_gym: GymSchema = Depends(verify_gym_access)
 ) -> MembershipPlan:
@@ -211,7 +212,7 @@ async def get_membership_plan(
 @router.get("/plans-stats")
 async def get_membership_plans_stats(
     request: Request,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_user: Auth0User = Depends(auth.get_user),
     current_gym: GymSchema = Depends(verify_gym_admin_access)
 ):
@@ -255,40 +256,54 @@ async def get_membership_plans_stats(
     from app.models.user_gym import UserGym
     from app.models.user import User
     from datetime import datetime
-    from sqlalchemy import func, and_
-    
+
     # Obtener todos los planes del gimnasio
-    plans = db.query(MembershipPlan).filter(
+    result = await db.execute(select(MembershipPlan).where(
         MembershipPlan.gym_id == current_gym.id
-    ).all()
+    ))
+    plans = result.scalars().all()
     
     # Estadísticas generales de usuarios en el gimnasio
     now = datetime.utcnow()
     
     # Usuarios activos por tipo de membresía
-    total_users = db.query(UserGym).filter(
-        UserGym.gym_id == current_gym.id
-    ).count()
+    result = await db.execute(select(func.count()).select_from(UserGym).where(
+    UserGym.gym_id == current_gym.id
+    ))
+ total_users = result.scalar()
     
-    active_users = db.query(UserGym).filter(
-        UserGym.gym_id == current_gym.id,
-        UserGym.is_active == True,
-        (UserGym.membership_expires_at.is_(None)) | (UserGym.membership_expires_at > now)
-    ).count()
+    # ✅ MIGRADO A ASYNC: count con filtros complejos
+    result_active = await db.execute(
+        select(func.count())
+        .select_from(UserGym)
+        .where(
+            UserGym.gym_id == current_gym.id,
+            UserGym.is_active == True,
+            (UserGym.membership_expires_at.is_(None)) | (UserGym.membership_expires_at > now)
+        )
+    )
+    active_users = result_active.scalar() or 0
     
-    expired_users = db.query(UserGym).filter(
+    result = await db.execute(select(func.count()).select_from(UserGym).where(
         UserGym.gym_id == current_gym.id,
         UserGym.membership_expires_at < now
-    ).count()
+    ))
+ expired_users = result.scalar()
     
     # Usuarios por tipo de membresía
-    membership_types = db.query(
-        UserGym.membership_type,
-        func.count(UserGym.id).label('count')
-    ).filter(
-        UserGym.gym_id == current_gym.id,
-        UserGym.is_active == True
-    ).group_by(UserGym.membership_type).all()
+    # ✅ MIGRADO A ASYNC: query con group_by y aggregates
+    result_types = await db.execute(
+        select(
+            UserGym.membership_type,
+            func.count(UserGym.id).label('count')
+        )
+        .where(
+            UserGym.gym_id == current_gym.id,
+            UserGym.is_active == True
+        )
+        .group_by(UserGym.membership_type)
+    )
+    membership_types = result_types.all()
     
     # Convertir a diccionario para fácil acceso
     membership_type_counts = {mt[0]: mt[1] for mt in membership_types}
@@ -310,20 +325,26 @@ async def get_membership_plans_stats(
             from app.models.user_gym_subscription import UserGymSubscription
             
             # Buscar suscripciones activas para este plan específico
-            plan_subscriptions = db.query(UserGymSubscription, UserGymStripeProfile, UserGym, User).join(
-                UserGymStripeProfile, UserGymSubscription.user_gym_stripe_profile_id == UserGymStripeProfile.id
-            ).join(
-                UserGym, and_(
-                    UserGymStripeProfile.user_id == UserGym.user_id,
-                    UserGymStripeProfile.gym_id == UserGym.gym_id
+            # ✅ MIGRADO A ASYNC: joins múltiples entre 4 tablas
+            result_subs = await db.execute(
+                select(UserGymSubscription, UserGymStripeProfile, UserGym, User)
+                .join(UserGymStripeProfile, UserGymSubscription.user_gym_stripe_profile_id == UserGymStripeProfile.id)
+                .join(
+                    UserGym, and_(
+                        UserGymStripeProfile.user_id == UserGym.user_id,
+                        UserGymStripeProfile.gym_id == UserGym.gym_id
+                    )
                 )
-            ).join(User, UserGym.user_id == User.id).filter(
-                UserGymStripeProfile.gym_id == current_gym.id,
-                UserGymSubscription.plan_id == plan.id,
-                UserGymSubscription.status == "active",
-                UserGymStripeProfile.is_active == True,
-                UserGym.is_active == True
-            ).all()
+                .join(User, UserGym.user_id == User.id)
+                .where(
+                    UserGymStripeProfile.gym_id == current_gym.id,
+                    UserGymSubscription.plan_id == plan.id,
+                    UserGymSubscription.status == "active",
+                    UserGymStripeProfile.is_active == True,
+                    UserGym.is_active == True
+                )
+            )
+            plan_subscriptions = result_subs.all()
             
             # Procesar suscripciones encontradas
             for subscription, stripe_profile, user_gym, user in plan_subscriptions:
@@ -367,12 +388,18 @@ async def get_membership_plans_stats(
         # 🔍 ESTRATEGIA SECUNDARIA: Asociación por metadatos en notas
         # Solo si hay referencia explícita al plan en las notas
         if not plan_users:  # Solo si no encontramos usuarios por Stripe
-            notes_users = db.query(UserGym, User).join(User, UserGym.user_id == User.id).filter(
-                UserGym.gym_id == current_gym.id,
-                UserGym.is_active == True,
-                UserGym.notes.isnot(None),
-                UserGym.notes.contains(f"plan_id:{plan.id}")  # Referencia específica al plan
-            ).all()
+            # ✅ MIGRADO A ASYNC: join con contains filter
+            result_notes = await db.execute(
+                select(UserGym, User)
+                .join(User, UserGym.user_id == User.id)
+                .where(
+                    UserGym.gym_id == current_gym.id,
+                    UserGym.is_active == True,
+                    UserGym.notes.isnot(None),
+                    UserGym.notes.contains(f"plan_id:{plan.id}")  # Referencia específica al plan
+                )
+            )
+            notes_users = result_notes.all()
             
             for user_gym, user in notes_users:
                 if user.id not in plan_user_ids:
@@ -427,18 +454,30 @@ async def get_membership_plans_stats(
         plans_stats.append(plan_stats)
     
     # Usuarios recientes (últimos 30 días)
-    recent_users = db.query(UserGym).filter(
-        UserGym.gym_id == current_gym.id,
-        UserGym.created_at >= now - timedelta(days=30)
-    ).count()
+    # ✅ MIGRADO A ASYNC: count con filtro de fecha
+    result_recent = await db.execute(
+        select(func.count())
+        .select_from(UserGym)
+        .where(
+            UserGym.gym_id == current_gym.id,
+            UserGym.created_at >= now - timedelta(days=30)
+        )
+    )
+    recent_users = result_recent.scalar() or 0
     
     # Usuarios con membresías próximas a expirar (próximos 7 días)
-    expiring_soon = db.query(UserGym).filter(
-        UserGym.gym_id == current_gym.id,
-        UserGym.is_active == True,
-        UserGym.membership_expires_at > now,
-        UserGym.membership_expires_at <= now + timedelta(days=7)
-    ).count()
+    # ✅ MIGRADO A ASYNC: count con filtros de rango de fechas
+    result_expiring = await db.execute(
+        select(func.count())
+        .select_from(UserGym)
+        .where(
+            UserGym.gym_id == current_gym.id,
+            UserGym.is_active == True,
+            UserGym.membership_expires_at > now,
+            UserGym.membership_expires_at <= now + timedelta(days=7)
+        )
+    )
+    expiring_soon = result_expiring.scalar() or 0
     
     return {
         "summary": {
@@ -471,7 +510,7 @@ async def update_membership_plan(
     request: Request,
     plan_id: int,
     plan_update: MembershipPlanUpdate,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_user: Auth0User = Depends(auth.get_user),
     current_gym: GymSchema = Depends(verify_gym_admin_access)
 ) -> MembershipPlan:
@@ -511,7 +550,7 @@ async def update_membership_plan(
 async def delete_membership_plan(
     request: Request,
     plan_id: int,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_user: Auth0User = Depends(auth.get_user),
     current_gym: GymSchema = Depends(verify_gym_admin_access)
 ):
@@ -548,7 +587,7 @@ async def delete_membership_plan(
 async def sync_plan_with_stripe(
     request: Request,
     plan_id: int,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_user: Auth0User = Depends(auth.get_user),
     current_gym: GymSchema = Depends(verify_gym_admin_access),
     _: None = Depends(billing_module_required)
@@ -597,7 +636,7 @@ async def sync_plan_with_stripe(
 @router.post("/sync-all-stripe", status_code=status.HTTP_200_OK)
 async def sync_all_plans_with_stripe(
     request: Request,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_user: Auth0User = Depends(auth.get_user),
     current_gym: GymSchema = Depends(verify_gym_admin_access),
     _: None = Depends(billing_module_required)
@@ -631,7 +670,7 @@ async def sync_all_plans_with_stripe(
 @router.get("/my-status", response_model=MembershipStatus)
 async def get_my_membership_status(
     request: Request,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_user: Auth0User = Depends(auth.get_user),
     current_gym: GymSchema = Depends(verify_gym_access)
 ) -> MembershipStatus:
@@ -668,7 +707,7 @@ async def get_my_membership_status(
 async def get_user_membership_status(
     request: Request,
     user_id: int,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_user: Auth0User = Depends(auth.get_user),
     current_gym: GymSchema = Depends(verify_gym_admin_access)
 ) -> MembershipStatus:
@@ -696,7 +735,7 @@ async def get_user_membership_status(
 @router.get("/summary", response_model=MembershipSummary)
 async def get_membership_summary(
     request: Request,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_user: Auth0User = Depends(auth.get_user),
     current_gym: GymSchema = Depends(verify_gym_admin_access)
 ) -> MembershipSummary:
@@ -724,7 +763,7 @@ async def get_membership_summary(
 async def purchase_membership(
     request: Request,
     purchase_data: PurchaseMembershipRequest,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_user: Auth0User = Depends(auth.get_user),
     current_gym: GymSchema = Depends(verify_gym_access),
     _: None = Depends(billing_module_required)
@@ -859,7 +898,7 @@ async def purchase_membership(
 async def admin_create_payment_link(
     request: Request,
     payment_data: AdminCreatePaymentLinkRequest,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_user: Auth0User = Depends(auth.get_user),
     current_gym: GymSchema = Depends(verify_gym_admin_access),
     _: None = Depends(billing_module_required)
@@ -923,7 +962,8 @@ async def admin_create_payment_link(
         # Verificar que el usuario existe en el sistema
         logger.info(f"🔍 Validando usuario {payment_data.user_id}")
         from app.models.user import User
-        target_user = db.query(User).filter(User.id == payment_data.user_id).first()
+        result = await db.execute(select(User).where(User.id == payment_data.user_id))
+    target_user = result.scalar_one_or_none()
         
         if not target_user:
             logger.error(f"❌ Usuario {payment_data.user_id} no encontrado")
@@ -934,10 +974,11 @@ async def admin_create_payment_link(
 
         # Verificar que el usuario tiene acceso al gimnasio (opcional - puede ser para invitar nuevos usuarios)
         from app.models.user_gym import UserGym
-        user_gym_relation = db.query(UserGym).filter(
+        result = await db.execute(select(UserGym).where(
             UserGym.user_id == payment_data.user_id,
             UserGym.gym_id == current_gym.id
-        ).first()
+        ))
+    user_gym_relation = result.scalar_one_or_none()
         
         if not user_gym_relation:
             logger.info(f"ℹ️ Usuario {payment_data.user_id} no está registrado en gym {current_gym.id} - creando link para nuevo miembro")
@@ -997,7 +1038,7 @@ async def admin_create_payment_link(
 async def handle_purchase_success(
     request: Request,
     session_id: str = Query(..., description="ID de sesión de Stripe"),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_async_db)
 ) -> PurchaseMembershipResponse:
     """
     Manejar confirmación de pago exitoso desde Stripe.
@@ -1028,7 +1069,7 @@ async def handle_purchase_success(
 @limiter.limit("100 per minute")
 async def stripe_webhook(
     request: Request,
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_async_db)
 ):
     """
     Webhook para manejar eventos de Stripe.
@@ -1090,7 +1131,7 @@ async def purchase_membership_with_trial(
     request: Request,
     purchase_data: PurchaseMembershipRequest,
     trial_days: int = Query(7, description="Días de prueba gratuita", ge=1, le=30),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_user: Auth0User = Depends(auth.get_user),
     current_gym: GymSchema = Depends(verify_gym_access)
 ) -> PurchaseMembershipResponse:
@@ -1146,7 +1187,7 @@ async def create_refund(
     charge_id: str = Query(..., description="ID del charge a reembolsar"),
     amount: Optional[int] = Query(None, description="Cantidad en centavos (None = reembolso completo)"),
     reason: str = Query("requested_by_customer", description="Razón del reembolso"),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: GymSchema = Depends(verify_gym_admin_access),
     current_user: Auth0User = Depends(auth.get_user)
 ):
@@ -1190,7 +1231,7 @@ async def create_refund(
 @router.get("/customers/{customer_id}/payment-methods")
 async def get_customer_payment_methods(
     customer_id: str = Path(..., description="ID del cliente en Stripe"),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: GymSchema = Depends(verify_gym_admin_access),
     current_user: Auth0User = Depends(auth.get_user)
 ):
@@ -1208,15 +1249,21 @@ async def get_customer_payment_methods(
         from app.models.stripe_profile import UserGymStripeProfile
         from app.models.user_gym import UserGym
         
-        customer_record = db.query(UserGymStripeProfile, UserGym).join(
-            UserGym, and_(
-                UserGymStripeProfile.user_id == UserGym.user_id,
-                UserGymStripeProfile.gym_id == UserGym.gym_id
+        # ✅ MIGRADO A ASYNC: join con and_() condition
+        result_customer = await db.execute(
+            select(UserGymStripeProfile, UserGym)
+            .join(
+                UserGym, and_(
+                    UserGymStripeProfile.user_id == UserGym.user_id,
+                    UserGymStripeProfile.gym_id == UserGym.gym_id
+                )
             )
-        ).filter(
-            UserGymStripeProfile.stripe_customer_id == customer_id,
-            UserGymStripeProfile.gym_id == current_gym.id
-        ).first()
+            .where(
+                UserGymStripeProfile.stripe_customer_id == customer_id,
+                UserGymStripeProfile.gym_id == current_gym.id
+            )
+        )
+        customer_record = result_customer.first()
         
         if not customer_record:
             raise HTTPException(
@@ -1266,7 +1313,7 @@ async def get_customer_payment_methods(
 @router.get("/subscriptions/{subscription_id}/status")
 async def get_subscription_status(
     subscription_id: str = Path(..., description="ID de la suscripción en Stripe"),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: GymSchema = Depends(verify_gym_admin_access),
     current_user: Auth0User = Depends(auth.get_user)
 ):
@@ -1285,17 +1332,22 @@ async def get_subscription_status(
         from app.models.stripe_profile import UserGymStripeProfile
         from app.models.user_gym import UserGym
         
-        subscription_record = db.query(UserGymSubscription, UserGymStripeProfile, UserGym).join(
-            UserGymStripeProfile, UserGymSubscription.user_gym_stripe_profile_id == UserGymStripeProfile.id
-        ).join(
-            UserGym, and_(
-                UserGymStripeProfile.user_id == UserGym.user_id,
-                UserGymStripeProfile.gym_id == UserGym.gym_id
+        # ✅ MIGRADO A ASYNC: joins múltiples entre 3 tablas
+        result_sub = await db.execute(
+            select(UserGymSubscription, UserGymStripeProfile, UserGym)
+            .join(UserGymStripeProfile, UserGymSubscription.user_gym_stripe_profile_id == UserGymStripeProfile.id)
+            .join(
+                UserGym, and_(
+                    UserGymStripeProfile.user_id == UserGym.user_id,
+                    UserGymStripeProfile.gym_id == UserGym.gym_id
+                )
             )
-        ).filter(
-            UserGymSubscription.stripe_subscription_id == subscription_id,
-            UserGymStripeProfile.gym_id == current_gym.id
-        ).first()
+            .where(
+                UserGymSubscription.stripe_subscription_id == subscription_id,
+                UserGymStripeProfile.gym_id == current_gym.id
+            )
+        )
+        subscription_record = result_sub.first()
         
         if not subscription_record:
             raise HTTPException(
@@ -1343,7 +1395,7 @@ async def get_subscription_status(
 async def cancel_subscription_endpoint(
     subscription_id: str = Path(..., description="ID de la suscripción en Stripe"),
     immediately: bool = Query(False, description="Cancelar inmediatamente o al final del período"),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: GymSchema = Depends(verify_gym_admin_access),
     current_user: Auth0User = Depends(auth.get_user)
 ):
@@ -1363,17 +1415,22 @@ async def cancel_subscription_endpoint(
         from app.models.stripe_profile import UserGymStripeProfile
         from app.models.user_gym import UserGym
         
-        subscription_record = db.query(UserGymSubscription, UserGymStripeProfile, UserGym).join(
-            UserGymStripeProfile, UserGymSubscription.user_gym_stripe_profile_id == UserGymStripeProfile.id
-        ).join(
-            UserGym, and_(
-                UserGymStripeProfile.user_id == UserGym.user_id,
-                UserGymStripeProfile.gym_id == UserGym.gym_id
+        # ✅ MIGRADO A ASYNC: joins múltiples entre 3 tablas
+        result_sub = await db.execute(
+            select(UserGymSubscription, UserGymStripeProfile, UserGym)
+            .join(UserGymStripeProfile, UserGymSubscription.user_gym_stripe_profile_id == UserGymStripeProfile.id)
+            .join(
+                UserGym, and_(
+                    UserGymStripeProfile.user_id == UserGym.user_id,
+                    UserGymStripeProfile.gym_id == UserGym.gym_id
+                )
             )
-        ).filter(
-            UserGymSubscription.stripe_subscription_id == subscription_id,
-            UserGymStripeProfile.gym_id == current_gym.id
-        ).first()
+            .where(
+                UserGymSubscription.stripe_subscription_id == subscription_id,
+                UserGymStripeProfile.gym_id == current_gym.id
+            )
+        )
+        subscription_record = result_sub.first()
         
         if not subscription_record:
             raise HTTPException(
@@ -1405,7 +1462,7 @@ async def cancel_subscription_endpoint(
             # 🆕 Actualizar estado local
             subscription_data.status = "canceled" if immediately else "pending_cancel"
             subscription_data.canceled_at = datetime.now() if immediately else None
-            db.commit()
+            await db.commit()
             
             logger.info(f"Suscripción {subscription_id} cancelada por admin {current_user.id}")
             
@@ -1433,7 +1490,7 @@ async def get_gym_revenue_summary(
     request: Request,
     start_date: Optional[str] = Query(None, description="Fecha de inicio (YYYY-MM-DD)"),
     end_date: Optional[str] = Query(None, description="Fecha de fin (YYYY-MM-DD)"),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: GymSchema = Depends(verify_gym_admin_access),
     current_user: Auth0User = Depends(auth.get_user)
 ):
@@ -1481,7 +1538,7 @@ async def get_platform_revenue_summary(
     request: Request,
     start_date: Optional[str] = Query(None, description="Fecha de inicio (YYYY-MM-DD)"),
     end_date: Optional[str] = Query(None, description="Fecha de fin (YYYY-MM-DD)"),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_user: Auth0User = Depends(auth.get_user)
 ):
     """
@@ -1537,7 +1594,7 @@ async def calculate_gym_payout(
     request: Request,
     start_date: str = Query(..., description="Fecha de inicio (YYYY-MM-DD)"),
     end_date: str = Query(..., description="Fecha de fin (YYYY-MM-DD)"),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: GymSchema = Depends(verify_gym_admin_access),
     current_user: Auth0User = Depends(auth.get_user)
 ):

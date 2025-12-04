@@ -72,3 +72,15 @@ htmlcov/
 # OS específicos
 .DS_Store
 Thumbs.db 
+# Grafana Agent
+GRAFANA_CLOUD_SETUP.md
+QUICK_GRAFANA_SETUP.md
+data-agent/
+docker-compose.grafana-agent.yml
+grafana-agent-config.yml
+grafana-agent-final.yml
+install-agent-local.sh
+setup-grafana-cloud.sh
+start-grafana-agent.sh
+batch_migrate_async.py
+migrate_to_async_db.py

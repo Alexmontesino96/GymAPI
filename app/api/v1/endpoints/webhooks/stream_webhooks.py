@@ -1,11 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException, Request, status, BackgroundTasks
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 from typing import Dict, Any
 import hmac
 import hashlib
 import logging
 
-from app.db.session import get_db
+from app.db.session import get_async_db
 from app.core.config import get_settings
 from app.services.notification_service import notification_service
 from app.services.chat import chat_service
@@ -73,7 +74,7 @@ async def verify_stream_webhook_signature(request: Request):
 async def handle_new_message(
     request: Request,
     background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     _: None = Depends(verify_stream_webhook_signature)
 ):
     """
@@ -152,13 +153,15 @@ async def handle_new_message(
                 logger.info(f"ID interno extraído de Stream: {sender_internal_id}")
                 
                 # Verificar que el usuario existe
-                sender = db.query(User).filter(User.id == sender_internal_id).first()
+                result = await db.execute(select(User).where(User.id == sender_internal_id))
+    sender = result.scalar_one_or_none()
                 if not sender:
                     logger.warning(f"Usuario con ID interno {sender_internal_id} no encontrado en la BD. Posible inconsistencia.")
                     return {"status": "success", "message": "Message processed, user not found in DB"}
             elif is_legacy_id_format(stream_user_id):
                 # Formato legacy (auth0_id) - intentar migración automática
-                sender = db.query(User).filter(User.auth0_id == stream_user_id).first()
+                result = await db.execute(select(User).where(User.auth0_id == stream_user_id))
+    sender = result.scalar_one_or_none()
                 if not sender:
                     logger.warning(f"Usuario remitente legacy no encontrado en la BD: {stream_user_id}")
                     return {"status": "success", "message": "Message processed, legacy user not found"}
@@ -187,7 +190,8 @@ async def handle_new_message(
         # Procesar el mensaje aquí según sea necesario
         try:
             # Obtener la sala de chat
-            chat_room = db.query(ChatRoom).filter(ChatRoom.stream_channel_id == channel_id).first()
+            result = await db.execute(select(ChatRoom).where(ChatRoom.stream_channel_id == channel_id))
+    chat_room = result.scalar_one_or_none()
             if not chat_room:
                 logger.warning(f"Sala de chat no encontrada para canal {channel_id}")
                 return {"status": "success", "message": "Message processed, chat room not found in DB"}
@@ -303,7 +307,8 @@ async def send_smart_notifications_with_role_logic_async(
                         
                         # Obtener auth0_id del usuario para OneSignal
                         from app.models.user import User
-                        user_data = async_db.query(User).filter(User.id == internal_id).first()
+                        result = await async_db.execute(select(User).where(User.id == internal_id))
+                        user_data = result.scalar_one_or_none()
                         auth0_id = user_data.auth0_id if user_data else None
                         
                         if auth0_id:
@@ -386,7 +391,8 @@ async def send_smart_chat_notifications_async(
                         
                         # Obtener auth0_id del usuario para OneSignal
                         from app.models.user import User
-                        user_data = async_db.query(User).filter(User.id == internal_id).first()
+                        result = await async_db.execute(select(User).where(User.id == internal_id))
+                        user_data = result.scalar_one_or_none()
                         auth0_id = user_data.auth0_id if user_data else None
                         
                         if auth0_id:
@@ -480,11 +486,12 @@ async def check_user_authority_in_gym(db: Session, user_id: int, gym_id: int) ->
     try:
         from app.models.user_gym import UserGym, GymRoleType
         
-        user_gym = db.query(UserGym).filter(
+        result = await db.execute(select(UserGym).where(
             UserGym.user_id == user_id,
             UserGym.gym_id == gym_id,
             UserGym.is_active == True
-        ).first()
+        ))
+    user_gym = result.scalar_one_or_none()
         
         if not user_gym:
             logger.info(f"👤 Usuario {user_id} no encontrado en gym {gym_id}")
@@ -517,7 +524,8 @@ async def send_targeted_notifications(
     try:
         # Obtener información del remitente
         from app.models.user import User
-        sender = db.query(User).filter(User.id == sender_id).first()
+        result = await db.execute(select(User).where(User.id == sender_id))
+    sender = result.scalar_one_or_none()
         
         # Construir nombre completo del remitente
         if sender:
@@ -794,7 +802,7 @@ async def migrate_legacy_user_async(
 async def handle_channel_deleted(
     request: Request,
     background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     _: None = Depends(verify_stream_webhook_signature)
 ):
     """
@@ -812,7 +820,8 @@ async def handle_channel_deleted(
             )
         
         # Buscar y limpiar la sala en la base de datos local
-        chat_room = db.query(ChatRoom).filter(ChatRoom.stream_channel_id == channel_id).first()
+        result = await db.execute(select(ChatRoom).where(ChatRoom.stream_channel_id == channel_id))
+    chat_room = result.scalar_one_or_none()
         if chat_room:
             # Eliminar miembros y la sala
             from app.repositories.chat import chat_repository
@@ -833,7 +842,7 @@ async def handle_channel_deleted(
 async def handle_user_banned(
     request: Request,
     background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     _: None = Depends(verify_stream_webhook_signature)
 ):
     """

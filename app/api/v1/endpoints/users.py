@@ -23,7 +23,7 @@ from datetime import datetime, timedelta, date
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Security, UploadFile, File, Path, BackgroundTasks, status, Request
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.ext.asyncio import AsyncSession
 from jose import JWTError, jwt
 from app.models.user import User, UserRole
@@ -34,7 +34,7 @@ from app.schemas.user import User as UserSchema, UserCreate, UserUpdate, UserRol
 from app.services.auth0_mgmt import auth0_mgmt_service
 from app.core.tenant import verify_gym_access, verify_gym_admin_access, verify_gym_trainer_access, get_current_gym, GymSchema
 from app.core.auth0_fastapi import auth, get_current_user, Auth0User
-from app.db.session import get_db, get_async_db
+from app.db.session import get_async_db, get_async_db
 from app.core.config import get_settings
 from app.db.redis_client import get_redis_client, redis
 from app.services.cache_service import cache_service
@@ -105,7 +105,7 @@ async def get_user_profile(
 @router.put("/profile", response_model=UserSchema, tags=["Profile"])
 async def update_user_profile(
     profile_update: UserProfileUpdate,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     user: Auth0User = Depends(get_current_user),
     redis_client: redis.Redis = Depends(get_redis_client)
 ) -> Any:
@@ -134,7 +134,7 @@ async def upload_profile_image(
     image: Optional[UploadFile] = File(None),
     photo: Optional[UploadFile] = File(None),
     picture: Optional[UploadFile] = File(None),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     user: Auth0User = Depends(get_current_user),
 ) -> Any:
     """
@@ -176,7 +176,7 @@ async def upload_profile_image(
 @router.post("/profile/data", response_model=UserSchema, tags=["Profile"])
 async def create_or_update_user_profile_data(
     profile_data: UserProfileUpdate, # Usamos el esquema existente que excluye email/teléfono
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_user: Auth0User = Security(auth.get_user, scopes=["user:read"]), # Asegurar autenticación
     redis_client: redis.Redis = Depends(get_redis_client)
 ) -> Any:
@@ -278,7 +278,7 @@ async def get_my_profile(
 
 @router.get("/last-attendance", response_model=Dict[str, Any], tags=["Profile"])
 async def get_last_attendance(
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_user: Auth0User = Security(auth.get_user, scopes=["resource:read"]),
     current_gym: GymSchema = Depends(verify_gym_access),
     redis_client: redis.Redis = Depends(get_redis_client)
@@ -345,7 +345,7 @@ async def get_last_attendance(
 @router.get("/profile/{user_id}", response_model=UserProfile, tags=["Profile"])
 async def get_user_profile_by_id(
     user_id: int = Path(..., title="ID del usuario", ge=1),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_user: Auth0User = Depends(get_current_user),
     current_gym: GymSchema = Depends(verify_gym_access),
     redis_client: redis.Redis = Depends(get_redis_client)
@@ -386,10 +386,11 @@ async def get_user_profile_by_id(
                     target_belongs_to_gym = True
             else:
                 # Cache miss, verificar en BD
-                user_gym = db.query(UserGym).filter(
+                result = await db.execute(select(UserGym).where(
                     UserGym.user_id == user_id,
                     UserGym.gym_id == gym_id
-                ).first()
+                ))
+    user_gym = result.scalar_one_or_none()
                 
                 if user_gym:
                     target_belongs_to_gym = True
@@ -408,10 +409,11 @@ async def get_user_profile_by_id(
                     )
         else:
             # Sin Redis, verificar directamente en BD
-            user_gym = db.query(UserGym).filter(
+            result = await db.execute(select(UserGym).where(
                 UserGym.user_id == user_id,
                 UserGym.gym_id == gym_id
-            ).first()
+            ))
+    user_gym = result.scalar_one_or_none()
             target_belongs_to_gym = user_gym is not None
         
         if not target_belongs_to_gym:
@@ -457,7 +459,7 @@ async def get_user_profile_by_id(
 @limiter.limit("10 per minute")
 async def check_email_availability(
     *,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     email_check: EmailAvailabilityCheck,
     request: Request,
     current_user: Auth0User = Security(auth.get_user),
@@ -487,7 +489,7 @@ async def check_email_availability(
 @limiter.limit("3 per minute")
 async def initiate_auth0_email_change(
     *,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     email_change_request: Auth0EmailChangeRequest,
     background_tasks: BackgroundTasks,
     request: Request,
@@ -527,7 +529,7 @@ async def initiate_auth0_email_change(
 @router.post("/me/resend-verification", response_model=dict, tags=["Email Management"])
 async def resend_email_verification(
     *,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_user: Auth0User = Security(auth.get_user),
     redis_client: redis.Redis = Depends(get_redis_client)
 ) -> Any:
@@ -552,7 +554,7 @@ async def resend_email_verification(
 async def read_gym_participants(
     request: Request,
     role: Optional[UserRole] = Query(None, description="Filtrar por rol (MEMBER o TRAINER). Omitir para ambos."),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     skip: int = 0,
     limit: int = 100,
     current_user: Auth0User = Security(auth.get_user, scopes=["user:read"]),
@@ -610,7 +612,7 @@ async def read_public_gym_participants(
     request: Request,
     role: Optional[UserRole] = Query(None, description="Filtrar por rol (MEMBER o TRAINER). Omitir para ambos."),
     name_contains: Optional[str] = Query(None, description="Filtrar por nombre/apellido (parcial)"),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     skip: int = 0,
     limit: int = 100,
     current_user: Auth0User = Security(auth.get_user, scopes=["resource:read"]),
@@ -672,7 +674,7 @@ async def read_public_gym_participants(
 async def read_public_gym_participant_by_id(
     request: Request,
     user_id: int = Path(..., title="ID interno del usuario", ge=1),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_user: Auth0User = Security(auth.get_user, scopes=["resource:read"]),
     current_gym: GymSchema = Depends(verify_gym_access),
     redis_client: redis.Redis = Depends(get_redis_client)
@@ -697,7 +699,8 @@ async def read_public_gym_participant_by_id(
         if belongs is None:
             # Cache miss o redis no disponible ⇒ consultar BD
             from app.models.user_gym import UserGym
-            membership = db.query(UserGym).filter(UserGym.user_id == user_id, UserGym.gym_id == gym_id).first()
+            result = await db.execute(select(UserGym).where(UserGym.user_id == user_id, UserGym.gym_id == gym_id))
+    membership = result.scalar_one_or_none()
             belongs = membership is not None
             # Guardar en caché si es posible
             if redis_client:
@@ -712,7 +715,8 @@ async def read_public_gym_participant_by_id(
         logger.error(f"Error verificando membresía en gym ({membership_cache_key}): {e}", exc_info=True)
         # Fallback BD sin caché
         from app.models.user_gym import UserGym
-        membership = db.query(UserGym).filter(UserGym.user_id == user_id, UserGym.gym_id == gym_id).first()
+        result = await db.execute(select(UserGym).where(UserGym.user_id == user_id, UserGym.gym_id == gym_id))
+    membership = result.scalar_one_or_none()
         if not membership:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario no encontrado en este gimnasio (BD Fallback)")
 
@@ -732,7 +736,7 @@ async def read_public_gym_participant_by_id(
 async def read_public_user_profile(
     request: Request,
     user_id: int,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_user: Auth0User = Security(auth.get_user, scopes=["resource:read"]),
     current_gym: GymSchema = Depends(verify_gym_access),
     redis_client: redis.Redis = Depends(get_redis_client)
@@ -757,7 +761,7 @@ async def read_public_user_profile(
 @router.get("/search-by-email", response_model=UserBasicInfo, tags=["Gym Management"])
 async def search_user_by_email(
     email: EmailStr = Query(..., description="Email del usuario a buscar"),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_user: Auth0User = Security(auth.get_user, scopes=["user:read"]),
     current_gym: GymSchema = Depends(verify_gym_admin_access)
 ) -> Any:
@@ -798,10 +802,11 @@ async def search_user_by_email(
         
         # Verificar que el usuario NO pertenece al gimnasio actual
         from app.models.user_gym import UserGym
-        membership = db.query(UserGym).filter(
+        result = await db.execute(select(UserGym).where(
             UserGym.user_id == target_user.id,
             UserGym.gym_id == current_gym.id
-        ).first()
+        ))
+    membership = result.scalar_one_or_none()
         
         if membership:
             raise HTTPException(
@@ -831,7 +836,7 @@ async def search_user_by_email(
 @router.get("/gym-users", response_model=List[GymUserSummary], tags=["Gym Management"])
 async def read_gym_users(
     request: Request,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     skip: int = 0,
     limit: int = 100,
     role: Optional[UserRole] = Query(None, description="Filtrar por rol de usuario global"),
@@ -866,7 +871,7 @@ async def read_gym_users(
 async def remove_user_from_gym(
     request: Request,
     user_id: int = Path(..., title="ID del usuario a eliminar del gimnasio"),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: GymSchema = Depends(verify_gym_access),
     current_user: Auth0User = Depends(get_current_user),
     redis_client: redis.Redis = Depends(get_redis_client)
@@ -883,14 +888,17 @@ async def remove_user_from_gym(
     is_super_admin = local_caller.role == UserRole.SUPER_ADMIN
     is_gym_admin = False
     if not is_super_admin:
-        caller_gym_membership = db.query(UserGym).filter(UserGym.user_id == local_caller.id, UserGym.gym_id == current_gym.id, UserGym.role == GymRoleType.ADMIN).first()
+        result = await db.execute(select(UserGym).where(UserGym.user_id == local_caller.id, UserGym.gym_id == current_gym.id, UserGym.role == GymRoleType.ADMIN))
+    caller_gym_membership = result.scalar_one_or_none()
         if not caller_gym_membership:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permisos insuficientes para eliminar usuarios de este gimnasio")
         is_gym_admin = True
 
-    target_user_membership = db.query(UserGym).filter(UserGym.user_id == user_id, UserGym.gym_id == current_gym.id).first()
+    result = await db.execute(select(UserGym).where(UserGym.user_id == user_id, UserGym.gym_id == current_gym.id))
+    target_user_membership = result.scalar_one_or_none()
     if not target_user_membership:
-        target_user_exists = db.query(User.id).filter(User.id == user_id).scalar() is not None
+        result = await db.execute(select(User.id).where(User.id == user_id))
+ target_user_exists = result.scalar() is not None
         if not target_user_exists:
              raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Usuario {user_id} no encontrado")
         else:
@@ -909,7 +917,7 @@ async def remove_user_from_gym(
     try:
         logger.info(f"Eliminando asociación UserGym para user {user_id} en gym {current_gym.id}")
         db.delete(target_user_membership)
-        db.commit()
+        await db.commit()
         if redis_client and target_role:
             # <<< Invalidar caché de membresía específica >>>
             membership_cache_key = f"user_gym_membership:{user_id}:{current_gym.id}"
@@ -922,7 +930,7 @@ async def remove_user_from_gym(
             await cache_service.delete_pattern(redis_client, f"gym:{current_gym.id}:users:*")
         logger.info(f"Usuario {user_id} eliminado exitosamente del gym {current_gym.id}")
     except Exception as e:
-        db.rollback()
+        await db.rollback()
         logger.error(f"Error al eliminar user {user_id} del gym {current_gym.id}: {str(e)}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error interno al eliminar usuario del gimnasio.")
 
@@ -932,7 +940,7 @@ async def remove_user_from_gym(
 @router.get("/search", response_model=List[UserSchema], tags=["User Search"])
 async def search_users(
     search_params: UserSearchParams = Depends(),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_auth_user: Auth0User = Depends(get_current_user),
     current_gym: Optional[GymSchema] = Depends(get_current_gym),
     redis_client: redis.Redis = Depends(get_redis_client)
@@ -972,7 +980,7 @@ async def search_users(
 async def read_user_by_id(
     request: Request,
     user_id: int,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_auth_user: Auth0User = Depends(get_current_user),
     current_gym: Optional[GymSchema] = Depends(get_current_gym),
     redis_client: redis.Redis = Depends(get_redis_client)
@@ -1019,7 +1027,7 @@ async def read_user_by_id(
 @router.get("/auth0/{auth0_id}", response_model=UserSchema, tags=["User Lookup"])
 async def read_user_by_auth0_id(
     auth0_id: str,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     user: Auth0User = Security(auth.get_user, scopes=["user:read"]),
 ) -> Any:
     """Obtiene un usuario específico por su ID de Auth0."""
@@ -1033,7 +1041,7 @@ async def read_user_by_auth0_id(
 
 @router.get("/", response_model=List[UserSchema], tags=["Platform Admin"])
 async def read_users(
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     skip: int = 0,
     limit: int = 100,
     current_user: Auth0User = Security(auth.get_user, scopes=["user:read"]),
@@ -1064,7 +1072,7 @@ async def read_users(
 @router.get("/by-role/{role}", response_model=List[UserSchema], tags=["Platform Admin"])
 async def read_users_by_role(
     role: UserRole,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
     gym_id: Optional[int] = Query(None, description="Filtrar por gimnasio específico (opcional)"),
@@ -1096,7 +1104,7 @@ async def read_users_by_role(
 async def update_user(
     user_id: int,
     user_in: UserUpdate,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_user: Auth0User = Depends(get_current_user),
     redis_client: redis.Redis = Depends(get_redis_client)
 ) -> Any:
@@ -1132,7 +1140,7 @@ async def update_user(
 @router.delete("/admin/users/{user_id}", response_model=UserSchema, tags=["Platform Admin"])
 async def admin_delete_user(
     user_id: int,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_user: Auth0User = Depends(get_current_user),
     redis_client: redis.Redis = Depends(get_redis_client)
 ) -> Any:
@@ -1181,7 +1189,7 @@ async def admin_delete_user(
 async def update_user_by_auth0_id(
     auth0_id: str,
     user_in: UserUpdate,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     user: Auth0User = Security(auth.get_user, scopes=["user:write"]),
     redis_client: redis.Redis = Depends(get_redis_client)
 ) -> Any:
@@ -1204,7 +1212,7 @@ async def update_user_by_auth0_id(
 async def sync_email_status_from_auth0(
     *, 
     sync_data: UserSyncFromAuth0, 
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     redis_client: redis.Redis = Depends(get_redis_client)
 ) -> None:
     """
@@ -1242,7 +1250,7 @@ async def sync_email_status_from_auth0(
 async def read_gym_participant_by_id(
     request: Request,
     user_id: int = Path(..., ge=1, title="ID interno del usuario"),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     skip: int = 0,
     limit: int = 1,
     current_user: Auth0User = Security(auth.get_user, scopes=["user:read"]),
@@ -1259,11 +1267,10 @@ async def read_gym_participant_by_id(
     from app.models.user_gym import UserGym, GymRoleType
 
     # Verificar que el usuario pertenezca al gimnasio actual
-    membership = (
-        db.query(UserGym)
-        .filter(UserGym.user_id == user_id, UserGym.gym_id == current_gym.id)
-        .first()
+    result = await db.execute(
+        select(UserGym).where(UserGym.user_id == user_id, UserGym.gym_id == current_gym.id)
     )
+    membership = result.scalar_one_or_none()
 
     if not membership:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario no encontrado en este gimnasio")

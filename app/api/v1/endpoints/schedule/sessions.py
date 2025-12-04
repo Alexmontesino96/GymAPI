@@ -12,7 +12,7 @@ router = APIRouter()
 async def get_upcoming_sessions(
     skip: int = 0,
     limit: int = 100,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: Gym = Depends(verify_gym_access),
     user: Auth0User = Security(auth.get_user, scopes=["resource:read"]),
     redis_client: Redis = Depends(get_redis_client)
@@ -85,7 +85,7 @@ async def get_upcoming_sessions(
 async def get_upcoming_sessions_with_timezone(
     skip: int = 0,
     limit: int = 100,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: Gym = Depends(verify_gym_access),
     user: Auth0User = Security(auth.get_user, scopes=["resource:read"]),
     redis_client: Redis = Depends(get_redis_client)
@@ -167,7 +167,7 @@ async def get_upcoming_sessions_with_timezone(
 @router.get("/sessions/{session_id}", response_model=Dict[str, Any])
 async def get_session_with_details(
     session_id: int = Path(..., description="ID of the session"),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: Gym = Depends(verify_gym_access),
     user: Auth0User = Security(auth.get_user, scopes=["resource:read"]),
     redis_client: Redis = Depends(get_redis_client)
@@ -214,7 +214,7 @@ async def get_session_with_details(
 @router.post("/sessions", response_model=ClassSession, status_code=status.HTTP_201_CREATED)
 async def create_session(
     session_data: ClassSessionCreate = Body(...),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: Gym = Depends(verify_gym_access),
     user: Auth0User = Security(auth.get_user, scopes=["resource:write"]),
     redis_client: Redis = Depends(get_redis_client)
@@ -329,7 +329,7 @@ async def create_recurring_sessions(
     days_of_week: List[int] = Body(
         ..., description="Days of week (0=Mon, 6=Sun)", example=[0, 2, 4]
     ),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     user: Auth0User = Security(auth.get_user, scopes=["resource:write"]),
     current_gym: Gym = Depends(verify_gym_access),
     redis_client: Redis = Depends(get_redis_client)
@@ -446,7 +446,7 @@ async def create_recurring_sessions(
 async def update_session(
     session_id: int = Path(..., description="ID of the session"),
     session_data: ClassSessionUpdate = Body(...),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: Gym = Depends(verify_gym_access),
     user: Auth0User = Security(auth.get_user, scopes=["resource:write"]),
     redis_client: Redis = Depends(get_redis_client)
@@ -497,7 +497,7 @@ async def update_session(
 @router.post("/sessions/{session_id}/cancel", response_model=ClassSession)
 async def cancel_session(
     session_id: int = Path(..., description="ID of the session"),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: Gym = Depends(verify_gym_access),
     user: Auth0User = Security(auth.get_user, scopes=["resource:write"]),
     redis_client: Redis = Depends(get_redis_client)
@@ -535,7 +535,7 @@ async def get_sessions_by_date_range(
     end_date: date = Query(..., description="End date (YYYY-MM-DD)"),
     skip: int = 0,
     limit: int = 100,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: Gym = Depends(verify_gym_access),
     user: Auth0User = Security(auth.get_user, scopes=["resource:read"]),
     redis_client: Redis = Depends(get_redis_client)
@@ -615,7 +615,7 @@ async def get_sessions_by_date_range_with_timezone(
     end_date: date = Query(..., description="End date (YYYY-MM-DD)"),
     skip: int = 0,
     limit: int = 100,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: Gym = Depends(verify_gym_access),
     user: Auth0User = Security(auth.get_user, scopes=["resource:read"]),
     redis_client: Redis = Depends(get_redis_client)
@@ -704,7 +704,7 @@ async def get_trainer_sessions(
     upcoming_only: bool = Query(False, description="Only return future sessions"),
     skip: int = 0,
     limit: int = 100,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: Gym = Depends(verify_gym_access),
     user: Auth0User = Security(auth.get_user, scopes=["resource:read"]),
     redis_client: Redis = Depends(get_redis_client)
@@ -806,7 +806,7 @@ async def get_my_sessions(
     upcoming_only: bool = Query(True, description="Only return future sessions"),
     skip: int = 0,
     limit: int = 100,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: Gym = Depends(verify_gym_access),
     user: Auth0User = Security(auth.get_user, scopes=["resource:read"]),
     redis_client: Redis = Depends(get_redis_client)
@@ -878,7 +878,7 @@ async def get_my_sessions(
 @router.delete("/sessions/{session_id}", response_model=ClassSession)
 async def delete_session(
     session_id: int = Path(..., description="ID of the session"),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_gym: Gym = Depends(verify_gym_access),
     user: Auth0User = Security(auth.get_user, scopes=["resource:admin"]),
     redis_client: Redis = Depends(get_redis_client)

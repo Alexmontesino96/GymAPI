@@ -7,8 +7,8 @@ después de completar o cancelar un pago en Stripe.
 
 from fastapi import APIRouter, Request, Query, Depends, HTTPException
 from fastapi.responses import HTMLResponse
-from sqlalchemy.orm import Session
-from app.db.session import get_db
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.db.session import get_async_db
 from app.services.stripe_service import stripe_service
 import logging
 
@@ -20,7 +20,7 @@ router = APIRouter()
 async def payment_success_page(
     request: Request,
     session_id: str = Query(None, description="ID de sesión de Stripe"),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_async_db)
 ):
     """
     Página de éxito después de completar un pago.
