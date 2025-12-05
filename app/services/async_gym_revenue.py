@@ -1,8 +1,8 @@
 """
-AsyncGymRevenueService - Servicio async para tracking de ingresos por gimnasio.
+AsyncGymRevenueService - Servicio async para tracking y distribución de ingresos.
 
-Este módulo proporciona un servicio totalmente async para contabilidad de pagos
-en arquitectura multi-tenant con Stripe.
+Este módulo maneja la contabilidad de pagos en arquitectura multi-tenant con
+integración de Stripe para charges e invoices.
 
 Migrado en FASE 3 de la conversión sync → async.
 """
@@ -10,38 +10,43 @@ Migrado en FASE 3 de la conversión sync → async.
 from typing import Dict, List, Optional, Any
 from datetime import datetime, timedelta, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_, func
+from sqlalchemy import select
 import logging
 import stripe
 
 from app.core.config import get_settings
 from app.models.gym import Gym
-from app.models.user_gym import UserGym
-from app.models.membership import MembershipPlan
 
 settings = get_settings()
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("async_gym_revenue_service")
 
 
 class AsyncGymRevenueService:
     """
     Servicio async para gestionar ingresos y distribución de pagos por gimnasio.
 
-    Todos los métodos son async y utilizan AsyncSession.
+    Todos los métodos de BD son async. Stripe API es sync (sin cliente async oficial).
 
-    Arquitectura Multi-tenant con Stripe:
-    - Una sola cuenta Stripe para toda la plataforma
-    - Cada pago incluye gym_id en metadata
-    - Tracking separado de ingresos por gimnasio
-    - Cálculo automático de comisiones de plataforma
+    Funcionalidades:
+    - Resumen de ingresos por gimnasio con período
+    - Tracking de pagos de Stripe (charges + invoices)
+    - Cálculo de comisiones de plataforma
+    - Resumen de ingresos de toda la plataforma
+    - Cálculo de payouts para gimnasios
 
     Métodos principales:
-    - get_gym_revenue_summary() - Resumen de ingresos de un gimnasio
-    - get_platform_revenue_summary() - Resumen total de la plataforma
-    - calculate_gym_payout() - Calcular pago a gimnasio
+    - get_gym_revenue_summary() - Resumen de ingresos del gym
+    - get_platform_revenue_summary() - Resumen de toda la plataforma
+    - calculate_gym_payout() - Calcular pago a realizar
     """
 
     def __init__(self):
+        """
+        Inicializa el servicio con configuración de Stripe.
+
+        Note:
+            - Stripe API es sync (no hay cliente async oficial)
+        """
         stripe.api_key = settings.STRIPE_SECRET_KEY
 
     async def get_gym_revenue_summary(
@@ -62,6 +67,8 @@ class AsyncGymRevenueService:
 
         Returns:
             Dict con resumen de ingresos:
+            - gym_id, gym_name
+            - period: start_date, end_date
             - revenue: total_gross, platform_fee, gym_net
             - transactions: total_count, by_plan
             - metrics: average_transaction, platform_fee_rate
@@ -70,8 +77,8 @@ class AsyncGymRevenueService:
             ValueError: Si el gimnasio no existe
 
         Note:
-            Busca pagos en Stripe (charges + invoices) con gym_id en metadata.
-            Comisión de plataforma: 5% (configurable).
+            - Comisión de plataforma: 5% por defecto
+            - Busca charges (pagos únicos) e invoices (suscripciones) en Stripe
         """
         try:
             # Fechas por defecto: último mes
@@ -80,12 +87,11 @@ class AsyncGymRevenueService:
             if not start_date:
                 start_date = end_date - timedelta(days=30)
 
-            # Obtener información del gimnasio
+            # Obtener información del gimnasio (async)
             result = await db.execute(
                 select(Gym).where(Gym.id == gym_id)
             )
             gym = result.scalar_one_or_none()
-
             if not gym:
                 raise ValueError(f"Gimnasio {gym_id} no encontrado")
 
@@ -105,7 +111,7 @@ class AsyncGymRevenueService:
                 revenue_by_plan[plan_name]['count'] += 1
                 revenue_by_plan[plan_name]['revenue'] += payment['amount'] / 100
 
-            # Calcular comisión de la plataforma (ejemplo: 5%)
+            # Calcular comisión de la plataforma (5%)
             platform_fee_rate = 0.05
             platform_fee = total_revenue * platform_fee_rate
             gym_net_revenue = total_revenue - platform_fee
@@ -121,7 +127,7 @@ class AsyncGymRevenueService:
                     'total_gross': total_revenue,
                     'platform_fee': platform_fee,
                     'gym_net': gym_net_revenue,
-                    'currency': 'EUR'  # O la moneda que uses
+                    'currency': 'EUR'  # O la moneda configurada
                 },
                 'transactions': {
                     'total_count': total_transactions,
@@ -152,11 +158,12 @@ class AsyncGymRevenueService:
             end_date: Fecha de fin
 
         Returns:
-            Lista de pagos de Stripe (charges + invoices)
+            List[Dict] con pagos de Stripe (charges + invoices)
 
         Note:
-            Método async pero Stripe SDK es sync - ejecuta en thread separado
-            si fuera necesario. Por ahora se mantiene sync dentro de async.
+            - Stripe API es sync (no hay cliente async oficial)
+            - Busca en metadata gym_id para filtrar
+            - Incluye charges (pagos únicos) e invoices (suscripciones)
         """
         try:
             # Convertir fechas a timestamps
@@ -166,7 +173,7 @@ class AsyncGymRevenueService:
             # Buscar charges (pagos únicos) y invoices (suscripciones)
             gym_payments = []
 
-            # 1. Buscar charges (pagos únicos)
+            # 1. Buscar charges (pagos únicos) - sync
             charges = stripe.Charge.list(
                 created={
                     'gte': start_timestamp,
@@ -188,7 +195,7 @@ class AsyncGymRevenueService:
                         'description': charge.description
                     })
 
-            # 2. Buscar invoices (suscripciones)
+            # 2. Buscar invoices (suscripciones) - sync
             invoices = stripe.Invoice.list(
                 created={
                     'gte': start_timestamp,
@@ -241,11 +248,13 @@ class AsyncGymRevenueService:
 
         Returns:
             Dict con resumen de plataforma:
-            - totals: gross_revenue, platform_fees, gym_payouts
-            - gyms: Lista con resumen por gimnasio
+            - period: start_date, end_date
+            - totals: gross_revenue, platform_fees, gym_payouts, total_transactions
+            - gyms: List[Dict] con resumen por gimnasio
 
         Note:
-            Agrega los ingresos de todos los gimnasios activos.
+            - Agrega ingresos de todos los gimnasios activos
+            - Incluye desglose por gimnasio
         """
         try:
             # Fechas por defecto: último mes
@@ -254,7 +263,7 @@ class AsyncGymRevenueService:
             if not start_date:
                 start_date = end_date - timedelta(days=30)
 
-            # Obtener todos los gimnasios activos
+            # Obtener todos los gimnasios activos (async)
             result = await db.execute(
                 select(Gym).where(Gym.is_active == True)
             )
@@ -318,16 +327,14 @@ class AsyncGymRevenueService:
 
         Returns:
             Dict con detalles del payout:
-            - payout_amount: Monto neto a pagar
-            - gross_revenue: Ingresos brutos
-            - platform_fee: Comisión de la plataforma
-            - transaction_count: Número de transacciones
-            - status: Estado del payout (pending)
+            - gym_id, gym_name
+            - period, payout_amount, currency
+            - transaction_count, gross_revenue, platform_fee
+            - status (pending), created_at
 
         Note:
-            Este método calcula el payout pero no lo ejecuta.
-            Para ejecutar el payout se necesitaría integración con
-            Stripe Connect o transferencias manuales.
+            - Payout = gross_revenue - platform_fee
+            - Status por defecto: pending
         """
         try:
             # Obtener resumen de ingresos
@@ -335,7 +342,7 @@ class AsyncGymRevenueService:
                 db, gym_id, start_date, end_date
             )
 
-            # Obtener información bancaria del gimnasio (si la tienes almacenada)
+            # Obtener información del gimnasio (async)
             result = await db.execute(
                 select(Gym).where(Gym.id == gym_id)
             )
@@ -343,7 +350,7 @@ class AsyncGymRevenueService:
 
             payout_details = {
                 'gym_id': gym_id,
-                'gym_name': gym.name if gym else 'Unknown',
+                'gym_name': gym.name,
                 'period': revenue_summary['period'],
                 'payout_amount': revenue_summary['revenue']['gym_net'],
                 'currency': revenue_summary['revenue']['currency'],
