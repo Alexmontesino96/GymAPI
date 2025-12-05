@@ -2607,7 +2607,7 @@ class AsyncClassParticipationService:
             logger.warning(f"Error accessing cache: {e}")
 
         # Si no está en cache, consultar BD
-        participations = await async_class_participation_repository.get_member_participation_status_async(
+        participations = await async_class_participation_repository.get_member_participation_status(
             db, member_id=member_id, start_date=start_date, end_date=end_date,
             gym_id=gym_id, session_ids=session_ids
         )

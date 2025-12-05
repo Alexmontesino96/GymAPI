@@ -10,7 +10,7 @@ import logging
 from typing import Optional, Dict, List, Any, Union
 from datetime import datetime, timedelta, date
 from sqlalchemy.orm import Session
-from sqlalchemy import func, case, and_
+from sqlalchemy import func, case, and_, select
 from redis.asyncio import Redis
 
 from app.schemas.user_stats import (
@@ -180,10 +180,12 @@ class UserStatsService:
                 monthly_progress = min((weekly_workouts * 4 / monthly_target) * 100, 100.0)
                 
                 # Estado de membresía
-                user_gym = db.query(UserGym).filter(
+                stmt_user_gym = select(UserGym).where(
                     UserGym.user_id == user_id,
                     UserGym.gym_id == gym_id
-                ).first()
+                )
+                result_user_gym = await db.execute(stmt_user_gym)
+                user_gym = result_user_gym.scalar_one_or_none()
                 membership_status = "active" if user_gym else "inactive"
                 
                 # Próxima clase (query rápida)
@@ -311,18 +313,22 @@ class UserStatsService:
             # Obtener los últimos 30 días de participaciones exitosas
             thirty_days_ago = date.today() - timedelta(days=30)
             
-            # Query optimizada: obtener solo fechas únicas de asistencia
-            # Usar índice compuesto en (user_id, gym_id, status, created_at)
-            attendance_dates = db.query(
-                func.date(ClassParticipation.created_at).label('attendance_date')
-            ).filter(
-                ClassParticipation.member_id == user_id,
-                ClassParticipation.gym_id == gym_id,
-                ClassParticipation.status == ClassParticipationStatus.ATTENDED,
-                func.date(ClassParticipation.created_at) >= thirty_days_ago
-            ).distinct().order_by(
-                func.date(ClassParticipation.created_at).desc()
-            ).all()
+            # Query optimizada (async): obtener solo fechas únicas de asistencia
+            stmt = (
+                select(func.date(ClassParticipation.created_at).label('attendance_date'))
+                .where(
+                    and_(
+                        ClassParticipation.member_id == user_id,
+                        ClassParticipation.gym_id == gym_id,
+                        ClassParticipation.status == ClassParticipationStatus.ATTENDED,
+                        func.date(ClassParticipation.created_at) >= thirty_days_ago,
+                    )
+                )
+                .distinct()
+                .order_by(func.date(ClassParticipation.created_at).desc())
+            )
+            result = await db.execute(stmt)
+            attendance_dates = result.all()
             
             if not attendance_dates:
                 return 0
@@ -363,19 +369,21 @@ class UserStatsService:
             from app.models.schedule import ClassParticipation, ClassParticipationStatus
             
             # Obtener todas las fechas de asistencia en el período
-            attendance_dates = db.query(
-                func.date(ClassParticipation.created_at).label('attendance_date')
-            ).join(
-                ClassParticipation.session
-            ).filter(
-                ClassParticipation.member_id == user_id,
-                ClassParticipation.gym_id == gym_id,
-                ClassParticipation.status == ClassParticipationStatus.ATTENDED,
-                ClassParticipation.created_at >= start_date,
-                ClassParticipation.created_at <= end_date
-            ).distinct().order_by(
-                func.date(ClassParticipation.created_at).asc()
-            ).all()
+            stmt_attendance = (
+                select(func.date(ClassParticipation.created_at).label('attendance_date'))
+                .join(ClassParticipation.session)
+                .where(
+                    ClassParticipation.member_id == user_id,
+                    ClassParticipation.gym_id == gym_id,
+                    ClassParticipation.status == ClassParticipationStatus.ATTENDED,
+                    ClassParticipation.created_at >= start_date,
+                    ClassParticipation.created_at <= end_date
+                )
+                .distinct()
+                .order_by(func.date(ClassParticipation.created_at).asc())
+            )
+            result_attendance = await db.execute(stmt_attendance)
+            attendance_dates = result_attendance.all()
             
             if not attendance_dates:
                 return 0
@@ -421,16 +429,21 @@ class UserStatsService:
             
             week_end = week_start + timedelta(days=6)
             
-            # Query optimizada: contar clases asistidas en la semana
-            workout_count = db.query(ClassParticipation).filter(
-                ClassParticipation.member_id == user_id,
-                ClassParticipation.gym_id == gym_id,
-                ClassParticipation.status == ClassParticipationStatus.ATTENDED,
-                func.date(ClassParticipation.created_at) >= week_start,
-                func.date(ClassParticipation.created_at) <= week_end
-            ).count()
-            
-            return workout_count
+            # Query optimizada (async): contar clases asistidas en la semana
+            stmt = (
+                select(func.count(ClassParticipation.id))
+                .where(
+                    and_(
+                        ClassParticipation.member_id == user_id,
+                        ClassParticipation.gym_id == gym_id,
+                        ClassParticipation.status == ClassParticipationStatus.ATTENDED,
+                        func.date(ClassParticipation.created_at) >= week_start,
+                        func.date(ClassParticipation.created_at) <= week_end,
+                    )
+                )
+            )
+            result = await db.execute(stmt)
+            return result.scalar() or 0
             
         except Exception as e:
             logger.error(f"Error getting weekly workout count for user {user_id}: {e}")
@@ -448,23 +461,25 @@ class UserStatsService:
             
             now = datetime.now()
             
-            # Query para obtener la próxima clase registrada
-            next_class = db.query(
-                Class.name,
-                ClassSession.start_time
-            ).join(
-                ClassSession, Class.id == ClassSession.class_id
-            ).join(
-                ClassParticipation, ClassSession.id == ClassParticipation.session_id
-            ).filter(
-                ClassParticipation.member_id == user_id,
-                ClassParticipation.gym_id == gym_id,
-                ClassParticipation.status == ClassParticipationStatus.REGISTERED,
-                ClassSession.status == ClassSessionStatus.SCHEDULED,
-                ClassSession.start_time > now
-            ).order_by(
-                ClassSession.start_time.asc()
-            ).first()
+            # Query para obtener la próxima clase registrada (async)
+            stmt = (
+                select(Class.name.label('name'), ClassSession.start_time.label('start_time'))
+                .join(ClassSession, Class.id == ClassSession.class_id)
+                .join(ClassParticipation, ClassSession.id == ClassParticipation.session_id)
+                .where(
+                    and_(
+                        ClassParticipation.member_id == user_id,
+                        ClassParticipation.gym_id == gym_id,
+                        ClassParticipation.status == ClassParticipationStatus.REGISTERED,
+                        ClassSession.status == ClassSessionStatus.SCHEDULED,
+                        ClassSession.start_time > now,
+                    )
+                )
+                .order_by(ClassSession.start_time.asc())
+                .limit(1)
+            )
+            result = await db.execute(stmt)
+            next_class = result.first()
             
             if next_class:
                 class_name = next_class.name
@@ -518,61 +533,61 @@ class UserStatsService:
             # TODO: Reemplazar cuando se implemente escaneo QR en gimnasio
             now = datetime.now()
             
-            # Query mejorada con JOIN a ClassSession para verificar fechas
-            class_counts = db.query(
-                func.count(
-                    case(
-                        # Caso 1: Explícitamente marcadas como ATTENDED
-                        (ClassParticipation.status == ClassParticipationStatus.ATTENDED, 1),
-                        # Caso 2: REGISTERED y la sesión ya terminó (asumimos asistencia)
-                        ((ClassParticipation.status == ClassParticipationStatus.REGISTERED) & 
-                         (ClassSession.end_time < now), 1),
-                        else_=None
+            # Query mejorada con JOIN a ClassSession para verificar fechas (async)
+            stmt_counts = (
+                select(
+                    func.count(
+                        case(
+                            (ClassParticipation.status == ClassParticipationStatus.ATTENDED, 1),
+                            ((ClassParticipation.status == ClassParticipationStatus.REGISTERED) & (ClassSession.end_time < now), 1),
+                            else_=None,
+                        )
+                    ).label('attended_classes'),
+                    func.count(
+                        case(
+                            (ClassParticipation.status.in_([ClassParticipationStatus.REGISTERED, ClassParticipationStatus.ATTENDED]), 1),
+                            else_=None,
+                        )
+                    ).label('scheduled_classes'),
+                )
+                .select_from(ClassParticipation)
+                .join(ClassSession, ClassParticipation.session_id == ClassSession.id)
+                .where(
+                    and_(
+                        ClassParticipation.member_id == user_id,
+                        ClassParticipation.gym_id == gym_id,
+                        ClassSession.start_time >= period_start,
+                        ClassSession.start_time <= period_end,
                     )
-                ).label('attended_classes'),
-                func.count(
-                    case(
-                        (ClassParticipation.status.in_([
-                            ClassParticipationStatus.REGISTERED,
-                            ClassParticipationStatus.ATTENDED
-                        ]), 1), 
-                        else_=None
-                    )
-                ).label('scheduled_classes')
-            ).join(
-                ClassSession, ClassParticipation.session_id == ClassSession.id
-            ).filter(
-                ClassParticipation.member_id == user_id,
-                ClassParticipation.gym_id == gym_id,
-                ClassSession.start_time >= period_start,  # Usar fecha de sesión en lugar de created_at
-                ClassSession.start_time <= period_end
-            ).first()
-            
-            attended_classes = class_counts.attended_classes or 0
-            scheduled_classes = class_counts.scheduled_classes or 0
+                )
+            )
+            res_counts = await db.execute(stmt_counts)
+            row_counts = res_counts.first()
+            attended_classes = (row_counts.attended_classes if row_counts else 0) or 0
+            scheduled_classes = (row_counts.scheduled_classes if row_counts else 0) or 0
             
             # Tasa de asistencia
             attendance_rate = (attended_classes / scheduled_classes * 100) if scheduled_classes > 0 else 0.0
             
             # Total de horas de entrenamiento (estimado por duración promedio de clases)
             # TEMPORAL: Incluye REGISTERED pasadas como asistidas
-            total_hours_result = db.query(
-                func.sum(Class.duration).label('total_minutes')
-            ).join(
-                ClassSession
-            ).join(
-                ClassParticipation
-            ).filter(
-                ClassParticipation.member_id == user_id,
-                ClassParticipation.gym_id == gym_id,
-                ((ClassParticipation.status == ClassParticipationStatus.ATTENDED) |
-                 ((ClassParticipation.status == ClassParticipationStatus.REGISTERED) & 
-                  (ClassSession.end_time < now))),
-                ClassSession.start_time >= period_start,
-                ClassSession.start_time <= period_end
-            ).first()
-            
-            total_minutes = total_hours_result.total_minutes or 0
+            stmt_total_minutes = (
+                select(func.sum(Class.duration).label('total_minutes'))
+                .select_from(Class)
+                .join(ClassSession, Class.id == ClassSession.class_id)
+                .join(ClassParticipation, ClassSession.id == ClassParticipation.session_id)
+                .where(
+                    and_(
+                        ClassParticipation.member_id == user_id,
+                        ClassParticipation.gym_id == gym_id,
+                        ((ClassParticipation.status == ClassParticipationStatus.ATTENDED) | ((ClassParticipation.status == ClassParticipationStatus.REGISTERED) & (ClassSession.end_time < now))),
+                        ClassSession.start_time >= period_start,
+                        ClassSession.start_time <= period_end,
+                    )
+                )
+            )
+            res_total = await db.execute(stmt_total_minutes)
+            total_minutes = res_total.scalar() or 0
             total_workout_hours = total_minutes / 60.0
             
             # Duración promedio de sesión
@@ -587,51 +602,51 @@ class UserStatsService:
             
             # Tipos de clase favoritos
             # TEMPORAL: Incluye REGISTERED pasadas como asistidas
-            favorite_classes_result = db.query(
-                Class.name,
-                func.count(ClassParticipation.id).label('count')
-            ).select_from(
-                Class
-            ).join(
-                ClassSession, Class.id == ClassSession.class_id
-            ).join(
-                ClassParticipation, ClassSession.id == ClassParticipation.session_id
-            ).filter(
-                ClassParticipation.member_id == user_id,
-                ClassParticipation.gym_id == gym_id,
-                ((ClassParticipation.status == ClassParticipationStatus.ATTENDED) |
-                 ((ClassParticipation.status == ClassParticipationStatus.REGISTERED) & 
-                  (ClassSession.end_time < now))),
-                ClassSession.start_time >= period_start,
-                ClassSession.start_time <= period_end
-            ).group_by(
-                Class.name
-            ).order_by(
-                func.count(ClassParticipation.id).desc()
-            ).limit(3).all()
-            
-            favorite_class_types = [result.name for result in favorite_classes_result]
+            stmt_favorites = (
+                select(Class.name.label('name'), func.count(ClassParticipation.id).label('count'))
+                .select_from(Class)
+                .join(ClassSession, Class.id == ClassSession.class_id)
+                .join(ClassParticipation, ClassSession.id == ClassParticipation.session_id)
+                .where(
+                    and_(
+                        ClassParticipation.member_id == user_id,
+                        ClassParticipation.gym_id == gym_id,
+                        ((ClassParticipation.status == ClassParticipationStatus.ATTENDED) | ((ClassParticipation.status == ClassParticipationStatus.REGISTERED) & (ClassSession.end_time < now))),
+                        ClassSession.start_time >= period_start,
+                        ClassSession.start_time <= period_end,
+                    )
+                )
+                .group_by(Class.name)
+                .order_by(func.count(ClassParticipation.id).desc())
+                .limit(3)
+            )
+            res_fav = await db.execute(stmt_favorites)
+            favorite_class_types = [row.name for row in res_fav.all()]
             
             # Horarios pico (simplificado - análisis básico)
             # TEMPORAL: Incluye REGISTERED pasadas como asistidas
-            peak_times_result = db.query(
-                func.extract('hour', ClassSession.start_time).label('hour'),
-                func.count(ClassParticipation.id).label('count')
-            ).join(
-                ClassParticipation
-            ).filter(
-                ClassParticipation.member_id == user_id,
-                ClassParticipation.gym_id == gym_id,
-                ((ClassParticipation.status == ClassParticipationStatus.ATTENDED) |
-                 ((ClassParticipation.status == ClassParticipationStatus.REGISTERED) & 
-                  (ClassSession.end_time < now))),
-                ClassSession.start_time >= period_start,
-                ClassSession.start_time <= period_end
-            ).group_by(
-                func.extract('hour', ClassSession.start_time)
-            ).order_by(
-                func.count(ClassParticipation.id).desc()
-            ).limit(2).all()
+            stmt_peak = (
+                select(
+                    func.extract('hour', ClassSession.start_time).label('hour'),
+                    func.count(ClassParticipation.id).label('count'),
+                )
+                .select_from(ClassSession)
+                .join(ClassParticipation, ClassParticipation.session_id == ClassSession.id)
+                .where(
+                    and_(
+                        ClassParticipation.member_id == user_id,
+                        ClassParticipation.gym_id == gym_id,
+                        ((ClassParticipation.status == ClassParticipationStatus.ATTENDED) | ((ClassParticipation.status == ClassParticipationStatus.REGISTERED) & (ClassSession.end_time < now))),
+                        ClassSession.start_time >= period_start,
+                        ClassSession.start_time <= period_end,
+                    )
+                )
+                .group_by(func.extract('hour', ClassSession.start_time))
+                .order_by(func.count(ClassParticipation.id).desc())
+                .limit(2)
+            )
+            res_peak = await db.execute(stmt_peak)
+            peak_times_result = res_peak.all()
             
             peak_workout_times = []
             for result in peak_times_result:
@@ -672,55 +687,74 @@ class UserStatsService:
             from app.models.event import EventParticipation, Event, EventParticipationStatus
             from app.models.user import User
             
-            # Query base para participaciones en eventos del período
-            base_query = db.query(EventParticipation).join(
-                Event
-            ).filter(
+            # Base condición
+            base_where = and_(
                 EventParticipation.member_id == user_id,
                 EventParticipation.gym_id == gym_id,
                 Event.start_time >= period_start,
-                Event.start_time <= period_end
+                Event.start_time <= period_end,
             )
-            
+
             # Eventos asistidos (marcados como asistidos)
-            events_attended = base_query.filter(
-                EventParticipation.attended == True
-            ).count()
-            
+            stmt_attended = (
+                select(func.count(EventParticipation.id))
+                .select_from(EventParticipation)
+                .join(Event, Event.id == EventParticipation.event_id)
+                .where(and_(base_where, EventParticipation.attended == True))
+            )
+            res_attended = await db.execute(stmt_attended)
+            events_attended = res_attended.scalar() or 0
+
             # Eventos registrados (incluyendo asistidos)
-            events_registered = base_query.filter(
-                EventParticipation.status == EventParticipationStatus.REGISTERED
-            ).count()
+            stmt_registered = (
+                select(func.count(EventParticipation.id))
+                .select_from(EventParticipation)
+                .join(Event, Event.id == EventParticipation.event_id)
+                .where(and_(base_where, EventParticipation.status == EventParticipationStatus.REGISTERED))
+            )
+            res_registered = await db.execute(stmt_registered)
+            events_registered = res_registered.scalar() or 0
             
             # Tasa de asistencia
             attendance_rate = (events_attended / events_registered * 100) if events_registered > 0 else 0.0
             
             # Eventos creados (si el usuario es trainer/admin)
-            events_created = db.query(Event).filter(
-                Event.creator_id == user_id,
-                Event.gym_id == gym_id,
-                Event.start_time >= period_start,
-                Event.start_time <= period_end
-            ).count()
+            stmt_created = (
+                select(func.count(Event.id))
+                .select_from(Event)
+                .where(
+                    and_(
+                        Event.creator_id == user_id,
+                        Event.gym_id == gym_id,
+                        Event.start_time >= period_start,
+                        Event.start_time <= period_end,
+                    )
+                )
+            )
+            res_created = await db.execute(stmt_created)
+            events_created = res_created.scalar() or 0
             
             # Tipos de evento favoritos (basado en la descripción del evento)
             # Simplificado: análisis de palabras clave en títulos
-            favorite_events_result = db.query(
-                Event.title,
-                func.count(EventParticipation.id).label('count')
-            ).join(
-                EventParticipation
-            ).filter(
-                EventParticipation.member_id == user_id,
-                EventParticipation.gym_id == gym_id,
-                EventParticipation.attended == True,
-                Event.start_time >= period_start,
-                Event.start_time <= period_end
-            ).group_by(
-                Event.title
-            ).order_by(
-                func.count(EventParticipation.id).desc()
-            ).limit(5).all()
+            stmt_fav_events = (
+                select(Event.title.label('title'), func.count(EventParticipation.id).label('count'))
+                .select_from(Event)
+                .join(EventParticipation, EventParticipation.event_id == Event.id)
+                .where(
+                    and_(
+                        EventParticipation.member_id == user_id,
+                        EventParticipation.gym_id == gym_id,
+                        EventParticipation.attended == True,
+                        Event.start_time >= period_start,
+                        Event.start_time <= period_end,
+                    )
+                )
+                .group_by(Event.title)
+                .order_by(func.count(EventParticipation.id).desc())
+                .limit(5)
+            )
+            res_fav_events = await db.execute(stmt_fav_events)
+            favorite_events_result = res_fav_events.all()
             
             # Extraer tipos de eventos de los títulos (análisis básico)
             favorite_event_types = []
@@ -792,31 +826,39 @@ class UserStatsService:
             
             # Interacciones con entrenadores (basado en membresías de salas de chat)
             # Contar salas donde hay entrenadores o admins
-            trainer_interactions = db.query(ChatMember).join(
-                ChatRoom
-            ).join(
-                User, ChatMember.user_id == User.id
-            ).filter(
-                ChatRoom.gym_id == gym_id,
-                ChatMember.user_id == user_id,
-                # Buscar otras membresías en las mismas salas que incluyan trainers/admins
-                ChatMember.room_id.in_(
-                    db.query(ChatMember.room_id).join(
-                        User, ChatMember.user_id == User.id
-                    ).join(
-                        User.gyms
-                    ).filter(
-                        User.gyms.any(
-                            and_(
-                                User.gyms.property.mapper.class_.gym_id == gym_id,
-                                User.gyms.property.mapper.class_.role.in_([
-                                    UserRole.TRAINER, UserRole.ADMIN
-                                ])
-                            )
+
+            # Subquery: obtener room_ids donde hay trainers/admins
+            subq_trainer_rooms = (
+                select(ChatMember.room_id)
+                .join(User, ChatMember.user_id == User.id)
+                .join(User.gyms)
+                .where(
+                    User.gyms.any(
+                        and_(
+                            User.gyms.property.mapper.class_.gym_id == gym_id,
+                            User.gyms.property.mapper.class_.role.in_([
+                                UserRole.TRAINER, UserRole.ADMIN
+                            ])
                         )
-                    ).distinct()
+                    )
                 )
-            ).count()
+                .distinct()
+            ).scalar_subquery()
+
+            # Query principal
+            stmt_trainer = (
+                select(func.count(ChatMember.id))
+                .select_from(ChatMember)
+                .join(ChatRoom)
+                .join(User, ChatMember.user_id == User.id)
+                .where(
+                    ChatRoom.gym_id == gym_id,
+                    ChatMember.user_id == user_id,
+                    ChatMember.room_id.in_(subq_trainer_rooms)
+                )
+            )
+            result_trainer = await db.execute(stmt_trainer)
+            trainer_interactions = result_trainer.scalar() or 0
             
             return SocialMetrics(
                 chat_messages_sent=chat_messages_sent,
@@ -899,11 +941,13 @@ class UserStatsService:
         from app.schemas.user_stats import AppUsageMetrics
         
         try:
-            user_gym = db.query(UserGym).filter(
+            stmt_user_gym = select(UserGym).where(
                 UserGym.user_id == user_id,
                 UserGym.gym_id == gym_id
-            ).first()
-            
+            )
+            result_user_gym = await db.execute(stmt_user_gym)
+            user_gym = result_user_gym.scalar_one_or_none()
+
             if not user_gym:
                 return AppUsageMetrics()
             
@@ -954,11 +998,13 @@ class UserStatsService:
             from app.models.schedule import ClassParticipation, ClassParticipationStatus
             
             # Obtener la membresía del usuario en este gimnasio
-            user_gym = db.query(UserGym).filter(
+            stmt_user_gym = select(UserGym).where(
                 UserGym.user_id == user_id,
                 UserGym.gym_id == gym_id
-            ).first()
-            
+            )
+            result_user_gym = await db.execute(stmt_user_gym)
+            user_gym = result_user_gym.scalar_one_or_none()
+
             if not user_gym:
                 # Usuario no tiene membresía en este gimnasio
                 return MembershipUtilization(
@@ -972,20 +1018,29 @@ class UserStatsService:
             # Obtener el plan de membresía si existe
             membership_plan = None
             if hasattr(user_gym, 'membership_plan_id') and user_gym.membership_plan_id:
-                membership_plan = db.query(MembershipPlan).filter(
+                stmt_plan = select(MembershipPlan).where(
                     MembershipPlan.id == user_gym.membership_plan_id
-                ).first()
-            
+                )
+                result_plan = await db.execute(stmt_plan)
+                membership_plan = result_plan.scalar_one_or_none()
+
             plan_name = membership_plan.name if membership_plan else "Basic"
             
             # Calcular utilización basada en clases asistidas vs disponibles
-            classes_attended_count = db.query(ClassParticipation).filter(
-                ClassParticipation.member_id == user_id,
-                ClassParticipation.gym_id == gym_id,
-                ClassParticipation.status == ClassParticipationStatus.ATTENDED,
-                ClassParticipation.created_at >= period_start,
-                ClassParticipation.created_at <= period_end
-            ).count()
+            stmt_classes_attended = (
+                select(func.count(ClassParticipation.id))
+                .where(
+                    and_(
+                        ClassParticipation.member_id == user_id,
+                        ClassParticipation.gym_id == gym_id,
+                        ClassParticipation.status == ClassParticipationStatus.ATTENDED,
+                        ClassParticipation.created_at >= period_start,
+                        ClassParticipation.created_at <= period_end,
+                    )
+                )
+            )
+            res_classes = await db.execute(stmt_classes_attended)
+            classes_attended_count = res_classes.scalar() or 0
             
             # Estimación de clases disponibles (basado en días del período)
             period_days = (period_end - period_start).days
@@ -1204,14 +1259,19 @@ class UserStatsService:
             from app.models.schedule import ClassParticipation, ClassParticipationStatus
 
             # Obtener la participación más reciente con asistencia confirmada
-            last_participation = db.query(ClassParticipation).filter(
-                ClassParticipation.member_id == user_id,
-                ClassParticipation.gym_id == gym_id,
-                ClassParticipation.status == ClassParticipationStatus.ATTENDED,
-                ClassParticipation.attendance_time.isnot(None)
-            ).order_by(
-                ClassParticipation.attendance_time.desc()
-            ).first()
+            stmt_last = (
+                select(ClassParticipation)
+                .where(
+                    ClassParticipation.member_id == user_id,
+                    ClassParticipation.gym_id == gym_id,
+                    ClassParticipation.status == ClassParticipationStatus.ATTENDED,
+                    ClassParticipation.attendance_time.isnot(None)
+                )
+                .order_by(ClassParticipation.attendance_time.desc())
+                .limit(1)
+            )
+            result_last = await db.execute(stmt_last)
+            last_participation = result_last.scalar_one_or_none()
 
             last_attendance = last_participation.attendance_time if last_participation else None
 
@@ -1276,36 +1336,46 @@ class UserStatsService:
             
             # Calcular clase favorita basada en asistencia
             favorite_class = None
-            favorite_class_query = db.query(
-                Class.name,
-                func.count(ClassParticipation.id).label('attendance_count')
-            ).join(
-                ClassParticipation, Class.id == ClassParticipation.class_id
-            ).filter(
-                ClassParticipation.member_id == user_id,
-                ClassParticipation.gym_id == gym_id,
-                ClassParticipation.status == ClassParticipationStatus.ATTENDED
-            ).group_by(Class.name).order_by(
-                func.count(ClassParticipation.id).desc()
-            ).first()
-            
+            stmt_favorite = (
+                select(
+                    Class.name,
+                    func.count(ClassParticipation.id).label('attendance_count')
+                )
+                .join(ClassParticipation, Class.id == ClassParticipation.class_id)
+                .where(
+                    ClassParticipation.member_id == user_id,
+                    ClassParticipation.gym_id == gym_id,
+                    ClassParticipation.status == ClassParticipationStatus.ATTENDED
+                )
+                .group_by(Class.name)
+                .order_by(func.count(ClassParticipation.id).desc())
+                .limit(1)
+            )
+            result_favorite = await db.execute(stmt_favorite)
+            favorite_class_query = result_favorite.first()
+
             if favorite_class_query:
                 favorite_class = favorite_class_query.name
             
             # Calcular duración promedio de sesiones (últimos 30 días)
             thirty_days_ago = datetime.utcnow() - timedelta(days=30)
-            avg_duration_query = db.query(
-                func.avg(func.extract('epoch', 
-                    func.coalesce(ClassParticipation.end_time, ClassParticipation.created_at + timedelta(minutes=60)) 
-                    - ClassParticipation.created_at
-                ) / 60).label('avg_minutes')
-            ).filter(
-                ClassParticipation.member_id == user_id,
-                ClassParticipation.gym_id == gym_id,
-                ClassParticipation.status == ClassParticipationStatus.ATTENDED,
-                ClassParticipation.created_at >= thirty_days_ago
-            ).scalar()
-            
+            stmt_avg_duration = (
+                select(
+                    func.avg(func.extract('epoch',
+                        func.coalesce(ClassParticipation.end_time, ClassParticipation.created_at + timedelta(minutes=60))
+                        - ClassParticipation.created_at
+                    ) / 60).label('avg_minutes')
+                )
+                .where(
+                    ClassParticipation.member_id == user_id,
+                    ClassParticipation.gym_id == gym_id,
+                    ClassParticipation.status == ClassParticipationStatus.ATTENDED,
+                    ClassParticipation.created_at >= thirty_days_ago
+                )
+            )
+            result_avg = await db.execute(stmt_avg_duration)
+            avg_duration_query = result_avg.scalar()
+
             avg_duration = round(avg_duration_query or 60.0, 1)  # Default 60 min si no hay data
             
             # Calcular social score usando chat analytics service
