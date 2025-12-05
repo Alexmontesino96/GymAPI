@@ -25,7 +25,7 @@ from app.core.tenant import verify_gym_admin_access, verify_gym_access, verify_g
 from app.schemas.gym import GymSchema
 from app.models.user_gym import UserGym, GymRoleType
 from app.models.event import Event
-from app.services.chat import chat_service
+from app.services.async_chat import async_chat_service
 from app.repositories.chat import chat_repository
 from app.schemas.chat import (
     ChatRoom, 
@@ -91,7 +91,7 @@ async def get_stream_token(
     }
 
     # Use internal ID to generate the token with gym restriction
-    token = chat_service.get_user_token(internal_user.id, user_data, gym_id=current_gym.id)
+    token = await async_chat_service.get_user_token(internal_user.id, user_data, gym_id=current_gym.id)
 
     # Call get_settings() to get the settings object
     settings_obj = get_settings()
@@ -154,7 +154,7 @@ async def create_chat_room(
 
     # Service handles room creation in DB and Stream using internal IDs
     # Pass gym_id to ensure room is associated with correct gym
-    return chat_service.create_room(db, creator_id, room_data, current_gym.id)
+    return await async_chat_service.create_room(db, creator_id, room_data, current_gym.id)
 
 @router.get("/rooms/direct/{other_user_id}", response_model=ChatRoom)
 async def get_direct_chat(
@@ -224,7 +224,7 @@ async def get_direct_chat(
     user1_id = internal_user.id
     user2_id = other_user_id
 
-    return chat_service.get_or_create_direct_chat(db, user1_id, user2_id, current_gym.id)
+    return await async_chat_service.get_or_create_direct_chat(db, user1_id, user2_id, current_gym.id)
 
 @router.get("/rooms/event/{event_id}", response_model=ChatRoom)
 async def get_event_chat(
@@ -330,7 +330,7 @@ async def get_event_chat(
         try:
             # Use internal user ID (integer) directly
             user_id = internal_user.id
-            result = chat_service.get_or_create_event_chat(db, event_id, user_id, current_gym.id)
+            result = await async_chat_service.get_or_create_event_chat(db, event_id, user_id, current_gym.id)
 
             total_time = time.time() - start_time
             logger.info(f"Event chat {event_id} processed in {total_time:.2f}s")
@@ -396,7 +396,7 @@ async def add_member_to_room(
     """
     try:
         # Use internal ID (integer) directly
-        chat_service.add_user_to_channel(db, room_id, user_id)
+        await async_chat_service.add_user_to_channel(db, room_id, user_id)
         return {"status": "User added successfully"}
     except ValueError as e:
         # Catch errors like room/user not found from service
@@ -440,7 +440,7 @@ async def remove_member_from_room(
     """
     try:
         # Use internal ID (integer) directly
-        chat_service.remove_user_from_channel(db, room_id, user_id)
+        await async_chat_service.remove_user_from_channel(db, room_id, user_id)
         return {"status": "User removed successfully"}
     except ValueError as e:
         # Catch errors like room/user not found from service
@@ -481,8 +481,8 @@ async def get_gym_chat_summary(
         
         # El gimnasio ya está verificado por la dependencia verify_gym_admin_access
         gym_id = current_gym.id
-        
-        summary = chat_analytics_service.get_gym_chat_summary(db, gym_id)
+
+        summary = await chat_analytics_service.get_gym_chat_summary(db, gym_id)
         return summary
         
     except Exception as e:
@@ -532,8 +532,8 @@ async def get_user_chat_activity(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="No puedes consultar la actividad de un usuario que no pertenece a tu gimnasio"
                 )
-        
-        activity = chat_analytics_service.get_user_chat_activity(db, target_user_id)
+
+        activity = await chat_analytics_service.get_user_chat_activity(db, target_user_id)
         return activity
         
     except Exception as e:
@@ -561,8 +561,8 @@ async def get_popular_chat_times(
         
         # El gimnasio ya está verificado por la dependencia verify_gym_admin_access
         gym_id = current_gym.id
-        
-        analysis = chat_analytics_service.get_popular_chat_times(db, gym_id, days)
+
+        analysis = await chat_analytics_service.get_popular_chat_times(db, gym_id, days)
         return analysis
         
     except Exception as e:
@@ -600,8 +600,8 @@ async def get_event_chat_effectiveness(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="No tienes acceso a este evento - pertenece a otro gimnasio"
             )
-        
-        effectiveness = chat_analytics_service.get_event_chat_effectiveness(db, event_id)
+
+        effectiveness = await chat_analytics_service.get_event_chat_effectiveness(db, event_id)
         return effectiveness
         
     except Exception as e:
@@ -629,8 +629,8 @@ async def get_chat_health_metrics(
         
         # El gimnasio ya está verificado por la dependencia verify_gym_admin_access
         gym_id = current_gym.id
-        
-        metrics = chat_analytics_service.get_chat_health_metrics(db, gym_id)
+
+        metrics = await chat_analytics_service.get_chat_health_metrics(db, gym_id)
         return metrics
         
     except Exception as e:
@@ -683,8 +683,8 @@ async def get_room_statistics(
         if not is_member:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, 
                               detail="No tienes acceso a esta sala de chat")
-        
-        stats = chat_service.get_chat_statistics(db, room_id)
+
+        stats = await async_chat_service.get_chat_statistics(db, room_id)
         return stats
         
     except HTTPException:
@@ -709,9 +709,9 @@ async def get_general_channel_info(
     número de miembros y fechas de creación/actualización.
     """
     from app.services.gym_chat import gym_chat_service
-    
-    channel_info = gym_chat_service.get_general_channel_info(db, current_gym.id)
-    
+
+    channel_info = await gym_chat_service.get_general_channel_info(db, current_gym.id)
+
     if not channel_info:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -744,9 +744,9 @@ async def join_general_channel(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Perfil de usuario no encontrado"
         )
-    
-    success = gym_chat_service.add_user_to_general_channel(db, current_gym.id, internal_user.id)
-    
+
+    success = await gym_chat_service.add_user_to_general_channel(db, current_gym.id, internal_user.id)
+
     if not success:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -779,9 +779,9 @@ async def leave_general_channel(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Perfil de usuario no encontrado"
         )
-    
-    success = gym_chat_service.remove_user_from_general_channel(db, current_gym.id, internal_user.id)
-    
+
+    success = await gym_chat_service.remove_user_from_general_channel(db, current_gym.id, internal_user.id)
+
     if not success:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -819,9 +819,9 @@ async def add_member_to_general_channel(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="El usuario no pertenece a este gimnasio"
         )
-    
-    success = gym_chat_service.add_user_to_general_channel(db, current_gym.id, user_id)
-    
+
+    success = await gym_chat_service.add_user_to_general_channel(db, current_gym.id, user_id)
+
     if not success:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -845,9 +845,9 @@ async def remove_member_from_general_channel(
     Permite a administradores remover manualmente un usuario del canal general.
     """
     from app.services.gym_chat import gym_chat_service
-    
-    success = gym_chat_service.remove_user_from_general_channel(db, current_gym.id, user_id)
-    
+
+    success = await gym_chat_service.remove_user_from_general_channel(db, current_gym.id, user_id)
+
     if not success:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -989,8 +989,8 @@ async def get_all_user_chat_rooms(
             )
         
         # Obtener todas las salas del usuario usando el repositorio
-        user_rooms = chat_repository.get_user_rooms(db, user_id=internal_user.id)
-        
+        user_rooms = await chat_repository.get_user_rooms(db, user_id=internal_user.id)
+
         # Filtrar solo salas activas
         active_rooms = [room for room in user_rooms if room.status == "ACTIVE"]
         

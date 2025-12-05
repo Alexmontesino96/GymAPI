@@ -39,6 +39,7 @@ from app.core.config import get_settings
 from app.db.redis_client import get_redis_client, redis
 from app.services.cache_service import cache_service
 from app.services.gym import gym_service
+from app.services.async_gym import async_gym_service
 from app.services.user_stats import user_stats_service
 from app.core.security import verify_auth0_webhook_secret
 from app.middleware.rate_limit import limiter
@@ -74,14 +75,9 @@ async def get_user_profile(
         from app.db.session import SessionLocal
         sync_db = SessionLocal()
         try:
-            # Importar el método sync temporalmente
-            import asyncio
-            loop = asyncio.new_event_loop()
-            result = loop.run_until_complete(
-                user_service.create_or_update_auth0_user_async(sync_db, data)
-            )
-            loop.close()
-            return result
+            # Nota: create_or_update_auth0_user_async es SÍNCRONA (nombre legado)
+            # Se ejecuta en el threadpool por el decorador run_sync_in_async
+            return user_service.create_or_update_auth0_user_async(sync_db, data)
         finally:
             sync_db.close()
 
@@ -1016,7 +1012,7 @@ async def read_user_by_id(
                 detail="Se requiere X-Gym-ID header para administradores."
             )
         # Verificar si el usuario objetivo pertenece al gimnasio actual
-        target_membership = gym_service.check_user_in_gym(db, user_id=target_user.id, gym_id=current_gym.id)
+        target_membership = await async_gym_service.check_user_in_gym(db, user_id=target_user.id, gym_id=current_gym.id)
         if not target_membership:
             # Ocultar la existencia del usuario si no está en el gimnasio del ADMIN
             raise HTTPException(status_code=404, detail="Usuario no encontrado")
@@ -1308,4 +1304,3 @@ async def read_gym_participant_by_id(
         logger.warning(f"No se pudo asignar gym_role/role en la respuesta de usuario {user_id}: {e}")
 
     return user_data
-
