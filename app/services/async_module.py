@@ -1,8 +1,7 @@
 """
-AsyncModuleService - Servicio async para gestión de módulos del gimnasio.
+AsyncModuleService - Servicio async para gestión de módulos del sistema.
 
-Este módulo proporciona un servicio totalmente async para operaciones CRUD de módulos
-del sistema y su activación/desactivación por gimnasio.
+Este módulo maneja operaciones CRUD de módulos y su configuración por gimnasio.
 
 Migrado en FASE 3 de la conversión sync → async.
 """
@@ -23,34 +22,20 @@ class AsyncModuleService:
 
     Todos los métodos son async y utilizan AsyncSession.
 
-    Módulos del sistema:
-    - nutrition: Módulo de nutrición con IA
-    - billing: Facturación y pagos con Stripe
-    - events: Eventos del gimnasio
-    - schedule: Clases y horarios
-    - chat: Sistema de chat con Stream
-    - surveys: Encuestas y feedback
-    - health: Tracking de medidas corporales
-    - metrics: Dashboard de estadísticas
+    Funcionalidades:
+    - CRUD de módulos del sistema
+    - Activación/desactivación por gimnasio
+    - Verificación de estado de módulos
+    - Listado de módulos activos por gym
 
     Métodos principales:
-    - get_module_by_id() - Obtener módulo por ID
-    - get_module_by_code() - Obtener módulo por código único
-    - get_modules() - Listar todos los módulos
-    - create_module() - Crear nuevo módulo (admin)
-    - update_module() - Actualizar módulo existente
-    - delete_module() - Eliminar módulo (hard delete)
-    - get_active_modules_for_gym() - Módulos activos de un gym
-    - get_gym_module_status() - Verificar estado de módulo
-    - activate_module_for_gym() - Activar módulo para gym
-    - deactivate_module_for_gym() - Desactivar módulo para gym
+    - get_module_by_code() - Buscar módulo por código
+    - get_active_modules_for_gym() - Módulos activos del gym
+    - activate_module_for_gym() - Activar módulo
+    - deactivate_module_for_gym() - Desactivar módulo
     """
 
-    async def get_module_by_id(
-        self,
-        db: AsyncSession,
-        module_id: int
-    ) -> Optional[Module]:
+    async def get_module_by_id(self, db: AsyncSession, module_id: int) -> Optional[Module]:
         """
         Obtener un módulo por su ID.
 
@@ -59,76 +44,60 @@ class AsyncModuleService:
             module_id: ID del módulo
 
         Returns:
-            Módulo encontrado o None
+            Optional[Module]: Módulo encontrado o None
         """
         result = await db.execute(
             select(Module).where(Module.id == module_id)
         )
         return result.scalar_one_or_none()
 
-    async def get_module_by_code(
-        self,
-        db: AsyncSession,
-        code: str
-    ) -> Optional[Module]:
+    async def get_module_by_code(self, db: AsyncSession, code: str) -> Optional[Module]:
         """
-        Obtener un módulo por su código único.
+        Obtener un módulo por su código.
 
         Args:
             db: Sesión async de base de datos
-            code: Código del módulo (ej: "nutrition", "billing")
+            code: Código del módulo (ej: "billing", "chat")
 
         Returns:
-            Módulo encontrado o None
-
-        Note:
-            Los códigos de módulo son únicos en el sistema.
+            Optional[Module]: Módulo encontrado o None
         """
         result = await db.execute(
             select(Module).where(Module.code == code)
         )
         return result.scalar_one_or_none()
 
-    async def get_modules(
-        self,
-        db: AsyncSession,
-        skip: int = 0,
-        limit: int = 100
-    ) -> List[Module]:
+    async def get_modules(self, db: AsyncSession, skip: int = 0, limit: int = 100) -> List[Module]:
         """
-        Obtener la lista de todos los módulos disponibles en el sistema.
+        Obtener la lista de todos los módulos disponibles.
 
         Args:
             db: Sesión async de base de datos
-            skip: Registros a omitir (paginación)
-            limit: Máximo de registros a devolver
+            skip: Número de registros a saltar (paginación)
+            limit: Límite de registros a retornar
 
         Returns:
-            Lista de módulos del sistema
+            List[Module]: Lista de módulos del sistema
         """
         result = await db.execute(
             select(Module).offset(skip).limit(limit)
         )
-        return result.scalars().all()
+        return list(result.scalars().all())
 
-    async def create_module(
-        self,
-        db: AsyncSession,
-        module: ModuleCreate
-    ) -> Module:
+    async def create_module(self, db: AsyncSession, module: ModuleCreate) -> Module:
         """
-        Crear un nuevo módulo en el sistema (solo admin).
+        Crear un nuevo módulo.
 
         Args:
             db: Sesión async de base de datos
             module: Datos del módulo a crear
 
         Returns:
-            Módulo creado
+            Module: Módulo creado con ID asignado
 
         Note:
-            El código del módulo debe ser único en el sistema.
-            is_premium determina si requiere suscripción especial.
+            - code debe ser único
+            - is_premium determina si requiere plan de pago
         """
         db_module = Module(
             code=module.code,
@@ -141,25 +110,17 @@ class AsyncModuleService:
         await db.refresh(db_module)
         return db_module
 
-    async def update_module(
-        self,
-        db: AsyncSession,
-        module_id: int,
-        module: ModuleUpdate
-    ) -> Optional[Module]:
+    async def update_module(self, db: AsyncSession, module_id: int, module: ModuleUpdate) -> Optional[Module]:
         """
         Actualizar un módulo existente.
 
         Args:
             db: Sesión async de base de datos
             module_id: ID del módulo a actualizar
-            module: Datos de actualización
+            module: Datos a actualizar (solo campos proporcionados)
 
         Returns:
-            Módulo actualizado o None si no existe
-
-        Note:
-            Solo actualiza campos no nulos del schema ModuleUpdate.
+            Optional[Module]: Módulo actualizado o None si no existe
         """
         db_module = await self.get_module_by_id(db, module_id)
         if db_module:
@@ -170,24 +131,20 @@ class AsyncModuleService:
             await db.refresh(db_module)
         return db_module
 
-    async def delete_module(
-        self,
-        db: AsyncSession,
-        module_id: int
-    ) -> bool:
+    async def delete_module(self, db: AsyncSession, module_id: int) -> bool:
         """
-        Eliminar un módulo por su ID (hard delete).
+        Eliminar un módulo por su ID.
 
         Args:
             db: Sesión async de base de datos
             module_id: ID del módulo a eliminar
 
         Returns:
-            True si se eliminó, False si no existe
+            bool: True si se eliminó, False si no existía
 
-        Warning:
-            Hard delete - elimina permanentemente el módulo y todas
-            sus relaciones GymModule asociadas (CASCADE).
+        Note:
+            - Esto NO desactiva el módulo en gyms, lo elimina del sistema
+            - Use con precaución
         """
         db_module = await self.get_module_by_id(db, module_id)
         if db_module:
@@ -198,11 +155,7 @@ class AsyncModuleService:
 
     # Métodos para gestionar activación por gimnasio
 
-    async def get_active_modules_for_gym(
-        self,
-        db: AsyncSession,
-        gym_id: int
-    ) -> List[Module]:
+    async def get_active_modules_for_gym(self, db: AsyncSession, gym_id: int) -> List[Module]:
         """
         Obtener la lista de módulos activos para un gimnasio específico.
 
@@ -211,14 +164,15 @@ class AsyncModuleService:
             gym_id: ID del gimnasio
 
         Returns:
-            Lista de módulos activos del gimnasio
+            List[Module]: Lista de módulos activos en el gym
 
         Note:
-            Solo retorna módulos con GymModule.active=True.
-            Útil para validar features disponibles por gimnasio.
+            - Solo retorna módulos con GymModule.active = True
+            - Join con GymModule para filtrar
         """
         result = await db.execute(
-            select(Module).join(
+            select(Module)
+            .join(
                 GymModule,
                 and_(
                     GymModule.module_id == Module.id,
@@ -227,14 +181,9 @@ class AsyncModuleService:
                 )
             )
         )
-        return result.scalars().all()
+        return list(result.scalars().all())
 
-    async def get_gym_module_status(
-        self,
-        db: AsyncSession,
-        gym_id: int,
-        module_code: str
-    ) -> Optional[bool]:
+    async def get_gym_module_status(self, db: AsyncSession, gym_id: int, module_code: str) -> Optional[bool]:
         """
         Verificar si un módulo está activo para un gimnasio específico.
 
@@ -244,10 +193,10 @@ class AsyncModuleService:
             module_code: Código del módulo
 
         Returns:
-            True si activo, False si inactivo, None si módulo no existe
-
-        Note:
-            Si el módulo no tiene GymModule, retorna False (inactivo por defecto).
+            Optional[bool]:
+            - True si está activo
+            - False si existe pero está desactivado
+            - None si el módulo no existe en el sistema
         """
         module = await self.get_module_by_code(db, module_code)
         if not module:
@@ -268,27 +217,22 @@ class AsyncModuleService:
 
         return gym_module.active
 
-    async def activate_module_for_gym(
-        self,
-        db: AsyncSession,
-        gym_id: int,
-        module_code: str
-    ) -> bool:
+    async def activate_module_for_gym(self, db: AsyncSession, gym_id: int, module_code: str) -> bool:
         """
         Activar un módulo para un gimnasio específico.
 
         Args:
             db: Sesión async de base de datos
             gym_id: ID del gimnasio
-            module_code: Código del módulo
+            module_code: Código del módulo a activar
 
         Returns:
-            True si se activó exitosamente, False si módulo no existe
+            bool: True si se activó, False si el módulo no existe
 
         Note:
-            - Si ya existe GymModule inactivo, lo reactiva
-            - Si no existe GymModule, lo crea con active=True
-            - Establece activated_at = now()
+            - Si GymModule ya existe, solo actualiza active = True
+            - Si no existe, crea nueva relación GymModule
+            - Limpia deactivated_at al activar
         """
         module = await self.get_module_by_code(db, module_code)
         if not module:
@@ -322,25 +266,21 @@ class AsyncModuleService:
         await db.commit()
         return True
 
-    async def deactivate_module_for_gym(
-        self,
-        db: AsyncSession,
-        gym_id: int,
-        module_code: str
-    ) -> bool:
+    async def deactivate_module_for_gym(self, db: AsyncSession, gym_id: int, module_code: str) -> bool:
         """
         Desactivar un módulo para un gimnasio específico.
 
         Args:
             db: Sesión async de base de datos
             gym_id: ID del gimnasio
-            module_code: Código del módulo
+            module_code: Código del módulo a desactivar
 
         Returns:
-            True si se desactivó exitosamente, False si módulo no existe o ya inactivo
+            bool: True si se desactivó, False si no estaba activo o no existe
 
         Note:
-            Establece deactivated_at = now() para auditoría.
+            - Marca deactivated_at con timestamp actual
+            - No elimina la relación, solo la marca como inactiva
         """
         module = await self.get_module_by_code(db, module_code)
         if not module:
