@@ -1092,8 +1092,8 @@ class UserService:
         @time_db_query
         async def db_fetch():
             logger.info(f"DB Fetch for gym participants cache miss: key={cache_key}")
-            # Llama al nuevo método del repositorio
-            return user_repository.get_gym_participants(
+            # Llama al método async del repositorio
+            return await user_repository.get_gym_participants_async(
                 db, gym_id=gym_id, roles=roles, skip=skip, limit=limit
             )
         
@@ -1110,9 +1110,9 @@ class UserService:
             return users
         except Exception as e:
             logger.error(f"Error al obtener participantes cacheados para gym {gym_id} (roles={roles}): {str(e)}", exc_info=True)
-            # Fallback al método directo del repositorio en caso de error
+            # Fallback al método async directo del repositorio en caso de error
             logger.info(f"Fallback a BD para gym {gym_id} (roles={roles}) debido a error de caché")
-            return user_repository.get_gym_participants(db, gym_id=gym_id, roles=roles, skip=skip, limit=limit)
+            return await user_repository.get_gym_participants_async(db, gym_id=gym_id, roles=roles, skip=skip, limit=limit)
             
     # <<< FIN MODIFICACIÓN >>>
 
