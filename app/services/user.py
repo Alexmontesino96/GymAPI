@@ -1194,15 +1194,15 @@ class UserService:
         if name_contains:
             # Búsqueda directa en BD sin caché cuando hay filtro de nombre
             logger.info(f"DB Search for public participants: gym={gym_id}, roles={roles}, name={name_contains}, skip={skip}, limit={limit}")
-            # Llama al nuevo método del repositorio que devuelve UserPublicProfile
-            return user_repository.get_public_participants(
+            # Llama al método async del repositorio que devuelve UserPublicProfile
+            return await user_repository.get_public_participants_async(
                 db, gym_id=gym_id, roles=roles, name=name_contains, skip=skip, limit=limit
             )
         else:
             # Lógica de caché cuando no hay filtro de nombre
             if not redis_client:
                 logger.warning("Redis client not available, fetching public participants directly from DB")
-                return user_repository.get_public_participants(
+                return await user_repository.get_public_participants_async(
                     db, gym_id=gym_id, roles=roles, skip=skip, limit=limit
                 )
 
@@ -1214,9 +1214,8 @@ class UserService:
             @time_db_query
             async def db_fetch():
                 logger.info(f"DB Fetch for public participants cache miss: key={cache_key}")
-                # La función del repositorio es síncrona pero la envolveremos
-                # para que sea compatible con el patrón que espera cache_service.get_or_set
-                return user_repository.get_public_participants(
+                # Usar el método async del repositorio
+                return await user_repository.get_public_participants_async(
                     db, gym_id=gym_id, roles=roles, name=None, skip=skip, limit=limit
                 )
 
@@ -1233,7 +1232,7 @@ class UserService:
                 logger.error(f"Error getting/setting public participants cache (key={cache_key}): {str(e)}", exc_info=True)
                 # Fallback a la BD en caso de error de caché
                 logger.info("Fallback to DB due to cache error")
-                return user_repository.get_public_participants(
+                return await user_repository.get_public_participants_async(
                     db, gym_id=gym_id, roles=roles, skip=skip, limit=limit
                 )
     # <<< FIN NUEVO MÉTODO >>>
