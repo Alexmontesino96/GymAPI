@@ -175,6 +175,35 @@ La FASE 4 consistió en actualizar todos los endpoints de la API FastAPI para us
 
 ---
 
+### FIX POST-DEPLOYMENT: Imports Rotos (2 archivos)
+
+**Error en producción detectado:**
+```
+ModuleNotFoundError: No module named 'app.services.async_user'
+```
+
+#### Archivos corregidos:
+1. **trainer_member.py** - 11 líneas modificadas
+   - Error: Importaba `async_user_service` que nunca existió
+   - Solución: Cambiar a `user_service` (que ya tiene métodos async)
+   - Método usado: `user_service.get_user_by_auth0_id_async_direct()`
+   - 7 llamadas actualizadas
+
+2. **context.py** - 1 cambio import + imports faltantes
+   - Error: Importaba `async_user_service` + faltaban `select`, `func`
+   - Solución: Cambiar a `user_service` + agregar imports SQLAlchemy
+   - Método usado: `user_service.get_user_by_auth0_id_cached()`
+   - 1 llamada actualizada
+
+**Lección aprendida:**
+- Estos archivos usaban imports de `async_user` que se planeó crear pero nunca se implementó
+- El servicio `user.py` ya tenía los métodos async necesarios desde FASE 3
+- No fueron detectados en la revisión porque no están en rutas típicas de API
+
+**Commit**: `fix(api): corregir imports rotos de async_user_service`
+
+---
+
 ## 📊 ESTADÍSTICAS TÉCNICAS
 
 ### Por Fase de Migración
@@ -186,7 +215,8 @@ La FASE 4 consistió en actualizar todos los endpoints de la API FastAPI para us
 | Parte 3 - Core Services | 7 | ~94 | ~100 | ✅ Completo |
 | Parte 4 - Final Adjustments | 7 | ~72 | 72 | ✅ Completo |
 | Parte 5 - 100% Completion | 2 | 2 | 68 | ✅ Completo |
-| **TOTAL** | **26** | **~274** | **~320** | **100%** |
+| Fix Post-Deploy | 2 | 8 | 12 | ✅ Completo |
+| **TOTAL** | **28** | **~282** | **~332** | **100%** |
 
 ### Servicios Async Utilizados (35 servicios)
 
@@ -426,9 +456,9 @@ Ahora que la migración async está 100% completa, los próximos pasos son:
 
 ## 🎯 LOGROS DE LA FASE 4
 
-✅ 26 archivos de endpoints migrados
-✅ ~274 endpoints actualizados
-✅ 320+ cambios aplicados
+✅ 28 archivos de endpoints migrados
+✅ ~282 endpoints actualizados
+✅ 332 cambios aplicados
 ✅ 36 servicios/repositorios async integrados
 ✅ 6 commits con documentación detallada
 ✅ 0 errores de sintaxis
@@ -447,6 +477,8 @@ Ahora que la migración async está 100% completa, los próximos pasos son:
 4. `cc90980` - feat(api): aplicar ajustes finales en endpoints restantes (FASE 4 - Parte 4)
 5. `18fe949` - docs: agregar documentación completa de FASE 4
 6. `e93c0e2` - feat(api): completar migración async al 100% - worker y admin_diagnostics (FASE 4 - Final)
+7. `db3aa35` - docs: actualizar FASE 4 a 100% completo con worker y admin_diagnostics
+8. `36e92ba` - **fix(api): corregir imports rotos de async_user_service** 🔥
 
 ---
 
