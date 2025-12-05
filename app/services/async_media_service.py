@@ -399,3 +399,7 @@ def get_async_media_service() -> AsyncMediaService:
     if _async_media_service_instance is None:
         _async_media_service_instance = AsyncMediaService()
     return _async_media_service_instance
+
+
+# Instancia exportada para uso directo (compatible con imports existentes)
+async_media_service = get_async_media_service()
