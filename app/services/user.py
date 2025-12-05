@@ -1363,29 +1363,29 @@ class UserService:
     # Nuevo método para verificar membresía de gimnasio con caché
     async def check_user_gym_membership_cached(
         self,
-        db: Session,
+        db: AsyncSession,
         user_id: int,
         gym_id: int,
         redis_client: Optional[Redis] = None
     ) -> Optional[Dict[str, Any]]:
         """
         Verifica si un usuario pertenece a un gimnasio utilizando caché.
-        
+
         Args:
-            db: Sesión de base de datos
+            db: Sesión async de base de datos
             user_id: ID del usuario
             gym_id: ID del gimnasio
             redis_client: Cliente Redis opcional
-            
+
         Returns:
             Diccionario con la información de membresía o None si no existe
         """
-        from app.services.gym import gym_service
-        
+        from app.services.async_gym import async_gym_service
+
         if not redis_client:
             # Si no hay Redis disponible, usar método directo
             logger.warning(f"Redis no disponible para check_user_gym_membership user_id={user_id}, gym_id={gym_id}")
-            user_gym = gym_service.check_user_in_gym(db, user_id=user_id, gym_id=gym_id)
+            user_gym = await async_gym_service.check_user_in_gym(db, user_id=user_id, gym_id=gym_id)
             if user_gym:
                 return {
                     "user_id": user_gym.user_id,
@@ -1420,9 +1420,9 @@ class UserService:
 
             # Caché miss (o datos inválidos purgados)
             register_cache_miss(cache_key)
-            
+
             # Obtener de la BD
-            user_gym = gym_service.check_user_in_gym(db, user_id=user_id, gym_id=gym_id)
+            user_gym = await async_gym_service.check_user_in_gym(db, user_id=user_id, gym_id=gym_id)
             
             if user_gym:
                 # Convertir a diccionario
@@ -1449,9 +1449,9 @@ class UserService:
                 
         except Exception as e:
             logger.error(f"Error al verificar membresía cacheada user_id={user_id}, gym_id={gym_id}: {str(e)}", exc_info=True)
-            
+
             # Fallback a consulta directa
-            user_gym = gym_service.check_user_in_gym(db, user_id=user_id, gym_id=gym_id)
+            user_gym = await async_gym_service.check_user_in_gym(db, user_id=user_id, gym_id=gym_id)
             if user_gym:
                 return {
                     "user_id": user_gym.user_id,

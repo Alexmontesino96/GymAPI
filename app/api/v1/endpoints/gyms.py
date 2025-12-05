@@ -459,7 +459,7 @@ async def remove_user_from_current_gym(
     is_self_removal = auth_user.id == user_id
     
     # Verificar el rol del usuario autenticado en este gimnasio
-    auth_user_gym = async_gym_service.check_user_in_gym(db, user_id=auth_user.id, gym_id=gym_id)
+    auth_user_gym = await async_gym_service.check_user_in_gym(db, user_id=auth_user.id, gym_id=gym_id)
     if not auth_user_gym:
         raise HTTPException(status_code=403, detail="Usuario no pertenece al gimnasio")
     
@@ -480,7 +480,7 @@ async def remove_user_from_current_gym(
         )
     
     # Verificar que el usuario a eliminar pertenece al gimnasio
-    target_user_gym = async_gym_service.check_user_in_gym(db, user_id=user_id, gym_id=gym_id)
+    target_user_gym = await async_gym_service.check_user_in_gym(db, user_id=user_id, gym_id=gym_id)
     if not target_user_gym:
         raise HTTPException(
             status_code=404, 
@@ -851,7 +851,7 @@ async def update_user_gym_role(
         )
     
     # Verificar que el usuario objetivo existe en el gimnasio
-    target_user_gym = async_gym_service.check_user_in_gym(db, user_id=user_id, gym_id=gym_id)
+    target_user_gym = await async_gym_service.check_user_in_gym(db, user_id=user_id, gym_id=gym_id)
     if not target_user_gym:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -980,8 +980,8 @@ async def assign_gym_owner(
         )
     
     # Comprobar si el usuario ya pertenece al gimnasio
-    user_gym = async_gym_service.check_user_in_gym(db, user_id=user_id, gym_id=gym_id)
-    
+    user_gym = await async_gym_service.check_user_in_gym(db, user_id=user_id, gym_id=gym_id)
+
     try:
         if user_gym:
             # Si ya existe, actualizar el rol a OWNER

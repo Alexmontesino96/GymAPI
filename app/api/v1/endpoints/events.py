@@ -280,24 +280,9 @@ async def read_events(
         return events
         
     except Exception as e:
-        logger.error(f"Error obteniendo eventos: {e}", exc_info=True)
-        # Fallback a la implementación original en caso de error
-        events_with_counts = event_repository.get_events_with_counts(
-            db,
-            skip=skip,
-            limit=limit,
-            status=status,
-            start_date=start_date,
-            end_date=end_date,
-            title_contains=title_contains,
-            location_contains=location_contains,
-            created_by=created_by,
-            only_available=only_available,
-            gym_id=current_gym.id if current_gym else None
-        )
         process_time = (time.time() - start_time) * 1000
-        logger.warning(f"Endpoint read_events completado con fallback en {process_time:.2f}ms")
-        return events_with_counts
+        logger.error(f"Error obteniendo eventos después de {process_time:.2f}ms: {e}", exc_info=True)
+        raise
 
 
 @router.get("/me", response_model=List[EventSchema])

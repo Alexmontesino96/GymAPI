@@ -559,7 +559,7 @@ class AsyncGymHoursService:
         if end_date < start_date:
             raise ValueError("La fecha de fin no puede ser anterior a la fecha de inicio")
 
-        special_hours = await async_gym_special_hours_repository.get_by_date_range_async(
+        special_hours = await async_gym_special_hours_repository.get_by_date_range(
             db, start_date=start_date, end_date=end_date, gym_id=gym_id
         )
         special_hours_dict = {str(hour.date): hour for hour in special_hours}
@@ -629,7 +629,7 @@ class AsyncGymHoursService:
                 raise ValueError("La fecha de fin no puede ser anterior a la fecha de inicio")
 
             # Obtener los horarios especiales para este rango
-            special_hours = await async_gym_special_hours_repository.get_by_date_range_async(
+            special_hours = await async_gym_special_hours_repository.get_by_date_range(
                 db, start_date=start_date, end_date=end_date, gym_id=gym_id
             )
 
@@ -2207,13 +2207,13 @@ class AsyncClassSessionService:
             logger.warning("Attempted to get sessions by date range without gym_id. Cache disabled.")
             start_datetime = datetime.combine(start_date, time.min)
             end_datetime = datetime.combine(end_date, time.max)
-            return await async_class_session_repository.get_by_date_range_async(db, start_date=start_datetime, end_date=end_datetime, skip=skip, limit=limit)
+            return await async_class_session_repository.get_by_date_range(db, start_date=start_datetime, end_date=end_datetime, skip=skip, limit=limit)
 
         # Si no hay redis_client, usar versión sin caché
         if not redis_client:
             start_datetime = datetime.combine(start_date, time.min)
             end_datetime = datetime.combine(end_date, time.max)
-            return await async_class_session_repository.get_by_date_range_async(
+            return await async_class_session_repository.get_by_date_range(
                 db, start_date=start_datetime, end_date=end_datetime,
                 skip=skip, limit=limit, gym_id=gym_id
             )
@@ -2231,7 +2231,7 @@ class AsyncClassSessionService:
             nonlocal fetched_from_db
             start_datetime = datetime.combine(start_date, time.min)
             end_datetime = datetime.combine(end_date, time.max)
-            result = await async_class_session_repository.get_by_date_range_async(
+            result = await async_class_session_repository.get_by_date_range(
                 db, start_date=start_datetime, end_date=end_datetime,
                 skip=skip, limit=limit, gym_id=gym_id
             )

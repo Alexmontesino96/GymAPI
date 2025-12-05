@@ -388,6 +388,137 @@ class AsyncEventRepository(AsyncBaseRepository[Event, EventCreate, EventUpdate])
             print(f"Error al marcar evento como completado: {e}")
             return None
 
+    async def get_events_with_counts(
+        self,
+        db: AsyncSession,
+        *,
+        skip: int = 0,
+        limit: int = 100,
+        status: Optional[EventStatus] = None,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+        title_contains: Optional[str] = None,
+        location_contains: Optional[str] = None,
+        created_by: Optional[Union[int, str]] = None,
+        only_available: bool = False,
+        gym_id: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Obtener eventos con filtros opcionales y el conteo de participantes calculado directamente en SQL.
+        Versión async más eficiente que get_events al calcular los conteos en SQL en vez de Python.
+
+        Args:
+            db: Sesión async de base de datos
+            skip: Registros a omitir (paginación)
+            limit: Máximo de registros
+            status: Filtrar por estado del evento
+            start_date: Filtrar eventos que terminan después de esta fecha
+            end_date: Filtrar eventos que empiezan antes de esta fecha
+            title_contains: Búsqueda parcial en título
+            location_contains: Búsqueda parcial en ubicación
+            created_by: ID o auth0_id del creador
+            only_available: Solo eventos con cupos disponibles
+            gym_id: ID del gimnasio (multi-tenant)
+
+        Returns:
+            Lista de diccionarios con datos del evento y participants_count
+        """
+        # Subconsulta para contar participantes registrados por evento
+        participants_count_subq = (
+            select(
+                EventParticipation.event_id.label('event_id'),
+                func.count(EventParticipation.id).label('count')
+            )
+            .where(EventParticipation.status == EventParticipationStatus.REGISTERED)
+            .group_by(EventParticipation.event_id)
+            .subquery()
+        )
+
+        # Construir los filtros
+        filters = []
+
+        # Filtrar por gimnasio (multi-tenant)
+        if gym_id is not None:
+            filters.append(Event.gym_id == gym_id)
+
+        # Filtrar por estado
+        if status:
+            filters.append(Event.status == status)
+
+        # Filtros de fechas
+        if start_date:
+            filters.append(Event.end_time >= start_date)
+
+        if end_date:
+            filters.append(Event.start_time <= end_date)
+
+        # Filtros de texto (case-insensitive)
+        if title_contains:
+            filters.append(Event.title.ilike(f"%{title_contains}%"))
+
+        if location_contains:
+            filters.append(Event.location.ilike(f"%{location_contains}%"))
+
+        # Filtrar por creador
+        if created_by:
+            if isinstance(created_by, str):
+                # Resolver auth0_id a user_id
+                user_stmt = select(User.id).where(User.auth0_id == created_by)
+                user_result = await db.execute(user_stmt)
+                user_id = user_result.scalar_one_or_none()
+                if user_id:
+                    filters.append(Event.creator_id == user_id)
+                else:
+                    return []  # Usuario no encontrado
+            else:
+                filters.append(Event.creator_id == created_by)
+
+        # Consulta principal con JOIN para conteo de participantes
+        stmt = (
+            select(
+                Event,
+                func.coalesce(participants_count_subq.c.count, 0).label('participants_count')
+            )
+            .outerjoin(participants_count_subq, Event.id == participants_count_subq.c.event_id)
+        )
+
+        # Aplicar filtros
+        if filters:
+            stmt = stmt.where(and_(*filters))
+
+        # Filtrar por disponibilidad
+        if only_available:
+            stmt = stmt.where(
+                or_(
+                    Event.max_participants == 0,  # Sin límite
+                    Event.max_participants > func.coalesce(participants_count_subq.c.count, 0)
+                )
+            )
+
+        # Ordenar y paginar
+        stmt = stmt.order_by(Event.start_time)
+
+        if limit > 0:
+            stmt = stmt.limit(limit)
+
+        if skip > 0:
+            stmt = stmt.offset(skip)
+
+        # Ejecutar la consulta
+        result = await db.execute(stmt)
+        rows = result.all()
+
+        # Formatear resultados
+        results = []
+        for event, count in rows:
+            # Convertir a diccionario
+            event_dict = {c.name: getattr(event, c.name) for c in event.__table__.columns}
+            # Añadir conteo de participantes
+            event_dict['participants_count'] = count
+            results.append(event_dict)
+
+        return results
+
 
 # Instancia singleton del repositorio async
 async_event_repository = AsyncEventRepository(Event)
