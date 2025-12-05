@@ -27,7 +27,7 @@ from app.core.auth0_fastapi import auth, get_current_user, get_current_user_with
 from app.db.session import get_async_db
 from app.models.user import User, UserRole
 from app.services.async_trainer_member import async_trainer_member_service
-from app.services.async_user import async_user_service
+from app.services.user import user_service
 from app.schemas.trainer_member import (
     TrainerMemberRelationship,
     TrainerMemberRelationshipCreate,
@@ -78,7 +78,7 @@ async def create_trainer_member_relationship(
             detail="Token does not contain user information (sub)",
         )
     
-    db_user = await async_user_service.get_user_by_auth0_id(db, auth0_id=auth0_id)
+    db_user = await user_service.get_user_by_auth0_id_async_direct(db, auth0_id=auth0_id)
     if not db_user:
         raise HTTPException(
             status_code=404,
@@ -158,7 +158,7 @@ async def read_members_by_trainer(
     """
     # Still verify if the user is the trainer or an admin
     auth0_id = user.id
-    db_user = await async_user_service.get_user_by_auth0_id(db, auth0_id=auth0_id)
+    db_user = await user_service.get_user_by_auth0_id_async_direct(db, auth0_id=auth0_id)
     
     if not db_user:
         raise HTTPException(
@@ -213,7 +213,7 @@ async def read_trainers_by_member(
     """
     # Still verify if the user is the member or an admin
     auth0_id = user.id
-    db_user = await async_user_service.get_user_by_auth0_id(db, auth0_id=auth0_id)
+    db_user = await user_service.get_user_by_auth0_id_async_direct(db, auth0_id=auth0_id)
     
     if not db_user:
         raise HTTPException(
@@ -264,7 +264,7 @@ async def read_my_trainers(
         HTTPException: 404 if user not found, 400 if not a member
     """
     auth0_id = user.id
-    db_user = await async_user_service.get_user_by_auth0_id(db, auth0_id=auth0_id)
+    db_user = await user_service.get_user_by_auth0_id_async_direct(db, auth0_id=auth0_id)
     
     if not db_user:
         raise HTTPException(
@@ -316,7 +316,7 @@ async def read_my_members(
         HTTPException: 404 if user not found, 400 if not a trainer
     """
     auth0_id = user.id
-    db_user = await async_user_service.get_user_by_auth0_id(db, auth0_id=auth0_id)
+    db_user = await user_service.get_user_by_auth0_id_async_direct(db, auth0_id=auth0_id)
 
     if not db_user:
         raise HTTPException(
@@ -376,7 +376,7 @@ async def read_relationship(
     
     # Still verify if the user is part of the relationship or an admin
     auth0_id = user.id
-    db_user = await async_user_service.get_user_by_auth0_id(db, auth0_id=auth0_id)
+    db_user = await user_service.get_user_by_auth0_id_async_direct(db, auth0_id=auth0_id)
     
     if not db_user:
         raise HTTPException(
@@ -435,7 +435,7 @@ async def update_relationship(
     
     # Still verify if the user is the trainer or an admin
     auth0_id = user.id
-    db_user = await async_user_service.get_user_by_auth0_id(db, auth0_id=auth0_id)
+    db_user = await user_service.get_user_by_auth0_id_async_direct(db, auth0_id=auth0_id)
     
     if not db_user:
         raise HTTPException(
@@ -494,7 +494,7 @@ async def delete_relationship(
     
     # Still verify if the user is part of the relationship or an admin
     auth0_id = user.id
-    db_user = await async_user_service.get_user_by_auth0_id(db, auth0_id=auth0_id)
+    db_user = await user_service.get_user_by_auth0_id_async_direct(db, auth0_id=auth0_id)
     
     if not db_user:
         raise HTTPException(

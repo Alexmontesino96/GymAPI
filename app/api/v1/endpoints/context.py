@@ -9,6 +9,7 @@ permitiendo que el frontend adapte la UI según el tipo de gimnasio
 from typing import List, Dict, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, Security, status
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, func
 from redis.asyncio import Redis
 
 from app.db.session import get_async_db
@@ -20,7 +21,7 @@ from app.models.gym import GymType
 from app.models.user import User
 from app.models.user_gym import GymRoleType
 from app.schemas.gym import GymSchema, GymType as GymTypeSchema
-from app.services.async_user import async_user_service
+from app.services.user import user_service
 import logging
 
 logger = logging.getLogger(__name__)
@@ -299,7 +300,7 @@ async def get_workspace_context(
             )
 
         # Obtener usuario interno y su rol
-        internal_user = await async_user_service.get_user_by_auth0_id_cached(
+        internal_user = await user_service.get_user_by_auth0_id_cached(
             db, auth0_id=current_user.id, redis_client=redis_client
         )
 
