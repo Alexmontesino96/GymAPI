@@ -6,7 +6,7 @@ from app.models.user_gym import GymRoleType
 from app.core.tenant import verify_gym_access, verify_trainer_role, verify_admin_role, GymSchema
 from fastapi import APIRouter, Depends, Body, Path, Security, HTTPException, status, Request
 from typing import List, Optional, Any
-from app.services.async_schedule import async_async_category_service
+from app.services.async_schedule import async_category_service
 from app.db.session import get_async_db
 from app.core.auth0_fastapi import Auth0User, auth
 from app.services.user import user_service

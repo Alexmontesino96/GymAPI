@@ -717,3 +717,37 @@ class AsyncActivityFeedService:
         logger.info(f"Limpieza completada para gym {gym_id}: {stats}")
 
         return stats
+
+
+# Factory function para crear instancia con Redis
+def get_async_activity_feed_service(redis: Redis) -> AsyncActivityFeedService:
+    """
+    Crea una instancia de AsyncActivityFeedService con el cliente Redis.
+
+    Args:
+        redis: Cliente Redis
+
+    Returns:
+        Instancia de AsyncActivityFeedService
+    """
+    return AsyncActivityFeedService(redis)
+
+
+# Singleton cache para instancias por cliente Redis
+_service_cache = {}
+
+
+def async_activity_feed_service(redis: Redis) -> AsyncActivityFeedService:
+    """
+    Obtiene o crea instancia singleton por cliente Redis.
+
+    Args:
+        redis: Cliente Redis
+
+    Returns:
+        Instancia de AsyncActivityFeedService
+    """
+    cache_key = id(redis)
+    if cache_key not in _service_cache:
+        _service_cache[cache_key] = AsyncActivityFeedService(redis)
+    return _service_cache[cache_key]

@@ -14,9 +14,15 @@ import logging
 
 from app.db.redis_client import get_redis_client
 from app.core.tenant import get_tenant_id
-from app.services.async_activity_feed_service import async_activity_feed_service
+from app.services.async_activity_feed_service import async_activity_feed_service, AsyncActivityFeedService
 from app.services.activity_aggregator import ActivityAggregator
 from app.core.dependencies import module_enabled
+
+
+# Dependency para obtener instancia del servicio
+async def get_activity_feed_service(redis: Redis = Depends(get_redis_client)) -> AsyncActivityFeedService:
+    """Inyecta instancia del servicio con Redis."""
+    return async_activity_feed_service(redis)
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +37,7 @@ async def get_activity_feed(
     gym_id: int = Depends(get_tenant_id),
     limit: int = Query(20, ge=1, le=100, description="Número de actividades a retornar"),
     offset: int = Query(0, ge=0, description="Offset para paginación"),
-    redis: Redis = Depends(get_redis_client)
+    service: AsyncActivityFeedService = Depends(get_activity_feed_service)
 ) -> Dict:
     """
     Obtiene el feed de actividades anónimo.
@@ -45,7 +51,7 @@ async def get_activity_feed(
         - has_more: Si hay más actividades disponibles
     """
     try:
-        activities = await async_activity_feed_service.get_feed(redis, gym_id, limit, offset)
+        activities = await service.get_feed(gym_id, limit, offset)
 
         return {
             "activities": activities,
