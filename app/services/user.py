@@ -1079,10 +1079,10 @@ class UserService:
         from app.services.cache_service import cache_service
         from app.schemas.user import User as UserSchema # El modelo de caché será UserSchema
         
-        # Si no hay Redis disponible, usar método nuevo del repositorio
+        # Si no hay Redis disponible, usar método async del repositorio
         if not redis_client:
             logger.warning(f"Redis no disponible, obteniendo participantes de gym {gym_id} desde BD")
-            return user_repository.get_gym_participants(db, gym_id=gym_id, roles=roles, skip=skip, limit=limit)
+            return await user_repository.get_gym_participants_async(db, gym_id=gym_id, roles=roles, skip=skip, limit=limit)
         
         # Crear clave única de caché combinada
         role_str = "_".join(sorted([r.name for r in roles]))
