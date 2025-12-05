@@ -1,8 +1,8 @@
 """
 AsyncOneSignalService - Servicio async para notificaciones push con OneSignal.
 
-Este módulo proporciona un servicio totalmente async para enviar notificaciones push
-a través de OneSignal con gestión de tokens de dispositivo.
+Este módulo maneja el envío de notificaciones push a usuarios y segmentos
+usando OneSignal API de forma asíncrona.
 
 Migrado en FASE 3 de la conversión sync → async.
 """
@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.repositories.async_notification import async_notification_repository
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("async_onesignal_service")
 
 # Obtener credenciales de las variables de entorno (SIN defaults por seguridad)
 ONESIGNAL_APP_ID = os.environ.get("ONESIGNAL_APP_ID")
@@ -31,25 +31,34 @@ if not ONESIGNAL_REST_API_KEY:
 
 class AsyncOneSignalService:
     """
-    Servicio async para enviar notificaciones push con OneSignal.
+    Servicio async para notificaciones push con OneSignal.
 
-    Todos los métodos son async y utilizan httpx para requests HTTP async.
-    Integrado con AsyncNotificationRepository para gestión de tokens.
+    Todos los métodos HTTP son async usando httpx.AsyncClient.
+
+    Funcionalidades:
+    - Envío de notificaciones a usuarios por external_user_id
+    - Envío de notificaciones a segmentos
+    - Programación de notificaciones futuras
+    - Notificaciones multi-canal para eventos cancelados
+    - Actualización de tokens last_used
 
     Métodos principales:
-    - send_to_users() - Enviar a usuarios específicos
-    - send_to_segment() - Enviar a un segmento
-    - schedule_notification() - Programar notificación futura
-    - notify_event_cancellation() - Notificación multi-canal de cancelación
+    - send_to_users() - Enviar a lista de usuarios
+    - send_to_segment() - Enviar a segmento
+    - schedule_notification() - Programar para el futuro
+    - notify_event_cancellation() - Multi-canal para eventos
     """
 
     def __init__(self, app_id: str, api_key: str):
         """
-        Inicializa el servicio de OneSignal.
+        Inicializa el servicio con credenciales de OneSignal.
 
         Args:
             app_id: OneSignal App ID
             api_key: OneSignal REST API Key
+
+        Note:
+            - Usa httpx.AsyncClient para llamadas async
         """
         self.app_id = app_id
         self.api_key = api_key
@@ -71,18 +80,22 @@ class AsyncOneSignalService:
         Envía notificación a múltiples usuarios por su user_id.
 
         Args:
-            user_ids: Lista de IDs de usuarios (strings)
+            user_ids: Lista de IDs externos de usuarios
             title: Título de la notificación
-            message: Contenido del mensaje
-            data: Datos adicionales para la notificación
-            db: Sesión async opcional para actualizar tokens
+            message: Mensaje de la notificación
+            data: Datos adicionales opcionales
+            db: Sesión async de BD (opcional, para actualizar last_used)
 
         Returns:
-            Dict con resultado: {success, notification_id, recipients} o {success, errors}
+            Dict con resultado:
+            - success: bool
+            - notification_id: str (si exitoso)
+            - recipients: int (si exitoso)
+            - errors: List[str] (si falla)
 
         Note:
-            Si se proporciona db, actualiza last_used de los tokens enviados.
-            Soporta localización en inglés y español automáticamente.
+            - Usa httpx.AsyncClient para llamada HTTP async
+            - Actualiza tokens last_used si db se proporciona
         """
         if not user_ids:
             return {"success": False, "errors": ["No user IDs provided"]}
@@ -99,11 +112,12 @@ class AsyncOneSignalService:
 
             logger.info(f"Sending notification to {len(user_ids)} users: {title}")
 
+            # Usar httpx.AsyncClient para llamada async
             async with httpx.AsyncClient() as client:
                 response = await client.post(
                     self.base_url,
                     headers=self.headers,
-                    json=payload,
+                    content=json.dumps(payload),
                     timeout=30.0
                 )
 
@@ -143,17 +157,17 @@ class AsyncOneSignalService:
         Envía notificación a un segmento de usuarios.
 
         Args:
-            segment: Nombre del segmento de OneSignal
+            segment: Nombre del segmento en OneSignal
             title: Título de la notificación
-            message: Contenido del mensaje
-            data: Datos adicionales para la notificación
+            message: Mensaje de la notificación
+            data: Datos adicionales opcionales
 
         Returns:
-            Dict con resultado: {success, notification_id, recipients} o {success, errors}
-
-        Note:
-            Los segmentos se definen en el dashboard de OneSignal.
-            Soporta localización en inglés y español automáticamente.
+            Dict con resultado:
+            - success: bool
+            - notification_id: str (si exitoso)
+            - recipients: int (si exitoso)
+            - errors: List[str] (si falla)
         """
         try:
             payload = {
@@ -166,11 +180,12 @@ class AsyncOneSignalService:
 
             logger.info(f"Sending notification to segment {segment}: {title}")
 
+            # Usar httpx.AsyncClient para llamada async
             async with httpx.AsyncClient() as client:
                 response = await client.post(
                     self.base_url,
                     headers=self.headers,
-                    json=payload,
+                    content=json.dumps(payload),
                     timeout=30.0
                 )
 
@@ -203,18 +218,18 @@ class AsyncOneSignalService:
         Programa una notificación para enviar en el futuro.
 
         Args:
-            user_ids: Lista de IDs de usuarios (strings)
+            user_ids: Lista de IDs externos de usuarios
             title: Título de la notificación
-            message: Contenido del mensaje
-            send_after: Fecha/hora de envío en formato ISO8601 (ej: "2023-04-07T15:00:00Z")
-            data: Datos adicionales para la notificación
+            message: Mensaje de la notificación
+            send_after: Timestamp ISO8601 (ej: "2023-04-07T15:00:00Z")
+            data: Datos adicionales opcionales
 
         Returns:
-            Dict con resultado: {success, notification_id, recipients} o {success, errors}
-
-        Note:
-            send_after debe estar en formato ISO8601 UTC.
-            Soporta localización en inglés y español automáticamente.
+            Dict con resultado:
+            - success: bool
+            - notification_id: str (si exitoso)
+            - recipients: int (si exitoso)
+            - errors: List[str] (si falla)
         """
         if not user_ids:
             return {"success": False, "errors": ["No user IDs provided"]}
@@ -232,11 +247,12 @@ class AsyncOneSignalService:
 
             logger.info(f"Scheduling notification for {len(user_ids)} users at {send_after}: {title}")
 
+            # Usar httpx.AsyncClient para llamada async
             async with httpx.AsyncClient() as client:
                 response = await client.post(
                     self.base_url,
                     headers=self.headers,
-                    json=payload,
+                    content=json.dumps(payload),
                     timeout=30.0
                 )
 
@@ -257,9 +273,7 @@ class AsyncOneSignalService:
             logger.error(error_msg, exc_info=True)
             return {"success": False, "errors": [error_msg]}
 
-    async def _update_tokens_last_used(
-        self, db: AsyncSession, user_ids: List[str]
-    ) -> None:
+    async def _update_tokens_last_used(self, db: AsyncSession, user_ids: List[str]) -> None:
         """
         Actualiza la última fecha de uso para los tokens de los usuarios.
 
@@ -268,8 +282,8 @@ class AsyncOneSignalService:
             user_ids: Lista de IDs de usuarios
 
         Note:
-            Método interno para tracking de tokens activos.
-            No falla silenciosamente para no bloquear el envío de notificaciones.
+            - Usa async_notification_repository
+            - No lanza excepciones, solo registra errores
         """
         try:
             tokens = await async_notification_repository.get_active_tokens_by_user_ids(db, user_ids)
@@ -306,17 +320,13 @@ class AsyncOneSignalService:
             participant_user_ids: Lista de IDs de usuarios participantes
             total_refunded_cents: Total reembolsado en centavos
             currency: Moneda del reembolso (default: EUR)
-            cancellation_reason: Razón opcional de la cancelación
+            cancellation_reason: Razón de la cancelación
 
         Returns:
-            Diccionario con contadores de notificaciones enviadas:
+            Dict con contadores de notificaciones enviadas:
             - push: Cantidad de notificaciones push enviadas
             - email: Cantidad de emails enviados (TODO)
             - chat: Cantidad de mensajes en chat enviados (TODO)
-
-        Note:
-            Este método orquesta notificaciones multi-canal.
-            Email y Chat están marcados como TODO para implementación futura.
         """
         stats = {
             "push": 0,
