@@ -1,6 +1,6 @@
 from typing import Dict, Any, List, Optional
-from sqlalchemy.orm import Session
-from sqlalchemy import func, and_, desc
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, func, and_, desc
 from datetime import datetime, timedelta
 import logging
 
@@ -15,22 +15,24 @@ class ChatAnalyticsService:
     """
     Servicio para generar estadísticas y analíticas avanzadas de chat.
     """
-    
-    def get_gym_chat_summary(self, db: Session, gym_id: int) -> Dict[str, Any]:
+
+    async def get_gym_chat_summary(self, db: AsyncSession, gym_id: int) -> Dict[str, Any]:
         """
         Obtiene un resumen completo de la actividad de chat en un gimnasio.
-        
+
         Args:
-            db: Sesión de base de datos
+            db: Sesión de base de datos async
             gym_id: ID del gimnasio
-            
+
         Returns:
             Dict con estadísticas del gimnasio
         """
         try:
             # Obtener todas las salas del gimnasio directamente por gym_id
-            rooms = db.query(ChatRoom).filter(ChatRoom.gym_id == gym_id).all()
-            
+            stmt = select(ChatRoom).where(ChatRoom.gym_id == gym_id)
+            result = await db.execute(stmt)
+            rooms = result.scalars().all()
+
             if not rooms:
                 return {
                     "gym_id": gym_id,
@@ -41,25 +43,31 @@ class ChatAnalyticsService:
                     "event_chats": 0,
                     "most_active_rooms": []
                 }
-            
+
             # Estadísticas básicas
             total_rooms = len(rooms)
             direct_chats = sum(1 for room in rooms if room.is_direct)
             event_chats = sum(1 for room in rooms if room.event_id is not None)
-            
+
             # Contar miembros únicos
-            unique_members = db.query(func.count(func.distinct(ChatMember.user_id))).filter(
-                ChatMember.room_id.in_([room.id for room in rooms])
-            ).scalar() or 0
-            
+            room_ids = [room.id for room in rooms]
+            stmt = select(func.count(func.distinct(ChatMember.user_id))).where(
+                ChatMember.room_id.in_(room_ids)
+            )
+            result = await db.execute(stmt)
+            unique_members = result.scalar() or 0
+
             # Salas activas (con actividad en los últimos 7 días)
             week_ago = datetime.utcnow() - timedelta(days=7)
             active_rooms = sum(1 for room in rooms if room.updated_at and room.updated_at > week_ago)
-            
+
             # Top 5 salas más activas (por número de miembros)
             room_stats = []
             for room in rooms:
-                member_count = db.query(ChatMember).filter(ChatMember.room_id == room.id).count()
+                stmt = select(func.count(ChatMember.id)).where(ChatMember.room_id == room.id)
+                result = await db.execute(stmt)
+                member_count = result.scalar() or 0
+
                 room_stats.append({
                     "room_id": room.id,
                     "name": room.name,
@@ -67,10 +75,10 @@ class ChatAnalyticsService:
                     "member_count": member_count,
                     "updated_at": room.updated_at.isoformat() if room.updated_at else None
                 })
-            
+
             # Ordenar por número de miembros y tomar top 5
             most_active_rooms = sorted(room_stats, key=lambda x: x["member_count"], reverse=True)[:5]
-            
+
             return {
                 "gym_id": gym_id,
                 "total_rooms": total_rooms,
@@ -81,38 +89,45 @@ class ChatAnalyticsService:
                 "most_active_rooms": most_active_rooms,
                 "generated_at": datetime.utcnow().isoformat()
             }
-            
+
         except Exception as e:
             logger.error(f"Error generando resumen de chat para gimnasio {gym_id}: {str(e)}")
             return {"error": f"Error generando estadísticas: {str(e)}"}
-    
-    def get_user_chat_activity(self, db: Session, user_id: int) -> Dict[str, Any]:
+
+    async def get_user_chat_activity(self, db: AsyncSession, user_id: int) -> Dict[str, Any]:
         """
         Obtiene estadísticas de actividad de chat para un usuario específico.
-        
+
         Args:
-            db: Sesión de base de datos
+            db: Sesión de base de datos async
             user_id: ID interno del usuario
-            
+
         Returns:
             Dict con estadísticas del usuario
         """
         try:
             # Obtener usuario
-            user = db.query(User).filter(User.id == user_id).first()
+            stmt = select(User).where(User.id == user_id)
+            result = await db.execute(stmt)
+            user = result.scalar_one_or_none()
+
             if not user:
                 return {"error": "Usuario no encontrado"}
-            
+
             # Obtener salas donde el usuario es miembro
-            user_rooms = db.query(ChatRoom).join(ChatMember).filter(
-                ChatMember.user_id == user_id
-            ).all()
-            
+            stmt = (
+                select(ChatRoom)
+                .join(ChatMember, ChatMember.room_id == ChatRoom.id)
+                .where(ChatMember.user_id == user_id)
+            )
+            result = await db.execute(stmt)
+            user_rooms = result.scalars().all()
+
             # Estadísticas básicas
             total_chats = len(user_rooms)
             direct_chats = sum(1 for room in user_rooms if room.is_direct)
             group_chats = total_chats - direct_chats
-            
+
             # Chats por gimnasio
             gym_distribution = {}
             for room in user_rooms:
@@ -120,12 +135,12 @@ class ChatAnalyticsService:
                 if gym_id not in gym_distribution:
                     gym_distribution[gym_id] = 0
                 gym_distribution[gym_id] += 1
-            
+
             # Actividad reciente (últimos 30 días)
             month_ago = datetime.utcnow() - timedelta(days=30)
-            recent_activity = sum(1 for room in user_rooms 
+            recent_activity = sum(1 for room in user_rooms
                                 if room.updated_at and room.updated_at > month_ago)
-            
+
             return {
                 "user_id": user_id,
                 "user_email": getattr(user, 'email', 'N/A'),
@@ -136,49 +151,51 @@ class ChatAnalyticsService:
                 "recent_activity": recent_activity,
                 "generated_at": datetime.utcnow().isoformat()
             }
-            
+
         except Exception as e:
             logger.error(f"Error generando actividad de chat para usuario {user_id}: {str(e)}")
             return {"error": f"Error generando estadísticas: {str(e)}"}
-    
-    def get_popular_chat_times(self, db: Session, gym_id: int, days: int = 30) -> Dict[str, Any]:
+
+    async def get_popular_chat_times(self, db: AsyncSession, gym_id: int, days: int = 30) -> Dict[str, Any]:
         """
         Analiza los horarios más populares para chat en un gimnasio.
-        
+
         Args:
-            db: Sesión de base de datos
+            db: Sesión de base de datos async
             gym_id: ID del gimnasio
             days: Número de días hacia atrás para analizar
-            
+
         Returns:
             Dict con análisis de horarios populares
         """
         try:
             # Por ahora, retornamos un análisis básico basado en updated_at de las salas
             # En una implementación completa, esto requeriría almacenar timestamps de mensajes
-            
+
             start_date = datetime.utcnow() - timedelta(days=days)
-            
+
             # Filtrar directamente por gym_id en ChatRoom
-            rooms = db.query(ChatRoom).filter(
+            stmt = select(ChatRoom).where(
                 and_(
                     ChatRoom.gym_id == gym_id,
                     ChatRoom.updated_at >= start_date
                 )
-            ).all()
-            
+            )
+            result = await db.execute(stmt)
+            rooms = result.scalars().all()
+
             # Agrupar por hora del día
             hourly_activity = {str(i): 0 for i in range(24)}
-            
+
             for room in rooms:
                 if room.updated_at:
                     hour = room.updated_at.hour
                     hourly_activity[str(hour)] += 1
-            
+
             # Encontrar las horas más activas
             sorted_hours = sorted(hourly_activity.items(), key=lambda x: x[1], reverse=True)
             peak_hours = sorted_hours[:3]
-            
+
             return {
                 "gym_id": gym_id,
                 "analysis_period_days": days,
@@ -187,43 +204,48 @@ class ChatAnalyticsService:
                 "total_activity": sum(hourly_activity.values()),
                 "generated_at": datetime.utcnow().isoformat()
             }
-            
+
         except Exception as e:
             logger.error(f"Error analizando horarios de chat para gimnasio {gym_id}: {str(e)}")
             return {"error": f"Error generando análisis: {str(e)}"}
-    
-    def get_event_chat_effectiveness(self, db: Session, event_id: int) -> Dict[str, Any]:
+
+    async def get_event_chat_effectiveness(self, db: AsyncSession, event_id: int) -> Dict[str, Any]:
         """
         Analiza la efectividad del chat de un evento específico.
-        
+
         Args:
-            db: Sesión de base de datos
+            db: Sesión de base de datos async
             event_id: ID del evento
-            
+
         Returns:
             Dict con métricas de efectividad del chat del evento
         """
         try:
             # Obtener el evento
-            event = db.query(Event).filter(Event.id == event_id).first()
+            stmt = select(Event).where(Event.id == event_id)
+            result = await db.execute(stmt)
+            event = result.scalar_one_or_none()
+
             if not event:
                 return {"error": "Evento no encontrado"}
-            
+
             # Obtener la sala de chat del evento
-            chat_room = chat_repository.get_event_room(db, event_id)
+            chat_room = await chat_repository.get_event_room_async(db, event_id)
             if not chat_room:
                 return {
                     "event_id": event_id,
                     "has_chat": False,
                     "message": "No se encontró chat para este evento"
                 }
-            
+
             # Obtener miembros del chat
-            members = db.query(ChatMember).filter(ChatMember.room_id == chat_room.id).all()
-            
+            stmt = select(ChatMember).where(ChatMember.room_id == chat_room.id)
+            result = await db.execute(stmt)
+            members = result.scalars().all()
+
             # Calcular métricas
             total_members = len(members)
-            
+
             # Comparar con participantes del evento (si existe esa relación)
             participation_rate = 0
             try:
@@ -232,7 +254,7 @@ class ChatAnalyticsService:
                 participation_rate = min(total_members * 10, 100)  # Estimación simple
             except:
                 pass
-            
+
             return {
                 "event_id": event_id,
                 "event_name": getattr(event, 'name', 'N/A'),
@@ -245,48 +267,52 @@ class ChatAnalyticsService:
                 "is_active": chat_room.updated_at > (datetime.utcnow() - timedelta(hours=24)) if chat_room.updated_at else False,
                 "generated_at": datetime.utcnow().isoformat()
             }
-            
+
         except Exception as e:
             logger.error(f"Error analizando efectividad de chat para evento {event_id}: {str(e)}")
             return {"error": f"Error generando análisis: {str(e)}"}
-    
-    def get_chat_health_metrics(self, db: Session, gym_id: int) -> Dict[str, Any]:
+
+    async def get_chat_health_metrics(self, db: AsyncSession, gym_id: int) -> Dict[str, Any]:
         """
         Genera métricas de salud general del sistema de chat.
-        
+
         Args:
-            db: Sesión de base de datos
+            db: Sesión de base de datos async
             gym_id: ID del gimnasio
-            
+
         Returns:
             Dict con métricas de salud del sistema
         """
         try:
             # Obtener todas las salas del gimnasio directamente por gym_id
-            rooms = db.query(ChatRoom).filter(ChatRoom.gym_id == gym_id).all()
-            
+            stmt = select(ChatRoom).where(ChatRoom.gym_id == gym_id)
+            result = await db.execute(stmt)
+            rooms = result.scalars().all()
+
             # Métricas de salud
             total_rooms = len(rooms)
-            
+
             # Salas abandonadas (sin actividad en 30 días)
             month_ago = datetime.utcnow() - timedelta(days=30)
-            abandoned_rooms = sum(1 for room in rooms 
+            abandoned_rooms = sum(1 for room in rooms
                                 if not room.updated_at or room.updated_at < month_ago)
-            
+
             # Salas con pocos miembros (menos de 2)
             low_engagement_rooms = 0
             for room in rooms:
-                member_count = db.query(ChatMember).filter(ChatMember.room_id == room.id).count()
+                stmt = select(func.count(ChatMember.id)).where(ChatMember.room_id == room.id)
+                result = await db.execute(stmt)
+                member_count = result.scalar() or 0
                 if member_count < 2:
                     low_engagement_rooms += 1
-            
+
             # Calcular score de salud (0-100)
             health_score = 100
             if total_rooms > 0:
                 abandoned_penalty = (abandoned_rooms / total_rooms) * 30
                 low_engagement_penalty = (low_engagement_rooms / total_rooms) * 20
                 health_score = max(0, 100 - abandoned_penalty - low_engagement_penalty)
-            
+
             # Recomendaciones
             recommendations = []
             if abandoned_rooms > 0:
@@ -295,7 +321,7 @@ class ChatAnalyticsService:
                 recommendations.append("Muchas salas tienen baja participación, considera estrategias de engagement")
             if health_score > 80:
                 recommendations.append("¡Sistema de chat en excelente estado!")
-            
+
             return {
                 "gym_id": gym_id,
                 "total_rooms": total_rooms,
@@ -305,11 +331,11 @@ class ChatAnalyticsService:
                 "recommendations": recommendations,
                 "generated_at": datetime.utcnow().isoformat()
             }
-            
+
         except Exception as e:
             logger.error(f"Error generando métricas de salud para gimnasio {gym_id}: {str(e)}")
             return {"error": f"Error generando métricas: {str(e)}"}
 
 
 # Instancia global del servicio
-chat_analytics_service = ChatAnalyticsService() 
+chat_analytics_service = ChatAnalyticsService()

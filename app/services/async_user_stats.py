@@ -194,8 +194,16 @@ class AsyncUserStatsService:
                 # Próxima clase (query rápida)
                 next_class = await self._get_next_scheduled_class(db, user_id, gym_id)
 
-                # Logro más reciente usando health service
-                recent_achievement = health_service.get_recent_achievement(db, user_id, gym_id)
+                # Logro más reciente usando health service async
+                recent_achievement_obj = await health_service.get_recent_achievement_async(db, user_id, gym_id)
+                recent_achievement = Achievement(
+                    id=recent_achievement_obj.id,
+                    type=recent_achievement_obj.achievement_type.value,
+                    name=recent_achievement_obj.title,
+                    description=recent_achievement_obj.description,
+                    earned_at=recent_achievement_obj.earned_at,
+                    badge_icon=recent_achievement_obj.icon
+                ) if recent_achievement_obj else None
 
                 # Última fecha de asistencia
                 last_attendance_date = await self.get_last_attendance_date(db, user_id, gym_id, None)
@@ -893,9 +901,9 @@ class AsyncUserStatsService:
         try:
             from app.services.health import health_service
 
-            # Usar health service para obtener métricas reales
-            return health_service.calculate_health_metrics(
-                db, user_id, gym_id, include_goals=include_goals
+            # Usar health service async para obtener métricas reales
+            return await health_service.calculate_health_metrics_async(
+                db, user_id, gym_id
             )
 
         except Exception as e:
@@ -1126,8 +1134,8 @@ class AsyncUserStatsService:
         try:
             from app.services.health import health_service
 
-            # Obtener achievements del período usando el health service
-            user_achievements = health_service.get_user_achievements(db, user_id, gym_id, limit=10)
+            # Obtener achievements del período usando el health service async
+            user_achievements = await health_service.get_user_achievements_async(db, user_id, gym_id)
 
             # Filtrar por período si es necesario y convertir a Achievement schema
             recent_achievements = []
