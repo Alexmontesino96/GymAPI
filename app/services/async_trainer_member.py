@@ -1,14 +1,14 @@
 """
-AsyncTrainerMemberService - Servicio async para gestión de relaciones trainer-member.
+AsyncTrainerMemberService - Servicio async para relaciones entrenador-miembro.
 
-Este módulo proporciona un servicio totalmente async para gestionar la asignación
-y seguimiento de relaciones entre entrenadores y miembros del gimnasio.
+Este módulo gestiona las relaciones entre entrenadores y miembros asignados,
+permitiendo crear, actualizar y consultar dichas relaciones.
 
 Migrado en FASE 3 de la conversión sync → async.
 """
 
-from typing import Dict, List, Optional
-from datetime import datetime
+from typing import List, Optional
+from datetime import datetime, timezone
 
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,73 +19,65 @@ from app.models.user import UserRole
 from app.models.trainer_member import RelationshipStatus
 from app.schemas.trainer_member import (
     TrainerMemberRelationshipCreate,
-    TrainerMemberRelationshipUpdate,
-    UserWithRelationship
+    TrainerMemberRelationshipUpdate
 )
 
 
 class AsyncTrainerMemberService:
     """
-    Servicio async para gestionar relaciones trainer-member.
+    Servicio async para gestión de relaciones entrenador-miembro.
 
-    Todos los métodos son async y utilizan AsyncSession y repositorios async.
+    Todos los métodos son async y utilizan AsyncSession.
+
+    Funcionalidades:
+    - CRUD de relaciones trainer-member
+    - Listado de miembros por entrenador
+    - Listado de entrenadores por miembro
+    - Validación de roles (TRAINER/MEMBER)
+    - Actualización automática de start_date al activar
 
     Métodos principales:
-    - get_relationship() - Obtener relación por ID
-    - get_all_relationships() - Lista de todas las relaciones
-    - get_relationship_by_trainer_and_member() - Buscar relación específica
     - get_members_by_trainer() - Miembros asignados a un trainer
-    - get_trainers_by_member() - Trainers asignados a un member
-    - create_relationship() - Crear asignación trainer-member
-    - update_relationship() - Actualizar estado de relación
-    - delete_relationship() - Eliminar relación
+    - get_trainers_by_member() - Trainers de un miembro
+    - create_relationship() - Crear relación con validación
+    - update_relationship() - Actualizar con auto-start_date
     """
 
-    async def get_relationship(
-        self, db: AsyncSession, relationship_id: int, gym_id: int
-    ):
+    async def get_relationship(self, db: AsyncSession, relationship_id: int):
         """
         Obtener una relación por su ID.
 
         Args:
             db: Sesión async de base de datos
             relationship_id: ID de la relación
-            gym_id: ID del gimnasio (multi-tenant)
 
         Returns:
-            Relación trainer-member
+            TrainerMemberRelationship
 
         Raises:
-            HTTPException: Si la relación no existe
+            HTTPException 404: Si la relación no existe
         """
-        relationship = await async_trainer_member_repository.get(
-            db, id=relationship_id, gym_id=gym_id
-        )
+        relationship = await async_trainer_member_repository.get(db, id=relationship_id)
         if not relationship:
             raise HTTPException(status_code=404, detail="Relación no encontrada")
         return relationship
 
-    async def get_all_relationships(
-        self, db: AsyncSession, gym_id: int, skip: int = 0, limit: int = 100
-    ):
+    async def get_all_relationships(self, db: AsyncSession, skip: int = 0, limit: int = 100):
         """
         Obtener todas las relaciones (solo para administradores).
 
         Args:
             db: Sesión async de base de datos
-            gym_id: ID del gimnasio (multi-tenant)
-            skip: Registros a omitir (paginación)
-            limit: Máximo de registros a devolver
+            skip: Número de registros a saltar
+            limit: Límite de registros
 
         Returns:
-            Lista de relaciones del gimnasio
+            List[TrainerMemberRelationship]
         """
-        return await async_trainer_member_repository.get_multi(
-            db, skip=skip, limit=limit, gym_id=gym_id
-        )
+        return await async_trainer_member_repository.get_multi(db, skip=skip, limit=limit)
 
     async def get_relationship_by_trainer_and_member(
-        self, db: AsyncSession, trainer_id: int, member_id: int, gym_id: int
+        self, db: AsyncSession, trainer_id: int, member_id: int
     ):
         """
         Obtener una relación específica entre un entrenador y un miembro.
@@ -94,40 +86,36 @@ class AsyncTrainerMemberService:
             db: Sesión async de base de datos
             trainer_id: ID del entrenador
             member_id: ID del miembro
-            gym_id: ID del gimnasio (multi-tenant)
 
         Returns:
-            Relación o None si no existe
+            Optional[TrainerMemberRelationship]
         """
         return await async_trainer_member_repository.get_by_trainer_and_member(
-            db, trainer_id=trainer_id, member_id=member_id, gym_id=gym_id
+            db, trainer_id=trainer_id, member_id=member_id
         )
 
     async def get_members_by_trainer(
-        self, db: AsyncSession, trainer_id: int, gym_id: int, skip: int = 0, limit: int = 100
-    ) -> List[Dict]:
+        self, db: AsyncSession, trainer_id: int, skip: int = 0, limit: int = 100
+    ) -> List:
         """
         Obtener todos los miembros asignados a un entrenador.
 
         Args:
             db: Sesión async de base de datos
             trainer_id: ID del entrenador
-            gym_id: ID del gimnasio (multi-tenant)
-            skip: Registros a omitir (paginación)
-            limit: Máximo de registros a devolver
+            skip: Número de registros a saltar
+            limit: Límite de registros
 
         Returns:
-            Lista de miembros con información de relación
+            List[Dict] con datos del miembro y relación:
+            - id, full_name, email, picture
+            - relationship_id, relationship_status, relationship_start_date
 
         Raises:
-            HTTPException: Si el usuario no es un entrenador
-
-        Note:
-            Retorna diccionarios con: id, full_name, email, picture,
-            relationship_id, relationship_status, relationship_start_date
+            HTTPException 400: Si el usuario no es un TRAINER
         """
         # Verificar que el usuario sea un entrenador
-        trainer = await async_user_repository.get(db, id=trainer_id, gym_id=gym_id)
+        trainer = await async_user_repository.get(db, id=trainer_id)
         if not trainer or trainer.role != UserRole.TRAINER:
             raise HTTPException(
                 status_code=400,
@@ -136,13 +124,13 @@ class AsyncTrainerMemberService:
 
         # Obtener las relaciones
         relationships = await async_trainer_member_repository.get_by_trainer(
-            db, trainer_id=trainer_id, gym_id=gym_id, skip=skip, limit=limit
+            db, trainer_id=trainer_id, skip=skip, limit=limit
         )
 
         # Obtener los usuarios correspondientes a los miembros
         result = []
         for rel in relationships:
-            member = await async_user_repository.get(db, id=rel.member_id, gym_id=gym_id)
+            member = await async_user_repository.get(db, id=rel.member_id)
             if member:
                 result.append({
                     "id": member.id,
@@ -157,30 +145,27 @@ class AsyncTrainerMemberService:
         return result
 
     async def get_trainers_by_member(
-        self, db: AsyncSession, member_id: int, gym_id: int, skip: int = 0, limit: int = 100
-    ) -> List[Dict]:
+        self, db: AsyncSession, member_id: int, skip: int = 0, limit: int = 100
+    ) -> List:
         """
         Obtener todos los entrenadores asignados a un miembro.
 
         Args:
             db: Sesión async de base de datos
             member_id: ID del miembro
-            gym_id: ID del gimnasio (multi-tenant)
-            skip: Registros a omitir (paginación)
-            limit: Máximo de registros a devolver
+            skip: Número de registros a saltar
+            limit: Límite de registros
 
         Returns:
-            Lista de entrenadores con información de relación
+            List[Dict] con datos del trainer y relación:
+            - id, full_name, email, picture
+            - relationship_id, relationship_status, relationship_start_date
 
         Raises:
-            HTTPException: Si el usuario no es un miembro
-
-        Note:
-            Retorna diccionarios con: id, full_name, email, picture,
-            relationship_id, relationship_status, relationship_start_date
+            HTTPException 400: Si el usuario no es un MEMBER
         """
         # Verificar que el usuario sea un miembro
-        member = await async_user_repository.get(db, id=member_id, gym_id=gym_id)
+        member = await async_user_repository.get(db, id=member_id)
         if not member or member.role != UserRole.MEMBER:
             raise HTTPException(
                 status_code=400,
@@ -189,13 +174,13 @@ class AsyncTrainerMemberService:
 
         # Obtener las relaciones
         relationships = await async_trainer_member_repository.get_by_member(
-            db, member_id=member_id, gym_id=gym_id, skip=skip, limit=limit
+            db, member_id=member_id, skip=skip, limit=limit
         )
 
         # Obtener los usuarios correspondientes a los entrenadores
         result = []
         for rel in relationships:
-            trainer = await async_user_repository.get(db, id=rel.trainer_id, gym_id=gym_id)
+            trainer = await async_user_repository.get(db, id=rel.trainer_id)
             if trainer:
                 result.append({
                     "id": trainer.id,
@@ -210,30 +195,31 @@ class AsyncTrainerMemberService:
         return result
 
     async def create_relationship(
-        self,
-        db: AsyncSession,
-        relationship_in: TrainerMemberRelationshipCreate,
-        created_by_id: int,
-        gym_id: int
+        self, db: AsyncSession, relationship_in: TrainerMemberRelationshipCreate, created_by_id: int
     ):
         """
         Crear una nueva relación entre un entrenador y un miembro.
 
         Args:
             db: Sesión async de base de datos
-            relationship_in: Datos de la relación a crear
+            relationship_in: Datos de la relación
             created_by_id: ID del usuario que crea la relación
-            gym_id: ID del gimnasio (multi-tenant)
 
         Returns:
-            Relación creada
+            TrainerMemberRelationship: Relación creada
 
         Raises:
-            HTTPException: Si el trainer o member no existen, no tienen el rol correcto,
-                          o ya existe una relación entre ellos
+            HTTPException 400:
+            - Si el trainer no existe o no tiene rol TRAINER
+            - Si el member no existe o no tiene rol MEMBER
+            - Si ya existe una relación entre ambos
+
+        Note:
+            - Valida roles de ambos usuarios
+            - Previene duplicados
         """
         # Verificar que el entrenador exista y sea un entrenador
-        trainer = await async_user_repository.get(db, id=relationship_in.trainer_id, gym_id=gym_id)
+        trainer = await async_user_repository.get(db, id=relationship_in.trainer_id)
         if not trainer or trainer.role != UserRole.TRAINER:
             raise HTTPException(
                 status_code=400,
@@ -241,7 +227,7 @@ class AsyncTrainerMemberService:
             )
 
         # Verificar que el miembro exista y sea un miembro
-        member = await async_user_repository.get(db, id=relationship_in.member_id, gym_id=gym_id)
+        member = await async_user_repository.get(db, id=relationship_in.member_id)
         if not member or member.role != UserRole.MEMBER:
             raise HTTPException(
                 status_code=400,
@@ -250,7 +236,7 @@ class AsyncTrainerMemberService:
 
         # Verificar si ya existe una relación
         existing = await async_trainer_member_repository.get_by_trainer_and_member(
-            db, trainer_id=relationship_in.trainer_id, member_id=relationship_in.member_id, gym_id=gym_id
+            db, trainer_id=relationship_in.trainer_id, member_id=relationship_in.member_id
         )
         if existing:
             raise HTTPException(
@@ -263,15 +249,11 @@ class AsyncTrainerMemberService:
         relationship_data["created_by"] = created_by_id
 
         return await async_trainer_member_repository.create(
-            db, obj_in=TrainerMemberRelationshipCreate(**relationship_data), gym_id=gym_id
+            db, obj_in=TrainerMemberRelationshipCreate(**relationship_data)
         )
 
     async def update_relationship(
-        self,
-        db: AsyncSession,
-        relationship_id: int,
-        relationship_update: TrainerMemberRelationshipUpdate,
-        gym_id: int
+        self, db: AsyncSession, relationship_id: int, relationship_update: TrainerMemberRelationshipUpdate
     ):
         """
         Actualizar una relación existente.
@@ -279,22 +261,18 @@ class AsyncTrainerMemberService:
         Args:
             db: Sesión async de base de datos
             relationship_id: ID de la relación
-            relationship_update: Datos de actualización
-            gym_id: ID del gimnasio (multi-tenant)
+            relationship_update: Datos a actualizar
 
         Returns:
-            Relación actualizada
+            TrainerMemberRelationship: Relación actualizada
 
         Raises:
-            HTTPException: Si la relación no existe
+            HTTPException 404: Si la relación no existe
 
         Note:
-            Si se actualiza el estado a ACTIVE y no tiene fecha de inicio,
-            se establece automáticamente a la fecha actual.
+            - Si se actualiza a ACTIVE y no hay start_date, se asigna automáticamente
         """
-        relationship = await async_trainer_member_repository.get(
-            db, id=relationship_id, gym_id=gym_id
-        )
+        relationship = await async_trainer_member_repository.get(db, id=relationship_id)
         if not relationship:
             raise HTTPException(status_code=404, detail="Relación no encontrada")
 
@@ -302,39 +280,34 @@ class AsyncTrainerMemberService:
         if (relationship_update.status == RelationshipStatus.ACTIVE and
             not relationship.start_date and not relationship_update.start_date):
             relationship_update_dict = relationship_update.model_dump(exclude_unset=True)
-            relationship_update_dict["start_date"] = datetime.now()
+            relationship_update_dict["start_date"] = datetime.now(timezone.utc)
             return await async_trainer_member_repository.update(
-                db, db_obj=relationship, obj_in=relationship_update_dict, gym_id=gym_id
+                db, db_obj=relationship, obj_in=relationship_update_dict
             )
 
         return await async_trainer_member_repository.update(
-            db, db_obj=relationship, obj_in=relationship_update, gym_id=gym_id
+            db, db_obj=relationship, obj_in=relationship_update
         )
 
-    async def delete_relationship(
-        self, db: AsyncSession, relationship_id: int, gym_id: int
-    ):
+    async def delete_relationship(self, db: AsyncSession, relationship_id: int):
         """
         Eliminar una relación.
 
         Args:
             db: Sesión async de base de datos
             relationship_id: ID de la relación
-            gym_id: ID del gimnasio (multi-tenant)
 
         Returns:
-            Relación eliminada
+            TrainerMemberRelationship: Relación eliminada
 
         Raises:
-            HTTPException: Si la relación no existe
+            HTTPException 404: Si la relación no existe
         """
-        relationship = await async_trainer_member_repository.get(
-            db, id=relationship_id, gym_id=gym_id
-        )
+        relationship = await async_trainer_member_repository.get(db, id=relationship_id)
         if not relationship:
             raise HTTPException(status_code=404, detail="Relación no encontrada")
 
-        return await async_trainer_member_repository.remove(db, id=relationship_id, gym_id=gym_id)
+        return await async_trainer_member_repository.remove(db, id=relationship_id)
 
 
 # Instancia singleton del servicio async
