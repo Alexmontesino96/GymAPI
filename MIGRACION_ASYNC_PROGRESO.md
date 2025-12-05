@@ -3,9 +3,9 @@
 ## Estado General
 
 **FASE 2 - REPOSITORIOS**: ✅ **COMPLETADA**
-**FASE 3 - SERVICIOS**: 🚧 **EN PROGRESO** (8/40 servicios, 20%)
+**FASE 3 - SERVICIOS**: 🚧 **EN PROGRESO** (19/40 servicios, 48%)
 
-**Total migrado**: **11,669 líneas de código**
+**Total migrado**: **15,611 líneas de código**
 
 ---
 
@@ -57,7 +57,7 @@ class AsyncBaseRepository(Generic[ModelType, CreateSchemaType, UpdateSchemaType]
 
 ## FASE 3 - Capa de Servicios 🚧
 
-**Completados**: 12 servicios async (6,747 líneas, 30% del total)
+**Completados**: 19 servicios async (9,052 líneas, 48% del total)
 
 ### Servicios Migrados
 
@@ -202,6 +202,146 @@ final_score = (
 - Stream Feeds integration
 - Highlights para historias permanentes (is_pinned=True)
 - Privacy: PUBLIC, PRIVATE, FOLLOWERS, CLOSE_FRIENDS
+
+#### 9. AsyncModuleService (331 líneas)
+**Archivo**: `app/services/async_module.py`
+**Métodos principales**:
+- `activate_module_for_gym()` - Activa módulo para gimnasio
+- `deactivate_module_for_gym()` - Desactiva módulo
+- `get_gym_module_status()` - Verifica estado de módulo
+- `get_all_modules_for_gym()` - Lista todos los módulos
+
+**Características**:
+- Gestión de módulos activables (billing, nutrition, etc.)
+- Validación de módulos disponibles
+- Estado multi-tenant por gimnasio
+
+#### 10. AsyncAttendanceService (275 líneas)
+**Archivo**: `app/services/async_attendance.py`
+**Métodos principales**:
+- `generate_qr_code()` - Genera QR único por usuario
+- `process_check_in()` - Procesa check-in con QR
+
+**Características**:
+- Sistema de QR codes: U{user_id}_{hash}
+- Ventana de check-in: ±30 minutos
+- Auto-detección de clase más cercana
+- Invalidación automática de cache post check-in
+
+#### 11. AsyncPostInteractionService (622 líneas)
+**Archivo**: `app/services/async_post_interaction.py`
+**Métodos principales**:
+- `toggle_like()` - Like/unlike en post
+- `add_comment()` - Agregar comentario
+- `update_comment()` / `delete_comment()` - CRUD comentarios
+- `toggle_comment_like()` - Like en comentarios
+- `get_post_comments()` / `get_post_likes()` - Listados
+- `report_post()` - Sistema de reportes
+
+**Características**:
+- Contadores atómicos con sql_update()
+- Protección contra race conditions con IntegrityError
+- Soft delete de comentarios
+- Sistema de reportes por razón (spam, harassment, etc.)
+
+#### 12. AsyncGymRevenueService (372 líneas)
+**Archivo**: `app/services/async_gym_revenue.py`
+**Métodos principales**:
+- `get_gym_revenue_summary()` - Resumen de ingresos
+- `get_platform_revenue_summary()` - Resumen de plataforma
+- `calculate_gym_payout()` - Calcular payout a gimnasio
+
+**Características**:
+- Multi-tenant revenue tracking con Stripe
+- Metadata gym_id en todos los pagos
+- Comisión de plataforma: 5% configurable
+- Procesamiento de charges + invoices (suscripciones)
+
+#### 13. AsyncQueueService (163 líneas)
+**Archivo**: `app/services/async_queue_services.py`
+**Métodos principales**:
+- `publish_event_processing()` - Publica mensaje a SQS
+- `cancel_event_processing()` - Elimina mensajes pendientes
+
+**Características**:
+- Mensajes FIFO con MessageGroupId
+- Acción create_event_chat para eventos
+- Limpieza de mensajes por event_id
+
+#### 14. AsyncAuth0SyncService (238 líneas)
+**Archivo**: `app/services/async_auth0_sync.py`
+**Métodos principales**:
+- `determine_highest_role()` - Calcula rol más alto
+- `update_highest_role_in_auth0()` - Sincroniza rol con Auth0
+- `run_initial_migration()` - Migración masiva de roles
+
+**Características**:
+- Prioridades de roles jerárquicas
+- Sincronización automática con Auth0 Management API
+- Mapeo de roles internos a Auth0
+
+#### 15. AsyncSQSService (293 líneas)
+**Archivo**: `app/services/async_aws_sqs.py`
+**Métodos principales**:
+- `send_message()` - Envía mensaje a SQS
+- `send_batch_messages()` - Envía hasta 10 mensajes
+- `delete_event_messages()` - Elimina mensajes por event_id
+
+**Características**:
+- Soporte FIFO con MessageGroupId requerido
+- Batch processing (máx 10 mensajes)
+- Filtrado por acción y event_id
+- Nota: boto3 SDK es sync, métodos async para consistencia
+
+#### 16-17. AsyncStorageService + AsyncMediaService (750 líneas)
+**Archivos**:
+- `app/services/async_storage.py` (349 líneas)
+- `app/services/async_media_service.py` (401 líneas)
+
+**AsyncStorageService métodos**:
+- `upload_profile_image()` - Sube imagen de perfil
+- `delete_profile_image()` - Elimina imagen
+- `generate_public_url()` - Genera URL pública
+- Reintentos automáticos con backoff progresivo
+
+**AsyncMediaService métodos**:
+- `upload_story_media()` - Sube imagen/video para historias
+- `_generate_image_thumbnail()` - Thumbnails 400x400
+- `delete_story_media()` - Elimina media
+- Validación de tipos de archivo
+
+**Características**:
+- Supabase Storage con reintentos
+- Generación automática de thumbnails con PIL
+- Límites: 10MB imágenes, 50MB videos
+
+#### 18. AsyncGymChatService (399 líneas)
+**Archivo**: `app/services/async_gym_chat.py`
+**Métodos principales**:
+- `get_or_create_general_channel()` - Canal general del gimnasio
+- `add_user_to_general_channel()` - Agrega usuario
+- `remove_user_from_general_channel()` - Remueve usuario
+- `send_welcome_message()` - Mensaje de bienvenida
+
+**Características**:
+- Creación automática de canal general
+- Mensajes de bienvenida via Stream Chat
+- Usuario bot del gimnasio: gym_{id}_bot
+
+#### 19. AsyncBillingModuleService (462 líneas)
+**Archivo**: `app/services/async_billing_module.py`
+**Métodos principales**:
+- `activate_billing_for_gym()` - Activa billing
+- `deactivate_billing_for_gym()` - Desactiva billing
+- `get_billing_status()` - Estado completo
+- `_validate_stripe_configuration()` - Valida Stripe API
+- `_sync_existing_plans_with_stripe()` - Sincroniza planes
+
+**Características**:
+- Validación de Stripe antes de activar
+- Sincronización automática de planes
+- Preservación de datos al desactivar
+- Verificación de suscripciones activas
 
 ---
 
