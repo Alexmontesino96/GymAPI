@@ -50,7 +50,7 @@ from fastapi.responses import JSONResponse
 from fastapi.encoders import jsonable_encoder
 import logging
 import time
-from app.services.event import event_service
+from app.services.async_event import async_event_service
 from app.services.chat import chat_service
 from app.services.event_payment_service import event_payment_service
 from app.services.notification_service import notification_service
@@ -174,7 +174,7 @@ async def create_event(
     # Invalidar cachés relacionadas después de la creación
     if redis_client:
         try:
-            await event_service.invalidate_event_caches(
+            await async_event_service.invalidate_event_caches(
                 redis_client=redis_client,
                 event_id=event.id,
                 gym_id=gym_id,
@@ -260,7 +260,7 @@ async def read_events(
     # Usar el servicio de eventos con caché
     try:
         # Llamar al método con soporte para caché
-        events = await event_service.get_events_cached(
+        events = await async_event_service.get_events_cached(
             db=db,
             skip=skip,
             limit=limit,
@@ -335,7 +335,7 @@ async def read_my_events(
             return []
         
         # Obtener eventos usando caché
-        events = await event_service.get_events_by_creator_cached(
+        events = await async_event_service.get_events_by_creator_cached(
             db=db,
             creator_id=user.id,  # Usar ID interno
             skip=skip,
@@ -395,7 +395,7 @@ async def read_event(
     
     try:
         # Obtener evento usando caché
-        event_detail = await event_service.get_event_cached(
+        event_detail = await async_event_service.get_event_cached(
             db, 
             event_id, 
             gym_id=current_gym.id,  # ← PASAR gym_id del middleware
@@ -544,7 +544,7 @@ async def update_event(
         # Invalidar cachés relacionadas después de la actualización
         if redis_client:
             try:
-                await event_service.invalidate_event_caches(
+                await async_event_service.invalidate_event_caches(
                     redis_client=redis_client,
                     event_id=event_id,
                     gym_id=current_gym.id,
@@ -633,7 +633,7 @@ async def update_event(
     # Invalidar cachés relacionadas después de la actualización
     if redis_client and updated_event:
         try:
-            await event_service.invalidate_event_caches(
+            await async_event_service.invalidate_event_caches(
                 redis_client=redis_client,
                 event_id=event_id,
                 gym_id=current_gym.id,
@@ -873,7 +873,7 @@ async def admin_delete_event(
 
             # Invalidar cachés relacionados (NO eliminar el evento físicamente - ya está CANCELLED)
             try:
-                await event_service.invalidate_event_caches(
+                await async_event_service.invalidate_event_caches(
                     redis_client=redis_client,
                     event_id=event_id,
                     gym_id=current_gym.id,
@@ -927,7 +927,7 @@ async def admin_delete_event(
             ).values({"status": EventParticipationStatus.CANCELLED}))
 
             # Eliminar evento (comportamiento anterior)
-            await event_service.delete_event(
+            await async_event_service.delete_event(
                 db=db,
                 event_id=event_id,
                 redis_client=redis_client
@@ -1272,7 +1272,7 @@ async def register_for_event(
     # Invalidar cachés relacionadas
     if redis_client:
         try:
-            await event_service.invalidate_event_caches(
+            await async_event_service.invalidate_event_caches(
                 redis_client=redis_client,
                 event_id=participation_in.event_id
             )
@@ -1377,7 +1377,7 @@ async def confirm_event_payment(
         # Invalidar cachés del evento
         if redis_client:
             try:
-                await event_service.invalidate_event_caches(
+                await async_event_service.invalidate_event_caches(
                     redis_client=redis_client,
                     event_id=event.id
                 )
@@ -1789,7 +1789,7 @@ async def cancel_participation(
     # Invalidar cachés relacionadas
     if redis_client:
         try:
-            await event_service.invalidate_event_caches(
+            await async_event_service.invalidate_event_caches(
                 redis_client=redis_client,
                 event_id=event_id
             )
@@ -1978,7 +1978,7 @@ async def bulk_register_for_event(
 
     # Invalidar caché relacionada
     if redis_client and created_participations:
-        await event_service.invalidate_event_caches(redis_client, event_id=payload.event_id)
+        await async_event_service.invalidate_event_caches(redis_client, event_id=payload.event_id)
 
     return created_participations
 

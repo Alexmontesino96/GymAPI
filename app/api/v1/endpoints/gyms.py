@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.user import User, UserRole
 from app.models.gym import Gym
 from app.models.user_gym import UserGym, GymRoleType
-from app.services.gym import gym_service
+from app.services.async_gym import async_gym_service
 from app.services.user import user_service
 from app.schemas.gym import Gym as GymSchema, GymCreate, GymUpdate, GymStatusUpdate, GymWithStats, UserGymMembershipSchema, UserGymRoleUpdate, UserGymSchema, GymPublicSchema, GymDetailedPublicSchema
 from app.core.auth0_fastapi import auth, get_current_user, Auth0User
@@ -61,7 +61,7 @@ async def create_gym(
         HTTPException: 400 si ya existe un gimnasio con el mismo subdominio
     """
     # Verificar que el subdominio es único
-    db_gym = gym_service.get_gym_by_subdomain(db, subdomain=gym_in.subdomain)
+    db_gym = await async_gym_service.get_gym_by_subdomain(db, subdomain=gym_in.subdomain)
     if db_gym:
         raise HTTPException(
             status_code=400,
@@ -69,7 +69,7 @@ async def create_gym(
         )
     
     # Crear el gimnasio
-    new_gym = gym_service.create_gym(db, gym_in=gym_in)
+    new_gym = await async_gym_service.create_gym(db, gym_in=gym_in)
     
     return new_gym
 
@@ -100,7 +100,7 @@ async def read_gyms_public(
     Returns:
         List[GymPublicSchema]: Lista de gimnasios públicos
     """
-    gyms = gym_service.get_gyms(db, skip=skip, limit=limit, is_active=is_active)
+    gyms = await async_gym_service.get_gyms(db, skip=skip, limit=limit, is_active=is_active)
     return gyms
 
 
@@ -130,7 +130,7 @@ async def get_gym_details_public(
     Raises:
         HTTPException 404: Si el gimnasio no existe o está inactivo
     """
-    gym = gym_service.get_gym_details_public(db, gym_id=gym_id)
+    gym = await async_gym_service.get_gym_details_public(db, gym_id=gym_id)
     if not gym:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -177,7 +177,7 @@ async def read_my_gyms(
         )
     
     # Obtener gimnasios del usuario
-    user_gyms = gym_service.get_user_gyms(db, user_id=db_user.id, skip=skip, limit=limit)
+    user_gyms = await async_gym_service.get_user_gyms(db, user_id=db_user.id, skip=skip, limit=limit)
     return user_gyms
 
 
@@ -219,7 +219,7 @@ async def read_current_gym_users(
     # La dependencia verify_gym_access ya verificó que el usuario pertenece al gym.
     
     # Obtener usuarios del gimnasio
-    users = gym_service.get_gym_users(
+    users = await async_gym_service.get_gym_users(
         db, 
         gym_id=gym_id, 
         role=role, 
@@ -272,7 +272,7 @@ async def add_user_to_current_gym(
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
     
     # Verificar si ya pertenece al gimnasio
-    existing_membership = gym_service.check_user_in_gym(db, user_id=user_id, gym_id=gym_id)
+    existing_membership = await async_gym_service.check_user_in_gym(db, user_id=user_id, gym_id=gym_id)
     if existing_membership:
         raise HTTPException(
             status_code=400,
@@ -280,7 +280,7 @@ async def add_user_to_current_gym(
         )
     
     # Añadir usuario al gimnasio (ahora síncrono)
-    user_gym = gym_service.add_user_to_gym(db, gym_id=gym_id, user_id=user_id)
+    user_gym = await async_gym_service.add_user_to_gym(db, gym_id=gym_id, user_id=user_id)
     
     # Actualizar el rol más alto en Auth0
     from app.services.auth0_sync import auth0_sync_service
@@ -360,7 +360,7 @@ async def add_user_to_current_gym_by_email(
     user_id = target_user.id
     
     # Verificar si ya pertenece al gimnasio
-    existing_membership = gym_service.check_user_in_gym(db, user_id=user_id, gym_id=gym_id)
+    existing_membership = await async_gym_service.check_user_in_gym(db, user_id=user_id, gym_id=gym_id)
     if existing_membership:
         raise HTTPException(
             status_code=400,
@@ -368,7 +368,7 @@ async def add_user_to_current_gym_by_email(
         )
     
     # Añadir usuario al gimnasio (ahora síncrono)
-    user_gym = gym_service.add_user_to_gym(db, gym_id=gym_id, user_id=user_id)
+    user_gym = await async_gym_service.add_user_to_gym(db, gym_id=gym_id, user_id=user_id)
     
     # Actualizar el rol más alto en Auth0
     from app.services.auth0_sync import auth0_sync_service
@@ -459,7 +459,7 @@ async def remove_user_from_current_gym(
     is_self_removal = auth_user.id == user_id
     
     # Verificar el rol del usuario autenticado en este gimnasio
-    auth_user_gym = gym_service.check_user_in_gym(db, user_id=auth_user.id, gym_id=gym_id)
+    auth_user_gym = async_gym_service.check_user_in_gym(db, user_id=auth_user.id, gym_id=gym_id)
     if not auth_user_gym:
         raise HTTPException(status_code=403, detail="Usuario no pertenece al gimnasio")
     
@@ -480,7 +480,7 @@ async def remove_user_from_current_gym(
         )
     
     # Verificar que el usuario a eliminar pertenece al gimnasio
-    target_user_gym = gym_service.check_user_in_gym(db, user_id=user_id, gym_id=gym_id)
+    target_user_gym = async_gym_service.check_user_in_gym(db, user_id=user_id, gym_id=gym_id)
     if not target_user_gym:
         raise HTTPException(
             status_code=404, 
@@ -501,7 +501,7 @@ async def remove_user_from_current_gym(
 
     # Eliminar usuario del gimnasio
     try:
-        gym_service.remove_user_from_gym(db, gym_id=gym_id, user_id=user_id)
+        await async_gym_service.remove_user_from_gym(db, gym_id=gym_id, user_id=user_id)
         await db.commit()
         
         # Invalidar cachés relevantes (usando el redis_client inyectado)
@@ -565,7 +565,7 @@ async def read_gym(
     Raises:
         HTTPException: 404 si el gimnasio no existe
     """
-    gym_with_stats = gym_service.get_gym_with_stats(db, gym_id=gym_id)
+    gym_with_stats = await async_gym_service.get_gym_with_stats(db, gym_id=gym_id)
     if not gym_with_stats:
         raise HTTPException(
             status_code=404,
@@ -605,7 +605,7 @@ async def update_gym(
         HTTPException: 404 si el gimnasio no existe
     """
     # Verificar que el gimnasio existe
-    gym = gym_service.get_gym(db, gym_id=gym_id)
+    gym = await async_gym_service.get_gym(db, gym_id=gym_id)
     if not gym:
         raise HTTPException(
             status_code=404,
@@ -616,7 +616,7 @@ async def update_gym(
     # ya que es un identificador único y podría romper URLs existentes
     
     # Actualizar el gimnasio
-    updated_gym = gym_service.update_gym(db, gym=gym, gym_in=gym_in)
+    updated_gym = await async_gym_service.update_gym(db, gym=gym, gym_in=gym_in)
     return updated_gym
 
 
@@ -650,7 +650,7 @@ async def update_gym_status(
         HTTPException: 404 si el gimnasio no existe
     """
     # Verificar que el gimnasio existe
-    gym = gym_service.get_gym(db, gym_id=gym_id)
+    gym = await async_gym_service.get_gym(db, gym_id=gym_id)
     if not gym:
         raise HTTPException(
             status_code=404,
@@ -658,7 +658,7 @@ async def update_gym_status(
         )
     
     # Actualizar el estado del gimnasio
-    updated_gym = gym_service.update_gym_status(db, gym_id=gym_id, is_active=status_in.is_active)
+    updated_gym = async_gym_service.update_gym_status(db, gym_id=gym_id, is_active=status_in.is_active)
     return updated_gym
 
 
@@ -703,13 +703,13 @@ async def remove_user_from_gym_by_superadmin(
         )
         
     # Verificar que el gimnasio existe (opcional, el servicio podría manejarlo)
-    gym = gym_service.get_gym(db, gym_id=gym_id)
+    gym = await async_gym_service.get_gym(db, gym_id=gym_id)
     if not gym:
         raise HTTPException(status_code=404, detail="Gimnasio no encontrado")
 
     # Eliminar usuario del gimnasio (el servicio maneja la lógica de no eliminar SUPER_ADMIN)
     try:
-        gym_service.remove_user_from_gym(db, gym_id=gym_id, user_id=user_id)
+        await async_gym_service.remove_user_from_gym(db, gym_id=gym_id, user_id=user_id)
         await db.commit()
         
         # Obtener redis_client para poder invalidar
@@ -778,12 +778,12 @@ async def read_gym_users_by_superadmin(
         )
         
     # Verificar que el gimnasio existe
-    gym = gym_service.get_gym(db, gym_id=gym_id)
+    gym = await async_gym_service.get_gym(db, gym_id=gym_id)
     if not gym:
         raise HTTPException(status_code=404, detail="Gimnasio no encontrado")
 
     # Obtener usuarios del gimnasio
-    users = gym_service.get_gym_users(
+    users = await async_gym_service.get_gym_users(
         db, 
         gym_id=gym_id, 
         role=role, 
@@ -851,7 +851,7 @@ async def update_user_gym_role(
         )
     
     # Verificar que el usuario objetivo existe en el gimnasio
-    target_user_gym = gym_service.check_user_in_gym(db, user_id=user_id, gym_id=gym_id)
+    target_user_gym = async_gym_service.check_user_in_gym(db, user_id=user_id, gym_id=gym_id)
     if not target_user_gym:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -862,7 +862,7 @@ async def update_user_gym_role(
     
     # Si se intenta cambiar a OWNER, verificar que no haya un OWNER ya
     if role_in.role == GymRoleType.OWNER and old_role != GymRoleType.OWNER:
-        existing_owner = gym_service.check_gym_has_owner(db, gym_id=gym_id)
+        existing_owner = async_gym_service.check_gym_has_owner(db, gym_id=gym_id)
         if existing_owner:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -870,7 +870,7 @@ async def update_user_gym_role(
             )
     
     # Actualizar el rol
-    updated_user_gym = gym_service.update_user_role_in_gym(
+    updated_user_gym = async_gym_service.update_user_role_in_gym(
         db, user_id=user_id, gym_id=gym_id, role=role_in.role
     )
 
@@ -963,7 +963,7 @@ async def assign_gym_owner(
         )
     
     # Verificar que el gimnasio existe
-    gym = gym_service.get_gym(db, gym_id=gym_id)
+    gym = await async_gym_service.get_gym(db, gym_id=gym_id)
     if not gym:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -979,7 +979,7 @@ async def assign_gym_owner(
         )
     
     # Comprobar si el usuario ya pertenece al gimnasio
-    user_gym = gym_service.check_user_in_gym(db, user_id=user_id, gym_id=gym_id)
+    user_gym = async_gym_service.check_user_in_gym(db, user_id=user_id, gym_id=gym_id)
     
     try:
         if user_gym:

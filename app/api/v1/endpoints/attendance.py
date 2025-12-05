@@ -7,7 +7,7 @@ from app.db.session import get_async_db
 from app.core.auth0_fastapi import Auth0User, auth
 from app.core.tenant import verify_gym_access
 from app.models.gym import Gym
-from app.services.attendance import attendance_service
+from app.services.async_attendance import async_attendance_service
 from app.services.user import user_service
 from app.db.redis_client import get_redis_client
 from redis.asyncio import Redis
@@ -43,7 +43,7 @@ async def check_in(
         HTTPException: Si hay algún error en el proceso
     """
     # Procesar el check-in
-    result = await attendance_service.process_check_in(
+    result = await async_attendance_service.process_check_in(
         db,
         qr_code=check_in_data.qr_code,
         gym_id=current_gym.id,

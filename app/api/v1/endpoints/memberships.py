@@ -30,8 +30,8 @@ from app.schemas.membership import (
     AdminPaymentLinkResponse,
     AdminCreatePaymentLinkRequest
 )
-from app.services.membership import membership_service
-from app.services.stripe_service import StripeService
+from app.services.async_membership import async_membership_service
+from app.services.async_stripe_service import AsyncStripeService
 from app.services.user import user_service
 from app.db.redis_client import get_redis_client
 from app.middleware.rate_limit import limiter
@@ -41,8 +41,8 @@ from datetime import datetime, timedelta
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-# Instanciar servicio de Stripe
-stripe_service = StripeService(membership_service)
+# Instanciar servicio de Stripe async
+stripe_service = AsyncStripeService(async_membership_service)
 
 
 # === Endpoint de Capacidades de Billing ===
@@ -158,7 +158,7 @@ async def list_membership_plans(
     Returns:
         MembershipPlanList: Lista de planes con metadatos
     """
-    plans = membership_service.get_membership_plans(
+    plans = await async_membership_service.get_membership_plans(
         db, 
         gym_id=current_gym.id, 
         active_only=active_only,
@@ -197,7 +197,7 @@ async def get_membership_plan(
     Raises:
         HTTPException: 404 si el plan no existe o no pertenece al gym
     """
-    plan = membership_service.get_membership_plan(db, plan_id)
+    plan = await async_membership_service.get_membership_plan(db, plan_id)
     
     if not plan or plan.gym_id != current_gym.id:
         raise HTTPException(
@@ -531,7 +531,7 @@ async def update_membership_plan(
         HTTPException: 404 si no se encuentra, 403 si no es admin
     """
     # Verificar que el plan pertenece al gym actual
-    existing_plan = membership_service.get_membership_plan(db, plan_id)
+    existing_plan = await async_membership_service.get_membership_plan(db, plan_id)
     if not existing_plan or existing_plan.gym_id != current_gym.id:
         raise HTTPException(
             status_code=404,
@@ -567,7 +567,7 @@ async def delete_membership_plan(
         HTTPException: 404 si no se encuentra, 403 si no es admin
     """
     # Verificar que el plan pertenece al gym actual
-    existing_plan = membership_service.get_membership_plan(db, plan_id)
+    existing_plan = await async_membership_service.get_membership_plan(db, plan_id)
     if not existing_plan or existing_plan.gym_id != current_gym.id:
         raise HTTPException(
             status_code=404,
@@ -608,7 +608,7 @@ async def sync_plan_with_stripe(
         HTTPException: 404 si no se encuentra el plan
     """
     # Verificar que el plan pertenece al gym actual
-    existing_plan = membership_service.get_membership_plan(db, plan_id)
+    existing_plan = await async_membership_service.get_membership_plan(db, plan_id)
     if not existing_plan or existing_plan.gym_id != current_gym.id:
         raise HTTPException(
             status_code=404,
@@ -696,7 +696,7 @@ async def get_my_membership_status(
             detail="Usuario no encontrado en el sistema local"
         )
     
-    status_info = membership_service.get_membership_status(
+    status_info = await async_membership_service.get_membership_status(
         db, local_user.id, current_gym.id
     )
     
@@ -723,7 +723,7 @@ async def get_user_membership_status(
     Returns:
         MembershipStatus: Estado de la membresía del usuario
     """
-    status_info = membership_service.get_membership_status(
+    status_info = await async_membership_service.get_membership_status(
         db, user_id, current_gym.id
     )
     
@@ -750,7 +750,7 @@ async def get_membership_summary(
     Returns:
         MembershipSummary: Estadísticas del gimnasio
     """
-    summary = membership_service.get_gym_membership_summary(db, current_gym.id)
+    summary = await async_membership_service.get_gym_membership_summary(db, current_gym.id)
     
     logger.info(f"Resumen consultado por admin {current_user.id} para gym {current_gym.id}")
     return summary
@@ -792,13 +792,13 @@ async def purchase_membership(
         
         # Verificar que el plan existe y pertenece al gimnasio actual
         logger.info(f"🔍 Validando plan {purchase_data.plan_id} para gym {current_gym.id}")
-        plan = membership_service.get_membership_plan(db, purchase_data.plan_id)
+        plan = await async_membership_service.get_membership_plan(db, purchase_data.plan_id)
         
         if not plan:
             logger.error(f"❌ Plan {purchase_data.plan_id} no encontrado en la base de datos")
             
             # Obtener planes disponibles para sugerir al usuario
-            available_plans = membership_service.get_membership_plans(
+            available_plans = await async_membership_service.get_membership_plans(
                 db, gym_id=current_gym.id, active_only=True, skip=0, limit=10
             )
             available_ids = [p.id for p in available_plans]
@@ -928,7 +928,7 @@ async def admin_create_payment_link(
         
         # Verificar que el plan existe y pertenece al gimnasio actual
         logger.info(f"🔍 Validando plan {payment_data.plan_id} para gym {current_gym.id}")
-        plan = membership_service.get_membership_plan(db, payment_data.plan_id)
+        plan = await async_membership_service.get_membership_plan(db, payment_data.plan_id)
         
         if not plan:
             logger.error(f"❌ Plan {payment_data.plan_id} no encontrado en la base de datos")

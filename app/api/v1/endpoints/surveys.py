@@ -31,7 +31,7 @@ from app.schemas.survey import (
     TemplateCreate,
     CreateFromTemplate
 )
-from app.services.survey import survey_service
+from app.services.async_survey import async_survey_service
 from app.repositories.survey import survey_repository
 import logging
 
@@ -65,7 +65,7 @@ async def get_available_surveys(
     user = result.scalar_one_or_none()
     user_id = user.id if user else None
     
-    surveys = await survey_service.get_available_surveys(
+    surveys = await async_survey_service.get_available_surveys(
         db=db,
         gym_id=current_gym.id,
         user_id=user_id,
@@ -108,7 +108,7 @@ async def submit_survey_response(
             detail="User profile not found"
         )
     
-    response = await survey_service.submit_response(
+    response = await async_survey_service.submit_response(
         db=db,
         response_in=response_in,
         user_id=user.id,
@@ -144,7 +144,7 @@ async def get_my_survey_responses(
     if not user:
         return []
     
-    responses = await survey_service.get_my_responses(
+    responses = await async_survey_service.get_my_responses(
         db=db,
         user_id=user.id,
         gym_id=current_gym.id,
@@ -247,7 +247,7 @@ async def create_survey_from_template(
     
     # Invalidate cache
     if redis_client:
-        await survey_service._invalidate_survey_caches(
+        await async_survey_service._invalidate_survey_caches(
             redis_client,
             gym_id=current_gym.id
         )
@@ -406,7 +406,7 @@ async def create_survey(
             detail="User profile not found"
         )
     
-    survey = await survey_service.create_survey(
+    survey = await async_survey_service.create_survey(
         db=db,
         survey_in=survey_in,
         creator_id=user.id,
@@ -476,7 +476,7 @@ async def update_survey(
     
     # Invalidate cache
     if redis_client:
-        await survey_service._invalidate_survey_caches(
+        await async_survey_service._invalidate_survey_caches(
             redis_client,
             gym_id=current_gym.id,
             survey_id=survey_id
@@ -534,7 +534,7 @@ async def publish_survey(
             detail="You don't have permission to publish this survey"
         )
     
-    published_survey = await survey_service.publish_survey(
+    published_survey = await async_survey_service.publish_survey(
         db=db,
         survey_id=survey_id,
         gym_id=current_gym.id,
@@ -589,7 +589,7 @@ async def close_survey(
             detail="You don't have permission to close this survey"
         )
     
-    closed_survey = await survey_service.close_survey(
+    closed_survey = await async_survey_service.close_survey(
         db=db,
         survey_id=survey_id,
         gym_id=current_gym.id,
@@ -648,7 +648,7 @@ async def delete_survey(
     )
     
     if result and redis_client:
-        await survey_service._invalidate_survey_caches(
+        await async_survey_service._invalidate_survey_caches(
             redis_client,
             gym_id=current_gym.id,
             survey_id=survey_id
@@ -707,7 +707,7 @@ async def get_survey_statistics(
             detail="You don't have permission to view survey statistics"
         )
     
-    statistics = await survey_service.get_survey_statistics(
+    statistics = await async_survey_service.get_survey_statistics(
         db=db,
         survey_id=survey_id,
         gym_id=current_gym.id,
@@ -830,7 +830,7 @@ async def export_survey_results(
         )
     
     # Export data
-    output = await survey_service.export_survey_results(
+    output = await async_survey_service.export_survey_results(
         db=db,
         survey_id=survey_id,
         gym_id=current_gym.id,

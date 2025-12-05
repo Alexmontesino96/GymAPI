@@ -11,12 +11,13 @@ Este módulo proporciona endpoints para:
 from typing import Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, func
 
 from app.db.session import get_async_db
 from app.core.auth0_fastapi import Auth0User, auth
 from app.core.tenant import verify_gym_admin_access
 from app.schemas.gym import GymSchema
-from app.services.stripe_connect_service import stripe_connect_service
+from app.services.async_stripe_connect_service import async_stripe_connect_service
 from app.middleware.rate_limit import limiter
 import logging
 
@@ -54,7 +55,7 @@ async def create_stripe_account(
     """
     try:
         # Verificar si ya existe cuenta
-        existing_account = stripe_connect_service.get_gym_stripe_account(db, current_gym.id)
+        existing_account = await async_stripe_connect_service.get_gym_stripe_account(db, current_gym.id)
         if existing_account and not existing_account.stripe_account_id.startswith("placeholder_"):
             return {
                 "message": "El gimnasio ya tiene una cuenta de Stripe configurada",
@@ -68,7 +69,7 @@ async def create_stripe_account(
             }
         
         # Crear o actualizar cuenta de Stripe Connect
-        gym_account = await stripe_connect_service.create_gym_stripe_account(
+        gym_account = await async_stripe_connect_service.create_gym_stripe_account(
             db, current_gym.id, country, account_type
         )
         
@@ -115,7 +116,7 @@ async def get_stripe_account_status(
     """
     try:
         # Obtener cuenta existente
-        gym_account = stripe_connect_service.get_gym_stripe_account(db, current_gym.id)
+        gym_account = await async_stripe_connect_service.get_gym_stripe_account(db, current_gym.id)
         if not gym_account:
             raise HTTPException(
                 status_code=404,
@@ -123,7 +124,7 @@ async def get_stripe_account_status(
             )
         
         # Actualizar estado desde Stripe
-        updated_account = await stripe_connect_service.update_gym_account_status(db, current_gym.id)
+        updated_account = await async_stripe_connect_service.update_gym_account_status(db, current_gym.id)
         
         return {
             "account_id": updated_account.stripe_account_id,
@@ -177,7 +178,7 @@ async def create_onboarding_link(
     """
     try:
         # Verificar que existe cuenta
-        gym_account = stripe_connect_service.get_gym_stripe_account(db, current_gym.id)
+        gym_account = await async_stripe_connect_service.get_gym_stripe_account(db, current_gym.id)
         if not gym_account:
             raise HTTPException(
                 status_code=404,
@@ -192,7 +193,7 @@ async def create_onboarding_link(
             )
         
         # Crear link de onboarding
-        onboarding_url = await stripe_connect_service.create_onboarding_link(
+        onboarding_url = await async_stripe_connect_service.create_onboarding_link(
             db, current_gym.id, refresh_url, return_url
         )
         
@@ -236,7 +237,7 @@ async def get_user_stripe_info(
     """
     try:
         # Obtener perfil de Stripe del usuario
-        stripe_profile = stripe_connect_service.get_user_stripe_profile(db, user_id, current_gym.id)
+        stripe_profile = await async_stripe_connect_service.get_user_stripe_profile(db, user_id, current_gym.id)
         if not stripe_profile:
             raise HTTPException(
                 status_code=404,
@@ -244,7 +245,7 @@ async def get_user_stripe_info(
             )
         
         # Obtener subscription_id si existe
-        subscription_id = await stripe_connect_service.get_subscription_for_user_gym(
+        subscription_id = await async_stripe_connect_service.get_subscription_for_user_gym(
             db, user_id, current_gym.id
         )
         
@@ -286,7 +287,7 @@ async def get_stripe_dashboard(
         from app.models.stripe_profile import UserGymStripeProfile
         
         # Obtener cuenta del gym
-        gym_account = stripe_connect_service.get_gym_stripe_account(db, current_gym.id)
+        gym_account = await async_stripe_connect_service.get_gym_stripe_account(db, current_gym.id)
         
         # Estadísticas de customers
         result = await db.execute(select(func.count()).select_from(UserGymStripeProfile).where(
