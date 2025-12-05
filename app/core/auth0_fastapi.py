@@ -503,13 +503,8 @@ async def get_current_user(
         def _create_or_update_user(data):
             sync_db = SessionLocal()
             try:
-                import asyncio
-                loop = asyncio.new_event_loop()
-                result = loop.run_until_complete(
-                    user_service.create_or_update_auth0_user_async(sync_db, data)
-                )
-                loop.close()
-                return result
+                # Método es síncrono (nombre heredado); ejecuta en threadpool
+                return user_service.create_or_update_auth0_user_async(sync_db, data)
             finally:
                 sync_db.close()
 

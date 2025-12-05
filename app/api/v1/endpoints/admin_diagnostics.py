@@ -12,8 +12,9 @@ from app.db.session import get_async_db
 from app.core.auth import get_current_user
 from app.models.user import User
 from app.models.chat import ChatRoom
-from app.services.chat import ChatService
+from app.services.async_chat import async_chat_service
 from app.core.stream_client import stream_client
+from app.models.user_gym import UserGym
 
 router = APIRouter()
 
@@ -28,14 +29,17 @@ async def get_stream_health(
     Solo accesible para administradores y owners.
     """
     # Verificar permisos - solo admins y owners
-    from app.services.user_gym import user_gym_service
-    user_role = user_gym_service.get_user_role_in_gym(db, current_user.id, gym_id)
-    
-    if user_role not in ["ADMIN", "OWNER"]:
+    result = await db.execute(
+        select(UserGym).where(
+            UserGym.user_id == current_user.id,
+            UserGym.gym_id == gym_id
+        )
+    )
+    user_gym = result.scalar_one_or_none()
+    if not user_gym or user_gym.role not in ["ADMIN", "OWNER"]:
         raise HTTPException(status_code=403, detail="Acceso denegado")
-    
+
     try:
-        chat_service = ChatService()
         
         # Estadísticas básicas de BD local
         result = await db.execute(select(func.count()).select_from(ChatRoom).where(ChatRoom.gym_id == gym_id))
@@ -126,10 +130,14 @@ async def trigger_stream_cleanup(
     Solo accesible para owners.
     """
     # Verificar permisos - solo owners
-    from app.services.user_gym import user_gym_service
-    user_role = user_gym_service.get_user_role_in_gym(db, current_user.id, gym_id)
-    
-    if user_role != "OWNER":
+    result = await db.execute(
+        select(UserGym).where(
+            UserGym.user_id == current_user.id,
+            UserGym.gym_id == gym_id
+        )
+    )
+    user_gym = result.scalar_one_or_none()
+    if not user_gym or user_gym.role != "OWNER":
         raise HTTPException(status_code=403, detail="Solo owners pueden ejecutar limpieza")
     
     try:

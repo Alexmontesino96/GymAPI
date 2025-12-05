@@ -16,8 +16,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_async_db
 from app.core.worker_auth import verify_worker_api_key
-from app.services.chat import chat_service
-from app.repositories.event import event_repository
+from app.services.async_chat import async_chat_service
+from app.repositories.async_event import async_event_repository
 from app.models.event import EventStatus, Event
 from app.models.chat import ChatRoom, ChatRoomStatus
 from app.models.user import User
@@ -80,16 +80,16 @@ async def create_event_chat(
     try:
         # Validate that the event exists
         logger.info(f"[DEBUG] Verifying event {request.event_id}")
-        event = event_repository.get_event(db, event_id=request.event_id)
+        event = await async_event_repository.get_event(db, event_id=request.event_id)
         if not event:
             logger.warning(f"[DEBUG] Event {request.event_id} not found in DB")
             return WorkerResponse(
                 success=False,
                 message=f"Event {request.event_id} not found"
             )
-        
+
         logger.info(f"[DEBUG] Event {request.event_id} found, gym_id={event.gym_id}, request.gym_id={request.gym_id}")
-        
+
         # Validate that the event belongs to the specified gym
         if event.gym_id != request.gym_id:
             logger.warning(f"[DEBUG] Event {request.event_id} belongs to gym {event.gym_id}, not {request.gym_id}")
@@ -97,10 +97,10 @@ async def create_event_chat(
                 success=False,
                 message=f"Event {request.event_id} does not belong to gym {request.gym_id}"
             )
-        
+
         # Check if a room already exists for this event
         logger.info(f"[DEBUG] Checking if room exists for event {request.event_id}")
-        existing_room = chat_service.get_event_room(db, request.event_id)
+        existing_room = await async_chat_service.get_event_room(db, request.event_id)
         
         if existing_room:
             logger.info(f"[DEBUG] Room for event {request.event_id} already exists: id={existing_room.id}")
@@ -112,13 +112,13 @@ async def create_event_chat(
             
         # Call the chat service to create the room
         logger.info(f"[DEBUG] Creating chat room for event {request.event_id}, creator_id={request.creator_id}")
-        room = chat_service.get_or_create_event_chat(db, request.event_id, request.creator_id, request.gym_id)
-        
+        room = await async_chat_service.get_or_create_event_chat(db, request.event_id, request.creator_id, request.gym_id)
+
         # Verify the result
         logger.info(f"[DEBUG] Creation result: {room}")
-        
+
         # Manually verify if the room was created
-        verification_room = chat_service.get_event_room(db, request.event_id)
+        verification_room = await async_chat_service.get_event_room(db, request.event_id)
         if verification_room:
             logger.info(f"[DEBUG] Positive verification: room created with id={verification_room.id}")
             
@@ -209,20 +209,20 @@ async def process_event_completion(
     """
     try:
         # Validate that the event exists
-        event = event_repository.get_event(db, event_id=request.event_id)
+        event = await async_event_repository.get_event(db, event_id=request.event_id)
         if not event:
             return WorkerResponse(
                 success=False,
                 message=f"Event {request.event_id} not found"
             )
-        
+
         # Validate that the event belongs to the specified gym
         if event.gym_id != request.gym_id:
             return WorkerResponse(
                 success=False,
                 message=f"Event {request.event_id} does not belong to gym {request.gym_id}"
             )
-        
+
         # Check if the event is already completed
         if event.status == EventStatus.COMPLETED:
             logger.warning(f"Attempted to mark event {request.event_id} as completed when it's already in COMPLETED state")
@@ -234,19 +234,19 @@ async def process_event_completion(
                     "was_already_completed": True
                 }
             )
-        
+
         # Mark event as completed
         logger.info(f"Worker requesting to mark event {request.event_id} as completed")
-        updated_event = event_repository.mark_event_completed(db, event_id=request.event_id)
-        
+        updated_event = await async_event_repository.mark_event_completed(db, event_id=request.event_id)
+
         if not updated_event:
             return WorkerResponse(
                 success=False,
                 message=f"Could not update event {request.event_id}"
             )
-        
+
         # Close chat room
-        chat_result = chat_service.close_event_chat(db, request.event_id)
+        chat_result = await async_chat_service.close_event_chat(db, request.event_id)
         
         return WorkerResponse(
             success=True,
