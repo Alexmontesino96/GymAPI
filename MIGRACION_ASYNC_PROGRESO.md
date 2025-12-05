@@ -57,7 +57,7 @@ class AsyncBaseRepository(Generic[ModelType, CreateSchemaType, UpdateSchemaType]
 
 ## FASE 3 - Capa de Servicios 🚧
 
-**Completados**: 8 servicios async (5,110 líneas, 20% del total)
+**Completados**: 10 servicios async (5,749 líneas, 25% del total)
 
 ### Servicios Migrados
 
