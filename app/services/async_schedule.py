@@ -1709,12 +1709,1161 @@ class AsyncClassService:
         return classes
 
 
-# Nota: AsyncClassSessionService y AsyncClassParticipationService serían demasiado largos
-# para este archivo. Recomendación: dividir en archivos separados si es necesario.
-# Por ahora, las funcionalidades principales están cubiertas.
+class AsyncClassSessionService:
+    async def get_session(self, db: AsyncSession, session_id: int, gym_id: int, redis_client: Optional[Redis] = None) -> Any:
+        """Obtener una sesión por ID con caché"""
+        # Verificar que la sesión pertenece al gimnasio
+        session = await async_class_session_repository.get_async(db, id=session_id)
+        if not session or session.gym_id != gym_id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Sesión no encontrada en este gimnasio"
+            )
+
+        # Si no hay redis_client, devolver directamente
+        if not redis_client:
+            return session
+
+        cache_key = f"schedule:session:detail:{session_id}"
+
+        async def db_fetch():
+            return await async_class_session_repository.get_async(db, id=session_id)
+
+        cached_session = await cache_service.get_or_set(
+            redis_client=redis_client,
+            cache_key=cache_key,
+            db_fetch_func=db_fetch,
+            model_class=ClassSessionSchema,
+            expiry_seconds=1800,  # 30 minutos para sesiones individuales
+            is_list=False
+        )
+
+        return cached_session
+
+    async def get_session_with_details(self, db: AsyncSession, session_id: int, gym_id: int, redis_client: Optional[Redis] = None) -> Dict[str, Any]:
+        """Obtener una sesión con detalles completos (clase, trainer, participantes) con caché"""
+        # Verificar que la sesión pertenece al gimnasio
+        session = await async_class_session_repository.get_async(db, id=session_id)
+        if not session or session.gym_id != gym_id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Sesión no encontrada en este gimnasio"
+            )
+
+        # Si no hay redis_client, usar versión sin caché
+        if not redis_client:
+            raw = await async_class_session_repository.get_with_availability_async(db, session_id=session_id)
+            if raw and "session" in raw:
+                session_with_tz = await populate_sessions_with_timezone([raw["session"]], gym_id, db)
+                if session_with_tz:
+                    raw["session"] = session_with_tz[0]
+            return raw
+
+        cache_key = f"schedule:session:detail_with_availability:{session_id}"
+
+        async def db_fetch():
+            raw = await async_class_session_repository.get_with_availability_async(db, session_id=session_id)
+
+            if not raw:
+                return None
+
+            try:
+                # Poblar campos timezone para la sesión
+                session_with_tz = await populate_sessions_with_timezone([raw["session"]], gym_id, db)
+                if session_with_tz:
+                    raw["session"] = session_with_tz[0]
+                else:
+                    raw["session"] = ClassSessionSchema.model_validate(raw["session"]).model_dump()
+
+                raw["class"] = ClassSchema.model_validate(raw["class"]).model_dump()
+            except Exception as e:
+                logger.error(f"Error al convertir modelos a dict para caché: {e}")
+
+            return raw
+
+        session_details = await cache_service.get_or_set_json(
+            redis_client=redis_client,
+            cache_key=cache_key,
+            db_fetch_func=db_fetch,
+            expiry_seconds=900,  # 15 minutos para detalles con disponibilidad
+        )
+
+        return session_details
+
+    async def create_session(
+        self, db: AsyncSession, session_data: ClassSessionCreate, gym_id: int, created_by_id: Optional[int] = None, redis_client: Optional[Redis] = None
+    ) -> Any:
+        """Crear una nueva sesión de clase e invalidar caché"""
+        # Verificar que la clase exista, esté activa y pertenezca al gimnasio
+        class_obj = await async_class_repository.get_async(db, id=session_data.class_id)
+        if not class_obj:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Clase no encontrada"
+            )
+        if not class_obj.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No se pueden crear sesiones para una clase inactiva"
+            )
+        if class_obj.gym_id != gym_id:
+             raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="La clase especificada no pertenece a este gimnasio"
+            )
+
+        # Obtener el gimnasio para su timezone
+        from app.repositories.async_gym import async_gym_repository
+        gym = await async_gym_repository.get_async(db, id=gym_id)
+        if not gym:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Gimnasio no encontrado"
+            )
+
+        # Calcular hora de fin si no se proporciona
+        obj_in_data = session_data.model_dump()
+        if not obj_in_data.get("end_time") and class_obj.duration:
+            start_time = obj_in_data.get("start_time")
+            if start_time:
+                end_time = start_time + timedelta(minutes=class_obj.duration)
+                obj_in_data["end_time"] = end_time
+
+        # Convertir tiempos de hora local del gimnasio a UTC
+        start_time_local = obj_in_data.get("start_time")
+        end_time_local = obj_in_data.get("end_time")
+
+        logger.info(f"🔄 TIMEZONE CONVERSION in create_session:")
+        logger.info(f"   Gym timezone: {gym.timezone}")
+        logger.info(f"   start_time_local (antes): {start_time_local}")
+        logger.info(f"   end_time_local (antes): {end_time_local}")
+        logger.info(f"   start_time_local type: {type(start_time_local)}")
+        logger.info(f"   start_time_local tzinfo: {getattr(start_time_local, 'tzinfo', 'No tzinfo')}")
+
+        if start_time_local and end_time_local:
+            # Normalizar a UTC: soporta input naive (hora local gym) o aware
+            from app.core.timezone_utils import normalize_to_utc
+            start_time_utc = normalize_to_utc(start_time_local, gym.timezone)
+            end_time_utc = normalize_to_utc(end_time_local, gym.timezone)
+
+            logger.info(f"   start_time_utc (después): {start_time_utc}")
+            logger.info(f"   end_time_utc (después): {end_time_utc}")
+            logger.info(f"   start_time_utc type: {type(start_time_utc)}")
+            logger.info(f"   start_time_utc tzinfo: {getattr(start_time_utc, 'tzinfo', 'No tzinfo')}")
+
+            obj_in_data["start_time"] = start_time_utc
+            obj_in_data["end_time"] = end_time_utc
+        else:
+            logger.warning(f"   ⚠️ start_time o end_time faltantes, no se puede convertir timezone")
+
+        # Agregar ID del creador si se proporciona
+        if created_by_id:
+            obj_in_data["created_by"] = created_by_id
+
+        # Asegurar que gym_id esté presente y sea el correcto
+        obj_in_data["gym_id"] = gym_id
+
+        # Crear la sesión
+        created_session = await async_class_session_repository.create_async(
+            db, obj_in=ClassSessionCreate(**obj_in_data)
+        )
+
+        logger.info(f"✅ SESSION CREATED in database:")
+        logger.info(f"   Session ID: {created_session.id}")
+        logger.info(f"   start_time stored: {created_session.start_time}")
+        logger.info(f"   end_time stored: {created_session.end_time}")
+        logger.info(f"   start_time type: {type(created_session.start_time)}")
+        logger.info(f"   start_time tzinfo: {getattr(created_session.start_time, 'tzinfo', 'No tzinfo')}")
+
+        # Invalidar cachés relevantes
+        await self._invalidate_session_caches(redis_client, gym_id=gym_id, trainer_id=created_session.trainer_id, class_id=created_session.class_id)
+
+        return created_session
+
+    async def _invalidate_session_caches(self, redis_client: Optional[Redis], gym_id: int, session_id: Optional[int] = None, trainer_id: Optional[int] = None, class_id: Optional[int] = None):
+        """
+        Invalidar cachés de sesiones de manera inteligente usando tracking sets.
+        """
+        if not redis_client:
+            return
+
+        keys_to_delete = []
+        tracking_sets_to_process = []
+
+        # Cachés específicos de sesión
+        if session_id:
+            keys_to_delete.extend([
+                f"schedule:session:detail:{session_id}",
+                f"schedule:session:detail_with_availability:{session_id}",
+                f"schedule:participations:session:{session_id}:gym:{gym_id}:*"
+            ])
+
+        # Tracking sets a procesar para invalidación masiva
+        tracking_sets_to_process.append(f"cache_keys:sessions:{gym_id}")
+
+        if trainer_id:
+            tracking_sets_to_process.append(f"cache_keys:sessions:trainer:{trainer_id}")
+
+        if class_id:
+            tracking_sets_to_process.append(f"cache_keys:sessions:class:{class_id}")
+
+        try:
+            # Eliminar claves específicas
+            if keys_to_delete:
+                # Separar claves directas de patrones
+                direct_keys = [k for k in keys_to_delete if '*' not in k]
+                pattern_keys = [k for k in keys_to_delete if '*' in k]
+
+                if direct_keys:
+                    deleted_keys = await redis_client.delete(*direct_keys)
+                    logger.debug(f"Invalidated {deleted_keys} direct session keys: {direct_keys}")
+
+                # Procesar patrones
+                for pattern in pattern_keys:
+                    deleted_count = await cache_service.delete_pattern(redis_client, pattern)
+                    logger.debug(f"Invalidated {deleted_count} keys with pattern: {pattern}")
+
+            # Procesar tracking sets para invalidación inteligente
+            total_invalidated = 0
+            for tracking_set in tracking_sets_to_process:
+                try:
+                    # Obtener todas las claves del tracking set
+                    cached_keys = await redis_client.smembers(tracking_set)
+                    if cached_keys:
+                        # Convertir bytes a strings si es necesario
+                        if isinstance(next(iter(cached_keys)), bytes):
+                            cached_keys = [key.decode('utf-8') for key in cached_keys]
+
+                        # Eliminar las claves
+                        deleted_count = await redis_client.delete(*cached_keys)
+                        total_invalidated += deleted_count
+
+                        # Limpiar el tracking set
+                        await redis_client.delete(tracking_set)
+
+                        logger.debug(f"Invalidated {deleted_count} cached keys from tracking set {tracking_set}")
+
+                except Exception as set_error:
+                    logger.warning(f"Error processing tracking set {tracking_set}: {set_error}")
+
+            if total_invalidated > 0:
+                logger.info(f"Total invalidated session cache keys: {total_invalidated}")
+
+        except Exception as e:
+            logger.error(f"Error invalidating session caches for gym {gym_id}: {e}", exc_info=True)
+
+    async def create_recurring_sessions(
+        self, db: AsyncSession,
+        base_session_data: ClassSessionCreate,
+        start_date: date,
+        end_date: date,
+        days_of_week: List[int],
+        created_by_id: Optional[int] = None,
+        gym_id: int = None,
+        redis_client: Optional[Redis] = None
+    ) -> List[Any]:
+        """Crear sesiones recurrentes basadas en días de la semana e invalidar caché"""
+        if not gym_id:
+             raise HTTPException(status_code=400, detail="Gym ID is required")
+
+        # Verificar que la clase exista, esté activa y pertenezca al gimnasio
+        class_obj = await async_class_repository.get_async(db, id=base_session_data.class_id)
+        if not class_obj or class_obj.gym_id != gym_id or not class_obj.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Clase inválida, inactiva o no pertenece a este gimnasio"
+            )
+
+        # Obtener el gimnasio para su timezone
+        from app.repositories.async_gym import async_gym_repository
+        gym = await async_gym_repository.get_async(db, id=gym_id)
+        if not gym:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Gimnasio no encontrado"
+            )
+
+        # Preparar datos base para las sesiones
+        session_base_data = base_session_data.model_dump()
+        session_base_data["gym_id"] = gym_id
+        if created_by_id:
+            session_base_data["created_by"] = created_by_id
+
+        # Marcar que son sesiones recurrentes
+        session_base_data["is_recurring"] = True
+        session_base_data["recurrence_pattern"] = f"WEEKLY:{','.join(map(str, days_of_week))}"
+
+        # Obtener la hora de inicio y fin de la sesión base
+        base_start_time = session_base_data["start_time"]
+        base_end_time = session_base_data["end_time"]
+
+        # Necesitamos solo la hora/minutos, no la fecha
+        base_start_hour = base_start_time.hour
+        base_start_minute = base_start_time.minute
+
+        # Si end_time está definido, extraer también su hora/minutos
+        if base_end_time:
+            base_end_hour = base_end_time.hour
+            base_end_minute = base_end_time.minute
+            duration_minutes = ((base_end_hour * 60 + base_end_minute) -
+                              (base_start_hour * 60 + base_start_minute))
+        else:
+            duration_minutes = class_obj.duration
+
+        created_sessions = []
+        current_date = start_date
+
+        # Iterar por cada día en el rango
+        while current_date <= end_date:
+            # Verificar si el día actual está en la lista de días seleccionados
+            if current_date.weekday() in days_of_week:
+                # Crear una copia de los datos base para esta sesión
+                session_data = session_base_data.copy()
+
+                # Crear datetime para este día específico con la hora base
+                new_start_datetime = datetime.combine(
+                    current_date,
+                    time(hour=base_start_hour, minute=base_start_minute)
+                )
+
+                session_data["start_time"] = new_start_datetime
+
+                # Calcular end_time basado en la duración
+                if "end_time" in session_data and session_data["end_time"]:
+                    new_end_datetime = datetime.combine(
+                        current_date,
+                        time(hour=base_end_hour, minute=base_end_minute)
+                    )
+                    session_data["end_time"] = new_end_datetime
+                elif duration_minutes:
+                    new_end_datetime = new_start_datetime + timedelta(minutes=duration_minutes)
+                    session_data["end_time"] = new_end_datetime
+
+                # Convertir/normalizar tiempos a UTC antes de crear la sesión
+                from app.core.timezone_utils import normalize_to_utc
+                session_data["start_time"] = normalize_to_utc(session_data["start_time"], gym.timezone)
+                session_data["end_time"] = normalize_to_utc(session_data["end_time"], gym.timezone)
+
+                # Crear la sesión
+                session = await async_class_session_repository.create_async(
+                    db, obj_in=session_data
+                )
+                created_sessions.append(session)
+
+            # Avanzar al siguiente día
+            current_date += timedelta(days=1)
+
+        # Invalidar cachés relevantes una vez después del bucle
+        if created_sessions:
+             await self._invalidate_session_caches(redis_client, gym_id=gym_id, trainer_id=base_session_data.trainer_id, class_id=base_session_data.class_id)
+
+        return created_sessions
+
+    async def update_session(
+        self, db: AsyncSession, session_id: int, session_data: ClassSessionUpdate, gym_id: int, redis_client: Optional[Redis] = None
+    ) -> Any:
+        """Actualizar una sesión existente e invalidar caché"""
+        session = await async_class_session_repository.get_async(db, id=session_id)
+        if not session or session.gym_id != gym_id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Sesión no encontrada en este gimnasio"
+            )
+
+        # Obtener el gimnasio para su timezone
+        from app.repositories.async_gym import async_gym_repository
+        gym = await async_gym_repository.get_async(db, id=gym_id)
+        if not gym:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Gimnasio no encontrado"
+            )
+
+        # Guardar datos originales para invalidación si cambian
+        original_trainer_id = session.trainer_id
+        original_class_id = session.class_id
+
+        # Preparar datos de actualización
+        update_data = session_data.model_dump(exclude_unset=True)
+
+        # Si se están actualizando los tiempos, normalizar a UTC
+        if "start_time" in update_data or "end_time" in update_data:
+            from app.core.timezone_utils import normalize_to_utc
+            if "start_time" in update_data and update_data["start_time"] is not None:
+                update_data["start_time"] = normalize_to_utc(update_data["start_time"], gym.timezone)
+            if "end_time" in update_data and update_data["end_time"] is not None:
+                update_data["end_time"] = normalize_to_utc(update_data["end_time"], gym.timezone)
+
+        # Actualizar en BD
+        updated_session = await async_class_session_repository.update_async(
+            db, db_obj=session, obj_in=update_data
+        )
+
+        # Invalidar caché
+        await self._invalidate_session_caches(
+            redis_client,
+            gym_id=gym_id,
+            session_id=session_id,
+            trainer_id=updated_session.trainer_id,
+            class_id=updated_session.class_id
+        )
+        # Invalidar también para trainer/clase original si cambiaron
+        if original_trainer_id != updated_session.trainer_id:
+             await self._invalidate_session_caches(redis_client, gym_id=gym_id, trainer_id=original_trainer_id)
+        if original_class_id != updated_session.class_id:
+             await self._invalidate_session_caches(redis_client, gym_id=gym_id, class_id=original_class_id)
+
+        return updated_session
+
+    async def cancel_session(self, db: AsyncSession, session_id: int, gym_id: int, redis_client: Optional[Redis] = None) -> Any:
+        """Cancelar una sesión e invalidar caché"""
+        session = await async_class_session_repository.get_async(db, id=session_id)
+        if not session or session.gym_id != gym_id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Sesión no encontrada en este gimnasio"
+            )
+
+        # Guardar datos para invalidación
+        trainer_id = session.trainer_id
+        class_id = session.class_id
+
+        # Actualizar el estado de la sesión a cancelado
+        cancelled_session = await async_class_session_repository.update_async(
+            db, db_obj=session,
+            obj_in={"status": ClassSessionStatus.CANCELLED}
+        )
+
+        # Invalidar caché
+        await self._invalidate_session_caches(
+            redis_client,
+            gym_id=gym_id,
+            session_id=session_id,
+            trainer_id=trainer_id,
+            class_id=class_id
+        )
+
+        return cancelled_session
+
+    async def get_upcoming_sessions(
+        self, db: AsyncSession, skip: int = 0, limit: int = 100, gym_id: Optional[int] = None, redis_client: Optional[Redis] = None
+    ) -> List[Any]:
+        """
+        Obtener las próximas sesiones programadas, opcionalmente filtradas por gimnasio (con caché).
+        """
+        # Si no hay gym_id, usar versión sin caché
+        if gym_id is None:
+            logger.warning("Attempted to get upcoming sessions without gym_id. Cache disabled.")
+            return await async_class_session_repository.get_upcoming_sessions_async(db, skip=skip, limit=limit)
+
+        # Si no hay redis_client, usar versión sin caché
+        if not redis_client:
+            return await async_class_session_repository.get_upcoming_sessions_async(
+                db, skip=skip, limit=limit, gym_id=gym_id
+            )
+
+        cache_key = f"schedule:sessions:upcoming:gym:{gym_id}:skip:{skip}:limit:{limit}"
+        tracking_set_key = f"cache_keys:sessions:{gym_id}"
+
+        # Indica si el resultado vino de la BD
+        fetched_from_db = False
+
+        async def db_fetch():
+            nonlocal fetched_from_db
+            result = await async_class_session_repository.get_upcoming_sessions_async(
+                db, skip=skip, limit=limit, gym_id=gym_id
+            )
+            fetched_from_db = True
+            return result
+
+        sessions = await cache_service.get_or_set(
+            redis_client=redis_client,
+            cache_key=cache_key,
+            db_fetch_func=db_fetch,
+            model_class=ClassSessionSchema,
+            expiry_seconds=300,  # 5 minutos para sesiones próximas
+            is_list=True
+        )
+
+        # Añadir a tracking set para invalidación
+        if fetched_from_db:
+            try:
+                await redis_client.sadd(tracking_set_key, cache_key)
+                await redis_client.expire(tracking_set_key, 3600)  # 1 hora de tracking
+            except Exception as e:
+                logger.warning(f"No se pudo añadir clave a tracking set: {e}")
+
+        return sessions
+
+    async def get_sessions_by_date_range(
+        self, db: AsyncSession, start_date: date, end_date: date,
+        skip: int = 0, limit: int = 100, gym_id: Optional[int] = None, redis_client: Optional[Redis] = None
+    ) -> List[Any]:
+        """
+        Obtener sesiones en un rango de fechas, opcionalmente filtradas por gimnasio (con caché).
+        """
+        # Si no hay gym_id, usar versión sin caché
+        if gym_id is None:
+            logger.warning("Attempted to get sessions by date range without gym_id. Cache disabled.")
+            start_datetime = datetime.combine(start_date, time.min)
+            end_datetime = datetime.combine(end_date, time.max)
+            return await async_class_session_repository.get_by_date_range_async(db, start_date=start_datetime, end_date=end_datetime, skip=skip, limit=limit)
+
+        # Si no hay redis_client, usar versión sin caché
+        if not redis_client:
+            start_datetime = datetime.combine(start_date, time.min)
+            end_datetime = datetime.combine(end_date, time.max)
+            return await async_class_session_repository.get_by_date_range_async(
+                db, start_date=start_datetime, end_date=end_datetime,
+                skip=skip, limit=limit, gym_id=gym_id
+            )
+
+        # Formatear fechas para la clave
+        start_str = start_date.isoformat()
+        end_str = end_date.isoformat()
+        cache_key = f"schedule:sessions:range:gym:{gym_id}:start:{start_str}:end:{end_str}:skip:{skip}:limit:{limit}"
+        tracking_set_key = f"cache_keys:sessions:{gym_id}"
+
+        # Indica si el resultado vino de la BD
+        fetched_from_db = False
+
+        async def db_fetch():
+            nonlocal fetched_from_db
+            start_datetime = datetime.combine(start_date, time.min)
+            end_datetime = datetime.combine(end_date, time.max)
+            result = await async_class_session_repository.get_by_date_range_async(
+                db, start_date=start_datetime, end_date=end_datetime,
+                skip=skip, limit=limit, gym_id=gym_id
+            )
+            fetched_from_db = True
+            return result
+
+        sessions = await cache_service.get_or_set(
+            redis_client=redis_client,
+            cache_key=cache_key,
+            db_fetch_func=db_fetch,
+            model_class=ClassSessionSchema,
+            expiry_seconds=900,  # 15 minutos para rangos de fechas
+            is_list=True
+        )
+
+        # Añadir a tracking set para invalidación
+        if fetched_from_db:
+            try:
+                await redis_client.sadd(tracking_set_key, cache_key)
+                await redis_client.expire(tracking_set_key, 3600)  # 1 hora de tracking
+            except Exception as e:
+                logger.warning(f"No se pudo añadir clave a tracking set: {e}")
+
+        return sessions
+
+    async def get_sessions_by_trainer(
+        self, db: AsyncSession, trainer_id: int, skip: int = 0, limit: int = 100,
+        upcoming_only: bool = False, gym_id: Optional[int] = None, redis_client: Optional[Redis] = None
+    ) -> List[Any]:
+        """
+        Obtener sesiones de un entrenador específico, opcionalmente filtradas por gimnasio (con caché).
+        """
+        # Si no hay gym_id, usar versión sin caché
+        if gym_id is None:
+            logger.warning("Attempted to get sessions by trainer without gym_id. Cache disabled.")
+            if upcoming_only:
+                return await async_class_session_repository.get_trainer_upcoming_sessions_async(db, trainer_id=trainer_id, skip=skip, limit=limit)
+            return await async_class_session_repository.get_by_trainer_async(db, trainer_id=trainer_id, skip=skip, limit=limit)
+
+        # Si no hay redis_client, usar versión sin caché
+        if not redis_client:
+            if upcoming_only:
+                return await async_class_session_repository.get_trainer_upcoming_sessions_async(
+                    db, trainer_id=trainer_id, skip=skip, limit=limit, gym_id=gym_id
+                )
+            return await async_class_session_repository.get_by_trainer_async(
+                db, trainer_id=trainer_id, skip=skip, limit=limit, gym_id=gym_id
+            )
+
+        cache_key = f"schedule:sessions:trainer:{trainer_id}:gym:{gym_id}:upcoming:{upcoming_only}:skip:{skip}:limit:{limit}"
+        tracking_set_key = f"cache_keys:sessions:{gym_id}"
+        trainer_tracking_key = f"cache_keys:sessions:trainer:{trainer_id}"
+
+        # Indica si el resultado vino de la BD
+        fetched_from_db = False
+
+        async def db_fetch():
+            nonlocal fetched_from_db
+            if upcoming_only:
+                result = await async_class_session_repository.get_trainer_upcoming_sessions_async(
+                    db, trainer_id=trainer_id, skip=skip, limit=limit, gym_id=gym_id
+                )
+            else:
+                result = await async_class_session_repository.get_by_trainer_async(
+                    db, trainer_id=trainer_id, skip=skip, limit=limit, gym_id=gym_id
+                )
+            fetched_from_db = True
+            return result
+
+        sessions = await cache_service.get_or_set(
+            redis_client=redis_client,
+            cache_key=cache_key,
+            db_fetch_func=db_fetch,
+            model_class=ClassSessionSchema,
+            expiry_seconds=600,  # 10 minutos para sesiones por trainer
+            is_list=True
+        )
+
+        # Añadir a tracking sets para invalidación
+        if fetched_from_db:
+            try:
+                await redis_client.sadd(tracking_set_key, cache_key)
+                await redis_client.sadd(trainer_tracking_key, cache_key)
+                await redis_client.expire(tracking_set_key, 3600)  # 1 hora de tracking
+                await redis_client.expire(trainer_tracking_key, 3600)  # 1 hora de tracking
+            except Exception as e:
+                logger.warning(f"No se pudo añadir clave a tracking sets: {e}")
+
+        return sessions
+
+    async def get_sessions_by_class(
+        self, db: AsyncSession, class_id: int, skip: int = 0, limit: int = 100, gym_id: Optional[int] = None, redis_client: Optional[Redis] = None
+    ) -> List[Any]:
+        """
+        Obtener sesiones de una clase específica, opcionalmente filtradas por gimnasio (con caché).
+        """
+        # Si no hay gym_id, usar versión sin caché
+        if gym_id is None:
+            logger.warning("Attempted to get sessions by class without gym_id. Cache disabled.")
+            return await async_class_session_repository.get_by_class_async(db, class_id=class_id, skip=skip, limit=limit)
+
+        # Si no hay redis_client, usar versión sin caché
+        if not redis_client:
+            return await async_class_session_repository.get_by_class_async(
+                db, class_id=class_id, skip=skip, limit=limit, gym_id=gym_id
+            )
+
+        cache_key = f"schedule:sessions:class:{class_id}:gym:{gym_id}:skip:{skip}:limit:{limit}"
+        tracking_set_key = f"cache_keys:sessions:{gym_id}"
+        class_tracking_key = f"cache_keys:sessions:class:{class_id}"
+
+        # Indica si el resultado vino de la BD
+        fetched_from_db = False
+
+        async def db_fetch():
+            nonlocal fetched_from_db
+            result = await async_class_session_repository.get_by_class_async(
+                db, class_id=class_id, skip=skip, limit=limit, gym_id=gym_id
+            )
+            fetched_from_db = True
+            return result
+
+        sessions = await cache_service.get_or_set(
+            redis_client=redis_client,
+            cache_key=cache_key,
+            db_fetch_func=db_fetch,
+            model_class=ClassSessionSchema,
+            expiry_seconds=600,  # 10 minutos para sesiones por clase
+            is_list=True
+        )
+
+        # Añadir a tracking sets para invalidación
+        if fetched_from_db:
+            try:
+                await redis_client.sadd(tracking_set_key, cache_key)
+                await redis_client.sadd(class_tracking_key, cache_key)
+                await redis_client.expire(tracking_set_key, 3600)  # 1 hora de tracking
+                await redis_client.expire(class_tracking_key, 3600)  # 1 hora de tracking
+            except Exception as e:
+                logger.warning(f"No se pudo añadir clave a tracking sets: {e}")
+
+        return sessions
+
+
+class AsyncClassParticipationService:
+    async def register_for_class(self, db: AsyncSession, member_id: int, session_id: int, gym_id: int, redis_client: Optional[Redis] = None) -> Any:
+        """Registrar a un miembro en una sesión de clase e invalidar caché de sesión"""
+        # Verificar si la sesión existe, está programada y pertenece al gimnasio
+        session_data = await async_class_session_repository.get_with_availability_async(db, session_id=session_id)
+        if not session_data or session_data["session"].gym_id != gym_id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Sesión no encontrada en este gimnasio"
+            )
+
+        session = session_data["session"]
+        class_obj = session_data["class"]
+
+        # Validar que la sesión esté en estado programado
+        if session.status != ClassSessionStatus.SCHEDULED:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No se puede registrar en una sesión que no está programada"
+            )
+
+        # Obtener información del gimnasio para usar su timezone
+        from app.repositories.async_gym import async_gym_repository
+        gym = await async_gym_repository.get_async(db, id=gym_id)
+        if not gym:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Gimnasio no encontrado"
+            )
+
+        # Validar que la sesión no haya comenzado aún usando timezone del gimnasio
+        if not is_session_in_future(session.start_time, gym.timezone):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No se puede registrar en una sesión que ya ha comenzado o terminado"
+            )
+
+        # Validar que la sesión no esté llena
+        if session_data["is_full"]:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="La sesión está llena"
+            )
+
+        # Verificar si el miembro ya está registrado
+        existing = await async_class_participation_repository.get_by_session_and_member_async(
+            db, session_id=session_id, member_id=member_id, gym_id=gym_id
+        )
+
+        participation_result = None
+        if existing:
+            if existing.status == ClassParticipationStatus.CANCELLED:
+                # Reactivar registro
+                participation_result = await async_class_participation_repository.update_async(
+                    db, db_obj=existing,
+                    obj_in={
+                        "status": ClassParticipationStatus.REGISTERED,
+                        "cancellation_time": None,
+                        "cancellation_reason": None
+                    }
+                )
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Ya estás registrado en esta clase"
+                )
+        else:
+            # Crear nueva participación con manejo de carrera por constraint único
+            participation_data = {
+                "session_id": session_id,
+                "member_id": member_id,
+                "status": ClassParticipationStatus.REGISTERED,
+                "gym_id": gym_id
+            }
+            from sqlalchemy.exc import IntegrityError
+            try:
+                participation_result = await async_class_participation_repository.create_async(
+                    db, obj_in=participation_data
+                )
+            except IntegrityError:
+                # Otro proceso registró simultáneamente; recuperar el existente
+                await db.rollback()
+                participation_result = await async_class_participation_repository.get_by_session_and_member_async(
+                    db, session_id=session_id, member_id=member_id, gym_id=gym_id
+                )
+
+        # Actualizar contador de participantes y validar resultado
+        if participation_result:
+            await async_class_session_repository.update_participant_count_async(db, session_id=session_id)
+            # Invalidar cachés de sesión y participación al final
+            await self._invalidate_session_caches_from_participation(
+                session_id=session_id,
+                gym_id=gym_id,
+                redis_client=redis_client,
+                trainer_id=session.trainer_id,
+                class_id=session.class_id
+            )
+            # Invalidar cache de participation status del miembro
+            await self.invalidate_member_participation_cache(
+                member_id=member_id, gym_id=gym_id, redis_client=redis_client
+            )
+            return participation_result
+        else:
+             raise HTTPException(status_code=500, detail="No se pudo completar el registro")
+
+    async def cancel_registration(self, db: AsyncSession, member_id: int, session_id: int, gym_id: int, reason: Optional[str] = None, redis_client: Optional[Redis] = None) -> Any:
+        """Cancelar el registro de un miembro en una sesión e invalidar caché de sesión"""
+        # Verificar si la participación existe y pertenece al gimnasio
+        participation = await async_class_participation_repository.get_by_session_and_member_async(
+            db, session_id=session_id, member_id=member_id, gym_id=gym_id
+        )
+
+        if not participation:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No estás registrado en esta clase"
+            )
+
+        session = await async_class_session_repository.get_async(db, id=session_id)
+
+        # Cancelar la participación
+        cancelled_participation = await async_class_participation_repository.cancel_participation_async(
+            db, session_id=session_id, member_id=member_id, reason=reason, gym_id=gym_id
+        )
+
+        # Actualizar contador y validar resultado
+        if cancelled_participation:
+            await async_class_session_repository.update_participant_count_async(db, session_id=session_id)
+            # Invalidar cachés de sesión
+            if session:
+                await self._invalidate_session_caches_from_participation(
+                    session_id=session_id,
+                    gym_id=gym_id,
+                    redis_client=redis_client,
+                    trainer_id=session.trainer_id,
+                    class_id=session.class_id
+                )
+            # Invalidar cache de participation status del miembro
+            await self.invalidate_member_participation_cache(
+                member_id=member_id, gym_id=gym_id, redis_client=redis_client
+            )
+            return cancelled_participation
+        else:
+             raise HTTPException(status_code=500, detail="No se pudo completar la cancelación")
+
+    async def mark_attendance(self, db: AsyncSession, member_id: int, session_id: int, gym_id: int, redis_client: Optional[Redis] = None) -> Any:
+        """Marcar la asistencia de un miembro a una sesión"""
+        # Verificar si la participación existe y pertenece al gimnasio
+        participation = await async_class_participation_repository.get_by_session_and_member_async(
+            db, session_id=session_id, member_id=member_id, gym_id=gym_id
+        )
+
+        if not participation:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="El miembro no está registrado en esta clase"
+            )
+
+        # Marcar la asistencia
+        return await async_class_participation_repository.mark_attendance_async(
+            db, session_id=session_id, member_id=member_id, gym_id=gym_id
+        )
+
+    async def mark_no_show(self, db: AsyncSession, member_id: int, session_id: int, gym_id: int, redis_client: Optional[Redis] = None) -> Any:
+        """Marcar que un miembro no asistió a una sesión"""
+        # Verificar si la participación existe y pertenece al gimnasio
+        participation = await async_class_participation_repository.get_by_session_and_member_async(
+            db, session_id=session_id, member_id=member_id, gym_id=gym_id
+        )
+
+        if not participation:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="El miembro no está registrado en esta clase"
+            )
+
+        # Marcar como no-show
+        updated = await async_class_participation_repository.update_async(
+            db, db_obj=participation,
+            obj_in={"status": ClassParticipationStatus.NO_SHOW}
+        )
+
+        return updated
+
+    async def get_session_participants(
+        self, db: AsyncSession, session_id: int, skip: int = 0, limit: int = 100, gym_id: Optional[int] = None, redis_client: Optional[Redis] = None
+    ) -> List[Any]:
+        """Obtener todos los participantes de una sesión (con caché)"""
+        if gym_id is None:
+             logger.warning("Attempted to get session participants without gym_id. Cache disabled.")
+             return await async_class_participation_repository.get_by_session_async(db, session_id=session_id, skip=skip, limit=limit)
+
+        cache_key = f"schedule:participations:session:{session_id}:gym:{gym_id}:skip:{skip}:limit:{limit}"
+
+        # Por ahora, versión no cacheada
+        return await async_class_participation_repository.get_by_session_async(
+            db, session_id=session_id, skip=skip, limit=limit, gym_id=gym_id
+        )
+
+    async def get_member_participation_status(
+        self, db: AsyncSession, member_id: int, start_date: datetime, end_date: datetime,
+        gym_id: int, session_ids: Optional[List[int]] = None, redis_client: Optional[Redis] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Obtener solo los estados de participación de un miembro (ultra-optimizado con caché agresivo).
+        """
+        # Si no hay Redis, usar versión sin caché
+        if not redis_client:
+            participations = await async_class_participation_repository.get_member_participation_status_async(
+                db, member_id=member_id, start_date=start_date, end_date=end_date,
+                gym_id=gym_id, session_ids=session_ids
+            )
+            return [self._format_participation_status(p) for p in participations]
+
+        # Generar cache key específico
+        session_ids_str = ",".join(map(str, sorted(session_ids))) if session_ids else "all"
+        start_str = start_date.strftime("%Y%m%d")
+        end_str = end_date.strftime("%Y%m%d")
+
+        cache_key = f"participation_status:{gym_id}:{member_id}:{start_str}:{end_str}:{session_ids_str}"
+        tracking_key = f"cache_keys:participation_status:{gym_id}:{member_id}"
+
+        # Intentar obtener del cache
+        try:
+            cached_data = await redis_client.get(cache_key)
+            if cached_data:
+                return json.loads(cached_data)
+        except Exception as e:
+            logger.warning(f"Error accessing cache: {e}")
+
+        # Si no está en cache, consultar BD
+        participations = await async_class_participation_repository.get_member_participation_status_async(
+            db, member_id=member_id, start_date=start_date, end_date=end_date,
+            gym_id=gym_id, session_ids=session_ids
+        )
+
+        # Formatear resultados
+        formatted_results = [self._format_participation_status(p) for p in participations]
+
+        # Guardar en cache con TTL de 5 minutos
+        try:
+            await redis_client.setex(
+                cache_key,
+                300,  # 5 minutos
+                json.dumps(formatted_results, default=str)
+            )
+            # Añadir a tracking set para invalidación
+            await redis_client.sadd(tracking_key, cache_key)
+            await redis_client.expire(tracking_key, 3600)  # 1 hora de tracking
+        except Exception as e:
+            logger.warning(f"Error setting cache: {e}")
+
+        return formatted_results
+
+    def _format_participation_status(self, participation: ClassParticipation) -> Dict[str, Any]:
+        """Formatear participación a diccionario ultra-ligero"""
+        return {
+            "session_id": participation.session_id,
+            "status": participation.status.value,
+            "registration_time": participation.registration_time.isoformat(),
+            "attendance_time": participation.attendance_time.isoformat() if participation.attendance_time else None,
+            "cancellation_time": participation.cancellation_time.isoformat() if participation.cancellation_time else None
+        }
+
+    async def invalidate_member_participation_cache(
+        self, member_id: int, gym_id: int, redis_client: Optional[Redis] = None
+    ):
+        """Invalidar cache de participaciones de un miembro específico"""
+        if not redis_client:
+            return
+
+        try:
+            tracking_key = f"cache_keys:participation_status:{gym_id}:{member_id}"
+            cache_keys = await redis_client.smembers(tracking_key)
+
+            if cache_keys:
+                await redis_client.delete(*cache_keys)
+                await redis_client.delete(tracking_key)
+                logger.info(f"Invalidated {len(cache_keys)} participation status cache keys for member {member_id}")
+        except Exception as e:
+            logger.warning(f"Error invalidating participation status cache: {e}")
+
+    async def get_member_participations(
+        self, db: AsyncSession, member_id: int, skip: int = 0, limit: int = 100, gym_id: Optional[int] = None, redis_client: Optional[Redis] = None
+    ) -> List[Any]:
+        """Obtener todas las participaciones de un miembro (con caché)"""
+        cache_key = f"schedule:participations:member:{member_id}:gym:{gym_id or 'all'}:skip:{skip}:limit:{limit}"
+
+        # Por ahora, versión no cacheada
+        return await async_class_participation_repository.get_by_member_async(
+            db, member_id=member_id, skip=skip, limit=limit, gym_id=gym_id
+        )
+
+    async def get_member_upcoming_classes(
+        self, db: AsyncSession, member_id: int, gym_id: int, skip: int = 0, limit: int = 100,
+        redis_client: Optional[Redis] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Get upcoming classes for a member (with Redis cache).
+        """
+        # Si no hay Redis, usar consulta directa
+        if not redis_client:
+            return await self._get_member_upcoming_classes_direct(db, member_id, gym_id, skip, limit)
+
+        # Crear clave de caché
+        cache_key = f"schedule:member_upcoming:member:{member_id}:gym:{gym_id}:skip:{skip}:limit:{limit}"
+
+        # Función para obtener datos de la BD
+        async def db_fetch():
+            logger.info(f"Cache miss para upcoming classes: member={member_id}, gym={gym_id}")
+            return await self._get_member_upcoming_classes_direct(db, member_id, gym_id, skip, limit)
+
+        # Intentar obtener de caché o generar nuevos datos
+        try:
+            cached_data = await redis_client.get(cache_key)
+
+            if cached_data:
+                # Cache hit
+                logger.debug(f"Cache HIT para upcoming classes: {cache_key}")
+                data = json.loads(cached_data)
+
+                # Reconstruir objetos desde cache
+                result = []
+                for item in data:
+                    result.append({
+                        "participation": ClassParticipationSchema.model_validate(item["participation"]),
+                        "session": ClassSessionSchema.model_validate(item["session"]),
+                        "gym_class": ClassSchema.model_validate(item["gym_class"])
+                    })
+                return result
+
+            # Cache miss - obtener de BD
+            logger.debug(f"Cache MISS para upcoming classes: {cache_key}")
+            raw_data = await db_fetch()
+
+            # Serializar para cache (convertir objetos Pydantic a dict)
+            cache_data = []
+            for item in raw_data:
+                cache_data.append({
+                    "participation": item["participation"].model_dump(),
+                    "session": item["session"].model_dump(),
+                    "gym_class": item["gym_class"].model_dump()
+                })
+
+            # Guardar en caché (TTL: 5 minutos para datos dinámicos)
+            await redis_client.set(
+                cache_key,
+                json.dumps(cache_data, default=str),
+                ex=300  # 5 minutos TTL
+            )
+
+            logger.debug(f"Datos guardados en cache: {cache_key}")
+            return raw_data
+
+        except Exception as e:
+            logger.error(f"Error en cache para upcoming classes: {e}", exc_info=True)
+            # Fallback a consulta directa
+            return await self._get_member_upcoming_classes_direct(db, member_id, gym_id, skip, limit)
+
+    async def _get_member_upcoming_classes_direct(
+        self, db: AsyncSession, member_id: int, gym_id: int, skip: int = 0, limit: int = 100
+    ) -> List[Dict[str, Any]]:
+        """
+        Consulta directa a BD para obtener clases próximas del usuario (método privado).
+        """
+        from datetime import timezone
+        now = datetime.now(timezone.utc)
+
+        # Get the member's upcoming registrations where start_time > now
+        stmt = (
+            select(ClassParticipation, ClassSession, Class)
+            .join(ClassSession, ClassParticipation.session_id == ClassSession.id)
+            .join(Class, ClassSession.class_id == Class.id)
+            .where(
+                ClassParticipation.member_id == member_id,
+                ClassParticipation.gym_id == gym_id,
+                ClassSession.start_time > now,
+                ClassParticipation.status == ClassParticipationStatus.REGISTERED
+            )
+            .order_by(ClassSession.start_time.asc())
+            .offset(skip)
+            .limit(limit)
+        )
+
+        result_exec = await db.execute(stmt)
+        upcoming_participations = result_exec.all()
+
+        # Format the results with proper serialization
+        result = []
+        for participation, session, gym_class in upcoming_participations:
+            result.append({
+                "participation": ClassParticipationSchema.model_validate(participation),
+                "session": ClassSessionSchema.model_validate(session),
+                "gym_class": ClassSchema.model_validate(gym_class)
+            })
+
+        return result
+
+    async def get_member_attendance_history(
+        self, db: AsyncSession, member_id: int, gym_id: int,
+        start_date: Optional[datetime] = None, end_date: Optional[datetime] = None,
+        skip: int = 0, limit: int = 100, redis_client: Optional[Redis] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Get attendance history for a member.
+        """
+        stmt = (
+            select(ClassParticipation, ClassSession, Class)
+            .join(ClassSession, ClassParticipation.session_id == ClassSession.id)
+            .join(Class, ClassSession.class_id == Class.id)
+            .where(
+                ClassParticipation.member_id == member_id,
+                ClassParticipation.gym_id == gym_id,
+                ClassSession.start_time <= datetime.utcnow()
+            )
+        )
+
+        # Apply date filters if provided
+        if start_date:
+            stmt = stmt.where(ClassSession.start_time >= start_date)
+        if end_date:
+            stmt = stmt.where(ClassSession.start_time <= end_date)
+
+        # Order by most recent first
+        stmt = stmt.order_by(ClassSession.start_time.desc())
+
+        # Apply pagination
+        stmt = stmt.offset(skip).limit(limit)
+
+        result_exec = await db.execute(stmt)
+        history = result_exec.all()
+
+        # Format the results
+        result = []
+        for participation, session, gym_class in history:
+            result.append({
+                "participation": participation,
+                "session": session,
+                "gym_class": gym_class
+            })
+
+        return result
+
+    async def _invalidate_session_caches_from_participation(self, session_id: int, gym_id: int, redis_client: Optional[Redis] = None, trainer_id: Optional[int] = None, class_id: Optional[int] = None):
+        """
+        Invalida las cachés relacionadas con una sesión específica cuando cambia una participación.
+        """
+        if not redis_client:
+            return
+
+        keys_to_delete = []
+        patterns_to_delete = []
+
+        # Claves de detalle de la sesión
+        keys_to_delete.append(f"schedule:session:detail:{session_id}")
+        keys_to_delete.append(f"schedule:session:detail_with_availability:{session_id}")
+
+        # Patrón de participantes de esta sesión específica
+        patterns_to_delete.append(f"schedule:participations:session:{session_id}:gym:{gym_id}:*")
+
+        # Invalidar listas generales donde la disponibilidad podría cambiar
+        patterns_to_delete.append(f"schedule:sessions:upcoming:gym:{gym_id}:*")
+        patterns_to_delete.append(f"schedule:sessions:range:gym:{gym_id}:*")
+        if trainer_id:
+             patterns_to_delete.append(f"schedule:sessions:trainer:{trainer_id}:gym:{gym_id}:*")
+        if class_id:
+             patterns_to_delete.append(f"schedule:sessions:class:{class_id}:gym:{gym_id}:*")
+
+        try:
+            if keys_to_delete:
+                deleted_keys = await redis_client.delete(*keys_to_delete)
+                logger.debug(f"Invalidated {deleted_keys} session detail keys from participation change: {keys_to_delete}")
+
+            deleted_pattern_count = 0
+            for pattern in patterns_to_delete:
+                deleted_count = await cache_service.delete_pattern(redis_client, pattern)
+                deleted_pattern_count += deleted_count
+                logger.debug(f"Invalidated {deleted_count} keys with pattern from participation change: {pattern}")
+            logger.debug(f"Total invalidated keys from patterns due to participation change: {deleted_pattern_count}")
+
+        except Exception as e:
+             logger.error(f"Error invalidating session cache {session_id} from participation change: {e}", exc_info=True)
+
 
 # Instantiate services
 async_gym_hours_service = AsyncGymHoursService()
 async_gym_special_hours_service = AsyncGymSpecialHoursService()
 async_category_service = AsyncClassCategoryService()
 async_class_service = AsyncClassService()
+async_class_session_service = AsyncClassSessionService()
+async_class_participation_service = AsyncClassParticipationService()
