@@ -2,12 +2,14 @@ from app.api.v1.endpoints.auth.common import *
 from app.repositories.user import user_repository
 from fastapi import APIRouter, Depends, HTTPException, Security, BackgroundTasks, status
 from sqlalchemy.ext.asyncio import AsyncSession
+from redis.asyncio import Redis
 from typing import Any, Dict
 
 from app.core.auth0_fastapi import auth
 from app.models.user import UserRole
 from app.services.auth0_sync import auth0_sync_service
 from app.db.session import get_async_db
+from app.db.redis_client import get_redis_client
 from app.services.user import user_service
 from app.services.cache_service import cache_service
 from app.core.security import verify_auth0_webhook_secret
@@ -360,7 +362,7 @@ async def create_platform_admin(
     request_data: CreateAdminRequest,
     db: AsyncSession = Depends(get_async_db),
     current_user: Auth0User = Security(auth.get_user, scopes=["user:write"]),
-    redis_client: redis.Redis = Depends(get_redis_client)
+    redis_client: Redis = Depends(get_redis_client)
 ):
     """
     Creates a platform administrator (super admin) user.
@@ -461,7 +463,7 @@ async def migrate_roles_to_auth0(
     db: AsyncSession = Depends(get_async_db),
     background_tasks: BackgroundTasks,
     current_user: Auth0User = Security(auth.get_user, scopes=["tenant:admin"]),
-    redis_client: redis.Redis = Depends(get_redis_client)
+    redis_client: Redis = Depends(get_redis_client)
 ) -> Any:
     """
     [SUPER_ADMIN] Migra el rol más alto de todos los usuarios a Auth0.
