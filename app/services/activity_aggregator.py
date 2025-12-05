@@ -360,7 +360,7 @@ class ActivityAggregator:
                     ClassSession.scheduled_at >= start_of_day,
                     ClassParticipation.attended == True
                 )
-            ).group_by(ClassParticipation.user_id).all()
+            ).group_by(ClassParticipation.member_id).all()
 
             attendance_values = [row[0] for row in attendance_query if row[0] > 0]
 

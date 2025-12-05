@@ -1081,7 +1081,7 @@ class UserHealthService:
             select(func.count(ClassParticipation.id))
             .where(
                 and_(
-                    ClassParticipation.user_id == user_id,
+                    ClassParticipation.member_id == user_id,
                     ClassParticipation.gym_id == gym_id,
                     ClassParticipation.status == ClassParticipationStatus.ATTENDED,
                     ClassParticipation.attendance_time >= start_of_month

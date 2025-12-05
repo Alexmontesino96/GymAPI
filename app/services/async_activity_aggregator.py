@@ -420,7 +420,7 @@ class AsyncActivityAggregator:
                         ClassParticipation.attended == True
                     )
                 )
-                .group_by(ClassParticipation.user_id)
+                .group_by(ClassParticipation.member_id)
             )
             attendance_results = result.all()
             attendance_values = [row[0] for row in attendance_results if row[0] > 0]
