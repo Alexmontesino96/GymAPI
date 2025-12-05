@@ -13,8 +13,8 @@ from app.db.session import get_async_db
 from app.core.tenant import get_tenant_id
 from app.core.auth0_fastapi import get_current_user, get_current_db_user, Auth0User
 from app.models.user import User
-from app.services.story_service import StoryService
-from app.services.media_service import get_media_service
+from app.services.async_story_service import async_story_service
+from app.services.async_media_service import async_media_service
 from app.schemas.story import (
     StoryCreate,
     StoryResponse,
@@ -71,8 +71,8 @@ async def create_story(
         media_type = "video" if media.content_type.startswith("video/") else "image"
 
         # Subir media usando MediaService
-        media_service = get_media_service()
-        media_result = await media_service.upload_story_media(
+        media_result = await async_media_service.upload_story_media(
+            db=db,
             gym_id=gym_id,
             user_id=db_user.id,  # Usar ID numérico de BD, no Auth0 ID
             file=media,
@@ -105,8 +105,8 @@ async def create_story(
     )
 
     # Crear historia usando el servicio
-    service = StoryService(db)
-    story = await service.create_story(
+    story = await async_story_service.create_story(
+        db=db,
         gym_id=gym_id,
         user_id=db_user.id,  # Usar ID numérico de BD
         story_data=story_data
@@ -145,8 +145,8 @@ async def get_stories_feed(
     - **filter_type**: Filtrar por tipo (all, following, close_friends)
     - **story_types**: Filtrar por tipos de historia específicos
     """
-    service = StoryService(db)
-    feed = await service.get_stories_feed(
+    feed = await async_story_service.get_stories_feed(
+        db=db,
         gym_id=gym_id,
         user_id=db_user.id,  # ID numérico de BD
         limit=limit,
@@ -175,8 +175,8 @@ async def get_user_stories(
     if include_expired and user_id != db_user.id:
         include_expired = False
 
-    service = StoryService(db)
-    stories = await service.get_user_stories(
+    stories = await async_story_service.get_user_stories(
+        db=db,
         target_user_id=user_id,
         gym_id=gym_id,
         requesting_user_id=db_user.id,  # ID numérico
@@ -193,7 +193,7 @@ async def get_user_stories(
             **story.__dict__,
             is_expired=story.is_expired,
             is_own_story=(story.user_id == db_user.id),
-            has_viewed=await service._has_viewed_story(story.id, db_user.id),  # ID numérico
+            has_viewed=await async_story_service._has_viewed_story(db, story.id, db_user.id),  # ID numérico
             has_reacted=False,  # TODO: Implementar verificación de reacción
             user_info={
                 "id": story_user.id if story_user else user_id,
@@ -220,8 +220,8 @@ async def get_story(
     """
     Obtener una historia específica por ID.
     """
-    service = StoryService(db)
-    story = await service.get_story_by_id(
+    story = await async_story_service.get_story_by_id(
+        db=db,
         story_id=story_id,
         gym_id=gym_id,
         user_id=db_user.id  # ID numérico
@@ -234,7 +234,7 @@ async def get_story(
         **story.__dict__,
         is_expired=story.is_expired,
         is_own_story=(story.user_id == db_user.id),
-        has_viewed=await service._has_viewed_story(story.id, db_user.id),  # ID numérico
+        has_viewed=await async_story_service._has_viewed_story(db, story.id, db_user.id),  # ID numérico
         has_reacted=False,  # TODO: Implementar verificación
         user_info={
             "id": story_user.id if story_user else story.user_id,
@@ -255,8 +255,8 @@ async def mark_story_viewed(
     """
     Marcar una historia como vista.
     """
-    service = StoryService(db)
-    await service.mark_story_as_viewed(
+    await async_story_service.mark_story_as_viewed(
+        db=db,
         story_id=story_id,
         gym_id=gym_id,
         user_id=db_user.id,  # ID numérico
@@ -277,8 +277,8 @@ async def get_story_viewers(
     Obtener la lista de usuarios que vieron una historia.
     Solo el dueño de la historia puede ver esta información.
     """
-    service = StoryService(db)
-    story = await service.get_story_by_id(
+    story = await async_story_service.get_story_by_id(
+        db=db,
         story_id=story_id,
         gym_id=gym_id,
         user_id=db_user.id  # ID numérico
@@ -318,8 +318,8 @@ async def add_story_reaction(
     """
     Agregar una reacción a una historia.
     """
-    service = StoryService(db)
-    reaction = await service.add_reaction(
+    reaction = await async_story_service.add_reaction(
+        db=db,
         story_id=story_id,
         gym_id=gym_id,
         user_id=db_user.id,
@@ -343,8 +343,8 @@ async def delete_story(
     """
     Eliminar una historia (solo el dueño puede eliminar).
     """
-    service = StoryService(db)
-    await service.delete_story(
+    await async_story_service.delete_story(
+        db=db,
         story_id=story_id,
         gym_id=gym_id,
         user_id=db_user.id
@@ -364,8 +364,8 @@ async def update_story(
     """
     Actualizar una historia (solo caption y privacidad).
     """
-    service = StoryService(db)
-    story = await service.get_story_by_id(
+    story = await async_story_service.get_story_by_id(
+        db=db,
         story_id=story_id,
         gym_id=gym_id,
         user_id=db_user.id
@@ -415,8 +415,8 @@ async def report_story(
     """
     Reportar una historia por contenido inapropiado.
     """
-    service = StoryService(db)
-    report = await service.report_story(
+    report = await async_story_service.report_story(
+        db=db,
         story_id=story_id,
         gym_id=gym_id,
         user_id=db_user.id,
@@ -440,8 +440,8 @@ async def create_story_highlight(
     """
     Crear un highlight de historias (colección de historias destacadas).
     """
-    service = StoryService(db)
-    highlight = await service.create_highlight(
+    highlight = await async_story_service.create_highlight(
+        db=db,
         gym_id=gym_id,
         user_id=db_user.id,
         highlight_data=highlight_data

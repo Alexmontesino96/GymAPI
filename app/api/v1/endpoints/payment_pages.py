@@ -9,7 +9,7 @@ from fastapi import APIRouter, Request, Query, Depends, HTTPException
 from fastapi.responses import HTMLResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.session import get_async_db
-from app.services.stripe_service import stripe_service
+from app.services.async_stripe_service import async_stripe_service
 import logging
 
 logger = logging.getLogger(__name__)
@@ -45,7 +45,7 @@ async def payment_success_page(
     if session_id:
         try:
             logger.info(f"🔄 Procesando pago automáticamente para session_id: {session_id}")
-            result = await stripe_service.handle_successful_payment(db, session_id)
+            result = await async_stripe_service.handle_successful_payment(db, session_id)
             
             if result.success:
                 payment_processed = True

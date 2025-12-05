@@ -26,8 +26,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth0_fastapi import auth, get_current_user, get_current_user_with_permissions, Auth0User
 from app.db.session import get_async_db
 from app.models.user import User, UserRole
-from app.services.trainer_member import trainer_member_service
-from app.services.user import user_service
+from app.services.async_trainer_member import async_trainer_member_service
+from app.services.async_user import async_user_service
 from app.schemas.trainer_member import (
     TrainerMemberRelationship,
     TrainerMemberRelationshipCreate,
@@ -78,7 +78,7 @@ async def create_trainer_member_relationship(
             detail="Token does not contain user information (sub)",
         )
     
-    db_user = user_service.get_user_by_auth0_id(db, auth0_id=auth0_id)
+    db_user = await async_user_service.get_user_by_auth0_id(db, auth0_id=auth0_id)
     if not db_user:
         raise HTTPException(
             status_code=404,
@@ -86,7 +86,7 @@ async def create_trainer_member_relationship(
         )
     
     # Create the relationship
-    relationship = trainer_member_service.create_relationship(
+    relationship = await async_trainer_member_service.create_relationship(
         db, relationship_in=relationship_in, created_by_id=db_user.id
     )
     return relationship
@@ -117,7 +117,7 @@ async def read_relationships(
     Returns:
         List[TrainerMemberRelationship]: List of all relationships
     """
-    relationships = trainer_member_service.get_all_relationships(db, skip=skip, limit=limit)
+    relationships = await async_trainer_member_service.get_all_relationships(db, skip=skip, limit=limit)
     return relationships
 
 
@@ -158,7 +158,7 @@ async def read_members_by_trainer(
     """
     # Still verify if the user is the trainer or an admin
     auth0_id = user.id
-    db_user = user_service.get_user_by_auth0_id(db, auth0_id=auth0_id)
+    db_user = await async_user_service.get_user_by_auth0_id(db, auth0_id=auth0_id)
     
     if not db_user:
         raise HTTPException(
@@ -173,7 +173,7 @@ async def read_members_by_trainer(
         )
     
     # Get trainer's members
-    members = trainer_member_service.get_members_by_trainer(
+    members = await async_trainer_member_service.get_members_by_trainer(
         db, trainer_id=trainer_id, skip=skip, limit=limit
     )
     return members
@@ -213,7 +213,7 @@ async def read_trainers_by_member(
     """
     # Still verify if the user is the member or an admin
     auth0_id = user.id
-    db_user = user_service.get_user_by_auth0_id(db, auth0_id=auth0_id)
+    db_user = await async_user_service.get_user_by_auth0_id(db, auth0_id=auth0_id)
     
     if not db_user:
         raise HTTPException(
@@ -228,7 +228,7 @@ async def read_trainers_by_member(
         )
     
     # Get member's trainers
-    trainers = trainer_member_service.get_trainers_by_member(
+    trainers = await async_trainer_member_service.get_trainers_by_member(
         db, member_id=member_id, skip=skip, limit=limit
     )
     return trainers
@@ -264,7 +264,7 @@ async def read_my_trainers(
         HTTPException: 404 if user not found, 400 if not a member
     """
     auth0_id = user.id
-    db_user = user_service.get_user_by_auth0_id(db, auth0_id=auth0_id)
+    db_user = await async_user_service.get_user_by_auth0_id(db, auth0_id=auth0_id)
     
     if not db_user:
         raise HTTPException(
@@ -280,7 +280,7 @@ async def read_my_trainers(
         )
     
     # Get member's trainers
-    trainers = trainer_member_service.get_trainers_by_member(
+    trainers = await async_trainer_member_service.get_trainers_by_member(
         db, member_id=db_user.id, skip=skip, limit=limit
     )
     return trainers
@@ -316,14 +316,14 @@ async def read_my_members(
         HTTPException: 404 if user not found, 400 if not a trainer
     """
     auth0_id = user.id
-    db_user = user_service.get_user_by_auth0_id(db, auth0_id=auth0_id)
-    
+    db_user = await async_user_service.get_user_by_auth0_id(db, auth0_id=auth0_id)
+
     if not db_user:
         raise HTTPException(
             status_code=404,
             detail="User not found in local database",
         )
-    
+
     # Verify if the user is a trainer
     if db_user.role != UserRole.TRAINER:
         raise HTTPException(
@@ -332,7 +332,7 @@ async def read_my_members(
         )
     
     # Get trainer's members
-    members = trainer_member_service.get_members_by_trainer(
+    members = await async_trainer_member_service.get_members_by_trainer(
         db, trainer_id=db_user.id, skip=skip, limit=limit
     )
     return members
@@ -369,14 +369,14 @@ async def read_relationship(
     Raises:
         HTTPException: 404 if user not found, 403 if unauthorized
     """
-    relationship = trainer_member_service.get_relationship(db, relationship_id=relationship_id)
+    relationship = await async_trainer_member_service.get_relationship(db, relationship_id=relationship_id)
     
     if not relationship or relationship.gym_id != current_gym.id:
         raise HTTPException(status_code=404, detail="Relationship not found in this gym")
     
     # Still verify if the user is part of the relationship or an admin
     auth0_id = user.id
-    db_user = user_service.get_user_by_auth0_id(db, auth0_id=auth0_id)
+    db_user = await async_user_service.get_user_by_auth0_id(db, auth0_id=auth0_id)
     
     if not db_user:
         raise HTTPException(
@@ -426,7 +426,7 @@ async def update_relationship(
         HTTPException: 404 if relationship or user not found, 403 if unauthorized
     """
     # Get the relationship
-    relationship = trainer_member_service.get_relationship(db, relationship_id=relationship_id)
+    relationship = await async_trainer_member_service.get_relationship(db, relationship_id=relationship_id)
     if not relationship:
         raise HTTPException(
             status_code=404,
@@ -435,7 +435,7 @@ async def update_relationship(
     
     # Still verify if the user is the trainer or an admin
     auth0_id = user.id
-    db_user = user_service.get_user_by_auth0_id(db, auth0_id=auth0_id)
+    db_user = await async_user_service.get_user_by_auth0_id(db, auth0_id=auth0_id)
     
     if not db_user:
         raise HTTPException(
@@ -451,7 +451,7 @@ async def update_relationship(
         )
     
     # Update the relationship
-    updated_relationship = trainer_member_service.update_relationship(
+    updated_relationship = await async_trainer_member_service.update_relationship(
         db, relationship_id=relationship_id, relationship_in=relationship_update
     )
     return updated_relationship
@@ -485,7 +485,7 @@ async def delete_relationship(
         HTTPException: 404 if relationship or user not found, 403 if unauthorized
     """
     # Get the relationship
-    relationship = trainer_member_service.get_relationship(db, relationship_id=relationship_id)
+    relationship = await async_trainer_member_service.get_relationship(db, relationship_id=relationship_id)
     if not relationship:
         raise HTTPException(
             status_code=404,
@@ -494,7 +494,7 @@ async def delete_relationship(
     
     # Still verify if the user is part of the relationship or an admin
     auth0_id = user.id
-    db_user = user_service.get_user_by_auth0_id(db, auth0_id=auth0_id)
+    db_user = await async_user_service.get_user_by_auth0_id(db, auth0_id=auth0_id)
     
     if not db_user:
         raise HTTPException(
@@ -512,7 +512,7 @@ async def delete_relationship(
         )
     
     # Delete the relationship
-    deleted_relationship = trainer_member_service.delete_relationship(
+    deleted_relationship = await async_trainer_member_service.delete_relationship(
         db, relationship_id=relationship_id
     )
     return deleted_relationship 

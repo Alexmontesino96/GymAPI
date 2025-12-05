@@ -4,8 +4,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_async_db
 from app.core.auth0_fastapi import get_current_user, Auth0User, auth
-from app.services.module import module_service
-from app.services.billing_module import billing_module_service
+from app.services.async_module import async_module_service
+from app.services.async_billing_module import async_billing_module_service
 from app.schemas.module import Module, ModuleCreate, ModuleUpdate, ModuleStatus, GymModuleList
 from app.core.tenant import get_tenant_id, verify_gym_admin_access
 from app.schemas.gym import GymSchema
@@ -31,8 +31,8 @@ async def get_active_modules(
     para mostrar en la interfaz.
     """
     # Obtener todos los módulos y su estado para este gimnasio
-    all_modules = module_service.get_modules(db)
-    active_modules = module_service.get_active_modules_for_gym(db, gym_id)
+    all_modules = await async_module_service.get_modules(db)
+    active_modules = await async_module_service.get_active_modules_for_gym(db, gym_id)
     active_module_ids = {m.id for m in active_modules}
     
     # Construir respuesta
@@ -63,7 +63,7 @@ async def activate_module(
     Solo los administradores pueden activar módulos.
     """
     # Verificar que el módulo existe
-    module = module_service.get_module_by_code(db, module_code)
+    module = await async_module_service.get_module_by_code(db, module_code)
     if not module:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -71,7 +71,7 @@ async def activate_module(
         )
     
     # Activar módulo - Verificación de admin ya realizada por verify_gym_admin_access
-    if module_service.activate_module_for_gym(db, gym_id, module_code):
+    if await async_module_service.activate_module_for_gym(db, gym_id, module_code):
         return {"status": "success", "message": f"Módulo {module_code} activado correctamente"}
     else:
         raise HTTPException(
@@ -93,15 +93,15 @@ async def deactivate_module(
     Solo los administradores pueden desactivar módulos.
     """
     # Verificar que el módulo existe
-    module = module_service.get_module_by_code(db, module_code)
+    module = await async_module_service.get_module_by_code(db, module_code)
     if not module:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Módulo con código {module_code} no encontrado"
         )
-    
+
     # Desactivar módulo - Verificación de admin ya realizada por verify_gym_admin_access
-    if module_service.deactivate_module_for_gym(db, gym_id, module_code):
+    if await async_module_service.deactivate_module_for_gym(db, gym_id, module_code):
         return {"status": "success", "message": f"Módulo {module_code} desactivado correctamente"}
     else:
         raise HTTPException(
@@ -130,7 +130,7 @@ async def activate_billing_module(
     
     Solo los administradores pueden activar el módulo billing.
     """
-    result = await billing_module_service.activate_billing_for_gym(
+    result = await async_billing_module_service.activate_billing_for_gym(
         db, gym_id, validate_stripe_config=True
     )
     
@@ -160,7 +160,7 @@ async def deactivate_billing_module(
         
     Solo los administradores pueden desactivar el módulo billing.
     """
-    result = await billing_module_service.deactivate_billing_for_gym(
+    result = await async_billing_module_service.deactivate_billing_for_gym(
         db, gym_id, preserve_stripe_data=preserve_data
     )
     
@@ -190,7 +190,7 @@ async def get_billing_module_status(
     - Estadísticas de planes y suscripciones
     - Capacidades disponibles
     """
-    status_info = await billing_module_service.get_billing_status(db, gym_id)
+    status_info = await async_billing_module_service.get_billing_status(db, gym_id)
     
     return {
         "gym_id": gym_id,

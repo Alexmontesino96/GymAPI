@@ -8,14 +8,13 @@ agregadas sin exponer identidades de usuarios.
 from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect, HTTPException, status
 from typing import List, Dict, Optional
 from redis.asyncio import Redis
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 import json
 import logging
 
 from app.db.redis_client import get_redis_client
-from app.db.session import get_db
 from app.core.tenant import get_tenant_id
-from app.services.activity_feed_service import ActivityFeedService
+from app.services.async_activity_feed_service import async_activity_feed_service
 from app.services.activity_aggregator import ActivityAggregator
 from app.core.dependencies import module_enabled
 
@@ -46,8 +45,7 @@ async def get_activity_feed(
         - has_more: Si hay más actividades disponibles
     """
     try:
-        feed_service = ActivityFeedService(redis)
-        activities = await feed_service.get_feed(gym_id, limit, offset)
+        activities = await async_activity_feed_service.get_feed(redis, gym_id, limit, offset)
 
         return {
             "activities": activities,
@@ -82,8 +80,7 @@ async def get_realtime_stats(
         Resumen con estadísticas actuales anónimas
     """
     try:
-        feed_service = ActivityFeedService(redis)
-        summary = await feed_service.get_realtime_summary(gym_id)
+        summary = await async_activity_feed_service.get_realtime_summary(redis, gym_id)
 
         return {
             "status": "success",
@@ -114,8 +111,7 @@ async def get_motivational_insights(
         Lista de insights motivacionales
     """
     try:
-        feed_service = ActivityFeedService(redis)
-        insights = await feed_service.generate_motivational_insights(gym_id)
+        insights = await async_activity_feed_service.generate_motivational_insights(redis, gym_id)
 
         return {
             "insights": insights,
@@ -162,8 +158,8 @@ async def get_anonymous_rankings(
         )
 
     try:
-        feed_service = ActivityFeedService(redis)
-        rankings = await feed_service.get_anonymous_rankings(
+        rankings = await async_activity_feed_service.get_anonymous_rankings(
+            redis=redis,
             gym_id=gym_id,
             ranking_type=ranking_type,
             period=period,
@@ -214,9 +210,8 @@ async def generate_test_activity(
         Actividad generada
     """
     try:
-        feed_service = ActivityFeedService(redis)
-
-        activity = await feed_service.publish_realtime_activity(
+        activity = await async_activity_feed_service.publish_realtime_activity(
+            redis=redis,
             gym_id=gym_id,
             activity_type=activity_type,
             count=count,

@@ -25,9 +25,9 @@ from app.schemas.post_interaction import (
     CommentCreate, CommentUpdate, CommentResponse, CommentsListResponse, CommentCreateResponse,
     LikeToggleResponse, PostLikesListResponse, PostReportCreate, ReportCreateResponse
 )
-from app.services.post_service import PostService
+from app.services.async_post_service import async_post_service
 from app.services.post_interaction_service import PostInteractionService
-from app.services.feed_ranking_service import FeedRankingService
+from app.services.async_feed_ranking_service import async_feed_ranking_service
 from app.repositories.post_repository import PostRepository
 
 logger = logging.getLogger(__name__)
@@ -104,8 +104,8 @@ async def create_post(
                 detail=f"Valores inválidos: {str(e)}"
             )
 
-        service = PostService(db)
-        post = await service.create_post(
+        post = await async_post_service.create_post(
+            db=db,
             gym_id=gym_id,
             user_id=db_user.id,
             post_data=post_data,
@@ -134,8 +134,7 @@ async def get_post(
     """
     Obtiene un post por ID.
     """
-    service = PostService(db)
-    return await service.get_post_by_id(post_id, gym_id, db_user.id)
+    return await async_post_service.get_post_by_id(db, post_id, gym_id, db_user.id)
 
 
 @router.get("/user/{user_id}", response_model=PostListResponse)
@@ -150,8 +149,8 @@ async def get_user_posts(
     """
     Obtiene los posts de un usuario específico.
     """
-    service = PostService(db)
-    posts = await service.get_user_posts(
+    posts = await async_post_service.get_user_posts(
+        db=db,
         target_user_id=user_id,
         gym_id=gym_id,
         requesting_user_id=db_user.id,
@@ -183,8 +182,8 @@ async def update_post(
     """
     Actualiza un post (solo caption y location son editables).
     """
-    service = PostService(db)
-    return await service.update_post(
+    return await async_post_service.update_post(
+        db=db,
         post_id=post_id,
         gym_id=gym_id,
         user_id=db_user.id,
@@ -202,8 +201,7 @@ async def delete_post(
     """
     Elimina un post.
     """
-    service = PostService(db)
-    await service.delete_post(post_id, gym_id, db_user.id)
+    await async_post_service.delete_post(db, post_id, gym_id, db_user.id)
     return None
 
 
@@ -220,8 +218,8 @@ async def get_timeline_feed(
     """
     Obtiene el feed principal (timeline cronológico).
     """
-    service = PostService(db)
-    posts = await service.get_gym_posts(
+    posts = await async_post_service.get_gym_posts(
+        db=db,
         gym_id=gym_id,
         user_id=db_user.id,
         limit=limit,
@@ -250,8 +248,8 @@ async def get_explore_feed(
     """
     Obtiene el feed de exploración (posts más populares).
     """
-    service = PostService(db)
-    posts = await service.get_gym_posts(
+    posts = await async_post_service.get_gym_posts(
+        db=db,
         gym_id=gym_id,
         user_id=db_user.id,
         limit=limit,
@@ -339,8 +337,8 @@ async def get_ranked_feed(
 
     # 4. Calcular scores para todos los candidatos
     try:
-        ranking_service = FeedRankingService(db)
-        feed_scores = ranking_service.calculate_feed_scores_batch(
+        feed_scores = await async_feed_ranking_service.calculate_feed_scores_batch(
+            db=db,
             user_id=db_user.id,
             gym_id=gym_id,
             posts=candidate_posts
@@ -367,7 +365,6 @@ async def get_ranked_feed(
     paginated_scores = feed_scores[offset:offset + page_size]
 
     # 6. Enriquecer posts con información del usuario
-    post_service = PostService(db)
     enriched_posts = []
 
     for feed_score in paginated_scores:
@@ -457,8 +454,7 @@ async def get_posts_by_location(
     )
 
     # Enriquecer posts con user_info
-    service = PostService(db)
-    enriched_posts = await service._enrich_posts_bulk(posts, db_user.id)
+    enriched_posts = await async_post_service._enrich_posts_bulk(db, posts, db_user.id)
 
     return PostListResponse(
         posts=enriched_posts,
@@ -695,8 +691,7 @@ async def get_posts_by_event(
     )
 
     # Enriquecer posts con user_info
-    service = PostService(db)
-    enriched_posts = await service._enrich_posts_bulk(posts, db_user.id)
+    enriched_posts = await async_post_service._enrich_posts_bulk(db, posts, db_user.id)
 
     return PostListResponse(
         posts=enriched_posts,
@@ -730,8 +725,7 @@ async def get_posts_by_session(
     )
 
     # Enriquecer posts con user_info
-    service = PostService(db)
-    enriched_posts = await service._enrich_posts_bulk(posts, db_user.id)
+    enriched_posts = await async_post_service._enrich_posts_bulk(db, posts, db_user.id)
 
     return PostListResponse(
         posts=enriched_posts,
@@ -764,8 +758,7 @@ async def get_my_mentions(
     )
 
     # Enriquecer posts con user_info
-    service = PostService(db)
-    enriched_posts = await service._enrich_posts_bulk(posts, db_user.id)
+    enriched_posts = await async_post_service._enrich_posts_bulk(db, posts, db_user.id)
 
     return PostListResponse(
         posts=enriched_posts,
