@@ -26,12 +26,13 @@ from app.models.schedule import (
     ClassSessionStatus,
     ClassParticipationStatus
 )
-from app.services.schedule import (
-    gym_hours_service,
-    gym_special_hours_service,
-    class_service,
-    class_session_service,
-    class_participation_service
+from app.services.async_schedule import (
+    async_gym_hours_service as gym_hours_service,
+    async_gym_special_hours_service as gym_special_hours_service,
+    async_class_service as class_service,
+    async_class_session_service as class_session_service,
+    async_class_participation_service as class_participation_service,
+    populate_sessions_with_timezone
 )
 from app.services.user import user_service
 from app.schemas.schedule import (

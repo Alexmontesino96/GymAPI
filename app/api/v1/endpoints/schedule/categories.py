@@ -6,7 +6,7 @@ from app.models.user_gym import GymRoleType
 from app.core.tenant import verify_gym_access, verify_trainer_role, verify_admin_role, GymSchema
 from fastapi import APIRouter, Depends, Body, Path, Security, HTTPException, status, Request
 from typing import List, Optional, Any
-from app.services.schedule import category_service
+from app.services.async_schedule import async_async_category_service
 from app.db.session import get_async_db
 from app.core.auth0_fastapi import Auth0User, auth
 from app.services.user import user_service
@@ -50,7 +50,7 @@ async def get_categories(
         HTTPException 403: Token lacks required scope or user doesn't belong to the gym.
         HTTPException 404: Gym not found.
     """
-    return await category_service.get_categories_by_gym(db, gym_id=current_gym.id, active_only=active_only, redis_client=redis_client)
+    return await async_category_service.get_categories_by_gym(db, gym_id=current_gym.id, active_only=active_only, redis_client=redis_client)
 
 
 @router.get("/categories/{category_id}", response_model=ClassCategoryCustomSchema)
@@ -88,7 +88,7 @@ async def get_category(
         HTTPException 403: Token lacks required scope or user doesn't belong to the gym.
         HTTPException 404: Gym or Category not found, or category doesn't belong to this gym.
     """
-    return await category_service.get_category(db, category_id=category_id, gym_id=current_gym.id, redis_client=redis_client)
+    return await async_category_service.get_category(db, category_id=category_id, gym_id=current_gym.id, redis_client=redis_client)
 
 
 @router.post("/categories", response_model=ClassCategoryCustomSchema, status_code=status.HTTP_201_CREATED)
@@ -142,7 +142,7 @@ async def create_category(
 
     created_by_id = db_user.id if db_user else None
 
-    return await category_service.create_category(
+    return await async_category_service.create_category(
         db, category_data=category_data, gym_id=current_gym.id, created_by_id=created_by_id, redis_client=redis_client
     )
 
@@ -194,7 +194,7 @@ async def update_category(
         HTTPException 404: Gym or Category not found, or category doesn't belong to this gym.
         HTTPException 422: Validation error in request body.
     """
-    return await category_service.update_category(
+    return await async_category_service.update_category(
         db, category_id=category_id, category_data=category_data, gym_id=current_gym.id, redis_client=redis_client
     )
 
@@ -238,5 +238,5 @@ async def delete_category(
         HTTPException 403: Token lacks required scope or user lacks required role.
         HTTPException 404: Gym or Category not found, or category doesn't belong to this gym.
     """
-    await category_service.delete_category(db, category_id=category_id, gym_id=current_gym.id, redis_client=redis_client)
+    await async_category_service.delete_category(db, category_id=category_id, gym_id=current_gym.id, redis_client=redis_client)
     return None 

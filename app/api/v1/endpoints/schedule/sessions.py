@@ -56,7 +56,6 @@ async def get_upcoming_sessions(
     )
 
     # Poblar campos timezone para las sesiones
-    from app.services.schedule import populate_sessions_with_timezone
     sessions_with_tz = await populate_sessions_with_timezone(upcoming, current_gym.id, db)
 
     # Para cada sesión, obtener la definición de la clase y empaquetar
@@ -299,7 +298,6 @@ async def create_session(
     logger.info(f"     start_time tzinfo: {getattr(new_session.start_time, 'tzinfo', 'No tzinfo')}")
 
     # Poblar campos timezone para la nueva sesión
-    from app.services.schedule import populate_sessions_with_timezone
     sessions_with_tz = await populate_sessions_with_timezone([new_session], current_gym.id, db)
 
     # Logging de la respuesta final
@@ -420,7 +418,6 @@ async def create_recurring_sessions(
         logger.info(f"     start_time tzinfo: {getattr(first_session.start_time, 'tzinfo', 'No tzinfo')}")
 
     # Poblar campos timezone para todas las sesiones
-    from app.services.schedule import populate_sessions_with_timezone
     sessions_with_tz = await populate_sessions_with_timezone(created_sessions, current_gym.id, db)
 
     # Logging de la respuesta final
@@ -587,7 +584,6 @@ async def get_sessions_by_date_range(
         redis_client=redis_client
     )
     # Poblar campos timezone en bloque
-    from app.services.schedule import populate_sessions_with_timezone
     sessions_with_tz = await populate_sessions_with_timezone(sessions, current_gym.id, db)
 
     results: List[SessionWithClass] = []
@@ -795,7 +791,6 @@ async def get_trainer_sessions(
         redis_client=redis_client
     )
     # Poblar timezone
-    from app.services.schedule import populate_sessions_with_timezone
     sessions_with_tz = await populate_sessions_with_timezone(base, current_gym.id, db)
     from app.schemas.schedule import ClassSession
     return [ClassSession.model_validate(s) for s in sessions_with_tz]
@@ -867,7 +862,6 @@ async def get_my_sessions(
     )
 
     # Poblar campos timezone para las sesiones
-    from app.services.schedule import populate_sessions_with_timezone
     sessions_with_tz = await populate_sessions_with_timezone(trainer_sessions, current_gym.id, db)
 
     # Convertir a esquemas ClassSession

@@ -16,7 +16,10 @@ from app.schemas.schedule import (
     ApplyDefaultsRequest,
     DailyScheduleResponse
 )
-from app.services import schedule
+from app.services.async_schedule import (
+    async_gym_hours_service,
+    async_gym_special_hours_service
+)
 from app.models.user import User, UserRole
 from app.models.user_gym import UserGym, GymRoleType
 from app.db.redis_client import get_redis_client
@@ -52,7 +55,7 @@ async def get_all_gym_hours(
         HTTPException 403: Token lacks required scope or user doesn't belong to the gym.
         HTTPException 404: Gym not found.
     """
-    return await schedule.gym_hours_service.get_all_gym_hours_cached(db, gym_id=current_gym.id, redis_client=redis_client)
+    return await async_gym_hours_service.get_all_gym_hours_cached(db, gym_id=current_gym.id, redis_client=redis_client)
 
 
 @router.get("/regular/{day}", response_model=GymHours)
@@ -89,7 +92,7 @@ async def get_gym_hours_by_day(
         HTTPException 404: Gym not found.
         HTTPException 422: If the day parameter is outside the 0-6 range.
     """
-    return await schedule.gym_hours_service.get_gym_hours_by_day_cached(db, day=day, gym_id=current_gym.id, redis_client=redis_client)
+    return await async_gym_hours_service.get_gym_hours_by_day_cached(db, day=day, gym_id=current_gym.id, redis_client=redis_client)
 
 
 @router.put("/regular/{day}", response_model=GymHours)
@@ -153,7 +156,7 @@ async def update_gym_hours(
 
     # Service expects gym_id, ensures data consistency
     # The schema GymHoursUpdate doesn't include gym_id, it's added by the service layer
-    return await schedule.gym_hours_service.create_or_update_gym_hours_cached(
+    return await async_gym_hours_service.create_or_update_gym_hours_cached(
         db,
         day=day,
         gym_hours_data=gym_hours_data, # Pass the Pydantic model directly
@@ -201,7 +204,7 @@ async def get_gym_hours_by_date(
         HTTPException 404: Gym not found.
         HTTPException 422: Invalid date format.
     """
-    return await schedule.gym_hours_service.get_hours_for_date_cached(db, date_value=date, gym_id=current_gym.id, redis_client=redis_client)
+    return await async_gym_hours_service.get_hours_for_date_cached(db, date_value=date, gym_id=current_gym.id, redis_client=redis_client)
 
 
 @router.post("/apply-defaults", response_model=List[GymSpecialHours])
@@ -266,7 +269,7 @@ async def apply_defaults_to_range(
     gym_id = current_gym.id
 
     try:
-        return await schedule.gym_hours_service.apply_defaults_to_range_cached(
+        return await async_gym_hours_service.apply_defaults_to_range_cached(
             db=db,
             start_date=apply_request.start_date,
             end_date=apply_request.end_date,
@@ -329,7 +332,7 @@ async def get_schedule_for_date_range(
     gym_id = current_gym.id
 
     try:
-        schedule_data = await schedule.gym_hours_service.get_schedule_for_date_range_cached(
+        schedule_data = await async_gym_hours_service.get_schedule_for_date_range_cached(
             db=db,
             start_date=start_date,
             end_date=end_date,

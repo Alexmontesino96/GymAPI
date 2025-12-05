@@ -18,7 +18,7 @@ from app.schemas.participation_status import (
 )
 from app.models.user import User
 from app.models.user_gym import UserGym as Member
-from app.services.schedule import ClassParticipationService
+# ClassParticipationService ahora se importa desde common.py
 
 router = APIRouter()
 
@@ -441,7 +441,6 @@ async def get_my_upcoming_classes(
         db, member_id=db_user.id, skip=skip, limit=limit, gym_id=current_gym.id, redis_client=redis_client
     )
     # Poblar timezone en sesiones
-    from app.services.schedule import populate_sessions_with_timezone
     sessions = [item["session"] for item in raw_results]
     sessions_with_tz = await populate_sessions_with_timezone(sessions, current_gym.id, db)
 
@@ -591,7 +590,6 @@ async def get_member_upcoming_classes(
         db, member_id=member_id, skip=skip, limit=limit, gym_id=current_gym.id, redis_client=redis_client
     )
     # Poblar timezone en sesiones
-    from app.services.schedule import populate_sessions_with_timezone
     sessions = [item["session"] for item in raw_results]
     sessions_with_tz = await populate_sessions_with_timezone(sessions, current_gym.id, db)
 
@@ -756,7 +754,6 @@ async def get_member_attendance_history(
     
     # Formatear la respuesta usando la función importada
     # Poblar timezone en sesiones del historial
-    from app.services.schedule import populate_sessions_with_timezone
     sessions = [item["session"] for item in history]
     sessions_with_tz = await populate_sessions_with_timezone(sessions, current_gym.id, db)
     result = []
@@ -907,7 +904,6 @@ async def get_my_attendance_history(
     
     # Formatear la respuesta usando la función importada
     # Poblar timezone en sesiones del historial
-    from app.services.schedule import populate_sessions_with_timezone
     sessions = [item["session"] for item in history]
     sessions_with_tz = await populate_sessions_with_timezone(sessions, current_gym.id, db)
     result = []

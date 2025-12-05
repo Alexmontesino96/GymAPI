@@ -13,7 +13,7 @@ from app.schemas.schedule import (
     GymSpecialHoursCreate, 
     GymSpecialHoursUpdate
 )
-from app.services import schedule
+from app.services.async_schedule import async_gym_special_hours_service
 from app.models.user import User, UserRole
 from app.models.user_gym import UserGym, GymRoleType
 from app.db.redis_client import get_redis_client
@@ -65,7 +65,7 @@ async def get_special_days(
     gym_id = current_gym.id
 
     if upcoming_only:
-        return await schedule.gym_special_hours_service.get_upcoming_special_days_cached(
+        return await async_gym_special_hours_service.get_upcoming_special_days_cached(
             db=db, limit=limit, gym_id=gym_id, redis_client=redis_client
         )
     else:
@@ -109,7 +109,7 @@ async def get_special_day(
         HTTPException 403: User doesn't belong to the gym or doesn't have access to this entry.
         HTTPException 404: Gym or Special Day entry not found, or entry doesn't belong to this gym.
     """
-    special_day = await schedule.gym_special_hours_service.get_special_hours_cached(
+    special_day = await async_gym_special_hours_service.get_special_hours_cached(
         db=db, special_day_id=special_day_id, redis_client=redis_client
     )
     if not special_day:
@@ -163,7 +163,7 @@ async def get_special_day_by_date(
     """
     gym_id = current_gym.id
 
-    special_day = await schedule.gym_special_hours_service.get_special_hours_by_date_cached(
+    special_day = await async_gym_special_hours_service.get_special_hours_by_date_cached(
         db=db, date_value=date, gym_id=gym_id, redis_client=redis_client
     )
 
@@ -244,7 +244,7 @@ async def create_special_day(
     gym_id = current_gym.id
 
     # Check if entry already exists for this date
-    existing = await schedule.gym_special_hours_service.get_special_hours_by_date_cached(
+    existing = await async_gym_special_hours_service.get_special_hours_by_date_cached(
         db=db, date_value=special_day_in.date, gym_id=gym_id, redis_client=redis_client
     )
 
@@ -269,7 +269,7 @@ async def create_special_day(
                 is_closed=obj_in_data.get("is_closed", False),
                 description=obj_in_data.get("description")
             )
-            return await schedule.gym_special_hours_service.update_special_day_cached(
+            return await async_gym_special_hours_service.update_special_day_cached(
                 db=db, special_day_id=existing.id, special_hours_data=update_data, redis_client=redis_client
             )
         elif existing:
@@ -282,7 +282,7 @@ async def create_special_day(
             # Create new entry
             # The service layer will handle adding the gym_id
             special_hours_data_create = GymSpecialHoursCreate(**obj_in_data)
-            return await schedule.gym_special_hours_service.create_special_day_cached(
+            return await async_gym_special_hours_service.create_special_day_cached(
                 db=db,
                 special_hours_data=special_hours_data_create,
                 gym_id=gym_id, # Pass gym_id to the service
@@ -356,7 +356,7 @@ async def update_special_day(
             )
 
     # Verify the special day exists and belongs to the current gym
-    special_day = await schedule.gym_special_hours_service.get_special_hours_cached(
+    special_day = await async_gym_special_hours_service.get_special_hours_cached(
         db=db, special_day_id=special_day_id, redis_client=redis_client
     )
     if not special_day:
@@ -370,7 +370,7 @@ async def update_special_day(
             detail="Access denied to this special day entry"
         )
 
-    return await schedule.gym_special_hours_service.update_special_day_cached(
+    return await async_gym_special_hours_service.update_special_day_cached(
         db=db, special_day_id=special_day_id, special_hours_data=special_day_in, redis_client=redis_client
     )
 
@@ -441,7 +441,7 @@ async def update_special_day_by_date(
     gym_id = current_gym.id
 
     # Find the special day by date within the gym
-    special_day = await schedule.gym_special_hours_service.get_special_hours_by_date_cached(
+    special_day = await async_gym_special_hours_service.get_special_hours_by_date_cached(
         db=db, date_value=date, gym_id=gym_id, redis_client=redis_client
     )
 
@@ -452,7 +452,7 @@ async def update_special_day_by_date(
         )
 
     # Update the found special day entry
-    return await schedule.gym_special_hours_service.update_special_day_cached(
+    return await async_gym_special_hours_service.update_special_day_cached(
         db=db, special_day_id=special_day.id, special_hours_data=special_day_in, redis_client=redis_client
     )
 
@@ -507,7 +507,7 @@ async def delete_special_day(
             )
 
     # Verify the special day exists and belongs to the current gym
-    special_day = await schedule.gym_special_hours_service.get_special_hours_cached(
+    special_day = await async_gym_special_hours_service.get_special_hours_cached(
         db=db, special_day_id=special_day_id, redis_client=redis_client
     )
     if not special_day:
@@ -521,6 +521,6 @@ async def delete_special_day(
             detail="Access denied to this special day entry"
         )
 
-    return await schedule.gym_special_hours_service.delete_special_day_cached(
+    return await async_gym_special_hours_service.delete_special_day_cached(
         db=db, special_day_id=special_day_id, redis_client=redis_client
     ) 
