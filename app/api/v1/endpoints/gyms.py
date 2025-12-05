@@ -149,27 +149,27 @@ async def read_my_gyms(
 ) -> Any:
     """
     Obtener todos los gimnasios a los que pertenece el usuario autenticado.
-    
+
     Este endpoint permite a cualquier usuario autenticado ver todos los gimnasios
     a los que está asociado, junto con su rol en cada uno.
-    
+
     Permissions:
         - Requiere autenticación
-        
+
     Args:
         db: Sesión de base de datos
         skip: Número de registros a omitir (paginación)
         limit: Número máximo de registros a devolver
         current_user: Usuario autenticado
-        
+
     Returns:
         List[UserGymMembership]: Lista de membresías del usuario
-        
+
     Raises:
         HTTPException: 404 si el usuario no se encuentra en la base de datos local
     """
-    # Obtener el usuario local de Auth0
-    db_user = user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
+    # Obtener el usuario local de Auth0 (versión async)
+    db_user = await user_service.get_user_by_auth0_id_async_direct(db, auth0_id=current_user.id)
     if not db_user:
         raise HTTPException(
             status_code=404,
@@ -449,9 +449,9 @@ async def remove_user_from_current_gym(
     
     # La dependencia verify_gym_access ya verificó que el usuario autenticado
     # pertenece al gimnasio actual.
-    
-    # Obtener el usuario autenticado desde la BD
-    auth_user = user_service.get_user_by_auth0_id(db, auth0_id=current_auth_user.id)
+
+    # Obtener el usuario autenticado desde la BD (versión async con caché)
+    auth_user = await user_service.get_user_by_auth0_id_cached(db, auth0_id=current_auth_user.id, redis_client=redis_client)
     if not auth_user:
         raise HTTPException(status_code=403, detail="Usuario no encontrado en la BD local")
     
@@ -690,18 +690,18 @@ async def remove_user_from_gym_by_superadmin(
         dict: Mensaje de confirmación
         
     Raises:
-        HTTPException: 403 si quien llama no es SUPER_ADMIN, 
-                       404 si el usuario o la asociación no existe, 
+        HTTPException: 403 si quien llama no es SUPER_ADMIN,
+                       404 si el usuario o la asociación no existe,
                        403 si se intenta eliminar un SUPER_ADMIN.
     """
-    # Verificar permiso SUPER_ADMIN
-    db_caller = user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
+    # Verificar permiso SUPER_ADMIN (versión async)
+    db_caller = await user_service.get_user_by_auth0_id_async_direct(db, auth0_id=current_user.id)
     if not db_caller or db_caller.role != UserRole.SUPER_ADMIN:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Acción restringida a administradores de plataforma."
         )
-        
+
     # Verificar que el gimnasio existe (opcional, el servicio podría manejarlo)
     gym = await async_gym_service.get_gym(db, gym_id=gym_id)
     if not gym:
@@ -769,14 +769,14 @@ async def read_gym_users_by_superadmin(
     Raises:
         HTTPException: 403 si quien llama no es SUPER_ADMIN, 404 si el gym no existe.
     """
-    # Verificar permiso SUPER_ADMIN
-    db_caller = user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
+    # Verificar permiso SUPER_ADMIN (versión async)
+    db_caller = await user_service.get_user_by_auth0_id_async_direct(db, auth0_id=current_user.id)
     if not db_caller or db_caller.role != UserRole.SUPER_ADMIN:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Acción restringida a administradores de plataforma."
         )
-        
+
     # Verificar que el gimnasio existe
     gym = await async_gym_service.get_gym(db, gym_id=gym_id)
     if not gym:
@@ -954,8 +954,9 @@ async def assign_gym_owner(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Token no contiene información de usuario (sub)"
         )
-    
-    db_user = user_service.get_user_by_auth0_id(db, auth0_id=auth0_id)
+
+    # Versión async con caché
+    db_user = await user_service.get_user_by_auth0_id_cached(db, auth0_id=auth0_id, redis_client=redis_client)
     if not db_user or db_user.role != UserRole.SUPER_ADMIN:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

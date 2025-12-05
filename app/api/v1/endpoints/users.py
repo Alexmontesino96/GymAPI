@@ -109,7 +109,7 @@ async def update_user_profile(
     auth0_id = user.id
     if not auth0_id:
         raise HTTPException(status_code=400, detail="Token inválido")
-    db_user = user_service.get_user_by_auth0_id(db, auth0_id=auth0_id)
+    db_user = await user_service.get_user_by_auth0_id_cached(db, auth0_id=auth0_id, redis_client=redis_client)
     if not db_user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
     updated_user = user_service.update_user_profile(db, user_id=db_user.id, profile_in=profile_update)
@@ -185,7 +185,7 @@ async def create_or_update_user_profile_data(
     if not auth0_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Token inválido")
 
-    db_user = user_service.get_user_by_auth0_id(db, auth0_id=auth0_id)
+    db_user = await user_service.get_user_by_auth0_id_cached(db, auth0_id=auth0_id, redis_client=redis_client)
     if not db_user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario local no encontrado")
 
@@ -306,8 +306,8 @@ async def get_last_attendance(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Token inválido")
 
     try:
-        # Obtener usuario desde la BD
-        db_user = user_service.get_user_by_auth0_id(db, auth0_id=auth0_id)
+        # Obtener usuario desde la BD (versión async con caché)
+        db_user = await user_service.get_user_by_auth0_id_cached(db, auth0_id=auth0_id, redis_client=redis_client)
         if not db_user:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario no encontrado")
 
@@ -361,8 +361,8 @@ async def get_user_profile_by_id(
     if not auth0_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Token inválido")
     
-    # Obtener ID interno del usuario actual
-    current_db_user = user_service.get_user_by_auth0_id(db, auth0_id=auth0_id)
+    # Obtener ID interno del usuario actual (versión async con caché)
+    current_db_user = await user_service.get_user_by_auth0_id_cached(db, auth0_id=auth0_id, redis_client=redis_client)
     if not current_db_user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario actual no encontrado")
     
@@ -466,7 +466,7 @@ async def check_email_availability(
     if not auth0_id:
          raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Token inválido")
     email = email_check.email
-    user = user_service.get_user_by_auth0_id(db, auth0_id=auth0_id)
+    user = await user_service.get_user_by_auth0_id_cached(db, auth0_id=auth0_id, redis_client=redis_client)
     if user and user.email.lower() == email.lower():
         return {"status": "error", "message": "Este es tu email actual."}
     try:
@@ -533,7 +533,7 @@ async def resend_email_verification(
     auth0_id = current_user.id
     if not auth0_id:
         raise HTTPException(status_code=400, detail="Token inválido")
-    user = user_service.get_user_by_auth0_id(db, auth0_id=auth0_id)
+    user = await user_service.get_user_by_auth0_id_cached(db, auth0_id=auth0_id, redis_client=redis_client)
     if not user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
     auth0_user = auth0_mgmt_service.get_user(auth0_id)
@@ -1025,9 +1025,10 @@ async def read_user_by_auth0_id(
     auth0_id: str,
     db: AsyncSession = Depends(get_async_db),
     user: Auth0User = Security(auth.get_user, scopes=["user:read"]),
+    redis_client: redis.Redis = Depends(get_redis_client)
 ) -> Any:
     """Obtiene un usuario específico por su ID de Auth0."""
-    db_user = user_service.get_user_by_auth0_id(db, auth0_id=auth0_id)
+    db_user = await user_service.get_user_by_auth0_id_cached(db, auth0_id=auth0_id, redis_client=redis_client)
     if not db_user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
     return db_user
@@ -1190,8 +1191,8 @@ async def update_user_by_auth0_id(
     redis_client: redis.Redis = Depends(get_redis_client)
 ) -> Any:
     """[SUPER_ADMIN] Actualiza un usuario específico por su ID de Auth0."""
-    # Get user by Auth0 ID
-    db_user = user_service.get_user_by_auth0_id(db, auth0_id=auth0_id)
+    # Get user by Auth0 ID (versión async con caché)
+    db_user = await user_service.get_user_by_auth0_id_cached(db, auth0_id=auth0_id, redis_client=redis_client)
     if not db_user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
     return await user_service.update_user(db=db, user_id=db_user.id, user_in=user_in, redis_client=redis_client)

@@ -360,25 +360,27 @@ async def create_platform_admin(
     request_data: CreateAdminRequest,
     db: AsyncSession = Depends(get_async_db),
     current_user: Auth0User = Security(auth.get_user, scopes=["user:write"]),
+    redis_client: redis.Redis = Depends(get_redis_client)
 ):
     """
     Creates a platform administrator (super admin) user.
-    
+
     This endpoint allows promoting a user to super admin status, with access to all gyms.
     It requires both the 'admin:users' scope (to ensure only admins can create other admins)
     and a secret key as an additional security measure.
-    
+
     The endpoint either updates an existing user to super admin status, or creates
     a new super admin user if the user doesn't exist in the local database yet.
-    
+
     Args:
         request_data: Request containing the secret key
         db: SQLAlchemy database session
         current_user: The authenticated user, injected by the security dependency
-        
+        redis_client: Redis client
+
     Returns:
         dict: Status and details of the super admin user
-        
+
     Raises:
         HTTPException: For invalid secret key or missing user ID
     """
@@ -389,17 +391,17 @@ async def create_platform_admin(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Invalid admin secret key"
         )
-    
+
     # Verify that the current user exists in the database
     user_id = current_user.id
-    
+
     if not user_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="User ID not found in token"
         )
-    
-    db_user = user_service.get_user_by_auth0_id(db, auth0_id=user_id)
+
+    db_user = await user_service.get_user_by_auth0_id_cached(db, auth0_id=user_id, redis_client=redis_client)
     
     # If the user doesn't exist, create them
     if not db_user:
@@ -458,25 +460,27 @@ async def migrate_roles_to_auth0(
     *,
     db: AsyncSession = Depends(get_async_db),
     background_tasks: BackgroundTasks,
-    current_user: Auth0User = Security(auth.get_user, scopes=["tenant:admin"])
+    current_user: Auth0User = Security(auth.get_user, scopes=["tenant:admin"]),
+    redis_client: redis.Redis = Depends(get_redis_client)
 ) -> Any:
     """
     [SUPER_ADMIN] Migra el rol más alto de todos los usuarios a Auth0.
-    
+
     Este endpoint inicia una tarea en segundo plano para determinar y actualizar
     el rol más alto de cada usuario en Auth0 mediante app_metadata. Esto permitirá
     que Auth0 asigne los permisos correctos al emitir tokens.
-    
+
     Args:
         db: Sesión de base de datos
         background_tasks: Tareas en segundo plano
         current_user: Usuario autenticado (debe ser SUPER_ADMIN)
-        
+        redis_client: Redis client
+
     Returns:
         Dict: Estado de la operación
     """
-    # Verificar que el usuario es SUPER_ADMIN
-    user = user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
+    # Verificar que el usuario es SUPER_ADMIN (versión async con caché)
+    user = await user_service.get_user_by_auth0_id_cached(db, auth0_id=current_user.id, redis_client=redis_client)
     if not user or user.role != UserRole.SUPER_ADMIN:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
