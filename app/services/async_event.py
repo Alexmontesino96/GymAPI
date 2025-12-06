@@ -189,7 +189,7 @@ class AsyncEventService:
 
         # Definir función de consulta a BD
         async def db_fetch():
-            event = await async_event_repository.get(db, id=event_id)
+            event = await async_event_repository.get_event(db, event_id=event_id)
             if not event:
                 return None
 
