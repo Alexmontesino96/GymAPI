@@ -13,6 +13,7 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_
+from sqlalchemy.orm import selectinload
 from fastapi import HTTPException, status, UploadFile
 
 from app.models.post import Post, PostMedia, PostTag, PostType, PostPrivacy, TagType
@@ -231,7 +232,10 @@ class AsyncPostService:
             HTTPException: Si el post no existe o no tiene permiso para verlo
         """
         result = await db.execute(
-            select(Post).where(
+            select(Post).options(
+                selectinload(Post.media),
+                selectinload(Post.tags)
+            ).where(
                 and_(
                     Post.id == post_id,
                     Post.gym_id == gym_id,
@@ -283,7 +287,10 @@ class AsyncPostService:
         Note:
             Filtra automáticamente posts según privacidad (PUBLIC/PRIVATE).
         """
-        query = select(Post).where(
+        query = select(Post).options(
+            selectinload(Post.media),
+            selectinload(Post.tags)
+        ).where(
             and_(
                 Post.user_id == target_user_id,
                 Post.gym_id == gym_id,
@@ -337,7 +344,10 @@ class AsyncPostService:
             - 'explore': Ordenado por engagement (likes + comments*2)
             Solo incluye posts públicos.
         """
-        query = select(Post).where(
+        query = select(Post).options(
+            selectinload(Post.media),
+            selectinload(Post.tags)
+        ).where(
             and_(
                 Post.gym_id == gym_id,
                 Post.is_deleted == False,
