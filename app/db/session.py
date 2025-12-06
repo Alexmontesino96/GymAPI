@@ -85,16 +85,23 @@ try:
         pool_timeout=30,
         pool_recycle=280,
         connect_args={
-            "statement_cache_size": 0,  # Requerido para pgbouncer (Supabase Transaction Pooler)
+            # ✅ CRÍTICO: Deshabilitar prepared statements para pgbouncer (Supabase)
+            # pgbouncer en modo transaction/statement NO soporta prepared statements
+            "statement_cache_size": 0,
             "server_settings": {
                 "search_path": "public",  # Configurar schema por defecto (una vez por conexión)
                 "application_name": "gymapi_async",
                 "statement_timeout": "30000"  # asyncpg usa server_settings
             }
+        },
+        # ✅ IMPORTANTE: Configuración a nivel de engine para asyncpg
+        # https://docs.sqlalchemy.org/en/20/dialects/postgresql.html#disabling-the-postgresql-jit-to-improve-schema-caching
+        execution_options={
+            "compiled_cache": None  # Deshabilitar compiled cache para evitar statement name conflicts
         }
     )
 
-    logger.info(f"✅ Async engine creado correctamente (asyncpg)")
+    logger.info(f"✅ Async engine creado correctamente (asyncpg) con statement_cache_size=0 para pgbouncer")
 
 except Exception as e:
     logger.critical(f"❌ FALLO CRÍTICO AL CREAR ASYNC ENGINE: {e}", exc_info=True)
