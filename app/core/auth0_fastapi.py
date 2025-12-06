@@ -543,7 +543,7 @@ async def get_current_db_user(
     Raises:
         HTTPException: Si el usuario no existe en la BD local
     """
-    db_user = await user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
+    db_user = await user_service.get_user_by_auth0_id_async_direct(db, auth0_id=current_user.id)
 
     if not db_user:
         raise Auth0UnauthenticatedException(
