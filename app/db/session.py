@@ -88,7 +88,10 @@ try:
         connect_args={
             # ✅ CRÍTICO: Deshabilitar prepared statements para pgbouncer (Supabase)
             # pgbouncer en modo transaction/statement NO soporta prepared statements
+            # Deshabilitar TODOS los parámetros de caching de prepared statements
             "statement_cache_size": 0,  # asyncpg: no cachear prepared statements
+            "max_cached_statement_lifetime": 0,  # asyncpg: deshabilitar lifetime del cache
+            "max_cacheable_statement_size": 0,  # asyncpg: deshabilitar tamaño máximo cacheable
             "server_settings": {
                 "search_path": "public",  # Configurar schema por defecto (una vez por conexión)
                 "application_name": "gymapi_async",
@@ -103,7 +106,7 @@ try:
         }
     )
 
-    logger.info(f"✅ Async engine creado con NullPool + statement_cache_size=0 para pgbouncer compatibility")
+    logger.info(f"✅ Async engine creado con NullPool + TODOS los caches de prepared statements DESHABILITADOS para pgbouncer compatibility")
 
 except Exception as e:
     logger.critical(f"❌ FALLO CRÍTICO AL CREAR ASYNC ENGINE: {e}", exc_info=True)
