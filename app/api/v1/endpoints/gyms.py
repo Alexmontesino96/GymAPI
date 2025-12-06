@@ -267,7 +267,7 @@ async def add_user_to_current_gym(
     # La dependencia verify_admin_role ya verificó que el usuario tiene rol de admin en este gym.
     
     # Verificar que el usuario a añadir existe
-    target_user = user_service.get_user(db, user_id=user_id)
+    target_user = await user_service.get_user_async(db, user_id=user_id)
     if not target_user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
     
@@ -496,7 +496,7 @@ async def remove_user_from_current_gym(
             )
     
     # Obtener información del usuario a eliminar para invalidar caché
-    target_user = user_service.get_user(db, user_id=user_id)
+    target_user = await user_service.get_user_async(db, user_id=user_id)
     target_role = target_user.role if target_user else None
 
     # Eliminar usuario del gimnasio
@@ -972,7 +972,7 @@ async def assign_gym_owner(
         )
     
     # Verificar que el usuario existe
-    user = user_service.get_user(db, user_id=user_id)
+    user = await user_service.get_user_async(db, user_id=user_id)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
