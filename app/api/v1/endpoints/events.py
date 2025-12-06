@@ -51,7 +51,7 @@ from fastapi.encoders import jsonable_encoder
 import logging
 import time
 from app.services.async_event import async_event_service
-from app.services.chat import chat_service
+from app.services.async_chat import async_chat_service
 from app.services.event_payment_service import event_payment_service
 from app.services.notification_service import notification_service
 from app.core.config import get_settings
@@ -401,9 +401,9 @@ async def read_event(
         raise
     except Exception as e:
         logger.error(f"Error obteniendo evento {event_id}: {e}", exc_info=True)
-        
+
         # Fallback a la implementación original en caso de error
-        event = event_repository.get_event(db, event_id=event_id)
+        event = await event_repository.get_event_async(db, event_id=event_id)
         if not event:
             raise HTTPException(status_code=404, detail="Evento no encontrado")
         
@@ -515,7 +515,8 @@ async def update_event(
     # Para administradores, podemos omitir la verificación del creador
     if is_admin:
         # Los administradores pueden actualizar cualquier evento
-        old_capacity = event_repository.get_event(db, event_id=event_id).max_participants
+        event_for_capacity = await event_repository.get_event_async(db, event_id=event_id)
+        old_capacity = event_for_capacity.max_participants if event_for_capacity else None
         updated_event = event_repository.update_event_efficient(
             db=db, event_id=event_id, event_in=event_in
         )
@@ -610,7 +611,8 @@ async def update_event(
         )
     
     # Actualizar el evento con el método eficiente
-    old_capacity = event_repository.get_event(db, event_id=event_id).max_participants
+    event_for_capacity = await event_repository.get_event_async(db, event_id=event_id)
+    old_capacity = event_for_capacity.max_participants if event_for_capacity else None
     updated_event = event_repository.update_event_efficient(
         db=db, event_id=event_id, event_in=event_in
     )
@@ -977,7 +979,7 @@ async def register_for_event(
         )
     
     # Verificar que el evento existe
-    event = event_repository.get_event(db, event_id=participation_in.event_id)
+    event = await event_repository.get_event_async(db, event_id=participation_in.event_id)
     if not event:
         raise HTTPException(
             status_code=404,
@@ -1075,9 +1077,9 @@ async def register_for_event(
             
             # Añadir usuario al canal de Stream Chat del evento para reactivación
             try:
-                event_room = chat_service.get_event_room(db, event_id=participation_in.event_id)
+                event_room = await async_chat_service.get_event_room(db, event_id=participation_in.event_id)
                 if event_room:
-                    chat_service.add_user_to_channel(db, room_id=event_room.id, user_id=user.id)
+                    await async_chat_service.add_user_to_channel(db, room_id=event_room.id, user_id=user.id)
                     logger.info(f"Usuario {user.id} añadido al canal de chat del evento {participation_in.event_id} (reactivación)")
                 else:
                     logger.warning(f"No se encontró canal de chat para evento {participation_in.event_id} (reactivación)")
@@ -1245,9 +1247,9 @@ async def register_for_event(
 
     # Añadir usuario al canal de Stream Chat del evento
     try:
-        event_room = chat_service.get_event_room(db, event_id=participation_in.event_id)
+        event_room = await async_chat_service.get_event_room(db, event_id=participation_in.event_id)
         if event_room:
-            chat_service.add_user_to_channel(db, room_id=event_room.id, user_id=user.id)
+            await async_chat_service.add_user_to_channel(db, room_id=event_room.id, user_id=user.id)
             logger.info(f"Usuario {user.id} añadido al canal de chat del evento {participation_in.event_id}")
         else:
             logger.warning(f"No se encontró canal de chat para evento {participation_in.event_id}")
@@ -1711,7 +1713,7 @@ async def cancel_participation(
         )
     
     # Verificar que el evento existe
-    event = event_repository.get_event(db, event_id=event_id)
+    event = await event_repository.get_event_async(db, event_id=event_id)
     if not event:
         raise HTTPException(
             status_code=404,
@@ -1927,7 +1929,7 @@ async def bulk_register_for_event(
         raise HTTPException(status_code=403, detail="Solo ADMIN u OWNER del gimnasio pueden usar este endpoint")
 
     # Verificar evento existe y pertenece al gym
-    event = event_repository.get_event(db, event_id=payload.event_id)
+    event = await event_repository.get_event_async(db, event_id=payload.event_id)
     if not event or event.gym_id != current_gym.id:
         raise HTTPException(status_code=404, detail="Evento no encontrado en este gimnasio")
 

@@ -419,7 +419,7 @@ async def get_user_profile_by_id(
             )
         
         # Obtener usuario objetivo
-        target_user = user_service.get_user(db, user_id=user_id)
+        target_user = await user_service.get_user_async(db, user_id=user_id)
         if not target_user:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario no encontrado")
         
@@ -907,7 +907,7 @@ async def remove_user_from_gym(
     if is_gym_admin and local_caller.id == user_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admins no pueden eliminarse a sí mismos del gimnasio.")
 
-    target_user = user_service.get_user(db, user_id=user_id)
+    target_user = await user_service.get_user_async(db, user_id=user_id)
     target_role = target_user.role if target_user else None
 
     try:
@@ -998,7 +998,7 @@ async def read_user_by_id(
         )
 
     # Obtener el usuario solicitado
-    target_user = user_service.get_user(db, user_id=user_id)
+    target_user = await user_service.get_user_async(db, user_id=user_id)
     if not target_user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
 
@@ -1110,7 +1110,7 @@ async def update_user(
     local_caller = await user_service.get_user_by_auth0_id_cached(db, current_user.id, redis_client)
     if not local_caller or local_caller.role != UserRole.SUPER_ADMIN:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Requiere rol SUPER_ADMIN.")
-    target_user = user_service.get_user(db, user_id=user_id)
+    target_user = await user_service.get_user_async(db, user_id=user_id)
     if not target_user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario a actualizar no encontrado")
     old_role = target_user.role
@@ -1146,7 +1146,7 @@ async def admin_delete_user(
     local_caller = await user_service.get_user_by_auth0_id_cached(db, current_user.id, redis_client)
     if not local_caller or local_caller.role != UserRole.SUPER_ADMIN:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Requiere rol SUPER_ADMIN.")
-    target_user = user_service.get_user(db, user_id=user_id)
+    target_user = await user_service.get_user_async(db, user_id=user_id)
     if not target_user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario a eliminar no encontrado")
     target_role = target_user.role
@@ -1277,7 +1277,7 @@ async def read_gym_participant_by_id(
         user_data = await user_service.get_user_cached(db, user_id, redis_client)
     except AttributeError:
         # Fallback si get_user_cached no existe aún
-        user_data = user_service.get_user(db, user_id=user_id)
+        user_data = await user_service.get_user_async(db, user_id=user_id)
 
     if not user_data:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
