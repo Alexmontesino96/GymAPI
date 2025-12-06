@@ -76,32 +76,34 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 # ASYNC ENGINE (NUEVO - Fase 2)
 # ==========================================
 try:
+    from sqlalchemy.pool import NullPool
+
     async_engine = create_async_engine(
         db_url_async,
         echo=False,
-        pool_pre_ping=False,  # Desactivado para asyncpg (usa su propio health check)
-        pool_size=20,  # Más alto para async
-        max_overflow=40,
-        pool_timeout=30,
-        pool_recycle=280,
+        # ✅ CRÍTICO: Usar NullPool para evitar pooling de conexiones
+        # Esto garantiza que cada request obtiene una conexión fresca sin prepared statements previos
+        # Es menos eficiente pero necesario para pgbouncer compatibility
+        poolclass=NullPool,
         connect_args={
             # ✅ CRÍTICO: Deshabilitar prepared statements para pgbouncer (Supabase)
             # pgbouncer en modo transaction/statement NO soporta prepared statements
-            "statement_cache_size": 0,
+            "statement_cache_size": 0,  # asyncpg: no cachear prepared statements
             "server_settings": {
                 "search_path": "public",  # Configurar schema por defecto (una vez por conexión)
                 "application_name": "gymapi_async",
                 "statement_timeout": "30000"  # asyncpg usa server_settings
             }
         },
-        # ✅ IMPORTANTE: Configuración a nivel de engine para asyncpg
-        # https://docs.sqlalchemy.org/en/20/dialects/postgresql.html#disabling-the-postgresql-jit-to-improve-schema-caching
+        # ✅ IMPORTANTE: Configuración a nivel de engine para SQLAlchemy
+        # https://docs.sqlalchemy.org/en/20/dialects/postgresql.html
         execution_options={
-            "compiled_cache": None  # Deshabilitar compiled cache para evitar statement name conflicts
+            "compiled_cache": None,  # Deshabilitar compiled cache de SQLAlchemy
+            "schema_translate_map": None  # Evitar statement caching adicional
         }
     )
 
-    logger.info(f"✅ Async engine creado correctamente (asyncpg) con statement_cache_size=0 para pgbouncer")
+    logger.info(f"✅ Async engine creado con NullPool + statement_cache_size=0 para pgbouncer compatibility")
 
 except Exception as e:
     logger.critical(f"❌ FALLO CRÍTICO AL CREAR ASYNC ENGINE: {e}", exc_info=True)
