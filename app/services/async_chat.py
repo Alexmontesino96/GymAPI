@@ -153,9 +153,9 @@ class AsyncChatService:
                 return cached_data["token"]
 
         try:
-            from app.db.session import get_async_session_context
+            from app.db.session import get_async_db_for_jobs
 
-            async with get_async_session_context() as db:
+            async with get_async_db_for_jobs() as db:
                 stmt = select(User).where(User.id == user_id)
                 result = await db.execute(stmt)
                 user = result.scalar_one_or_none()

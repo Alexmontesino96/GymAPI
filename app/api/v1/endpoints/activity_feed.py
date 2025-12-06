@@ -117,7 +117,7 @@ async def get_motivational_insights(
         Lista de insights motivacionales
     """
     try:
-        insights = await async_activity_feed_service.generate_motivational_insights(redis, gym_id)
+        insights = await async_activity_feed_service.generate_motivational_insights(gym_id)
 
         return {
             "insights": insights,

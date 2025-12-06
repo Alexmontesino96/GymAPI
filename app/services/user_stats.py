@@ -810,7 +810,7 @@ class UserStatsService:
             from app.models.user import User, UserRole
             
             # Usar el servicio de chat analytics existente
-            user_chat_activity = chat_analytics_service.get_user_chat_activity(db, user_id)
+            user_chat_activity = await chat_analytics_service.get_user_chat_activity(db, user_id)
             
             # Extraer métricas del resultado del servicio
             if "error" not in user_chat_activity:
