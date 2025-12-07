@@ -92,6 +92,7 @@ try:
             "statement_cache_size": 0,  # asyncpg: no cachear prepared statements
             "max_cached_statement_lifetime": 0,  # asyncpg: deshabilitar lifetime del cache
             "max_cacheable_statement_size": 0,  # asyncpg: deshabilitar tamaño máximo cacheable
+            "prepared_statement_cache_size": 0,  # asyncpg 0.28+: alias alternativo
             "server_settings": {
                 "search_path": "public",  # Configurar schema por defecto (una vez por conexión)
                 "application_name": "gymapi_async",
@@ -106,7 +107,8 @@ try:
         }
     )
 
-    logger.info(f"✅ Async engine creado con NullPool + TODOS los caches de prepared statements DESHABILITADOS para pgbouncer compatibility")
+    logger.info(f"✅ Async engine creado con NullPool + TODOS los caches de prepared statements DESHABILITADOS (4 parámetros) para pgbouncer compatibility")
+    logger.info(f"   statement_cache_size=0, max_cached_statement_lifetime=0, max_cacheable_statement_size=0, prepared_statement_cache_size=0")
 
 except Exception as e:
     logger.critical(f"❌ FALLO CRÍTICO AL CREAR ASYNC ENGINE: {e}", exc_info=True)
