@@ -268,7 +268,6 @@ def get_quick_actions(gym_type: GymTypeSchema, user_role: str) -> List[Dict]:
 async def get_workspace_context(
     request: Request,
     db: AsyncSession = Depends(get_async_db),
-    current_gym: Gym = Depends(verify_gym_access),
     current_user: Auth0User = Security(auth.get_user),
     redis_client: Redis = Depends(get_redis_client)
 ) -> Dict:
@@ -293,7 +292,7 @@ async def get_workspace_context(
     - user_context: Información del usuario y su rol
     """
     try:
-        # Obtener usuario interno y su rol
+        # Obtener usuario interno
         internal_user = await user_service.get_user_by_auth0_id_cached(
             db, auth0_id=current_user.id, redis_client=redis_client
         )
@@ -302,6 +301,49 @@ async def get_workspace_context(
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Usuario no encontrado"
+            )
+
+        # Obtener el primer gym del usuario (o el gym especificado en header si existe)
+        from app.core.tenant import get_tenant_id
+        tenant_id = request.headers.get("x-gym-id")
+
+        if tenant_id:
+            try:
+                tenant_id = int(tenant_id)
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="x-gym-id header debe ser un número entero"
+                )
+
+        # Si no hay tenant_id en header, obtener el primer gym del usuario
+        if not tenant_id:
+            from sqlalchemy import select
+            from app.models.user_gym import UserGym
+            result = await db.execute(
+                select(UserGym.gym_id)
+                .where(UserGym.user_id == internal_user.id)
+                .limit(1)
+            )
+            first_gym_id = result.scalar_one_or_none()
+
+            if not first_gym_id:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Usuario no pertenece a ningún gimnasio"
+                )
+            tenant_id = first_gym_id
+
+        # Obtener gym
+        result = await db.execute(
+            select(Gym).where(Gym.id == tenant_id)
+        )
+        current_gym = result.scalar_one_or_none()
+
+        if not current_gym:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Gimnasio con ID {tenant_id} no encontrado"
             )
 
         # Obtener rol del usuario en este gimnasio
