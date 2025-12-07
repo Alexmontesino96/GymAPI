@@ -73,7 +73,7 @@ async def populate_sessions_with_timezone(sessions: List[Any], gym_id: int, db: 
 
     # Obtener timezone del gimnasio
     from app.repositories.async_gym import async_gym_repository
-    gym = await async_gym_repository.get_async(db, id=gym_id)
+    gym = await async_gym_repository.get(db, id=gym_id)
     if not gym or not gym.timezone:
         # Si no hay timezone definido, usar UTC como fallback
         gym_timezone = "UTC"
@@ -797,7 +797,7 @@ class AsyncGymSpecialHoursService:
         cache_key = f"special_day:detail:{special_day_id}"
 
         async def db_fetch():
-            return await async_gym_special_hours_repository.get_async(db, id=special_day_id)
+            return await async_gym_special_hours_repository.get(db, id=special_day_id)
 
         special_day = await cache_service.get_or_set(
             redis_client=redis_client,
@@ -812,7 +812,7 @@ class AsyncGymSpecialHoursService:
 
     async def get_special_hours(self, db: AsyncSession, special_day_id: int) -> Any:
         """Obtener un día especial por ID (versión no-caché)"""
-        return await async_gym_special_hours_repository.get_async(db, id=special_day_id)
+        return await async_gym_special_hours_repository.get(db, id=special_day_id)
 
     async def get_special_hours_by_date_cached(self, db: AsyncSession, date_value: date, gym_id: int, redis_client: Optional[Redis] = None) -> Any:
         """
@@ -1017,7 +1017,7 @@ class AsyncGymSpecialHoursService:
             special_day_id: ID del día especial a actualizar
             special_hours_data: Datos a actualizar
         """
-        special_day = await async_gym_special_hours_repository.get_async(db, id=special_day_id)
+        special_day = await async_gym_special_hours_repository.get(db, id=special_day_id)
         if not special_day:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -1067,7 +1067,7 @@ class AsyncGymSpecialHoursService:
             db: Sesión de base de datos async
             special_day_id: ID del día especial a eliminar
         """
-        special_day = await async_gym_special_hours_repository.get_async(db, id=special_day_id)
+        special_day = await async_gym_special_hours_repository.get(db, id=special_day_id)
         if not special_day:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -1193,7 +1193,7 @@ class AsyncClassCategoryService:
 
         async def db_fetch():
             # Verificar que la categoría existe en la BD
-            category_db = await async_class_category_repository.get_async(db, id=category_id)
+            category_db = await async_class_category_repository.get(db, id=category_id)
             if not category_db:
                  raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
@@ -1304,7 +1304,7 @@ class AsyncClassCategoryService:
         """Actualizar una categoría existente e invalidar caché"""
         # Usar get_category sin caché para obtener el objeto a actualizar
         # No podemos usar la versión cacheada porque necesitamos el objeto de SQLAlchemy
-        category = await async_class_category_repository.get_async(db, id=category_id)
+        category = await async_class_category_repository.get(db, id=category_id)
         if not category or category.gym_id != gym_id:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -1329,7 +1329,7 @@ class AsyncClassCategoryService:
     async def delete_category(self, db: AsyncSession, category_id: int, gym_id: int, redis_client: Optional[Redis] = None) -> None:
         """Eliminar/inactivar una categoría e invalidar caché"""
         # Usar get_category sin caché para la verificación inicial
-        category = await async_class_category_repository.get_async(db, id=category_id)
+        category = await async_class_category_repository.get(db, id=category_id)
         if not category or category.gym_id != gym_id:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -1406,7 +1406,7 @@ class AsyncClassService:
         cache_key = f"schedule:class:detail:{class_id}"
 
         async def db_fetch():
-            class_obj = await async_class_repository.get_async(db, id=class_id)
+            class_obj = await async_class_repository.get(db, id=class_id)
             if not class_obj:
                     # No lanzar excepción aquí, dejar que get_or_set devuelva None
                     return None
@@ -1515,7 +1515,7 @@ class AsyncClassService:
     async def update_class(self, db: AsyncSession, class_id: int, class_data: ClassUpdate, gym_id: int, redis_client: Optional[Redis] = None) -> Any:
         """Actualizar una clase existente e invalidar caché"""
         # Obtener la clase de la BD (no usar caché aquí)
-        class_obj = await async_class_repository.get_async(db, id=class_id)
+        class_obj = await async_class_repository.get(db, id=class_id)
         if not class_obj or class_obj.gym_id != gym_id:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -1548,7 +1548,7 @@ class AsyncClassService:
     async def delete_class(self, db: AsyncSession, class_id: int, gym_id: int, redis_client: Optional[Redis] = None) -> Any:
         """Eliminar o inactivar una clase e invalidar caché"""
         # Obtener la clase de la BD (no usar caché)
-        class_obj = await async_class_repository.get_async(db, id=class_id)
+        class_obj = await async_class_repository.get(db, id=class_id)
         if not class_obj or class_obj.gym_id != gym_id:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -1713,7 +1713,7 @@ class AsyncClassSessionService:
     async def get_session(self, db: AsyncSession, session_id: int, gym_id: int, redis_client: Optional[Redis] = None) -> Any:
         """Obtener una sesión por ID con caché"""
         # Verificar que la sesión pertenece al gimnasio
-        session = await async_class_session_repository.get_async(db, id=session_id)
+        session = await async_class_session_repository.get(db, id=session_id)
         if not session or session.gym_id != gym_id:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -1727,7 +1727,7 @@ class AsyncClassSessionService:
         cache_key = f"schedule:session:detail:{session_id}"
 
         async def db_fetch():
-            return await async_class_session_repository.get_async(db, id=session_id)
+            return await async_class_session_repository.get(db, id=session_id)
 
         cached_session = await cache_service.get_or_set(
             redis_client=redis_client,
@@ -1743,7 +1743,7 @@ class AsyncClassSessionService:
     async def get_session_with_details(self, db: AsyncSession, session_id: int, gym_id: int, redis_client: Optional[Redis] = None) -> Dict[str, Any]:
         """Obtener una sesión con detalles completos (clase, trainer, participantes) con caché"""
         # Verificar que la sesión pertenece al gimnasio
-        session = await async_class_session_repository.get_async(db, id=session_id)
+        session = await async_class_session_repository.get(db, id=session_id)
         if not session or session.gym_id != gym_id:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -1795,7 +1795,7 @@ class AsyncClassSessionService:
     ) -> Any:
         """Crear una nueva sesión de clase e invalidar caché"""
         # Verificar que la clase exista, esté activa y pertenezca al gimnasio
-        class_obj = await async_class_repository.get_async(db, id=session_data.class_id)
+        class_obj = await async_class_repository.get(db, id=session_data.class_id)
         if not class_obj:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -1814,7 +1814,7 @@ class AsyncClassSessionService:
 
         # Obtener el gimnasio para su timezone
         from app.repositories.async_gym import async_gym_repository
-        gym = await async_gym_repository.get_async(db, id=gym_id)
+        gym = await async_gym_repository.get(db, id=gym_id)
         if not gym:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -1967,7 +1967,7 @@ class AsyncClassSessionService:
              raise HTTPException(status_code=400, detail="Gym ID is required")
 
         # Verificar que la clase exista, esté activa y pertenezca al gimnasio
-        class_obj = await async_class_repository.get_async(db, id=base_session_data.class_id)
+        class_obj = await async_class_repository.get(db, id=base_session_data.class_id)
         if not class_obj or class_obj.gym_id != gym_id or not class_obj.is_active:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -1976,7 +1976,7 @@ class AsyncClassSessionService:
 
         # Obtener el gimnasio para su timezone
         from app.repositories.async_gym import async_gym_repository
-        gym = await async_gym_repository.get_async(db, id=gym_id)
+        gym = await async_gym_repository.get(db, id=gym_id)
         if not gym:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -2063,7 +2063,7 @@ class AsyncClassSessionService:
         self, db: AsyncSession, session_id: int, session_data: ClassSessionUpdate, gym_id: int, redis_client: Optional[Redis] = None
     ) -> Any:
         """Actualizar una sesión existente e invalidar caché"""
-        session = await async_class_session_repository.get_async(db, id=session_id)
+        session = await async_class_session_repository.get(db, id=session_id)
         if not session or session.gym_id != gym_id:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -2072,7 +2072,7 @@ class AsyncClassSessionService:
 
         # Obtener el gimnasio para su timezone
         from app.repositories.async_gym import async_gym_repository
-        gym = await async_gym_repository.get_async(db, id=gym_id)
+        gym = await async_gym_repository.get(db, id=gym_id)
         if not gym:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -2117,7 +2117,7 @@ class AsyncClassSessionService:
 
     async def cancel_session(self, db: AsyncSession, session_id: int, gym_id: int, redis_client: Optional[Redis] = None) -> Any:
         """Cancelar una sesión e invalidar caché"""
-        session = await async_class_session_repository.get_async(db, id=session_id)
+        session = await async_class_session_repository.get(db, id=session_id)
         if not session or session.gym_id != gym_id:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -2399,7 +2399,7 @@ class AsyncClassParticipationService:
 
         # Obtener información del gimnasio para usar su timezone
         from app.repositories.async_gym import async_gym_repository
-        gym = await async_gym_repository.get_async(db, id=gym_id)
+        gym = await async_gym_repository.get(db, id=gym_id)
         if not gym:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -2494,7 +2494,7 @@ class AsyncClassParticipationService:
                 detail="No estás registrado en esta clase"
             )
 
-        session = await async_class_session_repository.get_async(db, id=session_id)
+        session = await async_class_session_repository.get(db, id=session_id)
 
         # Cancelar la participación
         cancelled_participation = await async_class_participation_repository.cancel_participation_async(

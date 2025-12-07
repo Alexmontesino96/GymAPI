@@ -15,6 +15,7 @@ from app.repositories.schedule import (
     class_participation_repository,
     class_category_repository
 )
+from app.repositories.async_schedule import async_gym_special_hours_repository
 from app.models.schedule import (
     ClassSessionStatus,
     ClassParticipationStatus,
@@ -1442,15 +1443,15 @@ class GymSpecialHoursService:
 
     async def get_special_hours_async(self, db: AsyncSession, special_day_id: int) -> Any:
         """Obtener un día especial por ID (async)."""
-        return await gym_special_hours_repository.get_async(db, id=special_day_id)
+        return await async_gym_special_hours_repository.get(db, id=special_day_id)
 
     async def get_special_hours_by_date_async(self, db: AsyncSession, date_value: date, gym_id: int) -> Any:
         """Obtener horarios especiales para una fecha específica (async)."""
-        return await gym_special_hours_repository.get_by_date_async(db, date_value=date_value, gym_id=gym_id)
+        return await async_gym_special_hours_repository.get_by_date(db, date_value=date_value, gym_id=gym_id)
 
     async def get_upcoming_special_days_async(self, db: AsyncSession, limit: int = 10, gym_id: int = None) -> List[Any]:
         """Obtener los próximos días especiales (async)."""
-        return await gym_special_hours_repository.get_upcoming_special_days_async(db, limit=limit, gym_id=gym_id)
+        return await async_gym_special_hours_repository.get_upcoming_special_days(db, limit=limit, gym_id=gym_id)
 
     async def create_special_day_async(self, db: AsyncSession, special_hours_data: GymSpecialHoursCreate, gym_id: int = None) -> Any:
         """Crear un nuevo día especial (async)."""
@@ -1463,33 +1464,33 @@ class GymSpecialHoursService:
         obj_in_data = special_hours_data.model_dump()
         obj_in_data["gym_id"] = gym_id
 
-        return await gym_special_hours_repository.create_async(db, obj_in=obj_in_data)
+        return await async_gym_special_hours_repository.create(db, obj_in=obj_in_data)
 
     async def update_special_day_async(
         self, db: AsyncSession, special_day_id: int, special_hours_data: GymSpecialHoursUpdate
     ) -> Any:
         """Actualizar un día especial existente (async)."""
-        special_day = await gym_special_hours_repository.get_async(db, id=special_day_id)
+        special_day = await async_gym_special_hours_repository.get(db, id=special_day_id)
         if not special_day:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Día especial no encontrado"
             )
 
-        return await gym_special_hours_repository.update_async(
+        return await async_gym_special_hours_repository.update(
             db, db_obj=special_day, obj_in=special_hours_data
         )
 
     async def delete_special_day_async(self, db: AsyncSession, special_day_id: int) -> Any:
         """Eliminar un día especial (async)."""
-        special_day = await gym_special_hours_repository.get_async(db, id=special_day_id)
+        special_day = await async_gym_special_hours_repository.get(db, id=special_day_id)
         if not special_day:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Día especial no encontrado"
             )
 
-        return await gym_special_hours_repository.remove_async(db, id=special_day_id)
+        return await async_gym_special_hours_repository.remove(db, id=special_day_id)
 
 
 # --- Añadir Servicio para Categorías Personalizadas ---
