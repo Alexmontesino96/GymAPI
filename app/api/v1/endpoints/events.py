@@ -45,6 +45,7 @@ from app.models.event import EventStatus, EventParticipationStatus, Event, Event
 from app.models.user import UserRole, User
 from app.models.stripe_profile import GymStripeAccount
 from app.repositories.event import event_repository, event_participation_repository
+from app.repositories.async_event_participation import async_event_participation_repository
 import stripe
 from fastapi.responses import JSONResponse
 from fastapi.encoders import jsonable_encoder
@@ -1001,7 +1002,7 @@ async def register_for_event(
         )
     
     # Verificar si el usuario ya está registrado
-    existing = event_participation_repository.get_participation_by_member_and_event(
+    existing = await async_event_participation_repository.get_participation_by_member_and_event(
         db, member_id=user.id, event_id=participation_in.event_id
     )
     if existing:
@@ -1735,7 +1736,7 @@ async def cancel_participation(
         )
 
     # Obtener la participación antes de cancelar
-    participation = event_participation_repository.get_participation_by_member_and_event(
+    participation = await async_event_participation_repository.get_participation_by_member_and_event(
         db, member_id=user.id, event_id=event_id
     )
 
@@ -1763,8 +1764,8 @@ async def cancel_participation(
             # El admin puede procesar el reembolso manualmente después
 
     # Cancelar participación
-    result = event_participation_repository.cancel_participation(
-        db, member_id=user.id, event_id=event_id
+    result = await async_event_participation_repository.cancel_participation(
+        db, participation_id=participation.id
     )
 
     if not result:
@@ -1827,7 +1828,7 @@ async def update_attendance(
                        403 if insufficient permissions.
     """
     # Buscar la participación específica usando event_id y user_id
-    participation = event_participation_repository.get_participation_by_member_and_event(
+    participation = await async_event_participation_repository.get_participation_by_member_and_event(
         db=db, member_id=user_id, event_id=event_id
     )
     
@@ -1873,10 +1874,9 @@ async def update_attendance(
         )
     
     # Actualizar participación usando el repositorio
-    # Pasamos el objeto de participación existente para que el repo no tenga que buscarlo de nuevo
-    updated = event_participation_repository.update_participation(
-        db=db, 
-        db_obj=participation, # Pasar el objeto encontrado 
+    updated = await async_event_participation_repository.update_participation(
+        db=db,
+        participation_id=participation.id,
         participation_in=attendance_data # attendance_data solo tiene 'attended'
     )
     
