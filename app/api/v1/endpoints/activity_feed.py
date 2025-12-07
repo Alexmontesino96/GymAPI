@@ -71,7 +71,8 @@ async def get_activity_feed(
 @router.get("/realtime", summary="Estadísticas en tiempo real")
 async def get_realtime_stats(
     gym_id: int = Depends(get_tenant_id),
-    redis: Redis = Depends(get_redis_client)
+    redis: Redis = Depends(get_redis_client),
+    service: AsyncActivityFeedService = Depends(get_activity_feed_service)
 ) -> Dict:
     """
     Obtiene estadísticas en tiempo real del gimnasio.
@@ -86,7 +87,7 @@ async def get_realtime_stats(
         Resumen con estadísticas actuales anónimas
     """
     try:
-        summary = await async_activity_feed_service.get_realtime_summary(redis, gym_id)
+        summary = await service.get_realtime_summary(redis, gym_id)
 
         return {
             "status": "success",
@@ -103,7 +104,8 @@ async def get_realtime_stats(
 @router.get("/insights", summary="Insights motivacionales")
 async def get_motivational_insights(
     gym_id: int = Depends(get_tenant_id),
-    redis: Redis = Depends(get_redis_client)
+    redis: Redis = Depends(get_redis_client),
+    service: AsyncActivityFeedService = Depends(get_activity_feed_service)
 ) -> Dict:
     """
     Obtiene insights motivacionales basados en la actividad actual.
@@ -117,7 +119,7 @@ async def get_motivational_insights(
         Lista de insights motivacionales
     """
     try:
-        insights = await async_activity_feed_service.generate_motivational_insights(gym_id)
+        insights = await service.generate_motivational_insights(gym_id)
 
         return {
             "insights": insights,
@@ -137,7 +139,8 @@ async def get_anonymous_rankings(
     gym_id: int = Depends(get_tenant_id),
     period: str = Query("weekly", regex="^(daily|weekly|monthly)$", description="Período del ranking"),
     limit: int = Query(10, ge=1, le=50, description="Número de posiciones a mostrar"),
-    redis: Redis = Depends(get_redis_client)
+    redis: Redis = Depends(get_redis_client),
+    service: AsyncActivityFeedService = Depends(get_activity_feed_service)
 ) -> Dict:
     """
     Obtiene rankings anónimos (solo valores, sin nombres).
@@ -164,7 +167,7 @@ async def get_anonymous_rankings(
         )
 
     try:
-        rankings = await async_activity_feed_service.get_anonymous_rankings(
+        rankings = await service.get_anonymous_rankings(
             redis=redis,
             gym_id=gym_id,
             ranking_type=ranking_type,
@@ -201,7 +204,8 @@ async def generate_test_activity(
     activity_type: str = Query(..., description="Tipo de actividad"),
     count: int = Query(..., ge=1, description="Cantidad para la actividad"),
     gym_id: int = Depends(get_tenant_id),
-    redis: Redis = Depends(get_redis_client)
+    redis: Redis = Depends(get_redis_client),
+    service: AsyncActivityFeedService = Depends(get_activity_feed_service)
 ) -> Dict:
     """
     Endpoint de prueba para generar actividades.
@@ -216,7 +220,7 @@ async def generate_test_activity(
         Actividad generada
     """
     try:
-        activity = await async_activity_feed_service.publish_realtime_activity(
+        activity = await service.publish_realtime_activity(
             redis=redis,
             gym_id=gym_id,
             activity_type=activity_type,
