@@ -5,7 +5,7 @@ Servicio para gestionar interacciones con posts (likes, comentarios, reportes).
 import logging
 from typing import List, Optional, Dict, Any
 from datetime import datetime
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, update as sql_update, delete as sql_delete
 from sqlalchemy.exc import IntegrityError
 from fastapi import HTTPException, status
@@ -25,7 +25,7 @@ class PostInteractionService:
     Servicio para gestionar interacciones con posts.
     """
 
-    def __init__(self, db: Session):
+    def __init__(self, db: AsyncSession):
         self.db = db
 
     async def toggle_like(
@@ -46,7 +46,7 @@ class PostInteractionService:
             Dict con action ('liked' o 'unliked') y total de likes
         """
         # Verificar que el post existe
-        post = self.db.execute(
+        result = await self.db.execute(
             select(Post).where(
                 and_(
                     Post.id == post_id,
@@ -54,7 +54,8 @@ class PostInteractionService:
                     Post.is_deleted == False
                 )
             )
-        ).scalar_one_or_none()
+        )
+        post = result.scalar_one_or_none()
 
         if not post:
             raise HTTPException(
@@ -63,30 +64,31 @@ class PostInteractionService:
             )
 
         # Verificar si ya existe un like
-        existing_like = self.db.execute(
+        result = await self.db.execute(
             select(PostLike).where(
                 and_(
                     PostLike.post_id == post_id,
                     PostLike.user_id == user_id
                 )
             )
-        ).scalar_one_or_none()
+        )
+        existing_like = result.scalar_one_or_none()
 
         if existing_like:
             # Unlike - eliminar like
-            self.db.delete(existing_like)
+            await self.db.delete(existing_like)
 
             # Decrementar contador atómicamente
-            self.db.execute(
+            await self.db.execute(
                 sql_update(Post)
                 .where(Post.id == post_id)
                 .values(like_count=Post.like_count - 1)
             )
 
-            self.db.commit()
+            await self.db.commit()
 
             # Obtener nuevo total
-            self.db.refresh(post)
+            await self.db.refresh(post)
 
             return {
                 "action": "unliked",
@@ -103,19 +105,19 @@ class PostInteractionService:
                 self.db.add(new_like)
 
                 # Incrementar contador atómicamente
-                self.db.execute(
+                await self.db.execute(
                     sql_update(Post)
                     .where(Post.id == post_id)
                     .values(like_count=Post.like_count + 1)
                 )
 
-                self.db.commit()
+                await self.db.commit()
             except IntegrityError:
                 # Carrera: ya existe like por constraint único
-                self.db.rollback()
+                await self.db.rollback()
             finally:
                 # Obtener total actualizado
-                self.db.refresh(post)
+                await self.db.refresh(post)
 
             return {"action": "liked", "total_likes": post.like_count}
 
@@ -139,7 +141,8 @@ class PostInteractionService:
             Lista de likes
         """
         # Verificar que el post existe
-        post = self.db.get(Post, post_id)
+        result = await self.db.execute(select(Post).where(Post.id == post_id))
+        post = result.scalar_one_or_none()
         if not post or post.gym_id != gym_id or post.is_deleted:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -150,7 +153,7 @@ class PostInteractionService:
             PostLike.post_id == post_id
         ).order_by(PostLike.created_at.desc()).limit(limit).offset(offset)
 
-        result = self.db.execute(query)
+        result = await self.db.execute(query)
         return result.scalars().all()
 
     async def add_comment(
@@ -173,7 +176,7 @@ class PostInteractionService:
             Comentario creado
         """
         # Verificar que el post existe
-        post = self.db.execute(
+        result = await self.db.execute(
             select(Post).where(
                 and_(
                     Post.id == post_id,
@@ -181,7 +184,8 @@ class PostInteractionService:
                     Post.is_deleted == False
                 )
             )
-        ).scalar_one_or_none()
+        )
+        post = result.scalar_one_or_none()
 
         if not post:
             raise HTTPException(
@@ -201,14 +205,14 @@ class PostInteractionService:
         self.db.add(comment)
 
         # Incrementar contador de comentarios atómicamente
-        self.db.execute(
+        await self.db.execute(
             sql_update(Post)
             .where(Post.id == post_id)
             .values(comment_count=Post.comment_count + 1)
         )
 
-        self.db.commit()
-        self.db.refresh(comment)
+        await self.db.commit()
+        await self.db.refresh(comment)
 
         # TODO: Notificar al dueño del post
         # TODO: Notificar usuarios mencionados en el comentario
@@ -235,7 +239,7 @@ class PostInteractionService:
         Returns:
             Comentario actualizado
         """
-        comment = self.db.execute(
+        result = await self.db.execute(
             select(PostComment).where(
                 and_(
                     PostComment.id == comment_id,
@@ -243,7 +247,8 @@ class PostInteractionService:
                     PostComment.is_deleted == False
                 )
             )
-        ).scalar_one_or_none()
+        )
+        comment = result.scalar_one_or_none()
 
         if not comment:
             raise HTTPException(
@@ -263,8 +268,8 @@ class PostInteractionService:
         comment.is_edited = True
         comment.edited_at = datetime.utcnow()
 
-        self.db.commit()
-        self.db.refresh(comment)
+        await self.db.commit()
+        await self.db.refresh(comment)
 
         logger.info(f"Comment {comment_id} updated by user {user_id}")
         return comment
@@ -288,7 +293,7 @@ class PostInteractionService:
         Returns:
             True si se eliminó exitosamente
         """
-        comment = self.db.execute(
+        result = await self.db.execute(
             select(PostComment).where(
                 and_(
                     PostComment.id == comment_id,
@@ -296,7 +301,8 @@ class PostInteractionService:
                     PostComment.is_deleted == False
                 )
             )
-        ).scalar_one_or_none()
+        )
+        comment = result.scalar_one_or_none()
 
         if not comment:
             raise HTTPException(
@@ -316,13 +322,13 @@ class PostInteractionService:
         comment.deleted_at = datetime.utcnow()
 
         # Decrementar contador de comentarios
-        self.db.execute(
+        await self.db.execute(
             sql_update(Post)
             .where(Post.id == comment.post_id)
             .values(comment_count=Post.comment_count - 1)
         )
 
-        self.db.commit()
+        await self.db.commit()
 
         logger.info(f"Comment {comment_id} deleted by user {user_id}")
         return True
@@ -347,7 +353,8 @@ class PostInteractionService:
             Lista de comentarios
         """
         # Verificar que el post existe
-        post = self.db.get(Post, post_id)
+        result = await self.db.execute(select(Post).where(Post.id == post_id))
+        post = result.scalar_one_or_none()
         if not post or post.gym_id != gym_id or post.is_deleted:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -361,7 +368,7 @@ class PostInteractionService:
             )
         ).order_by(PostComment.created_at.desc()).limit(limit).offset(offset)
 
-        result = self.db.execute(query)
+        result = await self.db.execute(query)
         return result.scalars().all()
 
     async def toggle_comment_like(
@@ -382,7 +389,7 @@ class PostInteractionService:
             Dict con action y total de likes
         """
         # Verificar que el comentario existe
-        comment = self.db.execute(
+        result = await self.db.execute(
             select(PostComment).where(
                 and_(
                     PostComment.id == comment_id,
@@ -390,7 +397,8 @@ class PostInteractionService:
                     PostComment.is_deleted == False
                 )
             )
-        ).scalar_one_or_none()
+        )
+        comment = result.scalar_one_or_none()
 
         if not comment:
             raise HTTPException(
@@ -399,28 +407,29 @@ class PostInteractionService:
             )
 
         # Verificar si ya existe un like
-        existing_like = self.db.execute(
+        result = await self.db.execute(
             select(PostCommentLike).where(
                 and_(
                     PostCommentLike.comment_id == comment_id,
                     PostCommentLike.user_id == user_id
                 )
             )
-        ).scalar_one_or_none()
+        )
+        existing_like = result.scalar_one_or_none()
 
         if existing_like:
             # Unlike
-            self.db.delete(existing_like)
+            await self.db.delete(existing_like)
 
             # Decrementar contador
-            self.db.execute(
+            await self.db.execute(
                 sql_update(PostComment)
                 .where(PostComment.id == comment_id)
                 .values(like_count=PostComment.like_count - 1)
             )
 
-            self.db.commit()
-            self.db.refresh(comment)
+            await self.db.commit()
+            await self.db.refresh(comment)
 
             return {
                 "action": "unliked",
@@ -436,17 +445,17 @@ class PostInteractionService:
                 self.db.add(new_like)
 
                 # Incrementar contador
-                self.db.execute(
+                await self.db.execute(
                     sql_update(PostComment)
                     .where(PostComment.id == comment_id)
                     .values(like_count=PostComment.like_count + 1)
                 )
 
-                self.db.commit()
+                await self.db.commit()
             except IntegrityError:
-                self.db.rollback()
+                await self.db.rollback()
             finally:
-                self.db.refresh(comment)
+                await self.db.refresh(comment)
 
             return {"action": "liked", "total_likes": comment.like_count}
 
@@ -470,7 +479,7 @@ class PostInteractionService:
             Reporte creado
         """
         # Verificar que el post existe
-        post = self.db.execute(
+        result = await self.db.execute(
             select(Post).where(
                 and_(
                     Post.id == post_id,
@@ -478,7 +487,8 @@ class PostInteractionService:
                     Post.is_deleted == False
                 )
             )
-        ).scalar_one_or_none()
+        )
+        post = result.scalar_one_or_none()
 
         if not post:
             raise HTTPException(
@@ -494,14 +504,15 @@ class PostInteractionService:
             )
 
         # Verificar si ya existe un reporte del mismo usuario
-        existing_report = self.db.execute(
+        result = await self.db.execute(
             select(PostReport).where(
                 and_(
                     PostReport.post_id == post_id,
                     PostReport.reporter_id == user_id
                 )
             )
-        ).scalar_one_or_none()
+        )
+        existing_report = result.scalar_one_or_none()
 
         if existing_report:
             raise HTTPException(
@@ -518,8 +529,8 @@ class PostInteractionService:
         )
 
         self.db.add(report)
-        self.db.commit()
-        self.db.refresh(report)
+        await self.db.commit()
+        await self.db.refresh(report)
 
         # TODO: Notificar a admins
 
