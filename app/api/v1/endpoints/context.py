@@ -17,7 +17,7 @@ from app.db.redis_client import get_redis_client
 from app.core.auth0_fastapi import Auth0User, auth
 from app.core.tenant import verify_gym_access, get_current_gym
 from app.core.config import Settings
-from app.models.gym import GymType
+from app.models.gym import GymType, Gym
 from app.models.user import User
 from app.models.user_gym import GymRoleType
 from app.schemas.gym import GymSchema, GymType as GymTypeSchema
@@ -268,7 +268,7 @@ def get_quick_actions(gym_type: GymTypeSchema, user_role: str) -> List[Dict]:
 async def get_workspace_context(
     request: Request,
     db: AsyncSession = Depends(get_async_db),
-    current_gym: GymSchema = Depends(get_current_gym),
+    current_gym: Gym = Depends(verify_gym_access),
     current_user: Auth0User = Security(auth.get_user),
     redis_client: Redis = Depends(get_redis_client)
 ) -> Dict:
@@ -293,12 +293,6 @@ async def get_workspace_context(
     - user_context: Información del usuario y su rol
     """
     try:
-        if not current_gym:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="No se pudo obtener el gimnasio actual"
-            )
-
         # Obtener usuario interno y su rol
         internal_user = await user_service.get_user_by_auth0_id_cached(
             db, auth0_id=current_user.id, redis_client=redis_client
