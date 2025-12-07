@@ -278,7 +278,7 @@ class AsyncEventService:
             try:
                 logger.debug(f"Cache miss. Consultando eventos de BD para creador {creator_id}")
                 # Obtener eventos del repositorio async
-                events = await async_event_repository.get_by_creator(
+                events = await async_event_repository.get_events_by_creator(
                     db,
                     creator_id=creator_id,
                     skip=skip,

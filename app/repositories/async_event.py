@@ -302,7 +302,8 @@ class AsyncEventRepository(AsyncBaseRepository[Event, EventCreate, EventUpdate])
                 return []
 
         stmt = select(Event).options(
-            selectinload(Event.participants)
+            selectinload(Event.participants),
+            joinedload(Event.creator)
         ).where(Event.creator_id == creator_id)
 
         if gym_id is not None:
