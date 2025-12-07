@@ -1774,7 +1774,10 @@ async def cancel_participation(
             status_code=404,
             detail="Error al cancelar la participación"
         )
-    
+
+    # Commit de la transacción para persistir cambios
+    await db.commit()
+
     # Invalidar cachés relacionadas
     if redis_client:
         try:
