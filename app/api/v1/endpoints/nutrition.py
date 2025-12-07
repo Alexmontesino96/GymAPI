@@ -2850,7 +2850,15 @@ async def get_audit_log(
     if not db_user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
 
-    user_gym = user_service.get_user_gym(db, db_user.id, current_gym.id)
+    from sqlalchemy import select
+    from app.models.user_gym import UserGym
+    result = await db.execute(
+        select(UserGym).where(
+            UserGym.user_id == db_user.id,
+            UserGym.gym_id == current_gym.id
+        )
+    )
+    user_gym = result.scalar_one_or_none()
     if not user_gym or user_gym.role not in ["admin", "trainer"]:
         raise HTTPException(
             status_code=403,
@@ -2895,7 +2903,15 @@ async def get_audit_summary(
     if not db_user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
 
-    user_gym = user_service.get_user_gym(db, db_user.id, current_gym.id)
+    from sqlalchemy import select
+    from app.models.user_gym import UserGym
+    result = await db.execute(
+        select(UserGym).where(
+            UserGym.user_id == db_user.id,
+            UserGym.gym_id == current_gym.id
+        )
+    )
+    user_gym = result.scalar_one_or_none()
     if not user_gym or user_gym.role not in ["admin", "trainer"]:
         raise HTTPException(
             status_code=403,

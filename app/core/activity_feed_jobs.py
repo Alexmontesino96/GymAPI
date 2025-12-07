@@ -215,9 +215,8 @@ async def update_realtime_counters():
         logger.error(f"Error actualizando contadores en tiempo real: {e}")
         import traceback
         logger.error(traceback.format_exc())
-    finally:
-        if db:
-            db.close()
+    # Nota: no es necesario cerrar explícitamente la sesión aquí;
+    # get_async_db_for_jobs() gestiona el cierre dentro del context manager.
 
 
 async def generate_hourly_summary():

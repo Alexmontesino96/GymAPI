@@ -353,7 +353,7 @@ async def add_user_to_current_gym_by_email(
     # La dependencia verify_admin_role ya verificó que el usuario tiene rol de admin en este gym.
     
     # Verificar que el usuario a añadir existe
-    target_user = user_service.get_user_by_email(db, email=email)
+    target_user = await user_service.get_user_by_email_async(db, email=email)
     if not target_user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado con ese email")
     

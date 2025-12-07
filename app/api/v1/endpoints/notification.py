@@ -91,8 +91,18 @@ async def send_notification_to_gym_users(
     """
     Envía una notificación a todos los usuarios del gimnasio actual (solo para admins)
     """
-    # Obtener todos los IDs de usuarios del gimnasio
-    user_ids = user_service.get_all_gym_user_ids(db, gym_id)
+    # Obtener todos los IDs de usuarios del gimnasio usando query async
+    from sqlalchemy import select
+    from app.models.user_gym import UserGym
+    from app.models.user import User as UserModel
+
+    result = await db.execute(
+        select(UserModel.auth0_id).join(UserGym).where(
+            UserGym.gym_id == gym_id,
+            UserModel.auth0_id.isnot(None)
+        )
+    )
+    user_ids = [row[0] for row in result.all()]
     
     if not user_ids:
         return {"success": False, "errors": ["No hay usuarios registrados en este gimnasio"]}

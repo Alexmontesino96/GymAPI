@@ -112,7 +112,11 @@ async def update_user_profile(
     db_user = await user_service.get_user_by_auth0_id_cached(db, auth0_id=auth0_id, redis_client=redis_client)
     if not db_user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
-    updated_user = user_service.update_user_profile(db, user_id=db_user.id, profile_in=profile_update)
+    from app.repositories.async_user import async_user_repository
+    user = await async_user_repository.get(db, id=db_user.id)
+    if not user:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    updated_user = await async_user_repository.update(db, db_obj=user, obj_in=profile_update)
     if redis_client:
         await cache_service.invalidate_user_caches(redis_client, user_id=db_user.id)
         if updated_user.role:
@@ -193,7 +197,11 @@ async def create_or_update_user_profile_data(
     logger.info(f"Usuario {db_user.id} ({auth0_id}) actualizando datos de perfil.")
 
     try:
-        updated_user = user_service.update_user_profile(db, user_id=db_user.id, profile_in=profile_data)
+        from app.repositories.async_user import async_user_repository
+        user = await async_user_repository.get(db, id=db_user.id)
+        if not user:
+            raise HTTPException(status_code=404, detail="Usuario no encontrado")
+        updated_user = await async_user_repository.update(db, db_obj=user, obj_in=profile_data)
 
         if redis_client:
             logger.info(f"Invalidando cachés para usuario {db_user.id} tras actualizar datos de perfil.")
@@ -789,7 +797,7 @@ async def search_user_by_email(
     
     try:
         # Buscar usuario por email
-        target_user = user_service.get_user_by_email(db, email=email)
+        target_user = await user_service.get_user_by_email_async(db, email=email)
         if not target_user:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, 
@@ -970,7 +978,20 @@ async def search_users(
             )
         gym_id_to_search = current_gym.id
 
-    return user_service.search_users(db, search_params=search_params, gym_id=gym_id_to_search)
+    from app.repositories.async_user import async_user_repository
+    users = await async_user_repository.search(
+        db,
+        name=search_params.name_contains,
+        email=search_params.email_contains,
+        role=search_params.role,
+        is_active=search_params.is_active,
+        created_before=search_params.created_before,
+        created_after=search_params.created_after,
+        gym_id=gym_id_to_search,
+        skip=search_params.skip,
+        limit=search_params.limit
+    )
+    return users
 
 @router.get("/{user_id}", response_model=UserSchema, tags=["User Lookup"])
 async def read_user_by_id(

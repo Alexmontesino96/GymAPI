@@ -45,6 +45,7 @@ from app.models.event import EventStatus, EventParticipationStatus, Event, Event
 from app.models.user import UserRole, User
 from app.models.stripe_profile import GymStripeAccount
 from app.repositories.event import event_repository, event_participation_repository
+from app.repositories.async_event import async_event_repository
 from app.repositories.async_event_participation import async_event_participation_repository
 import stripe
 from fastapi.responses import JSONResponse
@@ -120,9 +121,9 @@ async def create_event(
     
     # Crear Evento en BD (Pasar ID interno)
     try:
-        event = event_repository.create_event(
-            db=db, 
-            event_in=event_in, 
+        event = await async_event_repository.create_event(
+            db=db,
+            event_in=event_in,
             creator_id=internal_user_id,
             gym_id=gym_id
         )
@@ -153,9 +154,9 @@ async def create_event(
             participation_in = EventParticipationCreate(event_id=event.id)
             try:
                 # Usar el repositorio para crear la participación
-                participation = event_participation_repository.create_participation(
-                    db=db, 
-                    participation_in=participation_in, 
+                participation = await async_event_participation_repository.create_participation(
+                    db=db,
+                    participation_in=participation_in,
                     member_id=internal_user_id
                 )
                 if participation:
@@ -344,7 +345,7 @@ async def read_my_events(
         if not user:
             return []
             
-        events = event_repository.get_events_by_creator(
+        events = await async_event_repository.get_events_by_creator(
             db=db,
             creator_id=user.id,
             skip=skip,
@@ -518,7 +519,7 @@ async def update_event(
         # Los administradores pueden actualizar cualquier evento
         event_for_capacity = await event_repository.get_event_async(db, event_id=event_id)
         old_capacity = event_for_capacity.max_participants if event_for_capacity else None
-        updated_event = event_repository.update_event_efficient(
+        updated_event = await async_event_repository.update_event(
             db=db, event_id=event_id, event_in=event_in
         )
         
@@ -572,7 +573,7 @@ async def update_event(
         try:
             if updated_event and updated_event.max_participants and old_capacity is not None:
                 if updated_event.max_participants > old_capacity > 0:
-                    promoted = event_participation_repository.fill_vacancies_from_waiting_list(
+                    promoted = await async_event_participation_repository.fill_vacancies_from_waiting_list(
                         db, event_id=event_id
                     )
                     if promoted:
@@ -611,10 +612,10 @@ async def update_event(
             detail="You don't have permission to update this event"
         )
     
-    # Actualizar el evento con el método eficiente
+    # Actualizar el evento con el método async
     event_for_capacity = await event_repository.get_event_async(db, event_id=event_id)
     old_capacity = event_for_capacity.max_participants if event_for_capacity else None
-    updated_event = event_repository.update_event_efficient(
+    updated_event = await async_event_repository.update_event(
         db=db, event_id=event_id, event_in=event_in
     )
     
@@ -662,7 +663,7 @@ async def update_event(
     try:
         if updated_event and updated_event.max_participants and old_capacity is not None:
             if updated_event.max_participants > old_capacity > 0:
-                promoted = event_participation_repository.fill_vacancies_from_waiting_list(db, event_id=event_id)
+                promoted = await async_event_participation_repository.fill_vacancies_from_waiting_list(db, event_id=event_id)
                 if promoted:
                     logger.info(f"{len(promoted)} usuarios promovidos de waiting list en evento {event_id}")
     except Exception as e:
@@ -1109,7 +1110,7 @@ async def register_for_event(
     else:
         # Crear nueva participación
         # La lógica para determinar REGISTERED o WAITING_LIST ya está en el repositorio
-        participation = event_participation_repository.create_participation(
+        participation = await async_event_participation_repository.create_participation(
             db, participation_in=participation_in, member_id=user.id
         )
     
@@ -1953,7 +1954,7 @@ async def bulk_register_for_event(
     created_participations: List[EventParticipation] = []
     for uid in payload.user_ids:
         try:
-            part = event_participation_repository.create_participation(
+            part = await async_event_participation_repository.create_participation(
                 db=db,
                 participation_in=EventParticipationCreate(event_id=payload.event_id),
                 member_id=uid
