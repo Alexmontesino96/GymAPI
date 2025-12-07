@@ -318,7 +318,6 @@ async def get_workspace_context(
 
         # Si no hay tenant_id en header, obtener el primer gym del usuario
         if not tenant_id:
-            from sqlalchemy import select
             from app.models.user_gym import UserGym
             result = await db.execute(
                 select(UserGym.gym_id)
