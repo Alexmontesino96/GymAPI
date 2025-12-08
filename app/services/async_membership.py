@@ -343,9 +343,15 @@ class AsyncMembershipService:
 
         if user_gym.membership_expires_at:
             now = datetime.now(timezone.utc)
-            is_expired = user_gym.membership_expires_at < now
+
+            # Hacer timezone-aware si no lo es
+            expires_at = user_gym.membership_expires_at
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=timezone.utc)
+
+            is_expired = expires_at < now
             if not is_expired:
-                days_remaining = (user_gym.membership_expires_at - now).days
+                days_remaining = (expires_at - now).days
 
         can_access = user_gym.is_active and not is_expired
 
