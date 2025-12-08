@@ -396,6 +396,7 @@ class AsyncMembershipService:
 
         await db.flush()
         await db.refresh(user_gym)
+        await db.commit()
 
         logger.info(f"Membresía actualizada para user {user_id} en gym {gym_id}")
         return user_gym
@@ -533,6 +534,7 @@ class AsyncMembershipService:
         user_gym.notes = f"Desactivada: {reason} - {datetime.now(timezone.utc).isoformat()}"
 
         await db.flush()
+        await db.commit()
 
         logger.info(f"Membresía desactivada para user {user_id} en gym {gym_id}. Razón: {reason}")
         return True
@@ -666,6 +668,7 @@ class AsyncMembershipService:
 
         if count > 0:
             await db.flush()
+            await db.commit()
             logger.info(f"Expiradas {count} membresías automáticamente")
 
         return count

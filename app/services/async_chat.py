@@ -751,6 +751,7 @@ class AsyncChatService:
                     # Eliminar la referencia obsoleta si no hay usuario válido
                     db.delete(db_room)
                     await db.flush()
+                    await db.commit()
                     # Invalidar caché
                     if cache_key in channel_cache:
                         del channel_cache[cache_key]
@@ -772,6 +773,7 @@ class AsyncChatService:
                         logger.error(f"Inconsistencia detectada en canal {db_room.id}. Eliminando registro local.")
                         db.delete(db_room)
                         await db.flush()
+                        await db.commit()
                         # Invalidar caché
                         if cache_key in channel_cache:
                             del channel_cache[cache_key]
@@ -803,6 +805,7 @@ class AsyncChatService:
                 # Eliminar la referencia obsoleta
                 db.delete(db_room)
                 await db.flush()
+                await db.commit()
                 # Invalidar caché
                 if cache_key in channel_cache:
                     del channel_cache[cache_key]
@@ -1038,6 +1041,7 @@ class AsyncChatService:
                 logger_local.info(f"[DEBUG] Eliminando referencia a sala no válida: {db_room.id}")
                 db.delete(db_room)
                 await db.flush()
+                await db.commit()
 
             # Crear la sala
             try:

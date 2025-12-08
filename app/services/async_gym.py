@@ -240,6 +240,7 @@ class AsyncGymService:
         db.add(user_gym)
         await db.flush()
         await db.refresh(user_gym)
+        await db.commit()
 
         # Hook: Agregar usuario al canal general del gimnasio
         try:
