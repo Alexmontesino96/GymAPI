@@ -72,7 +72,6 @@ async def create_story(
 
         # Subir media usando MediaService
         media_result = await async_media_service.upload_story_media(
-            db=db,
             gym_id=gym_id,
             user_id=db_user.id,  # Usar ID numérico de BD, no Auth0 ID
             file=media,
