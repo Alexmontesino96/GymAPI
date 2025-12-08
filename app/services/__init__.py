@@ -21,9 +21,12 @@ from app.services.schedule import (
 from app.services.gym import gym_service
 from app.services.auth0_mgmt import auth0_mgmt_service
 from app.services.cache_service import cache_service
-from app.services.event import event_service
-from app.services.aws_sqs import sqs_service
-from app.services.queue_services import queue_service
+from app.services.event import event_service  # Legacy - use async_event_service
+from app.services.async_event import async_event_service
+from app.services.aws_sqs import sqs_service  # Legacy - use async_sqs_service
+from app.services.async_aws_sqs import AsyncSQSService
+from app.services.queue_services import queue_service  # Legacy - use async_queue_service
+from app.services.async_queue_services import async_queue_service
 
 # Exportar servicios para acceso fácil
 __all__ = [
@@ -31,7 +34,10 @@ __all__ = [
     "gym_service",
     "trainer_member_service",
     "chat_service",
-    "event_service",
-    "sqs_service",
-    "queue_service",
+    "event_service",  # Legacy
+    "async_event_service",  # Async version
+    "sqs_service",  # Legacy
+    "AsyncSQSService",  # Async version
+    "queue_service",  # Legacy
+    "async_queue_service",  # Async version
 ] 

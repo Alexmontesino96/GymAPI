@@ -22,7 +22,7 @@ from app.models.event import EventStatus, Event
 from app.models.chat import ChatRoom, ChatRoomStatus
 from app.models.user import User
 from app.schemas.event import EventWorkerResponse, Event as EventSchema
-from app.services.event import event_service
+from app.services.async_event import async_event_service
 from app.db.redis_client import get_redis_client
 from app.core.stream_client import stream_client
 from datetime import timedelta
@@ -337,7 +337,7 @@ async def process_event_completion(
     """
     try:
         # Get event using cache
-        event = await event_service.get_event_cached(db, event_id, redis_client=redis_client)
+        event = await async_event_service.get_event_cached(db, event_id, redis_client=redis_client)
         if not event:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -377,8 +377,8 @@ async def process_event_completion(
         # Invalidate event cache and related
         if redis_client:
             logger.info(f"Invalidating cache for event {event_id}")
-            await event_service.invalidate_event_caches(
-                redis_client, 
+            await async_event_service.invalidate_event_caches(
+                redis_client,
                 event_id=event_id,
                 gym_id=event_gym_id,
                 creator_id=event_creator_id
