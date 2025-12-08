@@ -1,7 +1,7 @@
 from typing import Dict, Any, List, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_, desc
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import logging
 
 from app.models.chat import ChatRoom, ChatMember
@@ -58,7 +58,7 @@ class ChatAnalyticsService:
             unique_members = result.scalar() or 0
 
             # Salas activas (con actividad en los últimos 7 días)
-            week_ago = datetime.utcnow() - timedelta(days=7)
+            week_ago = datetime.now(timezone.utc) - timedelta(days=7)
             active_rooms = sum(1 for room in rooms if room.updated_at and room.updated_at > week_ago)
 
             # Top 5 salas más activas (por número de miembros)
@@ -87,7 +87,7 @@ class ChatAnalyticsService:
                 "direct_chats": direct_chats,
                 "event_chats": event_chats,
                 "most_active_rooms": most_active_rooms,
-                "generated_at": datetime.utcnow().isoformat()
+                "generated_at": datetime.now(timezone.utc).isoformat()
             }
 
         except Exception as e:
@@ -137,7 +137,7 @@ class ChatAnalyticsService:
                 gym_distribution[gym_id] += 1
 
             # Actividad reciente (últimos 30 días)
-            month_ago = datetime.utcnow() - timedelta(days=30)
+            month_ago = datetime.now(timezone.utc) - timedelta(days=30)
             recent_activity = sum(1 for room in user_rooms
                                 if room.updated_at and room.updated_at > month_ago)
 
@@ -149,7 +149,7 @@ class ChatAnalyticsService:
                 "group_chats": group_chats,
                 "gym_distribution": gym_distribution,
                 "recent_activity": recent_activity,
-                "generated_at": datetime.utcnow().isoformat()
+                "generated_at": datetime.now(timezone.utc).isoformat()
             }
 
         except Exception as e:
@@ -172,7 +172,7 @@ class ChatAnalyticsService:
             # Por ahora, retornamos un análisis básico basado en updated_at de las salas
             # En una implementación completa, esto requeriría almacenar timestamps de mensajes
 
-            start_date = datetime.utcnow() - timedelta(days=days)
+            start_date = datetime.now(timezone.utc) - timedelta(days=days)
 
             # Filtrar directamente por gym_id en ChatRoom
             stmt = select(ChatRoom).where(
@@ -202,7 +202,7 @@ class ChatAnalyticsService:
                 "hourly_distribution": hourly_activity,
                 "peak_hours": [{"hour": hour, "activity": count} for hour, count in peak_hours],
                 "total_activity": sum(hourly_activity.values()),
-                "generated_at": datetime.utcnow().isoformat()
+                "generated_at": datetime.now(timezone.utc).isoformat()
             }
 
         except Exception as e:
@@ -264,8 +264,8 @@ class ChatAnalyticsService:
                 "participation_rate": participation_rate,
                 "chat_created_at": chat_room.created_at.isoformat() if chat_room.created_at else None,
                 "last_activity": chat_room.updated_at.isoformat() if chat_room.updated_at else None,
-                "is_active": chat_room.updated_at > (datetime.utcnow() - timedelta(hours=24)) if chat_room.updated_at else False,
-                "generated_at": datetime.utcnow().isoformat()
+                "is_active": chat_room.updated_at > (datetime.now(timezone.utc) - timedelta(hours=24)) if chat_room.updated_at else False,
+                "generated_at": datetime.now(timezone.utc).isoformat()
             }
 
         except Exception as e:
@@ -293,7 +293,7 @@ class ChatAnalyticsService:
             total_rooms = len(rooms)
 
             # Salas abandonadas (sin actividad en 30 días)
-            month_ago = datetime.utcnow() - timedelta(days=30)
+            month_ago = datetime.now(timezone.utc) - timedelta(days=30)
             abandoned_rooms = sum(1 for room in rooms
                                 if not room.updated_at or room.updated_at < month_ago)
 
@@ -329,7 +329,7 @@ class ChatAnalyticsService:
                 "low_engagement_rooms": low_engagement_rooms,
                 "health_score": round(health_score, 1),
                 "recommendations": recommendations,
-                "generated_at": datetime.utcnow().isoformat()
+                "generated_at": datetime.now(timezone.utc).isoformat()
             }
 
         except Exception as e:
