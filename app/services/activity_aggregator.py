@@ -6,7 +6,7 @@ convierte en estadísticas agregadas anónimas para el Activity Feed.
 """
 
 from typing import Dict, List, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from sqlalchemy.orm import Session
 from sqlalchemy import func, and_, or_
 import json
@@ -269,7 +269,7 @@ class ActivityAggregator:
             activity = {
                 "type": "class_completed",
                 "message": message,
-                "timestamp": datetime.utcnow().isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
                 "icon": "✅"
             }
 
@@ -306,7 +306,7 @@ class ActivityAggregator:
             activity = {
                 "type": "hourly_summary",
                 "message": message,
-                "timestamp": datetime.utcnow().isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
                 "icon": "📊"
             }
 
@@ -330,7 +330,7 @@ class ActivityAggregator:
 
         try:
             # Obtener estadísticas agregadas del día
-            today = datetime.utcnow().date()
+            today = datetime.now(timezone.utc).date()
             start_of_day = datetime.combine(today, datetime.min.time())
 
             # Top de consistencia (rachas) - solo valores
@@ -403,7 +403,7 @@ class ActivityAggregator:
             activity = {
                 "type": "social",
                 "message": message,
-                "timestamp": datetime.utcnow().isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
                 "icon": "👥"
             }
 
