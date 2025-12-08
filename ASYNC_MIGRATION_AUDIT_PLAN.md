@@ -2,13 +2,13 @@
 
 ## 🎯 Progreso General - Actualizado 2025-12-07
 
-### **Total: 137 de 332 errores eliminados (41.3% completado)**
+### **Total: 145 de 332 errores eliminados (43.7% completado)**
 
-- ✅ **Errores corregidos directamente:** 66
+- ✅ **Errores corregidos directamente:** 74
 - ✅ **Errores eliminados por deprecación:** 71
-- ⏳ **Errores restantes:** 195 (58.7%)
+- ⏳ **Errores restantes:** 187 (56.3%)
 
-### **Commits realizados:** 8
+### **Commits realizados:** 9
 1. `fix(async): 56 errores críticos` - Correcciones directas
 2. `refactor(async): deprecar 3 archivos legacy (66 errores)` - post_service, story_service, billing_module
 3. `refactor(async): migrar worker.py a async_event_service`
@@ -17,6 +17,7 @@
 6. `refactor(async): deprecar gym_revenue.py - completamente migrado` - Batch 19
 7. `docs(async): actualizar audit plan con Batch 19 completado`
 8. `fix(async): corregir 2 datetime.utcnow() en nutrition.py métodos async` - Batch 20
+9. `fix(async): agregar 8 await db.commit() faltantes después de flush()` - Batch 21
 
 ---
 
@@ -91,6 +92,15 @@
   - Métodos sync (líneas 49-1103): 50 errores - NO se usan
   - Métodos async (líneas 1110-1597): SÍ se usan
   - Requiere refactorización completa a async_nutrition.py (tarea futura)
+
+### **Batch 21: Missing commits (8 errores)**
+- ✅ async_gym.py:241 - add_user_to_gym()
+- ✅ async_membership.py:397 - update_user_membership()
+- ✅ async_membership.py:537 - deactivate_membership()
+- ✅ async_membership.py:671 - expire_memberships_automatically()
+- ✅ async_chat.py:754 - get_or_create_direct_chat() (3 casos)
+- ✅ async_chat.py:1044 - get_or_create_room()
+- ⚠️ Patrón identificado: flush() debe ir seguido de commit()
 
 ---
 
