@@ -8,7 +8,7 @@ mediante caché inteligente y cálculos en background.
 
 import logging
 from typing import Optional, Dict, List, Any, Union
-from datetime import datetime, timedelta, date
+from datetime import datetime, timedelta, date, timezone
 from sqlalchemy.orm import Session
 from sqlalchemy import func, case, and_, select
 from redis.asyncio import Redis
@@ -962,21 +962,21 @@ class UserStatsService:
             # Calcular días consecutivos de uso
             consecutive_days = 0
             if user_gym.last_app_access:
-                days_since_last = (datetime.utcnow() - user_gym.last_app_access).days
+                days_since_last = (datetime.now(timezone.utc) - user_gym.last_app_access).days
                 if days_since_last == 0:
                     consecutive_days = 1  # Accedió hoy
                 elif days_since_last == 1:
                     # Podría tener racha, simplificado por ahora
                     consecutive_days = 1
-            
+
             # Calcular promedio semanal
-            weeks_since_joined = max(1, (datetime.utcnow() - user_gym.created_at).days // 7)
+            weeks_since_joined = max(1, (datetime.now(timezone.utc) - user_gym.created_at).days // 7)
             avg_per_week = (user_gym.total_app_opens or 0) / weeks_since_joined
-            
+
             # Verificar si accedió hoy
             is_active_today = False
             if user_gym.last_app_access:
-                is_active_today = user_gym.last_app_access.date() == datetime.utcnow().date()
+                is_active_today = user_gym.last_app_access.date() == datetime.now(timezone.utc).date()
             
             return AppUsageMetrics(
                 last_access=user_gym.last_app_access,
@@ -1366,7 +1366,7 @@ class UserStatsService:
                 favorite_class = favorite_class_query.name
             
             # Calcular duración promedio de sesiones (últimos 30 días)
-            thirty_days_ago = datetime.utcnow() - timedelta(days=30)
+            thirty_days_ago = datetime.now(timezone.utc) - timedelta(days=30)
             stmt_avg_duration = (
                 select(
                     func.avg(func.extract('epoch',
