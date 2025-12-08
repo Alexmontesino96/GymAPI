@@ -600,7 +600,7 @@ class EventPaymentService:
             return {"amount": 0, "type": "NO_REFUND", "reason": "Sin política de reembolso"}
 
         if not cancellation_time:
-            cancellation_time = datetime.utcnow()
+            cancellation_time = datetime.now(timezone.utc)
 
         # Calcular horas hasta el evento
         hours_until_event = (event.start_time - cancellation_time).total_seconds() / 3600
@@ -707,7 +707,7 @@ class EventPaymentService:
 
             # Actualizar participación
             participation.payment_status = PaymentStatusType.REFUNDED
-            participation.refund_date = datetime.utcnow()
+            participation.refund_date = datetime.now(timezone.utc)
             participation.refund_amount_cents = refund_info["amount"]
 
             db.commit()
@@ -749,7 +749,7 @@ class EventPaymentService:
         # TODO: Implementar sistema de créditos
         # Por ahora, solo marcamos como CREDITED
         participation.payment_status = PaymentStatusType.CREDITED
-        participation.refund_date = datetime.utcnow()
+        participation.refund_date = datetime.now(timezone.utc)
         participation.refund_amount_cents = credit_amount
 
         db.commit()
@@ -782,7 +782,7 @@ class EventPaymentService:
         """
         try:
             # Establecer fecha límite de pago (24 horas)
-            payment_expiry = datetime.utcnow() + timedelta(hours=24)
+            payment_expiry = datetime.now(timezone.utc) + timedelta(hours=24)
             participation.payment_expiry = payment_expiry
 
             # Obtener usuario
@@ -823,7 +823,7 @@ class EventPaymentService:
             Lista de IDs de participaciones expiradas
         """
         try:
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
 
             # Buscar participaciones con pago pendiente y fecha expirada
             expired_participations = db.query(EventParticipation).filter(
@@ -887,7 +887,7 @@ class EventPaymentService:
         participation.payment_status = PaymentStatusType.PAID
         participation.stripe_payment_intent_id = payment_intent.id
         participation.amount_paid_cents = payment_intent.amount
-        participation.payment_date = datetime.utcnow()
+        participation.payment_date = datetime.now(timezone.utc)
 
         # CRÍTICO: Promover de PENDING_PAYMENT a REGISTERED
         if participation.status == EventParticipationStatus.PENDING_PAYMENT:
@@ -1046,7 +1046,7 @@ class EventPaymentService:
 
                                 # Actualizar participación
                                 participation.payment_status = PaymentStatusType.REFUNDED
-                                participation.refund_date = datetime.utcnow()
+                                participation.refund_date = datetime.now(timezone.utc)
                                 participation.refund_amount_cents = refund_amount
                                 participation.status = EventParticipationStatus.CANCELLED
 
@@ -1170,7 +1170,7 @@ class EventPaymentService:
             # Actualizar evento con información de auditoría
             from app.models.event import EventStatus
             event.status = EventStatus.CANCELLED
-            event.cancellation_date = datetime.utcnow()
+            event.cancellation_date = datetime.now(timezone.utc)
             event.cancelled_by_user_id = cancelled_by_user_id
             event.cancellation_reason = reason
             event.total_refunded_cents = stats["total_refunded_cents"]
