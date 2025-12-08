@@ -1111,7 +1111,9 @@ async def register_for_event(
         # Crear nueva participación
         # La lógica para determinar REGISTERED o WAITING_LIST ya está en el repositorio
         participation = await async_event_participation_repository.create_participation(
-            db, participation_in=participation_in, member_id=user.id
+            db,
+            event_id=participation_in.event_id,
+            member_id=user.id
         )
     
     if not participation:

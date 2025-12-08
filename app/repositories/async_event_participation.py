@@ -7,7 +7,7 @@ para gestionar participaciones en eventos.
 Migrado en FASE 2 de la conversión sync → async.
 """
 from typing import List, Optional, Union
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload, selectinload
@@ -72,7 +72,7 @@ class AsyncEventParticipationRepository(
             member_id=member_id,
             status=status,
             payment_status=payment_status,
-            registered_at=datetime.utcnow()
+            registered_at=datetime.now(timezone.utc)
         )
 
         db.add(participation)
@@ -276,7 +276,7 @@ class AsyncEventParticipationRepository(
             return None
 
         participation.status = EventParticipationStatus.CANCELLED
-        participation.cancelled_at = datetime.utcnow()
+        participation.cancelled_at = datetime.now(timezone.utc)
 
         db.add(participation)
         await db.flush()
@@ -335,7 +335,7 @@ class AsyncEventParticipationRepository(
         promoted = []
         for participant in waiting_participants:
             participant.status = EventParticipationStatus.REGISTERED
-            participant.registered_at = datetime.utcnow()
+            participant.registered_at = datetime.now(timezone.utc)
             db.add(participant)
             promoted.append(participant)
 
