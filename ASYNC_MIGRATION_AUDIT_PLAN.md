@@ -1,16 +1,16 @@
 # Plan de Auditoría Async/Sync - Migración a AsyncSession
 
-## 🎯 Progreso General - Actualizado 2025-12-07
+## 🎯 Progreso General - Actualizado 2025-12-08
 
-### **Total: 184 de 332 errores eliminados (55.4% completado)** 🎉🎉🎉
+### **Total: 212 de 332 errores eliminados (63.9% completado)** 🎉🎉🎉
 
-- ✅ **Errores corregidos directamente:** 113
+- ✅ **Errores corregidos directamente:** 141
 - ✅ **Errores eliminados por deprecación:** 71
-- ⏳ **Errores restantes:** 148 (44.6%)
+- ⏳ **Errores restantes:** 120 (36.1%)
 - 🏆 **¡HITO DEL 50% ALCANZADO!** (Batch 31)
-- 🚀 **¡Ya superamos el 55%!**
+- 🚀 **¡SUPERAMOS EL 60%!** (Batch 35-37)
 
-### **Commits realizados:** 22
+### **Commits realizados:** 26
 1. `fix(async): 56 errores críticos` - Correcciones directas
 2. `refactor(async): deprecar 3 archivos legacy (66 errores)` - post_service, story_service, billing_module
 3. `refactor(async): migrar worker.py a async_event_service`
@@ -33,6 +33,10 @@
 20. `docs(async): actualizar audit plan - HITO DEL 50% ALCANZADO` - Documentación
 21. `fix(async): corregir 8 datetime.utcnow() en event_payment_service.py` - Batch 32
 22. `fix(async): corregir 10 datetime.utcnow() en health.py` - Batch 33
+23. `docs(async): actualizar audit plan - 55.4% completado (Batches 31-33)` - Documentación
+24. `fix(async): corregir 10 datetime.utcnow() en chat_analytics.py` - Batch 34
+25. `fix(async): corregir 6 datetime.utcnow() en stripe_connect_service.py` - Batch 35-36 (paralelo)
+26. `fix(async): corregir 5 datetime.utcnow() en trainer_setup.py` - Batch 37 (paralelo)
 
 ---
 
@@ -195,6 +199,48 @@
   - start_of_month para contador mensual
 - Todos migrados a datetime.now(timezone.utc)
 - 📊 **184/332 errores eliminados = 55.4% completado**
+
+### **Batch 34: chat_analytics.py completo (10 errores)**
+- ✅ chat_analytics.py: 10 datetime.utcnow() (líneas 61, 90, 140, 152, 175, 205, 267, 268, 296, 332)
+  - week_ago para salas activas (7 días)
+  - generated_at timestamps (5 instancias)
+  - month_ago para trending analysis (2 instancias)
+  - start_date para actividad por días
+  - is_active check (últimas 24 horas)
+- Todos migrados a datetime.now(timezone.utc)
+- 📊 **194/332 errores eliminados = 58.4% completado**
+
+### **Batch 35-37: 🚀 AGENTES EN PARALELO 🚀 (18 errores)**
+
+**Batch 35: activity_feed_service.py (7 errores)**
+- ✅ activity_feed_service.py: 7 datetime.utcnow() (líneas 93, 98, 213, 369, 591, 640, 648)
+  - ID único de actividad en tiempo real (timestamp)
+  - Timestamps ISO en actividades publicadas
+  - Last update en resumen del gimnasio
+  - Timestamp al actualizar ocupación de clases
+  - Cálculo de tiempo relativo (_get_time_ago)
+  - Estadísticas diarias (attendance y classes)
+
+**Batch 36: stripe_connect_service.py (6 errores)**
+- ✅ stripe_connect_service.py: 6 datetime.utcnow() (líneas 182, 228, 311, 312, 362, 465)
+  - onboarding_expires_at con timedelta
+  - updated_at en actualización de cuenta
+  - customer_created_at y last_sync_at al crear perfil (2 instancias)
+  - last_sync_at al actualizar suscripción
+  - last_sync_at en sincronización con Stripe
+
+**Batch 37: trainer_setup.py (5 errores)**
+- ✅ trainer_setup.py: 5 datetime.utcnow() (líneas 159, 221, 275, 317, 401)
+  - created_at en _create_user() (User)
+  - created_at en _create_user_gym_relationship() (UserGym OWNER)
+  - created_at en _setup_stripe_connect() (GymStripeAccount)
+  - created_at en _activate_modules() (GymModule)
+  - created_at en _create_default_payment_plans() (MembershipPlan)
+
+- Todos migrados a datetime.now(timezone.utc)
+- ⚡ **Ejecutados en paralelo con Task tool**
+- 📊 **212/332 errores eliminados = 63.9% completado**
+- 🎯 **¡SUPERAMOS EL 60%!**
 
 ---
 
