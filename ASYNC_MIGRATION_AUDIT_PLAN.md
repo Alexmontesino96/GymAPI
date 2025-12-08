@@ -2,13 +2,13 @@
 
 ## 🎯 Progreso General - Actualizado 2025-12-07
 
-### **Total: 147 de 332 errores eliminados (44.3% completado)**
+### **Total: 149 de 332 errores eliminados (44.9% completado)** 🎉
 
-- ✅ **Errores corregidos directamente:** 76
+- ✅ **Errores corregidos directamente:** 78
 - ✅ **Errores eliminados por deprecación:** 71
-- ⏳ **Errores restantes:** 185 (55.7%)
+- ⏳ **Errores restantes:** 183 (55.1%)
 
-### **Commits realizados:** 10
+### **Commits realizados:** 11
 1. `fix(async): 56 errores críticos` - Correcciones directas
 2. `refactor(async): deprecar 3 archivos legacy (66 errores)` - post_service, story_service, billing_module
 3. `refactor(async): migrar worker.py a async_event_service`
@@ -19,6 +19,7 @@
 8. `fix(async): corregir 2 datetime.utcnow() en nutrition.py métodos async` - Batch 20
 9. `fix(async): agregar 8 await db.commit() faltantes después de flush()` - Batch 21
 10. `fix(async): corregir 2 datetime.utcnow() en module.py` - Batch 22
+11. `fix(async): corregir 2 datetime.utcnow() en post_interaction_service.py` - Batch 23
 
 ---
 
@@ -108,6 +109,11 @@
   - activate_module_for_gym() (línea 129)
   - deactivate_module_for_gym() (línea 152)
 - ✅ async_module.py ya está correcto (0 errores)
+
+### **Batch 23: post_interaction_service.py (2 errores)**
+- ✅ post_interaction_service.py: 2 datetime.utcnow() corregidos
+  - update_comment() edited_at (línea 269)
+  - delete_comment() deleted_at (línea 322)
 
 ---
 
