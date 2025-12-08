@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import hashlib
 import random
 import string
@@ -77,7 +77,7 @@ class AttendanceService:
             }
 
         # Buscar una clase próxima (±30 minutos desde ahora)
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         window_start = now - timedelta(minutes=30)
         window_end = now + timedelta(minutes=30)
         
