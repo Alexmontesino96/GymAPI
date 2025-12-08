@@ -5,7 +5,7 @@ Resuelve el problema de duplicación de customers en un entorno multitenant.
 
 import stripe
 from typing import Optional, Dict, Any
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from sqlalchemy.orm import Session
 from app.core.config import get_settings
 from app.models.stripe_profile import UserGymStripeProfile, GymStripeAccount
@@ -179,7 +179,7 @@ class StripeConnectService:
             
             # Actualizar información en BD
             gym_account.onboarding_url = account_link.url
-            gym_account.onboarding_expires_at = datetime.utcnow() + timedelta(hours=1)  # Expira en 1 hora
+            gym_account.onboarding_expires_at = datetime.now(timezone.utc) + timedelta(hours=1)  # Expira en 1 hora
             db.commit()
             
             logger.info(f"Link de onboarding creado para gym {gym_id}")
@@ -225,7 +225,7 @@ class StripeConnectService:
                 account.payouts_enabled and 
                 account.details_submitted
             )
-            gym_account.updated_at = datetime.utcnow()
+            gym_account.updated_at = datetime.now(timezone.utc)
             
             db.commit()
             db.refresh(gym_account)
@@ -308,8 +308,8 @@ class StripeConnectService:
                 stripe_customer_id=customer.id,
                 stripe_account_id=gym_account.stripe_account_id,
                 email=user.email,
-                customer_created_at=datetime.utcnow(),
-                last_sync_at=datetime.utcnow()
+                customer_created_at=datetime.now(timezone.utc),
+                last_sync_at=datetime.now(timezone.utc)
             )
             db.add(stripe_profile)
             db.commit()
@@ -359,7 +359,7 @@ class StripeConnectService:
             # Actualizar subscription_id
             old_subscription_id = stripe_profile.stripe_subscription_id
             stripe_profile.stripe_subscription_id = subscription_id
-            stripe_profile.last_sync_at = datetime.utcnow()
+            stripe_profile.last_sync_at = datetime.now(timezone.utc)
             
             db.commit()
             db.refresh(stripe_profile)
@@ -462,7 +462,7 @@ class StripeConnectService:
             
             # Actualizar información local
             stripe_profile.email = customer.email
-            stripe_profile.last_sync_at = datetime.utcnow()
+            stripe_profile.last_sync_at = datetime.now(timezone.utc)
             
             db.commit()
             db.refresh(stripe_profile)
