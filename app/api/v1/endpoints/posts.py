@@ -554,7 +554,8 @@ async def get_post_comments(
     limit: int = 20,
     offset: int = 0,
     db: AsyncSession = Depends(get_async_db),
-    gym_id: int = Depends(get_tenant_id)
+    gym_id: int = Depends(get_tenant_id),
+    db_user: User = Depends(get_current_db_user)
 ):
     """
     Obtiene los comentarios de un post.
@@ -567,9 +568,49 @@ async def get_post_comments(
         offset=offset
     )
 
+    # Enriquecer comentarios con user_info y has_liked
+    from app.models.post_interaction import PostCommentLike
+    enriched_comments = []
+
+    for comment in comments:
+        # Obtener información del usuario que hizo el comentario
+        result = await db.execute(select(User).where(User.id == comment.user_id))
+        comment_user = result.scalar_one_or_none()
+
+        # Verificar si el usuario actual dio like a este comentario
+        result = await db.execute(select(PostCommentLike).where(
+            and_(
+                PostCommentLike.comment_id == comment.id,
+                PostCommentLike.user_id == db_user.id
+            )
+        ))
+        has_liked = result.scalar_one_or_none() is not None
+
+        # Construir CommentResponse enriquecido
+        from app.schemas.post_interaction import CommentResponse
+        enriched_comment = CommentResponse(
+            id=comment.id,
+            post_id=comment.post_id,
+            user_id=comment.user_id,
+            gym_id=comment.gym_id,
+            comment_text=comment.comment_text,
+            is_edited=comment.is_edited,
+            edited_at=comment.edited_at,
+            like_count=comment.like_count,
+            created_at=comment.created_at,
+            updated_at=comment.updated_at,
+            user_info={
+                "id": comment_user.id,
+                "name": f"{comment_user.first_name or ''} {comment_user.last_name or ''}".strip() or comment_user.email,
+                "avatar": comment_user.picture
+            } if comment_user else None,
+            has_liked=has_liked
+        )
+        enriched_comments.append(enriched_comment)
+
     return CommentsListResponse(
-        comments=comments,
-        total=len(comments),
+        comments=enriched_comments,
+        total=len(enriched_comments),
         limit=limit,
         offset=offset,
         has_more=len(comments) == limit
