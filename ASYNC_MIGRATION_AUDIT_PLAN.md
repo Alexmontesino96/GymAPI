@@ -2,13 +2,14 @@
 
 ## 🎯 Progreso General - Actualizado 2025-12-07
 
-### **Total: 153 de 332 errores eliminados (46.1% completado)** 🎉
+### **Total: 166 de 332 errores eliminados (50.0% completado)** 🎉🎉🎉
 
-- ✅ **Errores corregidos directamente:** 82
+- ✅ **Errores corregidos directamente:** 95
 - ✅ **Errores eliminados por deprecación:** 71
-- ⏳ **Errores restantes:** 179 (53.9%)
+- ⏳ **Errores restantes:** 166 (50.0%)
+- 🏆 **¡HITO DEL 50% ALCANZADO!**
 
-### **Commits realizados:** 14
+### **Commits realizados:** 19
 1. `fix(async): 56 errores críticos` - Correcciones directas
 2. `refactor(async): deprecar 3 archivos legacy (66 errores)` - post_service, story_service, billing_module
 3. `refactor(async): migrar worker.py a async_event_service`
@@ -23,6 +24,11 @@
 12. `fix(async): corregir 2 datetime.utcnow() en membership.py` - Batch 24
 13. `fix(async): corregir 1 datetime.utcnow() en attendance.py` - Batch 25
 14. `fix(async): corregir 1 datetime.utcnow() en chat.py` - Batch 26
+15. `fix(async): corregir 1 datetime.utcnow() en schedule.py` - Batch 27
+16. `fix(async): corregir 1 datetime.utcnow() en sqs_notification_service.py` - Batch 28
+17. `fix(async): corregir 4 datetime.utcnow() en user_stats.py` - Batch 29
+18. `fix(async): corregir 4 datetime.utcnow() en activity_aggregator.py` - Batch 30
+19. `fix(async): ¡HITO 50%! - corregir 3 datetime.utcnow() en servicios de pago` - Batch 31
 
 ---
 
@@ -123,6 +129,43 @@
 - ✅ attendance.py: 1 datetime.utcnow() (línea 80)
 - ✅ chat.py: 1 datetime.utcnow() (línea 1557)
 - ⚠️ Todos son archivos sync legacy con versiones async correctas
+
+### **Batch 27: schedule.py (1 error)**
+- ✅ schedule.py: 1 datetime.utcnow() (línea 3210)
+  - get_member_class_history() comparación de fechas
+  - Migrado a datetime.now(timezone.utc)
+- ⚠️ Archivo sync legacy con versión async correcta
+
+### **Batch 28: sqs_notification_service.py (1 error)**
+- ✅ sqs_notification_service.py: 1 datetime.utcnow() (línea 57)
+  - NotificationMessage.__post_init__() timestamp ISO
+  - Migrado a datetime.now(timezone.utc).isoformat()
+- ⚠️ Archivo de servicio Amazon SQS para notificaciones
+
+### **Batch 29: user_stats.py (4 errores)**
+- ✅ user_stats.py: 4 datetime.utcnow() (líneas 965, 973, 979, 1369)
+  - get_app_usage_metrics() cálculos de días/semanas
+  - get_comprehensive_class_stats() ventana de 30 días
+  - Todos migrados a datetime.now(timezone.utc)
+- ⚠️ Archivo con estadísticas comprehensivas de usuarios
+
+### **Batch 30: activity_aggregator.py (4 errores)**
+- ✅ activity_aggregator.py: 4 datetime.utcnow() (líneas 272, 309, 333, 406)
+  - aggregate_class_completion() timestamp ISO
+  - aggregate_hourly() timestamp ISO
+  - update_daily_rankings() cálculo de fecha actual
+  - aggregate_social_activity() timestamp ISO
+  - Todos migrados a datetime.now(timezone.utc)
+- ⚠️ Archivo sync legacy de agregación de actividades
+
+### **Batch 31: 🏆 HITO DEL 50% 🏆 (3 errores)**
+- ✅ stripe_service.py: 2 datetime.utcnow() (líneas 1037, 1159)
+  - payment_date en webhook de pago exitoso
+  - refund_date en webhook de reembolso
+- ✅ event_payment_service.py: 1 datetime.utcnow() (línea 361)
+  - customer_created_at al crear perfil Stripe
+- Todos migrados a datetime.now(timezone.utc)
+- 🎉 **166/332 errores eliminados = 50.0% COMPLETADO**
 
 ---
 
