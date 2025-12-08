@@ -1,5 +1,5 @@
 from typing import List, Optional, Dict, Any, Union
-from datetime import datetime, time, timedelta, date
+from datetime import datetime, time, timedelta, date, timezone
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -3207,7 +3207,7 @@ class ClassParticipationService:
                 ClassParticipation.member_id == member_id,
                 ClassParticipation.gym_id == gym_id,
                 # Sessions that have already happened
-                ClassSession.start_time <= datetime.utcnow()
+                ClassSession.start_time <= datetime.now(timezone.utc)
             )
         )
         
