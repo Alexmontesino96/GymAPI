@@ -6,7 +6,7 @@ incluyendo configuración de Stripe, módulos y planes de pago.
 """
 
 from typing import Optional, List, Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 import stripe
 import logging
@@ -156,7 +156,7 @@ class TrainerSetupService:
             phone=phone,
             role=UserRole.TRAINER,  # Rol global
             is_active=True,
-            created_at=datetime.utcnow()
+            created_at=datetime.now(timezone.utc)
         )
         self.db.add(user)
         self.db.flush()  # Obtener ID sin commit
@@ -218,7 +218,7 @@ class TrainerSetupService:
             role=GymRoleType.OWNER,
             is_active=True,
             membership_type="owner",
-            created_at=datetime.utcnow()
+            created_at=datetime.now(timezone.utc)
         )
         self.db.add(user_gym)
         self.db.flush()
@@ -272,7 +272,7 @@ class TrainerSetupService:
                     gym_id=gym.id,
                     stripe_account_id=account.id,
                     is_connected=False,
-                    created_at=datetime.utcnow()
+                    created_at=datetime.now(timezone.utc)
                 )
                 self.db.add(gym_stripe)
                 logger.info(f"Stripe Connect configurado: {account.id}")
@@ -314,7 +314,7 @@ class TrainerSetupService:
                 is_active=is_active,
                 description=description,
                 config={},
-                created_at=datetime.utcnow()
+                created_at=datetime.now(timezone.utc)
             )
             self.db.add(module)
 
@@ -398,7 +398,7 @@ class TrainerSetupService:
                     billing_interval=plan_data.get("interval", "one_time"),
                     is_active=True,
                     features=f"{plan_data.get('sessions', '')} sesiones" if plan_data.get('sessions') else "Sesiones ilimitadas",
-                    created_at=datetime.utcnow()
+                    created_at=datetime.now(timezone.utc)
                 )
                 self.db.add(membership_plan)
                 plans_created.append(plan_data["name"])
