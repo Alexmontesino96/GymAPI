@@ -2,13 +2,13 @@
 
 ## 🎯 Progreso General - Actualizado 2025-12-07
 
-### **Total: 149 de 332 errores eliminados (44.9% completado)** 🎉
+### **Total: 153 de 332 errores eliminados (46.1% completado)** 🎉
 
-- ✅ **Errores corregidos directamente:** 78
+- ✅ **Errores corregidos directamente:** 82
 - ✅ **Errores eliminados por deprecación:** 71
-- ⏳ **Errores restantes:** 183 (55.1%)
+- ⏳ **Errores restantes:** 179 (53.9%)
 
-### **Commits realizados:** 11
+### **Commits realizados:** 14
 1. `fix(async): 56 errores críticos` - Correcciones directas
 2. `refactor(async): deprecar 3 archivos legacy (66 errores)` - post_service, story_service, billing_module
 3. `refactor(async): migrar worker.py a async_event_service`
@@ -20,6 +20,9 @@
 9. `fix(async): agregar 8 await db.commit() faltantes después de flush()` - Batch 21
 10. `fix(async): corregir 2 datetime.utcnow() en module.py` - Batch 22
 11. `fix(async): corregir 2 datetime.utcnow() en post_interaction_service.py` - Batch 23
+12. `fix(async): corregir 2 datetime.utcnow() en membership.py` - Batch 24
+13. `fix(async): corregir 1 datetime.utcnow() en attendance.py` - Batch 25
+14. `fix(async): corregir 1 datetime.utcnow() en chat.py` - Batch 26
 
 ---
 
@@ -114,6 +117,12 @@
 - ✅ post_interaction_service.py: 2 datetime.utcnow() corregidos
   - update_comment() edited_at (línea 269)
   - delete_comment() deleted_at (línea 322)
+
+### **Batch 24-26: Victorias rápidas sync legacy (4 errores)**
+- ✅ membership.py: 2 datetime.utcnow() (líneas 103, 137)
+- ✅ attendance.py: 1 datetime.utcnow() (línea 80)
+- ✅ chat.py: 1 datetime.utcnow() (línea 1557)
+- ⚠️ Todos son archivos sync legacy con versiones async correctas
 
 ---
 
