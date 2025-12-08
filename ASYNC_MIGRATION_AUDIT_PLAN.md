@@ -2,17 +2,19 @@
 
 ## 🎯 Progreso General - Actualizado 2025-12-07
 
-### **Total: 127 de 332 errores eliminados (38.3% completado)**
+### **Total: 135 de 332 errores eliminados (40.7% completado)**
 
-- ✅ **Errores corregidos directamente:** 61
-- ✅ **Errores eliminados por deprecación:** 66
-- ⏳ **Errores restantes:** 205 (61.7%)
+- ✅ **Errores corregidos directamente:** 64
+- ✅ **Errores eliminados por deprecación:** 71
+- ⏳ **Errores restantes:** 197 (59.3%)
 
-### **Commits realizados:** 4
+### **Commits realizados:** 6
 1. `fix(async): 56 errores críticos` - Correcciones directas
 2. `refactor(async): deprecar 3 archivos legacy (66 errores)` - post_service, story_service, billing_module
 3. `refactor(async): migrar worker.py a async_event_service`
 4. `refactor(async): migrar servicios async a AsyncMembershipService`
+5. `refactor(async): migrar memberships.py a async_gym_revenue_service` - Batch 19
+6. `refactor(async): deprecar gym_revenue.py - completamente migrado` - Batch 19
 
 ---
 
@@ -70,6 +72,14 @@
 - ✅ story_service.py → deprecated/ (28 errores)
 - ✅ billing_module.py → deprecated/ (11 errores)
 - ✅ deprecated/README.md creado con documentación
+
+### **Batch 19: Migración gym_revenue (8 errores)**
+- ✅ memberships.py: 3 endpoints migrados a async_gym_revenue_service
+  - get_gym_revenue_summary() (línea 1521)
+  - get_platform_revenue_summary() (línea 1575)
+  - calculate_gym_payout() (línea 1633)
+- ✅ gym_revenue.py → deprecated/ (5 errores eliminados)
+- ✅ deprecated/README.md actualizado (total 71 errores)
 
 ---
 
@@ -1000,10 +1010,10 @@ Archivo en general bien migrado, solo errores menores puntuales.
     - ✅ billing_module.py → deprecated/
     - ✅ post_service.py → deprecated/
     - ✅ story_service.py → deprecated/
+    - ✅ gym_revenue.py → deprecated/ (Batch 19)
     - ⏳ event.py (usado en worker.py → migrado a async)
     - ⏳ attendance.py (usado en user.py - pendiente)
     - ⏳ gym.py (usado en múltiples endpoints - pendiente)
-    - ⏳ gym_revenue.py (usado en memberships.py - pendiente)
 
 ### 🔵 **BAJA - Tech Debt** (Planificar para siguiente sprint)
 
