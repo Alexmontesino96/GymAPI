@@ -1505,20 +1505,20 @@ async def get_gym_revenue_summary(
         dict: Resumen detallado de ingresos del gimnasio
     """
     try:
-        from app.services.gym_revenue import gym_revenue_service
+        from app.services.async_gym_revenue import async_gym_revenue_service
         from datetime import datetime
-        
+
         # Convertir fechas de string a datetime si se proporcionan
         parsed_start_date = None
         parsed_end_date = None
-        
+
         if start_date:
             parsed_start_date = datetime.strptime(start_date, "%Y-%m-%d")
         if end_date:
             parsed_end_date = datetime.strptime(end_date, "%Y-%m-%d")
-        
+
         # Obtener resumen de ingresos
-        revenue_summary = await gym_revenue_service.get_gym_revenue_summary(
+        revenue_summary = await async_gym_revenue_service.get_gym_revenue_summary(
             db, current_gym.id, parsed_start_date, parsed_end_date
         )
         
@@ -1559,20 +1559,20 @@ async def get_platform_revenue_summary(
                 detail="Acceso restringido a super-administradores"
             )
         
-        from app.services.gym_revenue import gym_revenue_service
+        from app.services.async_gym_revenue import async_gym_revenue_service
         from datetime import datetime
-        
+
         # Convertir fechas de string a datetime si se proporcionan
         parsed_start_date = None
         parsed_end_date = None
-        
+
         if start_date:
             parsed_start_date = datetime.strptime(start_date, "%Y-%m-%d")
         if end_date:
             parsed_end_date = datetime.strptime(end_date, "%Y-%m-%d")
-        
+
         # Obtener resumen de la plataforma
-        platform_summary = await gym_revenue_service.get_platform_revenue_summary(
+        platform_summary = await async_gym_revenue_service.get_platform_revenue_summary(
             db, parsed_start_date, parsed_end_date
         )
         
@@ -1609,28 +1609,28 @@ async def calculate_gym_payout(
         dict: Detalles del pago calculado
     """
     try:
-        from app.services.gym_revenue import gym_revenue_service
+        from app.services.async_gym_revenue import async_gym_revenue_service
         from datetime import datetime
-        
+
         # Convertir fechas
         parsed_start_date = datetime.strptime(start_date, "%Y-%m-%d")
         parsed_end_date = datetime.strptime(end_date, "%Y-%m-%d")
-        
+
         # Validar que el rango de fechas sea razonable
         if (parsed_end_date - parsed_start_date).days > 365:
             raise HTTPException(
-                status_code=400, 
+                status_code=400,
                 detail="El rango de fechas no puede ser mayor a 365 días"
             )
-        
+
         if parsed_start_date > parsed_end_date:
             raise HTTPException(
-                status_code=400, 
+                status_code=400,
                 detail="La fecha de inicio debe ser anterior a la fecha de fin"
             )
-        
+
         # Calcular payout
-        payout_details = await gym_revenue_service.calculate_gym_payout(
+        payout_details = await async_gym_revenue_service.calculate_gym_payout(
             db, current_gym.id, parsed_start_date, parsed_end_date
         )
         
