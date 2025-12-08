@@ -10,7 +10,7 @@ Este servicio maneja toda la lógica de negocio relacionada con:
 
 import logging
 from typing import List, Optional, Dict, Any, Tuple
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 from sqlalchemy.orm import Session
 from sqlalchemy import func, and_, desc, asc
 from redis.asyncio import Redis
@@ -75,7 +75,7 @@ class UserHealthService:
                 muscle_mass=muscle_mass,
                 measurement_type=measurement_type,
                 notes=notes,
-                recorded_at=datetime.utcnow()
+                recorded_at=datetime.now(timezone.utc)
             )
             
             db.add(record)
@@ -131,7 +131,7 @@ class UserHealthService:
         Returns:
             Lista de registros de peso
         """
-        cutoff_date = datetime.utcnow() - timedelta(days=days)
+        cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
         
         return db.query(UserHealthRecord).filter(
             UserHealthRecord.user_id == user_id,
@@ -235,7 +235,7 @@ class UserHealthService:
             # Verificar si el objetivo se completó
             if self._is_goal_completed(goal):
                 goal.status = GoalStatus.COMPLETED
-                goal.completed_at = datetime.utcnow()
+                goal.completed_at = datetime.now(timezone.utc)
                 
                 # Crear achievement automático
                 self._create_goal_achievement(db, goal)
@@ -573,7 +573,7 @@ class UserHealthService:
         
         try:
             # Calcular racha actual
-            thirty_days_ago = datetime.utcnow() - timedelta(days=30)
+            thirty_days_ago = datetime.now(timezone.utc) - timedelta(days=30)
             attendance_dates = db.query(
                 func.date(ClassParticipation.created_at).label('attendance_date')
             ).filter(
@@ -730,7 +730,7 @@ class UserHealthService:
                 muscle_mass=muscle_mass,
                 measurement_type=measurement_type,
                 notes=notes,
-                recorded_at=datetime.utcnow()
+                recorded_at=datetime.now(timezone.utc)
             )
 
             db.add(record)
@@ -791,7 +791,7 @@ class UserHealthService:
         from sqlalchemy import select
         from sqlalchemy.ext.asyncio import AsyncSession
 
-        cutoff_date = datetime.utcnow() - timedelta(days=days)
+        cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
 
         stmt = (
             select(UserHealthRecord)
@@ -880,7 +880,7 @@ class UserHealthService:
                 raise ValueError(f"Goal {goal_id} not found")
 
             goal.current_value = current_value
-            goal.updated_at = datetime.utcnow()
+            goal.updated_at = datetime.now(timezone.utc)
 
             # Actualizar estado del objetivo
             progress_percentage = self._calculate_goal_progress_percentage(goal)
@@ -888,7 +888,7 @@ class UserHealthService:
 
             # Si se completó, crear achievement
             if goal.status == GoalStatus.COMPLETED and goal.completed_at is None:
-                goal.completed_at = datetime.utcnow()
+                goal.completed_at = datetime.now(timezone.utc)
                 await self._create_goal_achievement_async(db, goal)
 
             await db.flush()
@@ -1025,7 +1025,7 @@ class UserHealthService:
         from sqlalchemy import select
         from sqlalchemy.ext.asyncio import AsyncSession
 
-        cutoff_time = datetime.utcnow() - timedelta(hours=hours)
+        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
 
         stmt = (
             select(UserAchievement)
@@ -1076,7 +1076,7 @@ class UserHealthService:
         )
 
         # Contar asistencias del mes
-        start_of_month = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        start_of_month = datetime.now(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
         stmt = (
             select(func.count(ClassParticipation.id))
             .where(
