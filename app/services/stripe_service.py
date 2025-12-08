@@ -1,6 +1,6 @@
 import stripe
 from typing import Optional, Dict, Any, List
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 from app.core.config import get_settings
 from app.models.membership import MembershipPlan
@@ -1034,7 +1034,7 @@ class StripeService:
                 # Actualizar estado de pago
                 participation.payment_status = PaymentStatusType.PAID
                 participation.amount_paid_cents = payment_intent['amount']
-                participation.payment_date = datetime.utcnow()
+                participation.payment_date = datetime.now(timezone.utc)
 
                 # CRÍTICO: Promover de PENDING_PAYMENT a REGISTERED (ahora SÍ ocupa plaza)
                 from app.models.event import EventParticipationStatus, Event
@@ -1156,7 +1156,7 @@ class StripeService:
 
                 # Actualizar estado de reembolso
                 participation.payment_status = PaymentStatusType.REFUNDED
-                participation.refund_date = datetime.utcnow()
+                participation.refund_date = datetime.now(timezone.utc)
                 participation.refund_amount_cents = amount_refunded
 
                 db.commit()

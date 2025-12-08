@@ -10,7 +10,7 @@ Este servicio gestiona:
 """
 
 from typing import Optional, Dict, Any, List
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 import logging
 from sqlalchemy.orm import Session
@@ -358,7 +358,7 @@ class EventPaymentService:
                 stripe_customer_id=customer.id,
                 stripe_account_id=stripe_account_id,
                 email=user.email,
-                customer_created_at=datetime.utcnow()
+                customer_created_at=datetime.now(timezone.utc)
             )
             db.add(stripe_profile)
             db.commit()
