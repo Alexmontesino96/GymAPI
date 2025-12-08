@@ -6,7 +6,7 @@ import time
 import logging
 import re
 from functools import lru_cache, wraps
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import hashlib
 import random
 
@@ -1554,8 +1554,8 @@ class ChatService:
         """
         try:
             # Actualizar timestamp de último mensaje en la sala
-            chat_room.updated_at = datetime.utcnow()
-            
+            chat_room.updated_at = datetime.now(timezone.utc)
+
             # Actualizar el último usuario que envió mensaje
             if hasattr(chat_room, 'last_message_user_id'):
                 chat_room.last_message_user_id = sender_id
