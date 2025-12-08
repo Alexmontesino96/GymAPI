@@ -2,19 +2,21 @@
 
 ## 🎯 Progreso General - Actualizado 2025-12-07
 
-### **Total: 135 de 332 errores eliminados (40.7% completado)**
+### **Total: 137 de 332 errores eliminados (41.3% completado)**
 
-- ✅ **Errores corregidos directamente:** 64
+- ✅ **Errores corregidos directamente:** 66
 - ✅ **Errores eliminados por deprecación:** 71
-- ⏳ **Errores restantes:** 197 (59.3%)
+- ⏳ **Errores restantes:** 195 (58.7%)
 
-### **Commits realizados:** 6
+### **Commits realizados:** 8
 1. `fix(async): 56 errores críticos` - Correcciones directas
 2. `refactor(async): deprecar 3 archivos legacy (66 errores)` - post_service, story_service, billing_module
 3. `refactor(async): migrar worker.py a async_event_service`
 4. `refactor(async): migrar servicios async a AsyncMembershipService`
 5. `refactor(async): migrar memberships.py a async_gym_revenue_service` - Batch 19
 6. `refactor(async): deprecar gym_revenue.py - completamente migrado` - Batch 19
+7. `docs(async): actualizar audit plan con Batch 19 completado`
+8. `fix(async): corregir 2 datetime.utcnow() en nutrition.py métodos async` - Batch 20
 
 ---
 
@@ -80,6 +82,15 @@
   - calculate_gym_payout() (línea 1633)
 - ✅ gym_revenue.py → deprecated/ (5 errores eliminados)
 - ✅ deprecated/README.md actualizado (total 71 errores)
+
+### **Batch 20: Nutrition.py parcial (2 errores)**
+- ✅ nutrition.py: 2 datetime.utcnow() corregidos en métodos async
+  - update_nutrition_plan_async() (línea 1244)
+  - complete_meal_async() (línea 1439)
+- ⚠️ Arquitectura híbrida compleja identificada:
+  - Métodos sync (líneas 49-1103): 50 errores - NO se usan
+  - Métodos async (líneas 1110-1597): SÍ se usan
+  - Requiere refactorización completa a async_nutrition.py (tarea futura)
 
 ---
 
