@@ -31,9 +31,18 @@ Este directorio contiene servicios legacy que han sido reemplazados por versione
   - Métodos async con `Session` en lugar de `AsyncSession`
 - **Estado:** No se usa en ningún endpoint
 
-## Total de Errores Eliminados: 66
+### ✅ gym_revenue.py (est. 5 errores)
+- **Reemplazado por:** `async_gym_revenue.py` (0 errores, ⭐⭐⭐⭐⭐)
+- **Razón:** Métodos async con Session sync
+- **Errores:**
+  - Métodos async con `Session` en lugar de `AsyncSession`
+  - Posibles missing awaits en operaciones DB
+- **Estado:** Migrado completamente - no se usa en ningún endpoint
+- **Fecha deprecación:** 2025-12-07 (Batch 19)
 
-Al deprecar estos archivos, eliminamos 66 errores del total de 332 identificados en el plan de auditoría.
+## Total de Errores Eliminados: 71
+
+Al deprecar estos archivos, eliminamos 71 errores del total de 332 identificados en el plan de auditoría.
 
 ## Archivos Legacy que AÚN SE USAN (No Deprecar)
 
@@ -51,11 +60,6 @@ Al deprecar estos archivos, eliminamos 66 errores del total de 332 identificados
 - **Usado en:** `app/api/v1/endpoints/users.py`, `app/api/v1/endpoints/schedule/sessions.py`, `app/services/attendance.py`
 - **Tiene versión async:** `async_gym.py` ✅
 - **Acción requerida:** Migrar endpoints a usar async_gym_service
-
-### ⚠️ gym_revenue.py
-- **Usado en:** `app/api/v1/endpoints/memberships.py` (3 instancias)
-- **Tiene versión async:** `async_gym_revenue.py` ✅
-- **Acción requerida:** Migrar memberships.py a usar async_gym_revenue_service
 
 ### ⚠️ membership.py
 - **Usado en:** `app/services/async_billing_module.py`, `app/services/stripe_service.py`, `app/services/async_user_stats.py`, `app/services/billing_module.py`, `app/services/user_stats.py`
