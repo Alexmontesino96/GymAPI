@@ -5,7 +5,7 @@ Servicio para manejar la lógica de negocio de los planes nutricionales.
 from typing import List, Optional, Dict, Any, Tuple
 from sqlalchemy.orm import Session, joinedload, selectinload
 from sqlalchemy import and_, or_, func, desc, asc
-from datetime import datetime, timedelta, date
+from datetime import datetime, timedelta, date, timezone
 import json
 import logging
 
@@ -1241,7 +1241,7 @@ class NutritionService:
         for field, value in update_data.items():
             setattr(plan, field, value)
 
-        plan.updated_at = datetime.utcnow()
+        plan.updated_at = datetime.now(timezone.utc)
         await db.flush()
         await db.refresh(plan)
 
@@ -1435,7 +1435,7 @@ class NutritionService:
         completion = UserMealCompletion(
             meal_id=meal_id,
             user_id=user_id,
-            completed_at=datetime.utcnow(),
+            completed_at=datetime.now(timezone.utc),
             rating=rating,
             notes=notes
         )
