@@ -12,7 +12,10 @@ import json
 from typing import Dict, Any, Optional
 from datetime import datetime, timezone
 
-from app.services.aws_sqs import sqs_service
+from app.services.async_aws_sqs import AsyncSQSService
+
+# Instancia singleton del servicio SQS async
+async_sqs_service = AsyncSQSService()
 
 # Configurar logger
 logger = logging.getLogger(__name__)
@@ -89,7 +92,7 @@ class AsyncQueueService:
             message_group_id = str(event_id)
 
             # Enviar mensaje a SQS para crear el chat
-            sqs_response = sqs_service.send_message(
+            sqs_response = await async_sqs_service.send_message(
                 message_body=chat_message_body,
                 message_group_id=message_group_id
             )
@@ -141,7 +144,7 @@ class AsyncQueueService:
             Útil para limpiar mensajes pendientes cuando se elimina un evento.
         """
         try:
-            removed = sqs_service.delete_event_messages(
+            removed = await async_sqs_service.delete_event_messages(
                 event_id=event_id,
                 actions=[CREATE_EVENT_CHAT]
             )

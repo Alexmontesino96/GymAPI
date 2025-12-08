@@ -187,7 +187,7 @@ class AsyncEventParticipationRepository(
         if not participation:
             return False
 
-        await db.delete(participation)
+        db.delete(participation)
         await db.flush()
         return True
 

@@ -537,9 +537,11 @@ class AsyncActivityAggregator:
             stats["active_users"] = int(active)
             stats["is_peak_time"] = int(active) > 20
 
-        # Clases con grupos
+        # Clases con grupos - usar SCAN en lugar de KEYS para mejor performance
         pattern = f"gym:{gym_id}:realtime:by_class:*"
-        class_keys = await self.feed_service.redis.keys(pattern)
+        class_keys = []
+        async for key in self.feed_service.redis.scan_iter(match=pattern):
+            class_keys.append(key)
 
         for key in class_keys:
             count = await self.feed_service.redis.get(key)

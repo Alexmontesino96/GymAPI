@@ -59,7 +59,7 @@ class ModuleService:
         """Eliminar un módulo por su ID"""
         db_module = await self.get_module_by_id(db, module_id)
         if db_module:
-            await db.delete(db_module)
+            db.delete(db_module)
             await db.commit()
             return True
         return False

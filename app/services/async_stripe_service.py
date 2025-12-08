@@ -1,6 +1,6 @@
 import stripe
 from typing import Optional, Dict, Any, List
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from app.core.config import get_settings
@@ -844,22 +844,34 @@ class AsyncStripeService:
             if not subscription_id or not trial_end:
                 raise ValueError("Datos incompletos en webhook de fin de prueba")
 
-            # Buscar membresía local
+            # Buscar membresía local usando Stripe Connect Service
             from app.models.user_gym import UserGym
             from app.db.session import get_async_db
             from datetime import datetime
+            from app.services.async_stripe_connect_service import async_stripe_connect_service
 
             async for db in get_async_db():
                 try:
+                    # Buscar perfil de Stripe por subscription_id
+                    stripe_profile = await async_stripe_connect_service.find_profile_by_subscription_id(
+                        db, subscription_id
+                    )
+
+                    if not stripe_profile:
+                        logger.warning(f"Perfil Stripe no encontrado para suscripción {subscription_id}")
+                        return
+
+                    # Obtener UserGym a través del perfil
                     result = await db.execute(
                         select(UserGym).where(
-                            UserGym.stripe_subscription_id == subscription_id
+                            UserGym.user_id == stripe_profile.user_id,
+                            UserGym.gym_id == stripe_profile.gym_id
                         )
                     )
                     user_gym = result.scalar_one_or_none()
 
                     if not user_gym:
-                        logger.warning(f"Membresía local no encontrada para suscripción {subscription_id}")
+                        logger.warning(f"UserGym no encontrado para user {stripe_profile.user_id}, gym {stripe_profile.gym_id}")
                         return
 
                     # Actualizar nota sobre fin de prueba
@@ -890,12 +902,24 @@ class AsyncStripeService:
             if customer_id:
                 from app.models.user_gym import UserGym
                 from app.db.session import get_async_db
+                from app.services.async_stripe_connect_service import async_stripe_connect_service
 
                 async for db in get_async_db():
                     try:
+                        # Buscar perfil de Stripe por customer_id
+                        stripe_profile = await async_stripe_connect_service.find_profile_by_customer_id(
+                            db, customer_id
+                        )
+
+                        if not stripe_profile:
+                            logger.warning(f"Perfil Stripe no encontrado para customer {customer_id}")
+                            break
+
+                        # Obtener UserGym a través del perfil
                         result = await db.execute(
                             select(UserGym).where(
-                                UserGym.stripe_customer_id == customer_id
+                                UserGym.user_id == stripe_profile.user_id,
+                                UserGym.gym_id == stripe_profile.gym_id
                             )
                         )
                         user_gym = result.scalar_one_or_none()
@@ -927,12 +951,24 @@ class AsyncStripeService:
             if customer_id:
                 from app.models.user_gym import UserGym
                 from app.db.session import get_async_db
+                from app.services.async_stripe_connect_service import async_stripe_connect_service
 
                 async for db in get_async_db():
                     try:
+                        # Buscar perfil de Stripe por customer_id
+                        stripe_profile = await async_stripe_connect_service.find_profile_by_customer_id(
+                            db, customer_id
+                        )
+
+                        if not stripe_profile:
+                            logger.warning(f"Perfil Stripe no encontrado para customer {customer_id}")
+                            break
+
+                        # Obtener UserGym a través del perfil
                         result = await db.execute(
                             select(UserGym).where(
-                                UserGym.stripe_customer_id == customer_id
+                                UserGym.user_id == stripe_profile.user_id,
+                                UserGym.gym_id == stripe_profile.gym_id
                             )
                         )
                         user_gym = result.scalar_one_or_none()
@@ -1004,12 +1040,24 @@ class AsyncStripeService:
             if customer_id:
                 from app.models.user_gym import UserGym
                 from app.db.session import get_async_db
+                from app.services.async_stripe_connect_service import async_stripe_connect_service
 
                 async for db in get_async_db():
                     try:
+                        # Buscar perfil de Stripe por customer_id
+                        stripe_profile = await async_stripe_connect_service.find_profile_by_customer_id(
+                            db, customer_id
+                        )
+
+                        if not stripe_profile:
+                            logger.warning(f"Perfil Stripe no encontrado para customer {customer_id}")
+                            break
+
+                        # Obtener UserGym a través del perfil
                         result = await db.execute(
                             select(UserGym).where(
-                                UserGym.stripe_customer_id == customer_id
+                                UserGym.user_id == stripe_profile.user_id,
+                                UserGym.gym_id == stripe_profile.gym_id
                             )
                         )
                         user_gym = result.scalar_one_or_none()
@@ -1071,7 +1119,7 @@ class AsyncStripeService:
                     # Actualizar estado de pago
                     participation.payment_status = PaymentStatusType.PAID
                     participation.amount_paid_cents = payment_intent['amount']
-                    participation.payment_date = datetime.utcnow()
+                    participation.payment_date = datetime.now(timezone.utc)
 
                     # CRÍTICO: Promover de PENDING_PAYMENT a REGISTERED (ahora SÍ ocupa plaza)
                     from app.models.event import EventParticipationStatus, Event
@@ -1202,7 +1250,7 @@ class AsyncStripeService:
 
                     # Actualizar estado de reembolso
                     participation.payment_status = PaymentStatusType.REFUNDED
-                    participation.refund_date = datetime.utcnow()
+                    participation.refund_date = datetime.now(timezone.utc)
                     participation.refund_amount_cents = amount_refunded
 
                     await db.commit()
@@ -2249,13 +2297,24 @@ class AsyncStripeService:
         try:
             from app.models.user_gym import UserGym
             from app.db.session import get_async_db
+            from app.services.async_stripe_connect_service import async_stripe_connect_service
 
             async for db in get_async_db():
                 try:
-                    # Buscar la membresía del cliente
+                    # Buscar perfil de Stripe por customer_id
+                    stripe_profile = await async_stripe_connect_service.find_profile_by_customer_id(
+                        db, customer_id
+                    )
+
+                    if not stripe_profile:
+                        logger.warning(f"Perfil Stripe no encontrado para customer {customer_id}")
+                        break
+
+                    # Obtener UserGym a través del perfil
                     result = await db.execute(
                         select(UserGym).where(
-                            UserGym.stripe_customer_id == customer_id
+                            UserGym.user_id == stripe_profile.user_id,
+                            UserGym.gym_id == stripe_profile.gym_id
                         )
                     )
                     user_gym = result.scalar_one_or_none()

@@ -494,8 +494,8 @@ class AsyncEventService:
 
         # Eliminar mensajes pendientes en SQS relacionados con este evento
         try:
-            from app.services.queue_services import queue_service
-            queue_service.cancel_event_processing(event_id)
+            from app.services.async_queue_services import AsyncQueueService
+            await AsyncQueueService.cancel_event_processing(event_id)
         except Exception as sqs_exc:
             logger.error(
                 f"Error al limpiar mensajes de SQS para evento {event_id}: {sqs_exc}",

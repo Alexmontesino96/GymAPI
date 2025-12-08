@@ -75,6 +75,7 @@ class AsyncNotificationRepository:
             existing_token.updated_at = datetime.now()
             db.add(existing_token)
             await db.flush()
+            await db.commit()
             await db.refresh(existing_token)
             return existing_token
 
@@ -87,6 +88,7 @@ class AsyncNotificationRepository:
         )
         db.add(db_token)
         await db.flush()
+        await db.commit()
         await db.refresh(db_token)
         return db_token
 
@@ -175,6 +177,7 @@ class AsyncNotificationRepository:
         )
         result = await db.execute(stmt)
         await db.flush()
+        await db.commit()
         return result.rowcount > 0
 
     async def deactivate_user_tokens(
@@ -206,6 +209,7 @@ class AsyncNotificationRepository:
         )
         result = await db.execute(stmt)
         await db.flush()
+        await db.commit()
         return result.rowcount
 
     async def update_last_used(
@@ -234,6 +238,7 @@ class AsyncNotificationRepository:
         )
         result = await db.execute(stmt)
         await db.flush()
+        await db.commit()
         return result.rowcount
 
     async def cleanup_old_tokens(
@@ -268,6 +273,7 @@ class AsyncNotificationRepository:
         )
         result = await db.execute(stmt)
         await db.flush()
+        await db.commit()
         return result.rowcount
 
 

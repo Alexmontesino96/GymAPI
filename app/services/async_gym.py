@@ -319,7 +319,7 @@ class AsyncGymService:
             logger.error(f"Error removiendo usuario del canal general: {chat_error}")
 
         # Eliminar la asociación
-        await db.delete(user_gym)
+        db.delete(user_gym)
 
     async def update_user_role(
         self, db: AsyncSession, *, gym_id: int, user_id: int, role: GymRoleType

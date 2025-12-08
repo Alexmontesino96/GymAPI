@@ -347,7 +347,7 @@ class AsyncChatRepository:
         member = result.scalar_one_or_none()
 
         if member:
-            await db.delete(member)
+            db.delete(member)
             await db.flush()
             return True
         return False

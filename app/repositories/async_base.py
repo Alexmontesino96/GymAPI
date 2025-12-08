@@ -285,7 +285,7 @@ class AsyncBaseRepository(Generic[ModelType, CreateSchemaType, UpdateSchemaType]
                 )
 
         # Eliminar
-        await db.delete(obj)
+        db.delete(obj)
         await db.flush()
 
         return obj

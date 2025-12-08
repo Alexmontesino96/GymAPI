@@ -1259,7 +1259,7 @@ class NutritionService:
         if plan.creator_id != user_id:
             raise PermissionError("Only the creator can delete this plan")
 
-        await db.delete(plan)
+        db.delete(plan)
         await db.flush()
 
         logger.info(f"Deleted nutrition plan: {plan_id}")

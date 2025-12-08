@@ -511,6 +511,42 @@ class AsyncStripeConnectService:
             logger.error(f"Error buscando perfil por subscription {subscription_id}: {str(e)}")
             return None
 
+    async def find_profile_by_customer_id(
+        self,
+        db: AsyncSession,
+        customer_id: str,
+        stripe_account_id: Optional[str] = None
+    ) -> Optional[UserGymStripeProfile]:
+        """
+        Buscar perfil de Stripe por customer_id.
+
+        Args:
+            db: Sesión async de base de datos
+            customer_id: ID del customer en Stripe
+            stripe_account_id: ID de la cuenta de Stripe Connect (opcional)
+
+        Returns:
+            Optional[UserGymStripeProfile]: Perfil encontrado o None
+
+        Note:
+            Útil para webhooks que solo proporcionan customer_id.
+        """
+        try:
+            query = select(UserGymStripeProfile).where(
+                UserGymStripeProfile.stripe_customer_id == customer_id,
+                UserGymStripeProfile.is_active == True
+            )
+
+            if stripe_account_id:
+                query = query.where(UserGymStripeProfile.stripe_account_id == stripe_account_id)
+
+            result = await db.execute(query)
+            return result.scalar_one_or_none()
+
+        except Exception as e:
+            logger.error(f"Error buscando perfil por customer {customer_id}: {str(e)}")
+            return None
+
     async def sync_customer_with_stripe(
         self,
         db: AsyncSession,

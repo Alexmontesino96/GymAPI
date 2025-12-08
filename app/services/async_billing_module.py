@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 import logging
 import stripe
 
-from app.services.module import module_service
+from app.services.async_module import async_module_service
 from app.services.stripe_service import StripeService
 from app.services.membership import membership_service
 from app.models.gym import Gym
@@ -100,8 +100,8 @@ class AsyncBillingModuleService:
                         "error": f"Configuración de Stripe inválida: {stripe_validation['error']}"
                     }
 
-            # Activar el módulo (sync - TODO: migrar module_service a async)
-            success = module_service.activate_module_for_gym(db, gym_id, "billing")
+            # Activar el módulo usando async service
+            success = await async_module_service.activate_module_for_gym(db, gym_id, "billing")
 
             if not success:
                 return {
@@ -176,8 +176,8 @@ class AsyncBillingModuleService:
             if active_subscriptions["count"] > 0:
                 logger.warning(f"Gym {gym_id} tiene {active_subscriptions['count']} suscripciones activas")
 
-            # Desactivar el módulo (sync - TODO: migrar module_service a async)
-            success = module_service.deactivate_module_for_gym(db, gym_id, "billing")
+            # Desactivar el módulo usando async service
+            success = await async_module_service.deactivate_module_for_gym(db, gym_id, "billing")
 
             if not success:
                 return {
@@ -240,8 +240,8 @@ class AsyncBillingModuleService:
             planes y suscripciones.
         """
         try:
-            # Verificar estado del módulo (sync - TODO: migrar module_service a async)
-            is_active = module_service.get_gym_module_status(db, gym_id, "billing")
+            # Verificar estado del módulo usando async service
+            is_active = await async_module_service.get_gym_module_status(db, gym_id, "billing")
 
             if is_active is None:
                 return {

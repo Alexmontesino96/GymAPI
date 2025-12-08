@@ -6,6 +6,7 @@ creando automáticamente su workspace y configuración inicial.
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status, Request
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from redis.asyncio import Redis
 import logging
@@ -17,7 +18,7 @@ from app.schemas.trainer import (
     TrainerRegistrationResponse,
     TrainerRegistrationError
 )
-from app.services.trainer_setup import TrainerSetupService
+from app.services.async_trainer_setup import AsyncTrainerSetupService
 from app.middleware.rate_limit import limiter
 
 logger = logging.getLogger(__name__)
@@ -100,8 +101,8 @@ async def register_trainer(
     try:
         logger.info(f"Nueva solicitud de registro: {trainer_data.email}")
 
-        # Crear servicio de setup
-        setup_service = TrainerSetupService(db)
+        # Crear servicio de setup async
+        setup_service = AsyncTrainerSetupService(db)
 
         # Ejecutar setup completo
         result = await setup_service.create_trainer_workspace(

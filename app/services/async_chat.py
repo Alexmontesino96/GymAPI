@@ -5,7 +5,7 @@ import time
 import logging
 import re
 from functools import wraps
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import hashlib
 import random
 
@@ -749,7 +749,7 @@ class AsyncChatService:
                 if not user1:
                     logger.error(f"Usuario {user1_id} no encontrado para query de canal")
                     # Eliminar la referencia obsoleta si no hay usuario válido
-                    await db.delete(db_room)
+                    db.delete(db_room)
                     await db.flush()
                     # Invalidar caché
                     if cache_key in channel_cache:
@@ -770,7 +770,7 @@ class AsyncChatService:
                     # Validar consistencia entre BD y Stream
                     if not self._validate_channel_consistency(db_room, response):
                         logger.error(f"Inconsistencia detectada en canal {db_room.id}. Eliminando registro local.")
-                        await db.delete(db_room)
+                        db.delete(db_room)
                         await db.flush()
                         # Invalidar caché
                         if cache_key in channel_cache:
@@ -801,7 +801,7 @@ class AsyncChatService:
             except Exception as e:
                 logger.error(f"Error obteniendo canal existente: {e}")
                 # Eliminar la referencia obsoleta
-                await db.delete(db_room)
+                db.delete(db_room)
                 await db.flush()
                 # Invalidar caché
                 if cache_key in channel_cache:
@@ -1036,7 +1036,7 @@ class AsyncChatService:
             # Si hay una sala antigua en la base de datos que no funcionó, eliminarla
             if db_room:
                 logger_local.info(f"[DEBUG] Eliminando referencia a sala no válida: {db_room.id}")
-                await db.delete(db_room)
+                db.delete(db_room)
                 await db.flush()
 
             # Crear la sala
@@ -1591,13 +1591,14 @@ class AsyncChatService:
         """
         try:
             # Actualizar timestamp de último mensaje en la sala
-            chat_room.updated_at = datetime.utcnow()
+            chat_room.updated_at = datetime.now(timezone.utc)
 
             # Actualizar el último usuario que envió mensaje
             if hasattr(chat_room, 'last_message_user_id'):
                 chat_room.last_message_user_id = sender_id
 
             await db.flush()
+            await db.commit()
             logger.debug(f"Actividad actualizada para chat {chat_room.id}")
             return True
 

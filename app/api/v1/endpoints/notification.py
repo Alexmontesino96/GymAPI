@@ -4,8 +4,8 @@ from typing import List
 
 from app.db.session import get_async_db
 from app.schemas.notification import DeviceTokenCreate, DeviceTokenResponse, NotificationSend, NotificationResponse, GymNotificationRequest
-from app.repositories.notification_repository import notification_repository
-from app.services.notification_service import notification_service
+from app.repositories.async_notification import async_notification_repository
+from app.services.async_notification_service import async_notification_service
 from app.core.auth0_fastapi import auth, Auth0User
 from fastapi import Security
 from app.core.tenant import verify_gym_access, verify_admin_role, get_tenant_id
@@ -25,7 +25,7 @@ async def register_device(
     """
     Registra un nuevo dispositivo para recibir notificaciones push
     """
-    return await notification_repository.create_device_token_async(
+    return await async_notification_repository.create_device_token_async(
         db=db,
         user_id=current_user.id,
         device_token=token_data.device_token,
@@ -41,7 +41,7 @@ async def get_user_devices(
     """
     Obtiene todos los dispositivos registrados del usuario actual
     """
-    return await notification_repository.get_user_device_tokens_async(db, current_user.id)
+    return await async_notification_repository.get_user_device_tokens_async(db, current_user.id)
 
 @router.delete("/devices")
 async def logout_all_devices(
@@ -52,7 +52,7 @@ async def logout_all_devices(
     """
     Desactiva todos los dispositivos del usuario (para logout)
     """
-    count = await notification_repository.deactivate_user_tokens_async(db, current_user.id)
+    count = await async_notification_repository.deactivate_user_tokens_async(db, current_user.id)
     return {"message": f"Successfully deactivated {count} devices"}
 
 @router.post("/send", response_model=NotificationResponse)
@@ -67,7 +67,7 @@ async def send_notification(
     """
     # Enviar en segundo plano para no bloquear la respuesta
     background_tasks.add_task(
-        notification_service.send_to_users,
+        async_notification_service.send_to_users,
         user_ids=notification_data.user_ids,
         title=notification_data.title,
         message=notification_data.message,
@@ -109,7 +109,7 @@ async def send_notification_to_gym_users(
     
     # Enviar en segundo plano para no bloquear la respuesta
     background_tasks.add_task(
-        notification_service.send_to_users,
+        async_notification_service.send_to_users,
         user_ids=user_ids,
         title=notification_data.title,
         message=notification_data.message,

@@ -13,7 +13,7 @@ Renombrado para mantener convención de FASE 3 (async_*).
 from typing import List, Dict, Any, Optional
 import json
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from redis.asyncio import Redis
 import logging
 
@@ -108,12 +108,12 @@ class AsyncActivityFeedService:
 
         # Crear mensaje para feed
         activity = {
-            "id": f"{gym_id}_{activity_type}_{datetime.utcnow().timestamp()}",
+            "id": f"{gym_id}_{activity_type}_{datetime.now(timezone.utc).timestamp()}",
             "type": "realtime",
             "subtype": activity_type,
             "count": count,
             "message": self._generate_message(activity_type, count, metadata),
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "icon": self.ACTIVITY_ICONS.get(activity_type, "📊"),
             "ttl_minutes": self.TTL_CONFIG["realtime"] // 60
         }
@@ -219,16 +219,18 @@ class AsyncActivityFeedService:
         Returns:
             Resumen con estadísticas actuales
         """
-        # Buscar todos los contadores en tiempo real
+        # Buscar todos los contadores en tiempo real - usar SCAN para mejor performance
         pattern = f"gym:{gym_id}:realtime:*"
-        keys = await self.redis.keys(pattern)
+        keys = []
+        async for key in self.redis.scan_iter(match=pattern):
+            keys.append(key)
 
         summary = {
             "total_training": 0,
             "by_area": {},
             "popular_classes": [],
             "peak_time": False,
-            "last_update": datetime.utcnow().isoformat()
+            "last_update": datetime.now(timezone.utc).isoformat()
         }
 
         # ✅ Optimización: Usar pipeline para obtener todos los valores de una vez
@@ -384,7 +386,7 @@ class AsyncActivityFeedService:
             activity = {
                 "type": "class_status",
                 "message": message,
-                "timestamp": datetime.utcnow().isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
                 "icon": "🔥",
                 "metadata": {
                     "class_name": class_name,
@@ -606,7 +608,7 @@ class AsyncActivityFeedService:
         """
         try:
             timestamp = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
 
             # Si timestamp tiene timezone, convertir now también
             if timestamp.tzinfo:
@@ -655,7 +657,7 @@ class AsyncActivityFeedService:
             activities.append({
                 "type": "daily_stat",
                 "message": f"📊 {attendance.decode() if isinstance(attendance, bytes) else attendance} personas han entrenado hoy",
-                "timestamp": datetime.utcnow().isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
                 "icon": "📊"
             })
 
@@ -663,7 +665,7 @@ class AsyncActivityFeedService:
             activities.append({
                 "type": "daily_stat",
                 "message": f"✅ {classes.decode() if isinstance(classes, bytes) else classes} clases completadas hoy",
-                "timestamp": datetime.utcnow().isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
                 "icon": "✅"
             })
 
@@ -700,7 +702,10 @@ class AsyncActivityFeedService:
         ]
 
         for pattern in patterns:
-            keys = await self.redis.keys(pattern)
+            # Usar SCAN en lugar de KEYS para mejor performance
+            keys = []
+            async for key in self.redis.scan_iter(match=pattern):
+                keys.append(key)
             stats["keys_checked"] += len(keys)
 
             for key in keys:

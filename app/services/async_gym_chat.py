@@ -19,6 +19,7 @@ from app.models.user_gym import UserGym, GymRoleType
 from app.schemas.chat import ChatRoomCreate
 from app.repositories.async_chat import async_chat_repository
 from app.services.chat import chat_service
+from app.services.async_chat import async_chat_service
 from app.core.stream_client import stream_client
 
 logger = logging.getLogger("async_gym_chat_service")
@@ -161,9 +162,8 @@ class AsyncGymChatService:
                 event_id=None
             )
 
-            # Crear el canal usando el servicio de chat (sync)
-            # TODO: Migrar chat_service.create_room a async
-            result = chat_service.create_room(db, creator_id, room_data, gym_id)
+            # Crear el canal usando el servicio de chat async
+            result = await async_chat_service.create_room(db, creator_id, room_data, gym_id)
 
             # Obtener el objeto ChatRoom creado
             result_query = await db.execute(
@@ -221,8 +221,8 @@ class AsyncGymChatService:
                 logger.info(f"Usuario {user_id} ya es miembro del canal general de gym {gym_id}")
                 return True
 
-            # Agregar el usuario al canal (sync - TODO: migrar a async)
-            chat_service.add_user_to_channel(db, general_channel.id, user_id)
+            # Agregar el usuario al canal usando el servicio async
+            await async_chat_service.add_user_to_channel(db, general_channel.id, user_id)
 
             logger.info(f"Usuario {user_id} agregado al canal general de gym {gym_id}")
             return True
@@ -255,8 +255,8 @@ class AsyncGymChatService:
                 logger.warning(f"Canal general no encontrado para gym {gym_id}")
                 return False
 
-            # Remover el usuario del canal (sync - TODO: migrar a async)
-            chat_service.remove_user_from_channel(db, general_channel.id, user_id)
+            # Remover el usuario del canal usando el servicio async
+            await async_chat_service.remove_user_from_channel(db, general_channel.id, user_id)
 
             logger.info(f"Usuario {user_id} removido del canal general de gym {gym_id}")
             return True

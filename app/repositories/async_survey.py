@@ -467,7 +467,7 @@ class AsyncSurveyRepository:
                 detail="Solo se pueden eliminar encuestas en borrador"
             )
 
-        await db.delete(survey)
+        db.delete(survey)
         await db.flush()
 
         return True

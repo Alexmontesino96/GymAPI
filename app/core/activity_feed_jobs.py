@@ -13,7 +13,7 @@ import logging
 from app.db.redis_client import get_redis_for_jobs
 from app.db.session import get_async_db_for_jobs
 from app.services.activity_feed_service import ActivityFeedService
-from app.services.activity_aggregator import ActivityAggregator
+from app.services.async_activity_aggregator import AsyncActivityAggregator
 from app.models.gym import Gym
 from app.models.schedule import ClassParticipation, ClassSession, ClassParticipationStatus
 from sqlalchemy import and_, func, select
@@ -230,7 +230,7 @@ async def generate_hourly_summary():
     try:
         async with get_redis_for_jobs() as redis:
             feed_service = ActivityFeedService(redis)
-            aggregator = ActivityAggregator(feed_service)
+            aggregator = AsyncActivityAggregator(feed_service)
 
             async with get_async_db_for_jobs() as db:
                 # ✅ MIGRADO A ASYNC: db.query() → await db.execute(select())
@@ -385,7 +385,7 @@ async def generate_motivational_burst():
     try:
         async with get_redis_for_jobs() as redis:
             feed_service = ActivityFeedService(redis)
-            aggregator = ActivityAggregator(feed_service)
+            aggregator = AsyncActivityAggregator(feed_service)
 
             async with get_async_db_for_jobs() as db:
                 # ✅ MIGRADO A ASYNC: db.query() → await db.execute(select())

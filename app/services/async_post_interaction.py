@@ -103,7 +103,7 @@ class AsyncPostInteractionService:
 
         if existing_like:
             # Unlike - eliminar like
-            await db.delete(existing_like)
+            db.delete(existing_like)
 
             # Decrementar contador atómicamente
             await db.execute(
@@ -499,7 +499,7 @@ class AsyncPostInteractionService:
 
         if existing_like:
             # Unlike
-            await db.delete(existing_like)
+            db.delete(existing_like)
 
             # Decrementar contador
             await db.execute(

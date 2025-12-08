@@ -15,7 +15,7 @@ import logging
 from app.db.redis_client import get_redis_client
 from app.core.tenant import get_tenant_id
 from app.services.async_activity_feed_service import async_activity_feed_service, AsyncActivityFeedService
-from app.services.activity_aggregator import ActivityAggregator
+from app.services.async_activity_aggregator import AsyncActivityAggregator
 from app.core.dependencies import module_enabled
 
 

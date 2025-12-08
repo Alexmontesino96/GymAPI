@@ -265,7 +265,7 @@ class AsyncEventRepository(AsyncBaseRepository[Event, EventCreate, EventUpdate])
         if not event:
             return False
 
-        await db.delete(event)
+        db.delete(event)
         await db.flush()
         return True
 
