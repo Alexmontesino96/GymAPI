@@ -1,7 +1,7 @@
 from typing import List, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_
-from datetime import datetime
+from datetime import datetime, timezone
 
 from app.models.module import Module
 from app.models.gym_module import GymModule
@@ -126,7 +126,7 @@ class ModuleService:
             gym_id=gym_id,
             module_id=module.id,
             active=True,
-            activated_at=datetime.utcnow()
+            activated_at=datetime.now(timezone.utc)
         )
         db.add(new_gym_module)
         await db.commit()
@@ -149,7 +149,7 @@ class ModuleService:
 
         if gym_module and gym_module.active:
             gym_module.active = False
-            gym_module.deactivated_at = datetime.utcnow()
+            gym_module.deactivated_at = datetime.now(timezone.utc)
             await db.commit()
             return True
 
