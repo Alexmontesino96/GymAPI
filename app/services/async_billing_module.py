@@ -16,7 +16,7 @@ import stripe
 
 from app.services.async_module import async_module_service
 from app.services.stripe_service import StripeService
-from app.services.membership import membership_service
+from app.services.async_membership import AsyncMembershipService
 from app.models.gym import Gym
 from app.models.user_gym import UserGym
 from app.core.config import get_settings
@@ -46,12 +46,17 @@ class AsyncBillingModuleService:
 
     def __init__(self):
         """
-        Inicializa el servicio con StripeService.
+        Inicializa el servicio con StripeService y AsyncMembershipService.
 
         Note:
             StripeService puede tener métodos sync internamente.
+            Para métodos async, usamos AsyncMembershipService.
         """
-        self.stripe_service = StripeService(membership_service)
+        # StripeService aún necesita membership_service sync (legacy)
+        from app.services.membership import membership_service as legacy_membership_service
+        self.stripe_service = StripeService(legacy_membership_service)
+        # Para operaciones async, usar AsyncMembershipService
+        self.async_membership_service = AsyncMembershipService()
 
     async def activate_billing_for_gym(
         self,
@@ -338,7 +343,7 @@ class AsyncBillingModuleService:
             Usa membership_service que puede tener métodos sync.
         """
         try:
-            result = await membership_service.sync_all_plans_with_stripe(db, gym_id)
+            result = await self.async_membership_service.sync_all_plans_with_stripe(db, gym_id)
             return result
         except Exception as e:
             logger.error(f"Error sincronizando planes con Stripe para gym {gym_id}: {str(e)}")
@@ -396,10 +401,10 @@ class AsyncBillingModuleService:
             - sync_percentage: float
 
         Note:
-            Usa membership_service.get_membership_plans (puede ser sync).
+            Usa async_membership_service.get_membership_plans.
         """
         try:
-            plans = membership_service.get_membership_plans(
+            plans = await self.async_membership_service.get_membership_plans(
                 db, gym_id=gym_id, active_only=False, skip=0, limit=1000
             )
 
@@ -437,7 +442,7 @@ class AsyncBillingModuleService:
             No elimina productos, solo los marca como inactivos en Stripe.
         """
         try:
-            plans = membership_service.get_membership_plans(
+            plans = await self.async_membership_service.get_membership_plans(
                 db, gym_id=gym_id, active_only=False, skip=0, limit=1000
             )
 

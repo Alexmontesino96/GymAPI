@@ -26,7 +26,6 @@ from app.core.profiling import async_db_query_timer, register_cache_hit, registe
 from app.repositories.schedule import class_participation_repository
 from app.repositories.event import event_participation_repository
 from app.services.user import user_service
-from app.services.membership import membership_service
 from app.services.chat_analytics import chat_analytics_service
 from app.services.health import health_service
 from app.models.user import User
