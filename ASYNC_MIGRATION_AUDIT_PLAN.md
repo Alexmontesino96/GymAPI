@@ -2,13 +2,13 @@
 
 ## 🎯 Progreso General - Actualizado 2025-12-07
 
-### **Total: 145 de 332 errores eliminados (43.7% completado)**
+### **Total: 147 de 332 errores eliminados (44.3% completado)**
 
-- ✅ **Errores corregidos directamente:** 74
+- ✅ **Errores corregidos directamente:** 76
 - ✅ **Errores eliminados por deprecación:** 71
-- ⏳ **Errores restantes:** 187 (56.3%)
+- ⏳ **Errores restantes:** 185 (55.7%)
 
-### **Commits realizados:** 9
+### **Commits realizados:** 10
 1. `fix(async): 56 errores críticos` - Correcciones directas
 2. `refactor(async): deprecar 3 archivos legacy (66 errores)` - post_service, story_service, billing_module
 3. `refactor(async): migrar worker.py a async_event_service`
@@ -18,6 +18,7 @@
 7. `docs(async): actualizar audit plan con Batch 19 completado`
 8. `fix(async): corregir 2 datetime.utcnow() en nutrition.py métodos async` - Batch 20
 9. `fix(async): agregar 8 await db.commit() faltantes después de flush()` - Batch 21
+10. `fix(async): corregir 2 datetime.utcnow() en module.py` - Batch 22
 
 ---
 
@@ -101,6 +102,12 @@
 - ✅ async_chat.py:754 - get_or_create_direct_chat() (3 casos)
 - ✅ async_chat.py:1044 - get_or_create_room()
 - ⚠️ Patrón identificado: flush() debe ir seguido de commit()
+
+### **Batch 22: module.py (2 errores)**
+- ✅ module.py: 2 datetime.utcnow() corregidos
+  - activate_module_for_gym() (línea 129)
+  - deactivate_module_for_gym() (línea 152)
+- ✅ async_module.py ya está correcto (0 errores)
 
 ---
 
