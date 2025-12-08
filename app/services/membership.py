@@ -1,5 +1,5 @@
 from typing import List, Optional, Dict, Any
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import logging
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_
@@ -99,8 +99,8 @@ class MembershipService:
         update_data = plan_update.model_dump(exclude_unset=True)
         for field, value in update_data.items():
             setattr(db_plan, field, value)
-        
-        db_plan.updated_at = datetime.utcnow()
+
+        db_plan.updated_at = datetime.now(timezone.utc)
         db.commit()
         db.refresh(db_plan)
         
@@ -134,7 +134,7 @@ class MembershipService:
         
         # En lugar de eliminar, desactivamos
         db_plan.is_active = False
-        db_plan.updated_at = datetime.utcnow()
+        db_plan.updated_at = datetime.now(timezone.utc)
         db.commit()
         
         logger.info(f"Plan de membresía desactivado: {plan_id}")
