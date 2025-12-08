@@ -17,7 +17,7 @@ Beneficios:
 import boto3
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional
 from dataclasses import dataclass, asdict
 from enum import Enum
@@ -54,7 +54,7 @@ class NotificationMessage:
 
     def __post_init__(self):
         if self.created_at is None:
-            self.created_at = datetime.utcnow().isoformat()
+            self.created_at = datetime.now(timezone.utc).isoformat()
 
     def to_json(self) -> str:
         return json.dumps(asdict(self))
