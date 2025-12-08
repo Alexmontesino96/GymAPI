@@ -4,7 +4,7 @@ Servicio para gestionar interacciones con posts (likes, comentarios, reportes).
 
 import logging
 from typing import List, Optional, Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, update as sql_update, delete as sql_delete
 from sqlalchemy.exc import IntegrityError
@@ -266,7 +266,7 @@ class PostInteractionService:
         # Actualizar texto
         comment.comment_text = update_data.comment_text
         comment.is_edited = True
-        comment.edited_at = datetime.utcnow()
+        comment.edited_at = datetime.now(timezone.utc)
 
         await self.db.commit()
         await self.db.refresh(comment)
@@ -319,7 +319,7 @@ class PostInteractionService:
 
         # Soft delete
         comment.is_deleted = True
-        comment.deleted_at = datetime.utcnow()
+        comment.deleted_at = datetime.now(timezone.utc)
 
         # Decrementar contador de comentarios
         await self.db.execute(
