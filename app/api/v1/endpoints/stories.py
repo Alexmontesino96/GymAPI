@@ -5,6 +5,7 @@ Endpoints de API para el sistema de historias.
 from typing import List, Optional
 from fastapi import APIRouter, Depends, File, UploadFile, Form, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 
 from app.core.dependencies import (
     module_enabled
@@ -186,7 +187,8 @@ async def get_user_stories(
     story_responses = []
     for story in stories:
         # Obtener información del usuario
-        story_user = db.get(User, story.user_id)
+        result = await db.execute(select(User).where(User.id == story.user_id))
+        story_user = result.scalar_one_or_none()
 
         story_responses.append(StoryResponse(
             **story.__dict__,
@@ -227,7 +229,8 @@ async def get_story(
     )
 
     # Obtener información del usuario
-    story_user = db.get(User, story.user_id)
+    result = await db.execute(select(User).where(User.id == story.user_id))
+    story_user = result.scalar_one_or_none()
 
     return StoryResponse(
         **story.__dict__,
@@ -293,7 +296,8 @@ async def get_story_viewers(
     # Obtener vistas de la historia
     viewers = []
     for view in story.views:
-        viewer = db.get(User, view.viewer_id)
+        result = await db.execute(select(User).where(User.id == view.viewer_id))
+        viewer = result.scalar_one_or_none()
         if viewer:
             viewers.append(StoryViewerResponse(
                 viewer_id=viewer.id,
@@ -387,7 +391,8 @@ async def update_story(
     await db.refresh(story)
 
     # Obtener información del usuario
-    story_user = db.get(User, story.user_id)
+    result = await db.execute(select(User).where(User.id == story.user_id))
+    story_user = result.scalar_one_or_none()
 
     return StoryResponse(
         **story.__dict__,
