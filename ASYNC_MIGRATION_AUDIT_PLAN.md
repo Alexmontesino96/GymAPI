@@ -2,14 +2,15 @@
 
 ## 🎯 Progreso General - Actualizado 2025-12-07
 
-### **Total: 166 de 332 errores eliminados (50.0% completado)** 🎉🎉🎉
+### **Total: 184 de 332 errores eliminados (55.4% completado)** 🎉🎉🎉
 
-- ✅ **Errores corregidos directamente:** 95
+- ✅ **Errores corregidos directamente:** 113
 - ✅ **Errores eliminados por deprecación:** 71
-- ⏳ **Errores restantes:** 166 (50.0%)
-- 🏆 **¡HITO DEL 50% ALCANZADO!**
+- ⏳ **Errores restantes:** 148 (44.6%)
+- 🏆 **¡HITO DEL 50% ALCANZADO!** (Batch 31)
+- 🚀 **¡Ya superamos el 55%!**
 
-### **Commits realizados:** 19
+### **Commits realizados:** 22
 1. `fix(async): 56 errores críticos` - Correcciones directas
 2. `refactor(async): deprecar 3 archivos legacy (66 errores)` - post_service, story_service, billing_module
 3. `refactor(async): migrar worker.py a async_event_service`
@@ -29,6 +30,9 @@
 17. `fix(async): corregir 4 datetime.utcnow() en user_stats.py` - Batch 29
 18. `fix(async): corregir 4 datetime.utcnow() en activity_aggregator.py` - Batch 30
 19. `fix(async): ¡HITO 50%! - corregir 3 datetime.utcnow() en servicios de pago` - Batch 31
+20. `docs(async): actualizar audit plan - HITO DEL 50% ALCANZADO` - Documentación
+21. `fix(async): corregir 8 datetime.utcnow() en event_payment_service.py` - Batch 32
+22. `fix(async): corregir 10 datetime.utcnow() en health.py` - Batch 33
 
 ---
 
@@ -166,6 +170,31 @@
   - customer_created_at al crear perfil Stripe
 - Todos migrados a datetime.now(timezone.utc)
 - 🎉 **166/332 errores eliminados = 50.0% COMPLETADO**
+
+### **Batch 32: event_payment_service.py completo (8 errores)**
+- ✅ event_payment_service.py: 8 datetime.utcnow() restantes (líneas 603, 710, 752, 785, 826, 890, 1049, 1173)
+  - cancellation_time default value
+  - refund_date en proceso de reembolso
+  - refund_date en proceso de crédito
+  - payment_expiry cálculo (24 horas)
+  - now en cancelación de pagos expirados
+  - payment_date en confirmación manual
+  - refund_date en cancelación masiva con reembolsos
+  - cancellation_date al cancelar evento
+- Todos migrados a datetime.now(timezone.utc)
+- 📊 **174/332 errores eliminados = 52.4% completado**
+
+### **Batch 33: health.py completo (10 errores)**
+- ✅ health.py: 10 datetime.utcnow() (líneas 78, 134, 238, 576, 733, 794, 883, 891, 1028, 1079)
+  - recorded_at al crear health records (2 instancias)
+  - cutoff_date para filtrar por días (2 instancias)
+  - goal.completed_at al completar metas (2 instancias)
+  - thirty_days_ago para calcular rachas de asistencia
+  - goal.updated_at al actualizar progreso
+  - cutoff_time para achievements recientes
+  - start_of_month para contador mensual
+- Todos migrados a datetime.now(timezone.utc)
+- 📊 **184/332 errores eliminados = 55.4% completado**
 
 ---
 
