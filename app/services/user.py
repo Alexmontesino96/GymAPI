@@ -598,18 +598,18 @@ class UserService:
         return new_user
 
     async def update_user(
-        self, 
-        db: Session, 
-        user_id: int, 
-        user_in: UserUpdate, 
+        self,
+        db: AsyncSession,
+        user_id: int,
+        user_in: UserUpdate,
         *,
         redis_client: Redis
     ) -> UserModel:
         """ Actualizar usuario... Args: ... redis_client... """
-        user = self.get_user(db, user_id=user_id)
+        user = await self.get_user_async(db, user_id=user_id)
         if not user:
              raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario no encontrado")
-        
+
         # Email update requiere await y pasar redis_client
         email_updated_in_auth0 = False
         if user_in.email and user_in.email != user.email and user.auth0_id:
@@ -617,28 +617,31 @@ class UserService:
              try:
                 # Pasar redis_client como keyword
                 await auth0_mgmt_service.update_user_email(
-                    auth0_id=user.auth0_id, 
-                    new_email=user_in.email, 
-                    verify_email=True, 
+                    auth0_id=user.auth0_id,
+                    new_email=user_in.email,
+                    verify_email=True,
                     redis_client=redis_client
                 )
                 email_updated_in_auth0 = True
              except HTTPException as http_exc:
                  # Capturar HTTPExceptions (ej. 429 del rate limit) y relanzar
                  logger.error(f"HTTP Error al actualizar email en Auth0 durante update_user para {user_id}: {http_exc.detail}")
-                 raise http_exc 
+                 raise http_exc
              except Exception as e:
                  # Otros errores de conexión/etc. con Auth0
                  logger.error(f"Error al actualizar email en Auth0 durante update_user para {user_id}: {e}")
                  # Decidir si fallar o continuar. Por ahora, continuamos actualizando localmente.
                  # Podríamos añadir un flag o log específico para indicar que Auth0 falló.
-                 pass 
+                 pass
 
-        # Actualizar localmente (síncrono)
-        @time_db_query
-        def _update_db(session, db_obj, obj_in_data):
-             return user_repository.update(session, db_obj=db_obj, obj_in=obj_in_data)
-        updated_user = _update_db(db, user, user_in)
+        # Actualizar localmente (async)
+        # Actualizar campos del usuario
+        for key, value in user_in.model_dump(exclude_unset=True).items():
+            setattr(user, key, value)
+
+        await db.commit()
+        await db.refresh(user)
+        updated_user = user
         
         # <<< Invalidar caché user_by_auth0_id si el usuario tiene auth0_id >>>
         if updated_user.auth0_id and redis_client:
@@ -888,7 +891,7 @@ class UserService:
 
     async def initiate_auth0_email_change_flow(
         self,
-        db: Session,
+        db: AsyncSession,
         auth0_id: str,
         new_email: str,
         *,
@@ -896,28 +899,28 @@ class UserService:
     ) -> tuple[Optional[UserModel], str]:
         """
         Inicia el flujo de cambio de email directamente en Auth0.
-        
-        Esto actualiza el email en Auth0, lo marca como no verificado y 
-        desencadena el envío de un correo de verificación por parte de Auth0 
+
+        Esto actualiza el email en Auth0, lo marca como no verificado y
+        desencadena el envío de un correo de verificación por parte de Auth0
         al *nuevo* email.
-        
+
         NO actualiza la base de datos local. Se necesita un mecanismo externo
         (webhook/action) para sincronizar la BD cuando Auth0 confirme la verificación.
-        
+
         Args:
-            db: Sesión de base de datos.
+            db: Sesión async de base de datos.
             auth0_id: ID de Auth0 del usuario.
             new_email: Nuevo email deseado.
             redis_client: Cliente Redis para rate limiting de Auth0.
-            
+
         Returns:
             tuple[Optional[UserModel], str]: (usuario_local, nuevo_email)
-            
+
         Raises:
             HTTPException: Si el usuario no existe localmente, si el email es el mismo,
                            o si Auth0 rechaza la actualización (p. ej., email ya usado).
         """
-        user = self.get_user_by_auth0_id(db, auth0_id=auth0_id)
+        user = await self.get_user_by_auth0_id_async_direct(db, auth0_id=auth0_id)
         if not user:
             logger.warning(f"Intento de iniciar cambio de email Auth0 para usuario inexistente localmente: {auth0_id}")
             # Aunque no exista localmente, podríamos proceder si queremos permitirlo,
@@ -952,25 +955,25 @@ class UserService:
                 detail=f"Error interno al contactar con el servicio de autenticación."
             )
 
-    # --- Gestión Imagen Perfil (ya existente) --- 
-    async def update_user_profile_image(self, db: Session, auth0_id: str, file: UploadFile) -> UserModel:
+    # --- Gestión Imagen Perfil (ya existente) ---
+    async def update_user_profile_image(self, db: AsyncSession, auth0_id: str, file: UploadFile) -> UserModel:
         """
         Actualizar la imagen de perfil de un usuario.
         """
-        user = self.get_user_by_auth0_id(db, auth0_id=auth0_id)
+        user = await self.get_user_by_auth0_id_async_direct(db, auth0_id=auth0_id)
         if not user:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario no encontrado")
-        
+
         # Obtener la instancia del servicio de almacenamiento
         storage_service_instance = get_storage_service()
         _settings = get_settings()
-        
+
         if user.picture:
             # Determinar si la URL es de Supabase (si está configurado)
             is_supabase_url = False
             if storage_service_instance.api_url and user.picture.startswith(storage_service_instance.api_url):
                 is_supabase_url = True
-            
+
             if is_supabase_url:
                 try:
                     logger.info(f"Eliminando imagen anterior de Supabase: {user.picture}")
@@ -984,10 +987,15 @@ class UserService:
             else:
                 # Podríamos añadir lógica para eliminar de S3 si la URL no es de Supabase
                 logger.info(f"Imagen anterior ({user.picture}) no parece ser de Supabase, no se intentará eliminar.")
-        
+
         # Subir la nueva imagen usando la instancia del servicio
         image_url = await storage_service_instance.upload_profile_image(auth0_id, file=file)
-        updated_user = user_repository.update(db, db_obj=user, obj_in={"picture": image_url})
+
+        # Actualizar async
+        user.picture = image_url
+        await db.commit()
+        await db.refresh(user)
+        updated_user = user
 
         # Sincronizar picture con Auth0
         try:
@@ -1002,43 +1010,43 @@ class UserService:
 
         return updated_user
         
-    # --- NUEVO MÉTODO PARA SINCRONIZACIÓN --- 
+    # --- NUEVO MÉTODO PARA SINCRONIZACIÓN ---
     async def sync_user_email_from_auth0(
-        self, 
-        db: Session, 
+        self,
+        db: AsyncSession,
         auth0_user: UserSyncFromAuth0,
         redis_client: Optional[Redis] = None
     ) -> Optional[UserModel]:
         """
         Sincroniza el email de un usuario desde Auth0.
-        
+
         Args:
-            db: Sesión de base de datos.
+            db: Sesión async de base de datos.
             auth0_user: Datos del usuario de Auth0.
             redis_client: Cliente Redis opcional para invalidar caché.
-            
+
         Returns:
             El modelo de usuario actualizado o None si no se encuentra.
         """
         try:
-            # Buscar usuario por auth0_id
-            user = self.get_user_by_auth0_id(db, auth0_id=auth0_user.user_id)
+            # Buscar usuario por auth0_id (usar método async)
+            user = await self.get_user_by_auth0_id_async_direct(db, auth0_id=auth0_user.user_id)
             if not user:
                 logger.warning(f"Usuario con auth0_id {auth0_user.user_id} no encontrado para actualizar email")
                 return None
-                
+
             # Si el email no ha cambiado, no hacer nada
             if user.email == auth0_user.email:
                 logger.info(f"Email de usuario {auth0_user.user_id} no ha cambiado, omitiendo actualización")
                 return user
-                
+
             # Actualizar email
             user.email = auth0_user.email
-            db.commit()
-            
-            updated_user = self.get_user_by_auth0_id(db, auth0_id=auth0_user.user_id)
+            await db.commit()
+
+            updated_user = await self.get_user_by_auth0_id_async_direct(db, auth0_id=auth0_user.user_id)
             logger.info(f"Email de usuario {auth0_user.user_id} actualizado a {auth0_user.email}")
-            
+
             # Invalidar caché si Redis está disponible
             if redis_client:
                 try:
@@ -1046,29 +1054,29 @@ class UserService:
                     auth0_cache_key = f"user_by_auth0_id:{updated_user.auth0_id}"
                     await redis_client.delete(auth0_cache_key)
                     logger.debug(f"Caché invalidada para {auth0_cache_key}")
-                    
+
                     # Invalidar perfil público
                     public_profile_cache_key = f"user_public_profile:{updated_user.id}"
                     await redis_client.delete(public_profile_cache_key)
                     logger.debug(f"Caché invalidada para {public_profile_cache_key}")
                 except Exception as e:
                     logger.error(f"Error al invalidar caché para usuario {auth0_user.user_id}: {e}")
-            
+
             return updated_user
         except Exception as e:
             logger.error(f"Error al sincronizar email de usuario {auth0_user.user_id}: {e}")
-            db.rollback()
+            await db.rollback()
             return None
 
-    # --- Métodos con Caché en Redis --- 
+    # --- Métodos con Caché en Redis ---
     # <<< RENOMBRAR Y MODIFICAR get_users_by_role_cached >>>
     async def get_gym_participants_cached(
-        self, 
-        db: Session, 
+        self,
+        db: AsyncSession,
         *,
         gym_id: int, # No es opcional aquí
         roles: List[UserRole], # Recibe lista de roles
-        skip: int = 0, 
+        skip: int = 0,
         limit: int = 100,
         redis_client: Redis
     ) -> List[UserModel]:
@@ -1137,7 +1145,7 @@ class UserService:
     # <<< NUEVO MÉTODO CACHEADO PARA TODOS LOS USUARIOS >>>
     async def get_users_cached(
         self,
-        db: Session,
+        db: AsyncSession,
         *,
         skip: int = 0,
         limit: int = 100,
@@ -1176,7 +1184,7 @@ class UserService:
     # <<< AÑADIR NUEVO MÉTODO get_public_gym_participants_combined >>>
     async def get_public_gym_participants_combined(
         self,
-        db: Session,
+        db: AsyncSession,
         *,
         gym_id: int,
         roles: List[UserRole],
@@ -1241,7 +1249,7 @@ class UserService:
     async def get_public_profile_cached(
         self,
         user_id: int,
-        db: Session,
+        db: AsyncSession,
         redis_client: Redis
     ) -> Optional[UserPublicProfile]:
         """
@@ -1251,7 +1259,7 @@ class UserService:
 
         if not redis_client:
             logger.warning(f"Redis no disponible, obteniendo perfil público para user {user_id} desde BD")
-            user_model = user_repository.get(db, id=user_id)
+            user_model = await self.get_user_async(db, user_id=user_id)
             return UserPublicProfile.from_orm(user_model) if user_model else None
 
         cache_key = f"user_public_profile:{user_id}"
@@ -1259,7 +1267,7 @@ class UserService:
         @time_db_query
         async def db_fetch():
             logger.info(f"DB Fetch for public profile cache miss: key={cache_key}")
-            user_model = user_repository.get(db, id=user_id)
+            user_model = await self.get_user_async(db, user_id=user_id)
             if user_model:
                 # Mapear a UserPublicProfile antes de devolver para caché
                 return UserPublicProfile.from_orm(user_model)
