@@ -7,7 +7,7 @@ la gestión de miembros asociados a cada gimnasio.
 """
 
 from typing import Any, Dict, List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query, Security, Path, status, Request, Body
+from fastapi import APIRouter, Depends, HTTPException, Query, Security, Path, status, Request, Body, File, UploadFile
 from pydantic import EmailStr
 from sqlalchemy.orm import Session
 from app.models.user import User, UserRole
@@ -15,6 +15,7 @@ from app.models.gym import Gym
 from app.models.user_gym import UserGym, GymRoleType
 from app.services.gym import gym_service
 from app.services.user import user_service
+from app.services.gym_logo_service import gym_logo_service
 from app.schemas.gym import Gym as GymSchema, GymCreate, GymUpdate, GymStatusUpdate, GymWithStats, UserGymMembershipSchema, UserGymRoleUpdate, UserGymSchema, GymPublicSchema, GymDetailedPublicSchema
 from app.core.auth0_fastapi import auth, get_current_user, Auth0User
 from app.core.tenant import verify_gym_access, verify_admin_role
@@ -660,6 +661,110 @@ async def update_gym_status(
     # Actualizar el estado del gimnasio
     updated_gym = gym_service.update_gym_status(db, gym_id=gym_id, is_active=status_in.is_active)
     return updated_gym
+
+
+@router.post("/{gym_id}/logo", response_model=GymSchema, tags=["gyms"])
+async def upload_gym_logo(
+    *,
+    db: Session = Depends(get_db),
+    gym_id: int = Path(..., title="ID del gimnasio"),
+    file: UploadFile = File(..., description="Archivo de imagen del logo (jpg, png, webp)"),
+    current_gym_verified: Gym = Depends(verify_admin_role),
+    redis_client: redis.Redis = Depends(get_redis_client)
+) -> Any:
+    """
+    [ADMIN ONLY] Subir logo del gimnasio.
+
+    Este endpoint permite a administradores del gimnasio subir una imagen de logo.
+    El logo anterior se elimina automáticamente al subir uno nuevo.
+
+    Restricciones:
+    - Solo imágenes: jpg, jpeg, png, webp
+    - Tamaño máximo: 5MB
+    - Solo administradores del gimnasio pueden subir logos
+
+    Permissions:
+        - Requiere ser ADMIN/OWNER del gimnasio actual o SUPER_ADMIN.
+
+    Args:
+        db: Sesión de base de datos
+        gym_id: ID del gimnasio
+        file: Archivo de imagen del logo
+        current_gym_verified: Gimnasio actual verificado
+        redis_client: Cliente de Redis inyectado
+
+    Returns:
+        GymSchema: El gimnasio con el logo_url actualizado
+
+    Raises:
+        HTTPException: 400 si el archivo no es válido,
+                      403 si el usuario no tiene permisos,
+                      404 si el gimnasio no existe,
+                      413 si el archivo excede 5MB,
+                      502 si hay error de Supabase
+    """
+    # Validar que el gym_id coincide con el gimnasio verificado
+    if gym_id != current_gym_verified.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="No tienes permisos para modificar este gimnasio"
+        )
+
+    # Verificar que el gimnasio existe
+    gym = gym_service.get_gym(db, gym_id=gym_id)
+    if not gym:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Gimnasio no encontrado"
+        )
+
+    try:
+        # Si existe un logo anterior, eliminarlo
+        if gym.logo_url:
+            logger.info(f"Eliminando logo anterior del gimnasio {gym_id}: {gym.logo_url}")
+            deleted = await gym_logo_service.delete_gym_logo(gym.logo_url)
+            if deleted:
+                logger.info(f"Logo anterior eliminado exitosamente")
+            else:
+                logger.warning(f"No se pudo eliminar el logo anterior, continuando con upload")
+
+        # Subir nuevo logo
+        logger.info(f"Subiendo nuevo logo para gimnasio {gym_id}")
+        new_logo_url = await gym_logo_service.upload_gym_logo(
+            gym_id=gym_id,
+            file=file
+        )
+
+        # Actualizar el logo_url en la base de datos
+        gym.logo_url = new_logo_url
+        db.add(gym)
+        db.commit()
+        db.refresh(gym)
+
+        logger.info(f"Logo del gimnasio {gym_id} actualizado exitosamente: {new_logo_url}")
+
+        # Invalidar cachés relacionadas
+        if redis_client:
+            try:
+                # Invalidar caché del gimnasio específico
+                await cache_service.delete_pattern(redis_client, f"gym:{gym_id}:*")
+                logger.info(f"Caché del gimnasio {gym_id} invalidada")
+            except Exception as e:
+                logger.error(f"Error al invalidar caché del gimnasio {gym_id}: {str(e)}")
+                # No fallar la operación si falla la invalidación de caché
+
+        return gym
+
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error al subir logo del gimnasio {gym_id}: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error al procesar el logo: {str(e)}"
+        )
 
 
 @router.delete("/{gym_id}/users/{user_id}", status_code=status.HTTP_200_OK)
