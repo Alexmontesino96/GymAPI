@@ -86,3 +86,10 @@ class ChatDeleteGroupResponse(BaseModel):
     message: str
     room_id: int
     deleted_from_stream: bool
+
+class DeleteConversationResponse(BaseModel):
+    """Response de eliminar conversación para un usuario (Delete For Me)"""
+    success: bool
+    message: str
+    room_id: int
+    messages_deleted: int

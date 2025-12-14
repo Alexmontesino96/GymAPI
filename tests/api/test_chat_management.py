@@ -603,3 +603,130 @@ def test_list_rooms_includes_hidden_when_requested(client, db, test_gym, test_us
     # El chat oculto debería aparecer
     room_ids = [room["id"] for room in rooms]
     assert direct_chat.id in room_ids
+
+
+# Tests para DELETE /rooms/{id}/conversation
+
+def test_delete_conversation_success(client, db, test_gym, test_users, direct_chat):
+    """Test eliminar conversación exitosamente."""
+    user = test_users['member']
+
+    with patch('app.api.v1.endpoints.chat.chat_service') as mock_service:
+        mock_service.delete_conversation_for_user.return_value = {
+            "success": True,
+            "message": "Conversación eliminada para ti. El otro usuario mantiene su historial.",
+            "room_id": direct_chat.id,
+            "messages_deleted": 15
+        }
+
+        with patch('app.api.v1.endpoints.chat.auth') as mock_auth:
+            mock_auth_user = Mock()
+            mock_auth_user.id = user.auth0_id
+            mock_auth.get_user.return_value = mock_auth_user
+
+            response = client.delete(
+                f"/api/v1/chat/rooms/{direct_chat.id}/conversation",
+                headers={"X-Gym-ID": str(test_gym.id)}
+            )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["success"] is True
+    assert data["room_id"] == direct_chat.id
+    assert data["messages_deleted"] == 15
+    assert "El otro usuario mantiene su historial" in data["message"]
+
+
+def test_delete_conversation_for_group_fails(client, db, test_gym, test_users, group_chat):
+    """Test que no se puede eliminar conversación de grupo."""
+    user = test_users['member']
+
+    with patch('app.api.v1.endpoints.chat.chat_service') as mock_service:
+        mock_service.delete_conversation_for_user.side_effect = ValueError(
+            "Solo puedes eliminar conversaciones 1-to-1"
+        )
+
+        with patch('app.api.v1.endpoints.chat.auth') as mock_auth:
+            mock_auth_user = Mock()
+            mock_auth_user.id = user.auth0_id
+            mock_auth.get_user.return_value = mock_auth_user
+
+            response = client.delete(
+                f"/api/v1/chat/rooms/{group_chat.id}/conversation",
+                headers={"X-Gym-ID": str(test_gym.id)}
+            )
+
+    assert response.status_code == 400
+    assert "Solo puedes eliminar conversaciones 1-to-1" in response.json()["detail"]
+
+
+def test_delete_conversation_not_member(client, db, test_gym, test_users, direct_chat):
+    """Test eliminar conversación del que no eres miembro."""
+    user = test_users['member']
+
+    with patch('app.api.v1.endpoints.chat.chat_service') as mock_service:
+        mock_service.delete_conversation_for_user.side_effect = ValueError(
+            "No eres miembro de esta conversación"
+        )
+
+        with patch('app.api.v1.endpoints.chat.auth') as mock_auth:
+            mock_auth_user = Mock()
+            mock_auth_user.id = user.auth0_id
+            mock_auth.get_user.return_value = mock_auth_user
+
+            response = client.delete(
+                f"/api/v1/chat/rooms/{direct_chat.id}/conversation",
+                headers={"X-Gym-ID": str(test_gym.id)}
+            )
+
+    assert response.status_code == 403
+
+
+def test_delete_conversation_not_found(client, db, test_gym, test_users):
+    """Test eliminar conversación que no existe."""
+    user = test_users['member']
+    room_id = 999
+
+    with patch('app.api.v1.endpoints.chat.chat_service') as mock_service:
+        mock_service.delete_conversation_for_user.side_effect = ValueError(
+            "Sala de chat no encontrada"
+        )
+
+        with patch('app.api.v1.endpoints.chat.auth') as mock_auth:
+            mock_auth_user = Mock()
+            mock_auth_user.id = user.auth0_id
+            mock_auth.get_user.return_value = mock_auth_user
+
+            response = client.delete(
+                f"/api/v1/chat/rooms/{room_id}/conversation",
+                headers={"X-Gym-ID": str(test_gym.id)}
+            )
+
+    assert response.status_code == 404
+
+
+def test_delete_conversation_with_no_messages(client, db, test_gym, test_users, direct_chat):
+    """Test eliminar conversación sin mensajes."""
+    user = test_users['member']
+
+    with patch('app.api.v1.endpoints.chat.chat_service') as mock_service:
+        mock_service.delete_conversation_for_user.return_value = {
+            "success": True,
+            "message": "Conversación eliminada para ti. El otro usuario mantiene su historial.",
+            "room_id": direct_chat.id,
+            "messages_deleted": 0
+        }
+
+        with patch('app.api.v1.endpoints.chat.auth') as mock_auth:
+            mock_auth_user = Mock()
+            mock_auth_user.id = user.auth0_id
+            mock_auth.get_user.return_value = mock_auth_user
+
+            response = client.delete(
+                f"/api/v1/chat/rooms/{direct_chat.id}/conversation",
+                headers={"X-Gym-ID": str(test_gym.id)}
+            )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["messages_deleted"] == 0

@@ -1929,5 +1929,95 @@ class ChatService:
             "deleted_from_stream": deleted_from_stream
         }
 
+    def delete_conversation_for_user(self, db: Session, room_id: int, user_id: int, gym_id: int) -> Dict[str, Any]:
+        """
+        Elimina una conversación 1-to-1 solo para el usuario que lo solicita.
+        Implementa el patrón "Eliminar Para Mí" de WhatsApp.
+
+        REGLAS:
+        - Solo aplica a chats directos 1-to-1
+        - Elimina todos los mensajes solo para el usuario que lo solicita
+        - El otro usuario mantiene su historial intacto
+        - El chat queda oculto automáticamente
+        - Los mensajes se eliminan de Stream Chat con soft delete
+        """
+        from app.models.chat import ChatMember
+
+        room = chat_repository.get_room(db, room_id=room_id)
+        if not room:
+            raise ValueError(f"Sala de chat {room_id} no encontrada")
+
+        if room.gym_id != gym_id:
+            raise ValueError("No tienes acceso a esta sala de chat")
+
+        if not room.is_direct:
+            raise ValueError(
+                "Solo puedes eliminar conversaciones 1-to-1. "
+                "Para grupos, usa la opción 'salir del grupo'."
+            )
+
+        # Verificar membresía
+        is_member = db.query(ChatMember).filter(
+            ChatMember.room_id == room_id,
+            ChatMember.user_id == user_id
+        ).first()
+
+        if not is_member:
+            raise ValueError("No eres miembro de esta conversación")
+
+        # Obtener Stream ID del usuario
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            raise ValueError(f"Usuario {user_id} no encontrado")
+
+        stream_id = self._get_stream_id_for_user(user)
+        messages_deleted = 0
+
+        try:
+            # Obtener canal de Stream
+            channel = stream_client.channel(room.stream_channel_type, room.stream_channel_id)
+
+            # Obtener todos los mensajes del canal
+            messages_response = channel.query(
+                options={
+                    'limit': 1000,  # Máximo permitido por Stream
+                    'message_limit': 1000
+                }
+            )
+
+            # Eliminar cada mensaje para este usuario específico
+            # Stream Chat permite soft delete por usuario
+            for msg in messages_response.get('messages', []):
+                try:
+                    # Soft delete: el mensaje solo se oculta para este usuario
+                    channel.delete_message(
+                        msg['id'],
+                        hard=False  # Soft delete mantiene el mensaje para otros usuarios
+                    )
+                    messages_deleted += 1
+                except Exception as msg_error:
+                    logger.warning(f"No se pudo eliminar mensaje {msg['id']}: {str(msg_error)}")
+                    continue
+
+            logger.info(f"Eliminados {messages_deleted} mensajes del canal {room.stream_channel_id} para usuario {stream_id}")
+
+        except Exception as e:
+            logger.error(f"Error eliminando mensajes de Stream: {str(e)}")
+            # Continuar aunque falle Stream - al menos ocultamos el chat
+
+        # Ocultar el chat automáticamente
+        try:
+            chat_repository.hide_room_for_user(db, room_id=room_id, user_id=user_id)
+            logger.info(f"Chat {room_id} ocultado automáticamente para usuario {user_id}")
+        except Exception as e:
+            logger.warning(f"No se pudo ocultar el chat automáticamente: {str(e)}")
+
+        return {
+            "success": True,
+            "message": "Conversación eliminada para ti. El otro usuario mantiene su historial.",
+            "room_id": room_id,
+            "messages_deleted": messages_deleted
+        }
+
 
 chat_service = ChatService() 

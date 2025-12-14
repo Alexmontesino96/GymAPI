@@ -34,7 +34,8 @@ from app.schemas.chat import (
     StreamMessageSend,
     ChatHideResponse,
     ChatLeaveGroupResponse,
-    ChatDeleteGroupResponse
+    ChatDeleteGroupResponse,
+    DeleteConversationResponse
 )
 from app.models.user import User
 from app.models.chat import ChatRoom as ChatRoomModel, ChatRoomStatus
@@ -1319,4 +1320,56 @@ async def delete_group(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=error_msg)
     except Exception as e:
         logger.error(f"Error eliminando grupo {room_id}: {str(e)}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error eliminando el grupo") 
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error eliminando el grupo")
+
+
+@router.delete("/rooms/{room_id}/conversation", response_model=DeleteConversationResponse)
+async def delete_conversation_for_me(
+    request: Request,
+    *,
+    db: Session = Depends(get_db),
+    room_id: int = Path(..., title="ID de la conversación"),
+    current_gym: GymSchema = Depends(verify_gym_access),
+    current_user: Auth0User = Security(auth.get_user, scopes=["resource:write"])
+):
+    """
+    Eliminar Conversación 1-to-1 (Solo Para Mí)
+
+    Implementa el patrón "Eliminar Para Mí" de WhatsApp.
+
+    **Comportamiento:**
+    - Elimina todos los mensajes de la conversación SOLO para ti
+    - El otro usuario mantiene su historial intacto
+    - La conversación queda oculta automáticamente
+    - Solo aplica a chats directos 1-to-1
+
+    **Diferencias con Hide:**
+    - Hide: Solo oculta, mensajes permanecen
+    - Delete: Elimina mensajes + oculta chat
+
+    **Para grupos:** Usa el endpoint `POST /rooms/{id}/leave` en su lugar.
+    """
+    try:
+        internal_user = db.query(User).filter(User.auth0_id == current_user.id).first()
+        if not internal_user:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario no encontrado")
+
+        result = chat_service.delete_conversation_for_user(
+            db=db,
+            room_id=room_id,
+            user_id=internal_user.id,
+            gym_id=current_gym.id
+        )
+        return DeleteConversationResponse(**result)
+
+    except ValueError as e:
+        error_msg = str(e)
+        if "Solo puedes eliminar conversaciones 1-to-1" in error_msg:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_msg)
+        elif "No eres miembro" in error_msg:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=error_msg)
+        else:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=error_msg)
+    except Exception as e:
+        logger.error(f"Error eliminando conversación {room_id}: {str(e)}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error eliminando la conversación") 
