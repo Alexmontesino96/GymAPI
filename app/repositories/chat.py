@@ -156,8 +156,72 @@ class ChatRepository:
             ChatMember.room_id == room_id,
             ChatMember.user_id == user_id
         ).delete()
-        
+
         db.commit()
         return result > 0
+
+    def hide_room_for_user(self, db: Session, *, room_id: int, user_id: int) -> bool:
+        """Marca una sala como oculta para un usuario específico."""
+        from app.models.chat import ChatMemberHidden
+
+        existing = db.query(ChatMemberHidden).filter(
+            ChatMemberHidden.room_id == room_id,
+            ChatMemberHidden.user_id == user_id
+        ).first()
+
+        if existing:
+            return False  # Ya estaba oculta
+
+        hidden_record = ChatMemberHidden(room_id=room_id, user_id=user_id)
+        db.add(hidden_record)
+        db.commit()
+        return True
+
+    def show_room_for_user(self, db: Session, *, room_id: int, user_id: int) -> bool:
+        """Muestra una sala previamente oculta (unhide)."""
+        from app.models.chat import ChatMemberHidden
+
+        result = db.query(ChatMemberHidden).filter(
+            ChatMemberHidden.room_id == room_id,
+            ChatMemberHidden.user_id == user_id
+        ).delete()
+
+        db.commit()
+        return result > 0
+
+    def is_room_hidden_for_user(self, db: Session, *, room_id: int, user_id: int) -> bool:
+        """Verifica si una sala está oculta para un usuario."""
+        from app.models.chat import ChatMemberHidden
+
+        return db.query(ChatMemberHidden).filter(
+            ChatMemberHidden.room_id == room_id,
+            ChatMemberHidden.user_id == user_id
+        ).first() is not None
+
+    def get_room_members_count(self, db: Session, room_id: int) -> int:
+        """Cuenta los miembros activos de una sala."""
+        return db.query(ChatMember).filter(
+            ChatMember.room_id == room_id
+        ).count()
+
+    def is_user_room_creator(self, db: Session, room_id: int, user_id: int) -> bool:
+        """Verifica si un usuario es el creador de una sala."""
+        room = self.get_room(db, room_id=room_id)
+        if not room:
+            return False
+
+        # Para eventos, verificar contra el creador del evento
+        if room.event_id:
+            from app.models.event import Event
+            event = db.query(Event).filter(Event.id == room.event_id).first()
+            if event:
+                return event.creator_id == user_id
+
+        # Para grupos, el creador es el primer miembro
+        first_member = db.query(ChatMember).filter(
+            ChatMember.room_id == room_id
+        ).order_by(ChatMember.joined_at.asc()).first()
+
+        return first_member and first_member.user_id == user_id
 
 chat_repository = ChatRepository() 

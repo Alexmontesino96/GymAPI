@@ -28,10 +28,13 @@ from app.models.event import Event
 from app.services.chat import chat_service
 from app.repositories.chat import chat_repository
 from app.schemas.chat import (
-    ChatRoom, 
-    ChatRoomCreate, 
+    ChatRoom,
+    ChatRoomCreate,
     StreamTokenResponse,
-    StreamMessageSend
+    StreamMessageSend,
+    ChatHideResponse,
+    ChatLeaveGroupResponse,
+    ChatDeleteGroupResponse
 )
 from app.models.user import User
 from app.models.chat import ChatRoom as ChatRoomModel, ChatRoomStatus
@@ -876,23 +879,25 @@ async def get_user_chat_rooms(
     request: Request,
     *,
     db: Session = Depends(get_db),
+    include_hidden: bool = Query(False, description="Incluir chats ocultos"),
     current_gym: GymSchema = Depends(verify_gym_access),
     current_user: Auth0User = Security(auth.get_user, scopes=["resource:read"])
 ):
     """
     Obtiene todas las salas de chat del usuario actual en el gimnasio.
-    
+
     Devuelve una lista de salas donde el usuario es miembro dentro del gimnasio actual.
-    Incluye chats directos, chats de eventos y salas grupales.
-    
+    Por defecto, excluye chats ocultos.
+
     Args:
         db (Session): Sesión de base de datos
+        include_hidden: Si True, incluye chats ocultos (default: False)
         current_gym (GymSchema): Gimnasio actual del usuario
         current_user (Auth0User): Usuario autenticado
-        
+
     Returns:
         List[ChatRoom]: Lista de salas de chat del usuario en el gimnasio
-        
+
     Raises:
         HTTPException 401: Token inválido o faltante
         HTTPException 403: Usuario no pertenece al gimnasio
@@ -907,21 +912,38 @@ async def get_user_chat_rooms(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Usuario no encontrado"
             )
-        
+
         # Obtener salas del usuario en el gimnasio actual
-        from app.models.chat import ChatRoom, ChatMember
-        user_rooms = db.query(ChatRoom).join(ChatMember).filter(
+        from app.models.chat import ChatRoom, ChatMember, ChatMemberHidden
+        user_rooms_query = db.query(ChatRoom).join(ChatMember).filter(
             and_(
                 ChatMember.user_id == internal_user.id,
                 ChatRoom.gym_id == current_gym.id,
                 ChatRoom.status == "ACTIVE"  # Solo salas activas
             )
-        ).all()
-        
-        logger.info(f"Usuario {internal_user.id} tiene {len(user_rooms)} salas en gimnasio {current_gym.id}")
-        
+        )
+
+        # Excluir chats ocultos si no se solicitan explícitamente
+        if not include_hidden:
+            # Subconsulta para obtener IDs de salas ocultas
+            hidden_room_ids = db.query(ChatMemberHidden.room_id).filter(
+                ChatMemberHidden.user_id == internal_user.id
+            ).subquery()
+
+            user_rooms_query = user_rooms_query.filter(
+                ~ChatRoom.id.in_(hidden_room_ids)
+            )
+
+        user_rooms = user_rooms_query.all()
+
+        logger.info(
+            f"Usuario {internal_user.id} tiene {len(user_rooms)} salas "
+            f"{'(incluyendo ocultas)' if include_hidden else '(excluyendo ocultas)'} "
+            f"en gimnasio {current_gym.id}"
+        )
+
         return user_rooms
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -1139,4 +1161,162 @@ async def cleanup_expired_event_channels_endpoint(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error durante la limpieza de canales: {str(e)}"
-        ) 
+        )
+
+
+# =====================================
+# GESTIÓN DE CHATS (Hide/Leave/Delete)
+# =====================================
+
+@router.post("/rooms/{room_id}/hide", response_model=ChatHideResponse)
+async def hide_chat(
+    request: Request,
+    *,
+    db: Session = Depends(get_db),
+    room_id: int = Path(..., title="ID de la sala a ocultar"),
+    current_gym: GymSchema = Depends(verify_gym_access),
+    current_user: Auth0User = Security(auth.get_user, scopes=["resource:read"])
+):
+    """
+    Ocultar Chat 1-to-1 (Patrón WhatsApp)
+
+    Solo funciona con chats directos 1-to-1. Para grupos, usa 'Leave Group'.
+    """
+    try:
+        internal_user = db.query(User).filter(User.auth0_id == current_user.id).first()
+        if not internal_user:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario no encontrado")
+
+        result = chat_service.hide_channel_for_user(
+            db=db, room_id=room_id, user_id=internal_user.id, gym_id=current_gym.id
+        )
+        return ChatHideResponse(**result)
+
+    except ValueError as e:
+        error_msg = str(e)
+        if "Solo puedes ocultar chats directos" in error_msg:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_msg)
+        elif "No eres miembro" in error_msg:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=error_msg)
+        else:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=error_msg)
+    except Exception as e:
+        logger.error(f"Error ocultando chat {room_id}: {str(e)}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error ocultando el chat")
+
+
+@router.post("/rooms/{room_id}/show", response_model=ChatHideResponse)
+async def show_chat(
+    request: Request,
+    *,
+    db: Session = Depends(get_db),
+    room_id: int = Path(..., title="ID de la sala a mostrar"),
+    current_gym: GymSchema = Depends(verify_gym_access),
+    current_user: Auth0User = Security(auth.get_user, scopes=["resource:read"])
+):
+    """Mostrar Chat Oculto (Unhide)"""
+    try:
+        internal_user = db.query(User).filter(User.auth0_id == current_user.id).first()
+        if not internal_user:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario no encontrado")
+
+        result = chat_service.show_channel_for_user(
+            db=db, room_id=room_id, user_id=internal_user.id, gym_id=current_gym.id
+        )
+        return ChatHideResponse(**result)
+
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error mostrando chat {room_id}: {str(e)}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error mostrando el chat")
+
+
+@router.post("/rooms/{room_id}/leave", response_model=ChatLeaveGroupResponse)
+async def leave_group(
+    request: Request,
+    *,
+    db: Session = Depends(get_db),
+    room_id: int = Path(..., title="ID del grupo"),
+    auto_hide: bool = Query(True, description="Ocultar automáticamente después de salir"),
+    current_gym: GymSchema = Depends(verify_gym_access),
+    current_user: Auth0User = Security(auth.get_user, scopes=["resource:read"])
+):
+    """
+    Salir de Grupo (Patrón WhatsApp)
+
+    No aplica a chats 1-to-1 ni eventos. Si eres el último miembro, el grupo se elimina.
+    """
+    try:
+        internal_user = db.query(User).filter(User.auth0_id == current_user.id).first()
+        if not internal_user:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario no encontrado")
+
+        result = chat_service.leave_group(
+            db=db, room_id=room_id, user_id=internal_user.id, gym_id=current_gym.id, auto_hide=auto_hide
+        )
+        return ChatLeaveGroupResponse(**result)
+
+    except ValueError as e:
+        error_msg = str(e)
+        if "No puedes salir" in error_msg:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_msg)
+        elif "No eres miembro" in error_msg:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=error_msg)
+        else:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=error_msg)
+    except Exception as e:
+        logger.error(f"Error saliendo de grupo {room_id}: {str(e)}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error saliendo del grupo")
+
+
+@router.delete("/rooms/{room_id}", response_model=ChatDeleteGroupResponse)
+async def delete_group(
+    request: Request,
+    *,
+    db: Session = Depends(get_db),
+    room_id: int = Path(..., title="ID del grupo"),
+    hard_delete: bool = Query(False, description="Eliminar de Stream Chat"),
+    current_gym: GymSchema = Depends(verify_gym_access),
+    current_user: Auth0User = Security(auth.get_user, scopes=["resource:write"])
+):
+    """
+    Eliminar Grupo Completamente
+
+    Solo ADMIN/OWNER pueden eliminar cualquier grupo.
+    TRAINER solo puede eliminar grupos que creó.
+    Debes remover TODOS los miembros antes de eliminar.
+    """
+    try:
+        internal_user = db.query(User).filter(User.auth0_id == current_user.id).first()
+        if not internal_user:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario no encontrado")
+
+        # Obtener rol del usuario
+        user_gym = db.query(UserGym).filter(
+            UserGym.user_id == internal_user.id,
+            UserGym.gym_id == current_gym.id
+        ).first()
+
+        if not user_gym:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No perteneces a este gimnasio")
+
+        result = chat_service.delete_group(
+            db=db, room_id=room_id, user_id=internal_user.id,
+            gym_id=current_gym.id, user_role=user_gym.role.value, hard_delete=hard_delete
+        )
+        return ChatDeleteGroupResponse(**result)
+
+    except ValueError as e:
+        error_msg = str(e)
+        if "Debes remover a todos los miembros" in error_msg:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_msg)
+        elif "No tienes permisos" in error_msg or "solo pueden eliminar" in error_msg:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=error_msg)
+        elif "No puedes eliminar" in error_msg:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_msg)
+        else:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=error_msg)
+    except Exception as e:
+        logger.error(f"Error eliminando grupo {room_id}: {str(e)}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error eliminando el grupo") 

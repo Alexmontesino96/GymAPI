@@ -1668,12 +1668,12 @@ class ChatService:
     def validate_user_gym_membership(self, db: Session, user_id: int, gym_id: int) -> bool:
         """
         Valida que un usuario pertenezca a un gimnasio específico.
-        
+
         Args:
             db: Sesión de base de datos
             user_id: ID del usuario
             gym_id: ID del gimnasio
-            
+
         Returns:
             bool: True si el usuario pertenece al gimnasio
         """
@@ -1687,6 +1687,247 @@ class ChatService:
         except Exception as e:
             logger.error(f"Error validando membresía: {str(e)}")
             return False
+
+    def hide_channel_for_user(self, db: Session, room_id: int, user_id: int, gym_id: int) -> Dict[str, Any]:
+        """
+        Oculta un canal 1-to-1 para un usuario específico (patrón WhatsApp).
+
+        REGLA: Solo aplica para chats directos. Para grupos, usar 'leave'.
+        """
+        room = chat_repository.get_room(db, room_id=room_id)
+        if not room:
+            raise ValueError(f"Sala de chat {room_id} no encontrada")
+
+        if room.gym_id != gym_id:
+            raise ValueError("No tienes acceso a esta sala de chat")
+
+        if not room.is_direct:
+            raise ValueError(
+                "Solo puedes ocultar chats directos 1-to-1. "
+                "Para grupos, debes salir primero usando 'leave group'."
+            )
+
+        # Verificar membresía
+        is_member = db.query(ChatMember).filter(
+            ChatMember.room_id == room_id,
+            ChatMember.user_id == user_id
+        ).first()
+
+        if not is_member:
+            raise ValueError("No eres miembro de esta sala de chat")
+
+        # Obtener Stream ID
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            raise ValueError(f"Usuario {user_id} no encontrado")
+
+        stream_id = self._get_stream_id_for_user(user)
+
+        try:
+            # Ocultar en Stream
+            channel = stream_client.channel(room.stream_channel_type, room.stream_channel_id)
+            channel.hide(user_id=stream_id)
+            logger.info(f"Canal {room.stream_channel_id} ocultado en Stream para {stream_id}")
+        except Exception as e:
+            logger.error(f"Error ocultando canal en Stream: {str(e)}")
+
+        # Guardar en BD local
+        was_hidden = chat_repository.hide_room_for_user(db, room_id=room_id, user_id=user_id)
+
+        return {
+            "success": True,
+            "message": "Chat ocultado exitosamente" if was_hidden else "El chat ya estaba oculto",
+            "room_id": room_id,
+            "is_hidden": True
+        }
+
+    def show_channel_for_user(self, db: Session, room_id: int, user_id: int, gym_id: int) -> Dict[str, Any]:
+        """Muestra un canal previamente oculto (unhide)."""
+        room = chat_repository.get_room(db, room_id=room_id)
+        if not room:
+            raise ValueError(f"Sala de chat {room_id} no encontrada")
+
+        if room.gym_id != gym_id:
+            raise ValueError("No tienes acceso a esta sala de chat")
+
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            raise ValueError(f"Usuario {user_id} no encontrado")
+
+        stream_id = self._get_stream_id_for_user(user)
+
+        try:
+            # Mostrar en Stream
+            channel = stream_client.channel(room.stream_channel_type, room.stream_channel_id)
+            channel.show(user_id=stream_id)
+            logger.info(f"Canal {room.stream_channel_id} mostrado en Stream para {stream_id}")
+        except Exception as e:
+            logger.error(f"Error mostrando canal en Stream: {str(e)}")
+
+        was_shown = chat_repository.show_room_for_user(db, room_id=room_id, user_id=user_id)
+
+        return {
+            "success": True,
+            "message": "Chat mostrado exitosamente" if was_shown else "El chat ya estaba visible",
+            "room_id": room_id,
+            "is_hidden": False
+        }
+
+    def leave_group(self, db: Session, room_id: int, user_id: int, gym_id: int, auto_hide: bool = True) -> Dict[str, Any]:
+        """
+        Permite a un usuario salir de un grupo (patrón WhatsApp).
+
+        REGLAS:
+        - No aplica a chats 1-to-1 (usar 'hide')
+        - No aplica a chats de eventos (se cierran automáticamente)
+        - Si es el último miembro, el grupo se marca como CLOSED
+        """
+        from app.models.chat import ChatRoomStatus
+
+        room = chat_repository.get_room(db, room_id=room_id)
+        if not room:
+            raise ValueError(f"Sala de chat {room_id} no encontrada")
+
+        if room.gym_id != gym_id:
+            raise ValueError("No tienes acceso a esta sala de chat")
+
+        if room.is_direct:
+            raise ValueError(
+                "No puedes salir de un chat directo 1-to-1. "
+                "Usa la opción 'ocultar' en su lugar."
+            )
+
+        if room.event_id:
+            raise ValueError(
+                "No puedes salir manualmente de un chat de evento. "
+                "El chat se cerrará automáticamente cuando finalice el evento."
+            )
+
+        # Verificar membresía
+        is_member = db.query(ChatMember).filter(
+            ChatMember.room_id == room_id,
+            ChatMember.user_id == user_id
+        ).first()
+
+        if not is_member:
+            raise ValueError("No eres miembro de esta sala de chat")
+
+        # Remover de Stream y BD
+        try:
+            self.remove_user_from_channel(db, room_id, user_id)
+            logger.info(f"Usuario {user_id} removido del canal {room.stream_channel_id}")
+        except Exception as e:
+            logger.error(f"Error removiendo usuario de Stream: {str(e)}")
+            raise ValueError(f"Error al salir del grupo: {str(e)}")
+
+        # Verificar miembros restantes
+        remaining_members = chat_repository.get_room_members_count(db, room_id)
+
+        # Auto-ocultar si está habilitado
+        if auto_hide:
+            try:
+                chat_repository.hide_room_for_user(db, room_id=room_id, user_id=user_id)
+            except Exception as e:
+                logger.warning(f"No se pudo ocultar el chat automáticamente: {str(e)}")
+
+        # Si no quedan miembros, cerrar la sala
+        group_deleted = False
+        if remaining_members == 0:
+            room.status = ChatRoomStatus.CLOSED
+            room.updated_at = datetime.utcnow()
+            db.commit()
+            group_deleted = True
+            logger.info(f"Sala {room_id} marcada como CLOSED - no quedan miembros")
+
+        return {
+            "success": True,
+            "message": f"Has salido del grupo '{room.name or 'sin nombre'}'",
+            "room_id": room_id,
+            "remaining_members": remaining_members,
+            "group_deleted": group_deleted,
+            "auto_hidden": auto_hide
+        }
+
+    def delete_group(self, db: Session, room_id: int, user_id: int, gym_id: int, user_role: str, hard_delete: bool = False) -> Dict[str, Any]:
+        """
+        Elimina un grupo completamente (solo admin/creador).
+
+        REGLAS:
+        - Solo ADMIN/OWNER pueden eliminar cualquier grupo
+        - TRAINER solo puede eliminar grupos que creó
+        - MEMBER no puede eliminar grupos
+        - Debe remover todos los miembros antes de eliminar
+        - No aplica a chats 1-to-1 o de eventos
+        """
+        from app.models.chat import ChatRoomStatus
+        from app.models.user_gym import GymRoleType
+        from app.core.scheduler import delete_stream_channel
+
+        room = chat_repository.get_room(db, room_id=room_id)
+        if not room:
+            raise ValueError(f"Sala de chat {room_id} no encontrada")
+
+        if room.gym_id != gym_id:
+            raise ValueError("No tienes acceso a esta sala de chat")
+
+        if room.is_direct:
+            raise ValueError(
+                "No puedes eliminar un chat directo 1-to-1. "
+                "Usa la opción 'ocultar' en su lugar."
+            )
+
+        if room.event_id:
+            raise ValueError(
+                "Los chats de eventos se eliminan automáticamente. "
+                "Usa el endpoint de limpieza de canales si eres administrador."
+            )
+
+        # Validar permisos
+        is_creator = chat_repository.is_user_room_creator(db, room_id, user_id)
+        is_admin_or_owner = user_role in [GymRoleType.ADMIN.value, GymRoleType.OWNER.value]
+
+        if user_role == GymRoleType.TRAINER.value and not is_creator:
+            raise ValueError(
+                "Los entrenadores solo pueden eliminar grupos que ellos crearon. "
+                "Contacta a un administrador para eliminar este grupo."
+            )
+
+        if user_role == GymRoleType.MEMBER.value:
+            raise ValueError(
+                "No tienes permisos para eliminar este grupo. "
+                "Solo administradores y creadores pueden hacerlo."
+            )
+
+        # Verificar que no quedan miembros
+        member_count = chat_repository.get_room_members_count(db, room_id)
+        if member_count > 0:
+            raise ValueError(
+                f"Debes remover a todos los miembros ({member_count} restantes) "
+                "antes de eliminar el grupo."
+            )
+
+        # Eliminar de Stream si hard_delete
+        deleted_from_stream = False
+        if hard_delete:
+            try:
+                success = delete_stream_channel(room.stream_channel_type, room.stream_channel_id)
+                if success:
+                    deleted_from_stream = True
+                    logger.info(f"Canal {room.stream_channel_id} eliminado de Stream")
+            except Exception as e:
+                logger.error(f"Error eliminando canal de Stream: {str(e)}")
+
+        # Marcar como CLOSED en BD local
+        room.status = ChatRoomStatus.CLOSED
+        room.updated_at = datetime.utcnow()
+        db.commit()
+
+        return {
+            "success": True,
+            "message": f"Grupo '{room.name or 'sin nombre'}' eliminado exitosamente",
+            "room_id": room_id,
+            "deleted_from_stream": deleted_from_stream
+        }
 
 
 chat_service = ChatService() 

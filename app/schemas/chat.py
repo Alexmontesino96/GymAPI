@@ -58,4 +58,31 @@ class StreamMessageResponse(BaseModel):
     internal_user_id: Optional[int] = None  # ID interno del usuario
     created_at: datetime
     attachments: Optional[List[Dict[str, Any]]] = None
-    mentioned_users: Optional[List[Dict[str, Any]]] = None 
+    mentioned_users: Optional[List[Dict[str, Any]]] = None
+
+# ============================================
+# Schemas para gestión de chats (hide/leave/delete)
+# ============================================
+
+class ChatHideResponse(BaseModel):
+    """Response de operación hide/show"""
+    success: bool
+    message: str
+    room_id: int
+    is_hidden: bool
+
+class ChatLeaveGroupResponse(BaseModel):
+    """Response de salir de grupo"""
+    success: bool
+    message: str
+    room_id: int
+    remaining_members: int
+    group_deleted: bool
+    auto_hidden: bool
+
+class ChatDeleteGroupResponse(BaseModel):
+    """Response de eliminación de grupo"""
+    success: bool
+    message: str
+    room_id: int
+    deleted_from_stream: bool
