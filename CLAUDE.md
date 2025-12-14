@@ -293,6 +293,8 @@ python app_wrapper.py  # Verifica e instala dependencias críticas automáticame
 - **events/** - Eventos del gimnasio con participación
 - **schedule/** - Clases, horarios, reservas con capacidad dinámica
 - **chat/** - Mensajería Stream Chat multi-tenant
+  - **Gestión de chats**: Hide/show 1-to-1, leave/delete grupos (patrón WhatsApp)
+  - 📖 [Documentación completa](./docs/CHAT_MANAGEMENT_API.md) | [Guía rápida](./docs/CHAT_MANAGEMENT_QUICK_START.md)
 - **billing/** - Stripe: pagos, suscripciones, customer portal
 - **nutrition/** - IA nutricional: análisis de comidas, planes
 - **surveys/** - Encuestas y feedback con estadísticas
