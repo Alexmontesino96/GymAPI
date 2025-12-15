@@ -728,6 +728,68 @@ class ChatService:
         db_room = chat_repository.get_direct_chat(db, user1_id=user1_id, user2_id=user2_id, gym_id=None)
         
         if db_room:
+            # ==================== AUTO-UNHIDE LOGIC (INICIO) ====================
+            # Verificar si el chat está oculto para el usuario solicitante (patrón WhatsApp)
+            logger.info(f"Verificando si chat directo {db_room.id} está oculto para usuario {user1_id}")
+
+            is_hidden = chat_repository.is_room_hidden_for_user(
+                db,
+                room_id=db_room.id,
+                user_id=user1_id
+            )
+
+            if is_hidden:
+                logger.info(
+                    f"Chat directo {db_room.id} está oculto para usuario {user1_id}. "
+                    f"Ejecutando auto-unhide (patrón WhatsApp)..."
+                )
+
+                # PASO 1: Unhide en BD (crítico - fuente de verdad)
+                try:
+                    was_shown = chat_repository.show_room_for_user(
+                        db,
+                        room_id=db_room.id,
+                        user_id=user1_id
+                    )
+                    if was_shown:
+                        logger.info(f"✓ Auto-unhide en BD completado para chat {db_room.id}, usuario {user1_id}")
+                    else:
+                        logger.warning(
+                            f"show_room_for_user retornó False para chat {db_room.id}. "
+                            f"Posible race condition o ya estaba visible."
+                        )
+                except Exception as e:
+                    logger.error(f"✗ Error en auto-unhide (BD) para chat {db_room.id}: {str(e)}")
+                    # Continuar - el chat existe, unhide manual es posible después
+
+                # PASO 2: Unhide en Stream Chat (best effort, no crítico)
+                try:
+                    # Obtener usuario para construir stream_id
+                    user1_obj = db.query(User).filter(User.id == user1_id).first()
+                    if user1_obj:
+                        stream_id_user1 = self._get_stream_id_for_user(user1_obj)
+
+                        # Hacer show en Stream
+                        channel = stream_client.channel(
+                            db_room.stream_channel_type,
+                            db_room.stream_channel_id
+                        )
+                        channel.show(user_id=stream_id_user1)
+                        logger.info(
+                            f"✓ Auto-unhide en Stream completado para canal {db_room.stream_channel_id}, "
+                            f"usuario {stream_id_user1}"
+                        )
+                    else:
+                        logger.warning(f"No se pudo obtener usuario {user1_id} para unhide en Stream")
+                except Exception as e:
+                    logger.warning(
+                        f"✗ Auto-unhide falló en Stream para canal {db_room.stream_channel_id}: {str(e)}. "
+                        f"Continuando con chat visible en BD (graceful degradation)."
+                    )
+            else:
+                logger.debug(f"Chat directo {db_room.id} NO está oculto, continuando normalmente")
+            # ==================== AUTO-UNHIDE LOGIC (FIN) ====================
+
             # Usar el canal existente
             try:
                 # Obtener el primer usuario para usar como query user_id
