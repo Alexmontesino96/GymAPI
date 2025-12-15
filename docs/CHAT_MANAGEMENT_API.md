@@ -16,6 +16,7 @@ Sistema de gestión de chats siguiendo el patrón de WhatsApp, permitiendo a los
   - [Salir de Grupo](#3-salir-de-grupo)
   - [Eliminar Grupo](#4-eliminar-grupo)
   - [Eliminar Conversación (Delete For Me)](#5-eliminar-conversación-delete-for-me)
+  - [Eliminar Canal Huérfano](#6-eliminar-canal-huérfano)
 - [Matriz de Permisos](#matriz-de-permisos)
 - [Casos de Uso Comunes](#casos-de-uso-comunes)
 - [Códigos de Error](#códigos-de-error)
@@ -33,6 +34,7 @@ Sistema de gestión de chats siguiendo el patrón de WhatsApp, permitiendo a los
 | `POST` | `/api/v1/chat/rooms/{room_id}/leave` | Salir de grupo | `resource:read` |
 | `DELETE` | `/api/v1/chat/rooms/{room_id}` | Eliminar grupo | `resource:write` |
 | `DELETE` | `/api/v1/chat/rooms/{room_id}/conversation` | Eliminar conversación (Delete For Me) | `resource:write` |
+| `DELETE` | `/api/v1/chat/channels/orphan/{channel_id}` | Eliminar canal huérfano de Stream | `resource:write` |
 
 **Base URL:** `https://tu-dominio.com/api/v1/chat`
 
@@ -643,6 +645,369 @@ except Exception as e:
 - ✅ **Límite:** Procesa hasta 1000 mensajes por llamada
 - ⚠️ **Stream Chat:** Usa soft delete para preservar mensajes del otro usuario
 - ⚠️ **Reaparece:** Si recibes un mensaje nuevo, el chat vuelve a aparecer (vacío)
+
+---
+
+### 6. Eliminar Canal Huérfano
+
+Elimina un canal que existe en Stream Chat pero NO en la base de datos local.
+
+**🔹 Arquitectura Backend-First:** Implementa las mejores prácticas oficiales de Stream Chat, donde el backend valida TODAS las reglas de negocio antes de eliminar.
+
+```http
+DELETE /api/v1/chat/channels/orphan/{channel_id}
+```
+
+#### ¿Qué es un Canal Huérfano?
+
+Un canal huérfano es aquel que:
+- ✅ Existe en Stream Chat
+- ❌ NO existe en la base de datos local
+- 🔄 Se creó en Stream pero falló la creación en BD
+- 🔄 Se eliminó de BD pero quedó residual en Stream
+
+#### Casos de Uso
+
+| Escenario | Descripción | Solución |
+|-----------|-------------|----------|
+| **Creación parcial** | Canal creado en Stream pero falló transacción en BD | Usar este endpoint para limpiar |
+| **Sincronización fallida** | Canal eliminado de BD pero no de Stream | Usar este endpoint para limpiar |
+| **Chat desaparecido en iOS** | Usuario ve chat en iOS pero no en backend | Validar con backend si es huérfano |
+
+#### Parámetros de Path
+
+| Parámetro | Tipo | Requerido | Descripción |
+|-----------|------|-----------|-------------|
+| `channel_id` | string | ✅ | ID del canal en Stream (soporta formatos: `abc123` o `messaging:abc123`) |
+
+#### Headers
+
+```http
+Authorization: Bearer {token}
+X-Gym-ID: 1
+Content-Type: application/json
+```
+
+#### Respuesta Exitosa (200 OK)
+
+```json
+{
+  "success": true,
+  "message": "Canal huérfano eliminado correctamente"
+}
+```
+
+#### Validaciones de Seguridad
+
+El endpoint implementa **5 validaciones críticas** según mejores prácticas de Stream:
+
+| # | Validación | Descripción | Error si falla |
+|---|------------|-------------|----------------|
+| 1 | **Canal NO existe en BD** | Verificar que es realmente huérfano | 409 Conflict |
+| 2 | **Pertenece al gym actual** | Validar `team: "gym_X"` en Stream | 403 Forbidden |
+| 3 | **NO es canal de evento** | Eventos no eliminables por usuarios | 403 Forbidden |
+| 4 | **Usuario es owner** | Solo el creador puede eliminar | 403 Forbidden |
+| 5 | **Audit logging** | Registra quién, qué, cuándo | N/A |
+
+#### Formatos de Channel ID Soportados
+
+```bash
+# Formato 1: Solo ID (asume tipo "messaging")
+DELETE /api/v1/chat/channels/orphan/abc123
+
+# Formato 2: Con prefijo de tipo
+DELETE /api/v1/chat/channels/orphan/messaging:abc123
+
+# Ambos son válidos y equivalentes
+```
+
+#### Ejemplos de Uso
+
+<details>
+<summary><b>cURL</b></summary>
+
+```bash
+curl -X DELETE "https://api.tugym.com/api/v1/chat/channels/orphan/abc123" \
+  -H "Authorization: Bearer eyJhbGc..." \
+  -H "X-Gym-ID: 1"
+```
+</details>
+
+<details>
+<summary><b>JavaScript - Flujo Recomendado para iOS</b></summary>
+
+```javascript
+async function deleteConversation(channelId) {
+  try {
+    // Paso 1: Intentar endpoint normal (si existe en BD)
+    const response = await fetch(
+      `https://api.tugym.com/api/v1/chat/rooms/${channelId}?hard_delete=true`,
+      {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${authToken}`,
+          'X-Gym-ID': '1'
+        }
+      }
+    );
+
+    if (response.ok) {
+      console.log('Canal eliminado (existía en BD)');
+      return response.json();
+    }
+
+    throw new Error(`Error ${response.status}`);
+
+  } catch (error) {
+    // Paso 2: Si 404, intentar endpoint de huérfanos
+    if (error.message.includes('404')) {
+      console.log('Canal no en BD, intentando endpoint de huérfanos...');
+
+      const orphanResponse = await fetch(
+        `https://api.tugym.com/api/v1/chat/channels/orphan/${channelId}`,
+        {
+          method: 'DELETE',
+          headers: {
+            'Authorization': `Bearer ${authToken}`,
+            'X-Gym-ID': '1'
+          }
+        }
+      );
+
+      if (orphanResponse.ok) {
+        console.log('Canal huérfano eliminado exitosamente');
+        return orphanResponse.json();
+      }
+
+      // Si también falla, propagar error
+      const errorData = await orphanResponse.json();
+      throw new Error(errorData.detail);
+    }
+
+    // Re-lanzar otros errores
+    throw error;
+  }
+}
+
+// Uso
+try {
+  await deleteConversation('messaging:abc123');
+  alert('Canal eliminado correctamente');
+} catch (error) {
+  alert(`Error: ${error.message}`);
+}
+```
+</details>
+
+<details>
+<summary><b>Python</b></summary>
+
+```python
+import requests
+
+def delete_orphan_channel(channel_id: str, auth_token: str, gym_id: int):
+    """Elimina un canal huérfano de Stream"""
+    response = requests.delete(
+        f'https://api.tugym.com/api/v1/chat/channels/orphan/{channel_id}',
+        headers={
+            'Authorization': f'Bearer {auth_token}',
+            'X-Gym-ID': str(gym_id)
+        }
+    )
+
+    if response.status_code == 200:
+        data = response.json()
+        print(f"✅ {data['message']}")
+        return data
+    else:
+        error = response.json()
+        raise Exception(f"❌ Error {response.status_code}: {error['detail']}")
+
+# Uso
+try:
+    delete_orphan_channel(
+        channel_id="abc123",
+        auth_token="...",
+        gym_id=1
+    )
+except Exception as e:
+    print(str(e))
+```
+</details>
+
+<details>
+<summary><b>Swift - Integración iOS</b></summary>
+
+```swift
+func deleteConversation(channelId: String) async throws {
+    do {
+        // Paso 1: Intentar endpoint normal
+        try await ChatManagementService.shared.deleteGroup(
+            roomId: channelId,
+            hardDelete: true
+        )
+        print("Canal eliminado (existía en BD)")
+
+    } catch let error as APIError where error.statusCode == 404 {
+        // Paso 2: Si 404, es huérfano → usar endpoint especial
+        print("Canal no en BD, eliminando huérfano...")
+
+        try await ChatManagementService.shared.deleteOrphanChannel(
+            channelId: channelId
+        )
+        print("Canal huérfano eliminado exitosamente")
+
+    } catch {
+        // Propagar otros errores
+        throw error
+    }
+}
+
+// Método en ChatManagementService
+extension ChatManagementService {
+    func deleteOrphanChannel(channelId: String) async throws {
+        let endpoint = "/api/v1/chat/channels/orphan/\(channelId)"
+
+        try await apiClient.delete(endpoint)
+        // Backend valida TODO antes de eliminar
+    }
+}
+
+// Uso
+Task {
+    do {
+        try await deleteConversation(channelId: "messaging:abc123")
+        showAlert("Canal eliminado correctamente")
+    } catch let error as APIError {
+        showAlert("Error: \(error.message)")
+    }
+}
+```
+</details>
+
+#### Códigos de Respuesta
+
+| Código | Descripción | Causa |
+|--------|-------------|-------|
+| `200` | Canal huérfano eliminado exitosamente | Validaciones pasadas, canal eliminado |
+| `400` | Bad Request | Error genérico de validación |
+| `403` | Forbidden | No eres owner, canal de otro gym, o canal de evento |
+| `404` | Not Found | Canal no encontrado en Stream o usuario no encontrado |
+| `409` | Conflict | Canal existe en BD (usar endpoint normal) |
+| `500` | Internal Server Error | Error interno del servidor |
+
+#### Ejemplos de Errores
+
+**409 Conflict - Canal existe en BD:**
+```json
+{
+  "detail": "El canal existe en la base de datos. Usa el endpoint DELETE /rooms/{room_id} para eliminarlo."
+}
+```
+
+**403 Forbidden - No eres owner:**
+```json
+{
+  "detail": "Solo el creador (owner) puede eliminar canales huérfanos. Tu rol actual: member"
+}
+```
+
+**403 Forbidden - Canal de otro gym:**
+```json
+{
+  "detail": "El canal pertenece a otro gimnasio. Canal team: gym_2, gym esperado: gym_1"
+}
+```
+
+**403 Forbidden - Canal de evento:**
+```json
+{
+  "detail": "Los canales de eventos no pueden eliminarse manualmente. Se gestionan automáticamente por el sistema."
+}
+```
+
+**404 Not Found - Canal no existe:**
+```json
+{
+  "detail": "Canal messaging:abc123 no encontrado en Stream"
+}
+```
+
+#### Arquitectura Backend-First
+
+Este endpoint implementa las **mejores prácticas oficiales de Stream Chat**:
+
+```
+┌─────────────┐
+│ Cliente iOS │
+└──────┬──────┘
+       │ 1. DELETE /channels/orphan/{id}
+       ▼
+┌──────────────────┐
+│  BACKEND API     │ ← ✅ VALIDACIONES COMPLETAS
+│                  │
+│ ✓ NO existe BD   │
+│ ✓ team correcto  │
+│ ✓ NO es evento   │
+│ ✓ Usuario owner  │
+│ ✓ Audit log      │
+└──────┬───────────┘
+       │ 2. Si válido, eliminar con server-side API
+       ▼
+┌──────────────────┐
+│   Stream Chat    │
+│   (Server SDK)   │
+└──────────────────┘
+```
+
+**Beneficios:**
+- ✅ Backend valida TODAS las reglas de negocio
+- ✅ No permite bypass de validaciones desde cliente
+- ✅ Audit logging completo
+- ✅ Validación cross-gym garantizada
+- ✅ Protege canales de eventos
+
+#### Diferencia con Endpoint Normal
+
+| Aspecto | DELETE /rooms/{room_id} | DELETE /channels/orphan/{channel_id} |
+|---------|-------------------------|--------------------------------------|
+| **Canal en BD** | ✅ Debe existir | ❌ NO debe existir |
+| **room_id** | ID numérico de BD | ID string de Stream |
+| **Uso** | Eliminación normal | Limpieza de huérfanos |
+| **Validaciones** | BD + Stream | Solo Stream + validaciones backend |
+| **Código si no existe** | 404 | Exitoso si es huérfano |
+
+#### Flujo Recomendado en Producción
+
+```
+Usuario presiona "Eliminar" en iOS
+↓
+iOS: DELETE /api/v1/chat/rooms/{room_id} (intentar normal)
+↓
+├─ 200 OK → ✅ Canal eliminado (existía en BD)
+├─ 404 Not Found → Intentar DELETE /channels/orphan/{channel_id}
+│   ├─ 200 OK → ✅ Canal huérfano eliminado
+│   ├─ 403 → ❌ Sin permisos
+│   └─ 404 → ❌ Canal no existe en ningún lado
+└─ Otros errores → ❌ Mostrar error al usuario
+```
+
+#### Notas Importantes
+
+- ✅ **Solo owner:** Solo el creador del canal puede eliminarlo
+- ✅ **Multi-tenant:** Valida que el canal pertenezca al gym actual
+- ✅ **Eventos protegidos:** Canales de eventos NO pueden eliminarse
+- ✅ **Audit log:** Todas las eliminaciones se registran automáticamente
+- ✅ **Formatos flexibles:** Soporta `abc123` y `messaging:abc123`
+- ⚠️ **Irreversible:** La eliminación no se puede deshacer
+- ⚠️ **Backend-First:** Nunca eliminar directamente desde Stream sin pasar por backend
+
+#### Referencias
+
+- 📖 [Stream Chat Official Best Practices](../STREAM_OFFICIAL_BEST_PRACTICES.md)
+- 📖 [Security Analysis](../ANALISIS_SEGURIDAD_DELETE_STREAM.md)
+- 🔗 [Stream Chat - Deleting Channels](https://getstream.io/chat/docs/node/channel_delete/)
+- 🔗 [Stream Chat - Multi-Tenant Best Practices](https://getstream.io/chat/docs/node/multi_tenant_chat/)
 
 ---
 

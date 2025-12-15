@@ -1929,6 +1929,134 @@ class ChatService:
             "deleted_from_stream": deleted_from_stream
         }
 
+    def delete_orphan_channel(
+        self,
+        db: Session,
+        channel_id: str,
+        user_id: int,
+        gym_id: int
+    ) -> Dict[str, Any]:
+        """
+        Elimina un canal huérfano de Stream (que NO existe en BD).
+
+        Implementa las mejores prácticas recomendadas por Stream Chat:
+        - Backend valida TODAS las reglas de negocio antes de eliminar
+        - Solo canales huérfanos (que no existen en BD)
+        - Solo el owner del canal puede eliminar
+
+        VALIDACIONES:
+        1. Verificar que NO existe en BD (es huérfano)
+        2. Verificar que pertenece al gym actual (team)
+        3. Verificar que NO es canal de evento
+        4. Verificar que el usuario es owner en Stream
+
+        Args:
+            db: Sesión de base de datos
+            channel_id: ID del canal en Stream (ej: "messaging:abc123")
+            user_id: ID interno del usuario
+            gym_id: ID del gimnasio actual
+
+        Returns:
+            Dict con success, message
+
+        Raises:
+            ValueError: Si el canal existe en BD o no cumple validaciones
+        """
+        # 1. Verificar que NO existe en BD (es huérfano)
+        db_room = db.query(ChatRoom).filter(
+            ChatRoom.stream_channel_id == channel_id
+        ).first()
+
+        if db_room:
+            raise ValueError(
+                "El canal existe en la base de datos. "
+                "Usa el endpoint DELETE /rooms/{room_id} para eliminarlo."
+            )
+
+        # 2. Obtener canal de Stream (server-side API)
+        try:
+            # Extraer tipo y ID si vienen en formato "tipo:id"
+            if ":" in channel_id:
+                channel_type, cid = channel_id.split(":", 1)
+            else:
+                channel_type = "messaging"
+                cid = channel_id
+
+            channel = stream_client.channel(channel_type, cid)
+
+            # Stream ID del usuario para server-side auth
+            stream_user_id = f"gym_{gym_id}_user_{user_id}"
+
+            # Query channel con server-side auth
+            channel_data = channel.query(
+                user_id=stream_user_id,
+                messages_limit=0,
+                watch=False,
+                presence=False
+            )
+
+        except Exception as e:
+            error_msg = str(e).lower()
+            if "channel not found" in error_msg or "not found" in error_msg:
+                raise ValueError(f"Canal {channel_id} no encontrado en Stream")
+            logger.error(f"Error consultando canal {channel_id} de Stream: {e}")
+            raise ValueError(f"Error accediendo al canal: {str(e)}")
+
+        # 3. Verificar que pertenece al gym actual
+        channel_team = channel_data.get('channel', {}).get('team', '')
+        expected_team = f"gym_{gym_id}"
+
+        if channel_team != expected_team:
+            raise ValueError(
+                f"El canal pertenece a otro gimnasio. "
+                f"Canal team: {channel_team}, gym esperado: {expected_team}"
+            )
+
+        # 4. Verificar que NO es canal de evento
+        if cid.startswith('event_'):
+            raise ValueError(
+                "Los canales de eventos no pueden eliminarse manualmente. "
+                "Se gestionan automáticamente por el sistema."
+            )
+
+        # 5. Verificar que el usuario es owner en Stream
+        members = channel_data.get('members', [])
+        user_member = next(
+            (m for m in members if m.get('user_id') == stream_user_id),
+            None
+        )
+
+        if not user_member:
+            raise ValueError(
+                "No eres miembro de este canal. "
+                "Solo el creador puede eliminar canales huérfanos."
+            )
+
+        if user_member.get('role') != 'owner':
+            raise ValueError(
+                "Solo el creador (owner) puede eliminar canales huérfanos. "
+                f"Tu rol actual: {user_member.get('role')}"
+            )
+
+        # 6. Registrar en audit log
+        logger.info(
+            f"Eliminando canal huérfano: channel_id={channel_id}, "
+            f"user_id={user_id}, gym_id={gym_id}, team={channel_team}"
+        )
+
+        # 7. Eliminar de Stream (server-side)
+        try:
+            channel.delete()
+            logger.info(f"Canal huérfano {channel_id} eliminado exitosamente de Stream")
+        except Exception as e:
+            logger.error(f"Error eliminando canal {channel_id} de Stream: {e}")
+            raise ValueError(f"Error eliminando el canal de Stream: {str(e)}")
+
+        return {
+            "success": True,
+            "message": "Canal huérfano eliminado correctamente"
+        }
+
     def delete_conversation_for_user(self, db: Session, room_id: int, user_id: int, gym_id: int) -> Dict[str, Any]:
         """
         Elimina una conversación 1-to-1 solo para el usuario que lo solicita.

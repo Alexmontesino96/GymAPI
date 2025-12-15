@@ -35,7 +35,8 @@ from app.schemas.chat import (
     ChatHideResponse,
     ChatLeaveGroupResponse,
     ChatDeleteGroupResponse,
-    DeleteConversationResponse
+    DeleteConversationResponse,
+    DeleteOrphanChannelResponse
 )
 from app.models.user import User
 from app.models.chat import ChatRoom as ChatRoomModel, ChatRoomStatus
@@ -1437,4 +1438,128 @@ async def delete_conversation_for_me(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=error_msg)
     except Exception as e:
         logger.error(f"Error eliminando conversación {room_id}: {str(e)}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error eliminando la conversación") 
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error eliminando la conversación")
+
+
+@router.delete("/channels/orphan/{channel_id}", response_model=DeleteOrphanChannelResponse)
+async def delete_orphan_channel(
+    request: Request,
+    *,
+    db: Session = Depends(get_db),
+    channel_id: str = Path(..., title="ID del canal en Stream (ej: messaging:abc123 o abc123)"),
+    current_gym: GymSchema = Depends(verify_gym_access),
+    current_user: Auth0User = Security(auth.get_user, scopes=["resource:write"])
+):
+    """
+    Eliminar Canal Huérfano de Stream
+
+    Elimina un canal que existe en Stream Chat pero NO en la base de datos.
+
+    **Casos de uso:**
+    - Canal creado en Stream pero falló creación en BD
+    - Canal eliminado de BD pero quedó residual en Stream
+    - Limpieza manual de sincronización
+
+    **Validaciones de seguridad (según mejores prácticas de Stream Chat):**
+    1. ✅ Verificar que NO existe en BD (es huérfano)
+    2. ✅ Verificar que pertenece al gym actual (team)
+    3. ✅ Verificar que NO es canal de evento
+    4. ✅ Verificar que el usuario es owner en Stream
+    5. ✅ Audit logging automático
+
+    **Flujo recomendado en iOS:**
+    ```swift
+    do {
+        // Intentar endpoint normal primero
+        try await deleteGroup(roomId: id)
+    } catch let error where error.statusCode == 404 {
+        // Si 404, intentar endpoint de huérfanos
+        try await deleteOrphanChannel(channelId: id)
+    }
+    ```
+
+    **Permisos:**
+    - Solo el creador (owner) del canal puede eliminarlo
+    - Requiere scope `resource:write`
+
+    **Arquitectura:**
+    - Implementa arquitectura "Backend-First" recomendada por Stream
+    - Backend valida TODAS las reglas de negocio
+    - No permite bypass de validaciones desde el cliente
+
+    Args:
+        channel_id: ID del canal en Stream (ej: "messaging:abc123" o "abc123")
+        current_gym: Gimnasio actual (inyectado desde header X-Gym-ID)
+        current_user: Usuario autenticado (inyectado desde JWT)
+
+    Returns:
+        DeleteOrphanChannelResponse con success y message
+
+    Raises:
+        HTTPException 400: Canal existe en BD (usar endpoint normal)
+        HTTPException 403: No eres owner del canal o canal de otro gym
+        HTTPException 404: Canal no encontrado en Stream
+        HTTPException 500: Error interno del servidor
+    """
+    try:
+        internal_user = db.query(User).filter(User.auth0_id == current_user.id).first()
+        if not internal_user:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario no encontrado")
+
+        result = chat_service.delete_orphan_channel(
+            db=db,
+            channel_id=channel_id,
+            user_id=internal_user.id,
+            gym_id=current_gym.id
+        )
+        return DeleteOrphanChannelResponse(**result)
+
+    except ValueError as e:
+        error_msg = str(e)
+
+        # 409 Conflict - Canal existe en BD
+        if "existe en la base de datos" in error_msg:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=error_msg
+            )
+
+        # 403 Forbidden - Permisos o gym incorrecto
+        elif any(keyword in error_msg for keyword in [
+            "pertenece a otro gimnasio",
+            "owner",
+            "creador",
+            "No eres miembro"
+        ]):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=error_msg
+            )
+
+        # 403 Forbidden - Canales de eventos
+        elif "canales de eventos" in error_msg:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=error_msg
+            )
+
+        # 404 Not Found - Canal no existe en Stream
+        elif "no encontrado" in error_msg:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=error_msg
+            )
+
+        # Otros errores de validación
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=error_msg
+            )
+
+    except Exception as e:
+        logger.error(f"Error eliminando canal huérfano {channel_id}: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error eliminando el canal huérfano"
+        ) 

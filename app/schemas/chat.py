@@ -93,3 +93,8 @@ class DeleteConversationResponse(BaseModel):
     message: str
     room_id: int
     messages_deleted: int
+
+class DeleteOrphanChannelResponse(BaseModel):
+    """Response de eliminación de canal huérfano de Stream"""
+    success: bool
+    message: str
