@@ -52,16 +52,16 @@ class TestAsyncInfrastructure:
 
     @pytest.mark.asyncio
     async def test_async_session_with_search_path(self):
-        """Verifica que se puede establecer search_path en sesión async."""
+        """Verifica que search_path está configurado automáticamente desde server_settings."""
         async with AsyncSessionLocal() as session:
-            await session.execute(text("SET search_path TO public"))
-            await session.commit()
+            # search_path ya está configurado en server_settings del engine
+            # NO ejecutar SET aquí para evitar conflictos con pgbouncer
 
             # Verificar search_path
             result = await session.execute(text("SHOW search_path"))
             search_path = result.scalar()
             assert "public" in search_path, "search_path debe incluir 'public'"
-            print(f"✅ Search path configurado: {search_path}")
+            print(f"✅ Search path configurado automáticamente: {search_path}")
 
     @pytest.mark.asyncio
     async def test_get_async_db_dependency(self):
