@@ -1786,10 +1786,10 @@ class ChatService:
         stream_id = self._get_stream_id_for_user(user)
 
         try:
-            # Ocultar en Stream
+            # Ocultar en Stream Y limpiar historial (patrón WhatsApp - solo nuevos mensajes)
             channel = stream_client.channel(room.stream_channel_type, room.stream_channel_id)
-            channel.hide(user_id=stream_id)
-            logger.info(f"Canal {room.stream_channel_id} ocultado en Stream para {stream_id}")
+            channel.hide(user_id=stream_id, clear_history=True)
+            logger.info(f"Canal {room.stream_channel_id} ocultado con historial limpiado en Stream para {stream_id}")
         except Exception as e:
             logger.error(f"Error ocultando canal en Stream: {str(e)}")
 
@@ -2161,39 +2161,24 @@ class ChatService:
             raise ValueError(f"Usuario {user_id} no encontrado")
 
         stream_id = self._get_stream_id_for_user(user)
-        messages_deleted = 0
 
         try:
             # Obtener canal de Stream
             channel = stream_client.channel(room.stream_channel_type, room.stream_channel_id)
 
-            # Obtener todos los mensajes del canal
-            messages_response = channel.query(
-                options={
-                    'limit': 1000,  # Máximo permitido por Stream
-                    'message_limit': 1000
-                }
+            # Usar hide(clear_history=True) - Más eficiente que eliminar mensaje por mensaje
+            # Esto oculta el canal Y limpia TODO el historial para este usuario
+            # Patrón WhatsApp: solo verá mensajes nuevos después de esta acción
+            channel.hide(user_id=stream_id, clear_history=True)
+
+            logger.info(
+                f"Conversación {room.stream_channel_id} eliminada (hide + clear_history) "
+                f"en Stream para usuario {stream_id}"
             )
 
-            # Eliminar cada mensaje para este usuario específico
-            # Stream Chat permite soft delete por usuario
-            for msg in messages_response.get('messages', []):
-                try:
-                    # Soft delete: el mensaje solo se oculta para este usuario
-                    channel.delete_message(
-                        msg['id'],
-                        hard=False  # Soft delete mantiene el mensaje para otros usuarios
-                    )
-                    messages_deleted += 1
-                except Exception as msg_error:
-                    logger.warning(f"No se pudo eliminar mensaje {msg['id']}: {str(msg_error)}")
-                    continue
-
-            logger.info(f"Eliminados {messages_deleted} mensajes del canal {room.stream_channel_id} para usuario {stream_id}")
-
         except Exception as e:
-            logger.error(f"Error eliminando mensajes de Stream: {str(e)}")
-            # Continuar aunque falle Stream - al menos ocultamos el chat
+            logger.error(f"Error eliminando conversación en Stream: {str(e)}")
+            # Continuar aunque falle Stream - al menos ocultamos el chat en BD
 
         # Ocultar el chat automáticamente
         try:
@@ -2204,9 +2189,9 @@ class ChatService:
 
         return {
             "success": True,
-            "message": "Conversación eliminada para ti. El otro usuario mantiene su historial.",
+            "message": "Conversación eliminada para ti. Solo verás mensajes nuevos. El otro usuario mantiene su historial.",
             "room_id": room_id,
-            "messages_deleted": messages_deleted
+            "history_cleared": True  # clear_history=True limpia TODO sin conteo individual
         }
 
 

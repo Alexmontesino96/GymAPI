@@ -88,11 +88,15 @@ class ChatDeleteGroupResponse(BaseModel):
     deleted_from_stream: bool
 
 class DeleteConversationResponse(BaseModel):
-    """Response de eliminar conversación para un usuario (Delete For Me)"""
+    """Response de eliminar conversación para un usuario (Delete For Me)
+
+    Usa Stream hide(clear_history=True) que limpia todo el historial de mensajes.
+    El usuario solo verá mensajes nuevos después de esta acción (patrón WhatsApp).
+    """
     success: bool
     message: str
     room_id: int
-    messages_deleted: int
+    history_cleared: bool  # True si se limpió el historial en Stream
 
 class DeleteOrphanChannelResponse(BaseModel):
     """Response de eliminación de canal huérfano de Stream"""
