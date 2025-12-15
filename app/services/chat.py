@@ -867,19 +867,16 @@ class ChatService:
                     logger.info(f"Cache invalidado para clave: {cache_key} debido a error: {str(e)}")
                 # Continuar para crear un nuevo canal
         
-        # Obtener los auth0_ids correspondientes (necesarios para Stream)
+        # Obtener usuarios de la BD
         user1 = db.query(User).filter(User.id == user1_id).first()
         user2 = db.query(User).filter(User.id == user2_id).first()
-        
-        if not user1 or not user2 or not user1.auth0_id or not user2.auth0_id:
-            raise ValueError("Uno o ambos usuarios no existen o no tienen auth0_id")
-            
-        auth0_user1_id = user1.auth0_id
-        auth0_user2_id = user2.auth0_id
-        
-        # Sanitizar IDs de usuario para Stream
-        safe_user1_id = re.sub(r'[^a-zA-Z0-9@_\-]', '_', auth0_user1_id)
-        safe_user2_id = re.sub(r'[^a-zA-Z0-9@_\-]', '_', auth0_user2_id)
+
+        if not user1 or not user2:
+            raise ValueError("Uno o ambos usuarios no existen")
+
+        # Usar formato multi-tenant para IDs de Stream (gym_{gym_id}_user_{id})
+        safe_user1_id = self._get_stream_id_for_user(user1, gym_id=gym_id)
+        safe_user2_id = self._get_stream_id_for_user(user2, gym_id=gym_id)
         
         # Asegurar que ambos usuarios existen en Stream
         try:
@@ -919,12 +916,7 @@ class ChatService:
         
         # Crear nuevo chat directo
         logger.info("Creando nuevo chat directo")
-        
-        # Acortar los IDs sanitizados para evitar que el channel_id exceda los 64 caracteres
-        # Máximo 15 caracteres por ID para chats directos
-        short_user1_id = safe_user1_id[:15] if len(safe_user1_id) > 15 else safe_user1_id
-        short_user2_id = safe_user2_id[:15] if len(safe_user2_id) > 15 else safe_user2_id
-        
+
         # Generar nombre del chat usando nombres reales de usuario
         user1_name = self._get_display_name_for_user(user1)
         user2_name = self._get_display_name_for_user(user2)
@@ -966,9 +958,9 @@ class ChatService:
         if not creator:
             logger.error(f"[DEBUG] Usuario creador {creator_id} no encontrado")
             raise ValueError(f"Usuario creador {creator_id} no encontrado")
-            
-        # Obtener ID para Stream usando adaptador interno
-        creator_stream_id = get_stream_id_from_internal(creator_id)
+
+        # Obtener ID para Stream usando adaptador interno con gym_id multi-tenant
+        creator_stream_id = get_stream_id_from_internal(creator_id, gym_id=gym_id)
         
         try:
             # Verificar si el usuario existe en Stream

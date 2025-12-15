@@ -130,9 +130,9 @@ async def create_event_chat(
                     
                     # Use creator_id directly as the internal ID
                     from app.core.stream_utils import get_stream_id_from_internal
-                    
-                    # Generate Stream-compatible ID from internal ID
-                    message_sender_id = get_stream_id_from_internal(request.creator_id)
+
+                    # Generate Stream-compatible ID from internal ID with gym_id multi-tenant
+                    message_sender_id = get_stream_id_from_internal(request.creator_id, gym_id=request.gym_id)
                     
                     # Verificar si el usuario existe en Stream
                     user_exists_in_stream = True

@@ -34,6 +34,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import logging
 from sqlalchemy.orm import Session
 from app.db.session import SessionLocal
+from app.db.base import Base  # Importar Base para cargar todos los modelos
 from app.models.chat import ChatRoom, ChatMember
 from app.models.user import User
 from app.core.stream_client import stream_client
