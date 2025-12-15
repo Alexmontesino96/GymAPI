@@ -163,9 +163,9 @@ class ChatService:
                 user = db.query(User).filter(User.id == user_id).first()
                 if not user or not user.auth0_id:
                     raise ValueError(f"Usuario con ID interno {user_id} no encontrado o no tiene auth0_id")
-                    
-                # Adaptador interno: Convertir ID interno a stream_id (basado en auth0_id)
-                stream_id = self._get_stream_id_for_user(user)
+
+                # Adaptador interno: Convertir ID interno a stream_id multi-tenant
+                stream_id = self._get_stream_id_for_user(user, gym_id=gym_id)
                 
                 # Obtener los gimnasios del usuario para asignar teams
                 user_teams = []
@@ -220,24 +220,34 @@ class ChatService:
                 return user_token_cache[cache_key]["token"]
             raise ValueError(f"No se pudo generar token: {str(e)}")
     
-    def _get_stream_id_for_user(self, user: User) -> str:
+    def _get_stream_id_for_user(self, user: User, gym_id: int = None) -> str:
         """
         Método adaptador interno para obtener un ID compatible con Stream
-        a partir de un objeto de usuario.
-        
+        a partir de un objeto de usuario en formato multi-tenant.
+
         Este método encapsula la lógica de adaptación y nos permite cambiar
         fácilmente la implementación si cambia la forma de identificar usuarios en Stream.
-        
+
         Args:
             user: Objeto de usuario de la base de datos
-            
+            gym_id: ID del gimnasio (requerido para multi-tenant). Si es None, intenta usar user.gym_id.
+
         Returns:
-            str: ID para usar con Stream
+            str: ID para usar con Stream en formato gym_{gym_id}_user_{user_id}
         """
         from app.core.stream_utils import get_stream_id_from_internal
-        
-        # Usamos el ID interno del usuario para generar el ID de Stream
-        return get_stream_id_from_internal(user.id)
+
+        # Prioridad: gym_id pasado como parámetro, luego user.gym_id
+        effective_gym_id = gym_id if gym_id is not None else getattr(user, 'gym_id', None)
+
+        if effective_gym_id is None:
+            logger.warning(
+                f"_get_stream_id_for_user llamado sin gym_id para user {user.id}. "
+                f"Esto genera un ID legacy sin multi-tenant."
+            )
+
+        # Usamos el ID interno del usuario y gym_id para generar el ID de Stream
+        return get_stream_id_from_internal(user.id, gym_id=effective_gym_id)
     
     def _consolidate_user_in_stream(self, db: Session, user: User, gym_id: int) -> str:
         """
@@ -258,8 +268,8 @@ class ChatService:
             str: Stream ID consolidado en formato correcto (user_X)
         """
         try:
-            # Obtener IDs
-            new_stream_id = self._get_stream_id_for_user(user)  # Formato user_X
+            # Obtener IDs con formato multi-tenant
+            new_stream_id = self._get_stream_id_for_user(user, gym_id=gym_id)  # Formato gym_{gym_id}_user_{id}
             legacy_stream_id = user.auth0_id  # Formato legacy auth0|...
             
             logger.info(f"🔄 Consolidando usuario {user.id}: legacy='{legacy_stream_id}' → nuevo='{new_stream_id}'")
@@ -354,7 +364,7 @@ class ChatService:
         except Exception as e:
             logger.error(f"❌ Error consolidando usuario {user.id}: {str(e)}", exc_info=True)
             # Fallback al formato nuevo sin migración
-            return self._get_stream_id_for_user(user)
+            return self._get_stream_id_for_user(user, gym_id=gym_id)
     
     def _get_display_name_for_user(self, user: User) -> str:
         """
@@ -398,8 +408,8 @@ class ChatService:
                     logger.error(f"[DEBUG-CREATE] Usuario creador {creator_id} no encontrado")
                     raise ValueError(f"Usuario creador {creator_id} no encontrado")
                 
-                # Obtener stream_id para el creador (usando el adaptador)
-                creator_stream_id = self._get_stream_id_for_user(creator)
+                # Obtener stream_id para el creador (usando el adaptador multi-tenant)
+                creator_stream_id = self._get_stream_id_for_user(creator, gym_id=gym_id)
                 
                 # Asegurar que el creador está en la lista de miembros
                 if creator_id not in room_data.member_ids:
@@ -413,7 +423,7 @@ class ChatService:
                     member = db.query(User).filter(User.id == member_internal_id).first()
                     if member:
                         member_users.append(member)
-                        member_stream_id = self._get_stream_id_for_user(member)
+                        member_stream_id = self._get_stream_id_for_user(member, gym_id=gym_id)
                         member_stream_ids.append(member_stream_id)
                 
                 # Crear usuarios en Stream antes de crear el canal con consolidación automática
@@ -764,10 +774,10 @@ class ChatService:
 
                 # PASO 2: Unhide en Stream Chat (best effort, no crítico)
                 try:
-                    # Obtener usuario para construir stream_id
+                    # Obtener usuario para construir stream_id multi-tenant
                     user1_obj = db.query(User).filter(User.id == user1_id).first()
                     if user1_obj:
-                        stream_id_user1 = self._get_stream_id_for_user(user1_obj)
+                        stream_id_user1 = self._get_stream_id_for_user(user1_obj, gym_id=gym_id)
 
                         # Hacer show en Stream
                         channel = stream_client.channel(
@@ -805,9 +815,9 @@ class ChatService:
                         logger.info(f"Cache invalidado para clave: {cache_key}")
                     # Continuar para crear un nuevo canal
                 else:
-                    # Obtener stream_id del usuario
-                    query_stream_id = self._get_stream_id_for_user(user1)
-                    
+                    # Obtener stream_id del usuario con gym_id multi-tenant
+                    query_stream_id = self._get_stream_id_for_user(user1, gym_id=gym_id)
+
                     # CORECCIÓN: Usar método con reintentos automáticos
                     response = self._query_stream_channel_with_retry(
                         db_room.stream_channel_type, 
@@ -1162,8 +1172,8 @@ class ChatService:
         if not user:
             raise ValueError(f"Usuario con ID interno {user_id} no encontrado")
         
-        # Obtener Stream ID usando el método estándar
-        stream_id = self._get_stream_id_for_user(user)
+        # Obtener Stream ID usando el método estándar multi-tenant
+        stream_id = self._get_stream_id_for_user(user, gym_id=db_room.gym_id)
         
         try:
             # Primero añadir a la base de datos local usando ID interno
@@ -1229,8 +1239,8 @@ class ChatService:
         if not user:
             raise ValueError(f"Usuario con ID interno {user_id} no encontrado")
         
-        # Obtener Stream ID usando el método estándar
-        stream_id = self._get_stream_id_for_user(user)
+        # Obtener Stream ID usando el método estándar multi-tenant
+        stream_id = self._get_stream_id_for_user(user, gym_id=db_room.gym_id)
         
         try:
             # Primero intentar eliminar de Stream usando stream_id estándar
@@ -1778,12 +1788,12 @@ class ChatService:
         if not is_member:
             raise ValueError("No eres miembro de esta sala de chat")
 
-        # Obtener Stream ID
+        # Obtener Stream ID con formato multi-tenant
         user = db.query(User).filter(User.id == user_id).first()
         if not user:
             raise ValueError(f"Usuario {user_id} no encontrado")
 
-        stream_id = self._get_stream_id_for_user(user)
+        stream_id = self._get_stream_id_for_user(user, gym_id=gym_id)
 
         try:
             # Ocultar en Stream Y limpiar historial (patrón WhatsApp - solo nuevos mensajes)
@@ -1816,10 +1826,10 @@ class ChatService:
         if not user:
             raise ValueError(f"Usuario {user_id} no encontrado")
 
-        stream_id = self._get_stream_id_for_user(user)
+        stream_id = self._get_stream_id_for_user(user, gym_id=gym_id)
 
         try:
-            # Mostrar en Stream
+            # Mostrar en Stream con formato multi-tenant
             channel = stream_client.channel(room.stream_channel_type, room.stream_channel_id)
             channel.show(user_id=stream_id)
             logger.info(f"Canal {room.stream_channel_id} mostrado en Stream para {stream_id}")
@@ -2155,12 +2165,12 @@ class ChatService:
         if not is_member:
             raise ValueError("No eres miembro de esta conversación")
 
-        # Obtener Stream ID del usuario
+        # Obtener Stream ID del usuario con formato multi-tenant
         user = db.query(User).filter(User.id == user_id).first()
         if not user:
             raise ValueError(f"Usuario {user_id} no encontrado")
 
-        stream_id = self._get_stream_id_for_user(user)
+        stream_id = self._get_stream_id_for_user(user, gym_id=gym_id)
 
         try:
             # Obtener canal de Stream

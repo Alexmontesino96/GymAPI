@@ -1,7 +1,9 @@
 import os
 import pytest
+import uuid
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, TypeDecorator, CHAR
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -9,6 +11,56 @@ from app.core.config import get_settings
 from app.db.base import Base
 from app.db.session import get_db
 from main import app
+
+
+# TypeDecorator para UUID compatible con SQLite
+class GUID(TypeDecorator):
+    """Platform-independent GUID type.
+    Uses PostgreSQL's UUID type, otherwise uses CHAR(32), storing as stringified hex values.
+    """
+    impl = CHAR
+    cache_ok = True
+
+    def load_dialect_impl(self, dialect):
+        if dialect.name == 'postgresql':
+            return dialect.type_descriptor(UUID())
+        else:
+            return dialect.type_descriptor(CHAR(32))
+
+    def process_bind_param(self, value, dialect):
+        if value is None:
+            return value
+        elif dialect.name == 'postgresql':
+            return str(value)
+        else:
+            if not isinstance(value, uuid.UUID):
+                return "%.32x" % uuid.UUID(value).int
+            else:
+                return "%.32x" % value.int
+
+    def process_result_value(self, value, dialect):
+        if value is None:
+            return value
+        else:
+            if not isinstance(value, uuid.UUID):
+                value = uuid.UUID(value)
+            return value
+
+
+# Monkey patch para UUID en tests con SQLite
+import sqlalchemy.dialects.postgresql as postgresql_dialect
+original_uuid = postgresql_dialect.UUID
+
+class SQLiteCompatibleUUID(original_uuid):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def load_dialect_impl(self, dialect):
+        if dialect.name == 'sqlite':
+            return CHAR(32)
+        return super().load_dialect_impl(dialect)
+
+postgresql_dialect.UUID = SQLiteCompatibleUUID
 
 
 # Usar una base de datos en memoria para pruebas
@@ -25,9 +77,18 @@ TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engin
 # Crear las tablas en la base de datos de prueba
 @pytest.fixture(scope="session")
 def db_engine():
-    Base.metadata.create_all(bind=engine)
+    # Excluir tablas que usan UUID (no compatibles con SQLite en tests)
+    tables_to_create = [table for table in Base.metadata.sorted_tables
+                        if table.name not in ['device_tokens']]
+
+    for table in tables_to_create:
+        table.create(bind=engine, checkfirst=True)
+
     yield engine
-    Base.metadata.drop_all(bind=engine)
+
+    # Limpiar
+    for table in reversed(tables_to_create):
+        table.drop(bind=engine, checkfirst=True)
 
 
 @pytest.fixture(scope="function")
