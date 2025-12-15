@@ -231,8 +231,8 @@ async def get_direct_chat(
             detail="No compartes ningún gimnasio con este usuario"
         )
 
-    # Usar el gym_id del request si está en común, sino usar el primero compartido
-    shared_gym_id = current_gym.id if current_gym.id in common_gyms else list(common_gyms)[0]
+    # Usar el gym_id del request si está en común, sino usar el menor (determinista)
+    shared_gym_id = current_gym.id if current_gym.id in common_gyms else min(common_gyms)
 
     # Use internal IDs (integers) directly
     user1_id = internal_user.id
@@ -931,39 +931,65 @@ async def get_user_chat_rooms(
         # Obtener salas del usuario en el gimnasio actual
         from app.models.chat import ChatRoom, ChatMember, ChatMemberHidden
         from app.models.user_gym import UserGym
+        from sqlalchemy.orm import joinedload
 
-        # Query base: salas donde el usuario es miembro y están activas
-        user_rooms_query = db.query(ChatRoom).join(ChatMember).filter(
+        # Query base con eager loading para evitar N+1: salas donde el usuario es miembro y están activas
+        user_rooms = db.query(ChatRoom).join(ChatMember).options(
+            joinedload(ChatRoom.members)  # Eager load para evitar lazy loading
+        ).filter(
             and_(
                 ChatMember.user_id == internal_user.id,
                 ChatRoom.status == "ACTIVE"
             )
-        )
+        ).all()
 
-        # Filtrar por gym:
-        # 1. Chats con gym_id == current_gym (comportamiento normal)
-        # 2. Chats directos donde TODOS los miembros están en current_gym (cross-gym)
-        filtered_rooms = []
-        for room in user_rooms_query.all():
-            # Si el chat está en el gym actual, incluirlo
+        # Separar chats por tipo para procesamiento eficiente
+        rooms_in_current_gym = []
+        direct_rooms_to_check = []
+
+        for room in user_rooms:
+            # Caso 1: Chat está en el gym actual → incluir directamente
             if room.gym_id == current_gym.id:
-                filtered_rooms.append(room)
-            # Si es chat directo, verificar que todos los miembros estén en el gym actual
+                rooms_in_current_gym.append(room)
+            # Caso 2: Chat directo → verificar si todos los miembros están en gym actual
             elif room.is_direct:
-                # Obtener IDs de todos los miembros del chat
-                member_ids = [member.user_id for member in room.members]
+                direct_rooms_to_check.append(room)
 
-                # Verificar que TODOS los miembros estén en el gym actual
-                members_in_gym = db.query(UserGym).filter(
+        # Optimización: Verificar membresías de TODOS los chats directos en UNA sola query
+        filtered_direct_rooms = []
+        if direct_rooms_to_check:
+            # Obtener todos los member_ids únicos de los chats directos
+            all_member_ids = set()
+            room_to_members = {}
+            for room in direct_rooms_to_check:
+                member_ids = [member.user_id for member in room.members]
+                # Validar que el chat tenga miembros (Fix #5)
+                if not member_ids or len(member_ids) == 0:
+                    continue
+                room_to_members[room.id] = member_ids
+                all_member_ids.update(member_ids)
+
+            if all_member_ids:
+                # Una sola query para obtener TODAS las membresías relevantes
+                members_in_current_gym = db.query(UserGym.user_id).filter(
                     and_(
-                        UserGym.user_id.in_(member_ids),
+                        UserGym.user_id.in_(all_member_ids),
                         UserGym.gym_id == current_gym.id
                     )
-                ).count()
+                ).all()
+                members_in_gym_set = {user_id for (user_id,) in members_in_current_gym}
 
-                # Si todos los miembros están en el gym, incluir el chat
-                if members_in_gym == len(member_ids):
-                    filtered_rooms.append(room)
+                # Verificar cada room: incluir solo si TODOS los miembros están en el gym
+                for room in direct_rooms_to_check:
+                    if room.id not in room_to_members:
+                        continue
+                    member_ids = room_to_members[room.id]
+                    # Si todos los miembros están en el gym actual, incluir
+                    if all(member_id in members_in_gym_set for member_id in member_ids):
+                        filtered_direct_rooms.append(room)
+
+        # Combinar ambas listas
+        filtered_rooms = rooms_in_current_gym + filtered_direct_rooms
 
         # Ahora aplicar filtro de chats ocultos sobre la lista filtrada
         if not include_hidden:

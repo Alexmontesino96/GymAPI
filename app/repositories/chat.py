@@ -75,8 +75,12 @@ class ChatRepository:
             user2_id: ID interno del segundo usuario
             gym_id: ID del gimnasio para filtrar (opcional). Si se provee, solo busca chats en ese gym.
         """
-        # Construir query base
-        query = db.query(ChatRoom).join(ChatMember).filter(
+        from sqlalchemy.orm import joinedload
+
+        # Construir query base con eager loading para evitar N+1
+        query = db.query(ChatRoom).join(ChatMember).options(
+            joinedload(ChatRoom.members)  # Eager load members
+        ).filter(
             ChatRoom.is_direct == True,
             ChatMember.user_id.in_([user1_id, user2_id])
         )
