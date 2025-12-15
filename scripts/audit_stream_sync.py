@@ -105,16 +105,19 @@ class StreamSyncAuditor:
                 channel_data = item.get("channel", item)
 
                 # Extraer stream_channel_id correctamente
-                # El formato es "tipo:id", ej: "messaging:direct_user_10_user_8"
+                # Stream devuelve:
+                #   - "cid": "messaging:direct_user_10_user_8" (con prefijo)
+                #   - "id": "direct_user_10_user_8" (sin prefijo)
+                # La BD guarda SIN prefijo, así que usar "id"
                 cid = channel_data.get("cid", "")
-                channel_id = channel_data.get("id")
+                channel_id = channel_data.get("id", "")
 
-                # Si no hay 'id', extraerlo de 'cid'
+                # Si no hay 'id', extraer de 'cid' quitando el prefijo
                 if not channel_id and cid:
-                    # cid tiene formato "tipo:id", tomamos la parte después de ":"
-                    parts = cid.split(":", 1)
-                    if len(parts) == 2:
-                        channel_id = parts[1]
+                    if ":" in cid:
+                        channel_id = cid.split(":", 1)[1]
+                    else:
+                        channel_id = cid
 
                 if not channel_id:
                     if self.verbose:
@@ -202,7 +205,7 @@ class StreamSyncAuditor:
         Analiza un stream_channel_id para extraer información.
 
         Args:
-            channel_id: ID del canal de Stream
+            channel_id: ID del canal de Stream (sin prefijo, solo el ID limpio)
 
         Returns:
             Diccionario con categoría y datos extraídos
