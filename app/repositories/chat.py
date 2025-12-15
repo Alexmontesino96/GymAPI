@@ -67,20 +67,32 @@ class ChatRepository:
         """Obtiene una sala por su ID de Stream"""
         return db.query(ChatRoom).filter(ChatRoom.stream_channel_id == stream_channel_id).first()
     
-    def get_direct_chat(self, db: Session, *, user1_id: int, user2_id: int) -> Optional[ChatRoom]:
-        """Obtiene un chat directo entre dos usuarios usando sus IDs internos"""
-        # Buscar habitaciones donde ambos usuarios sean miembros
-        rooms = db.query(ChatRoom).join(ChatMember).filter(
+    def get_direct_chat(self, db: Session, *, user1_id: int, user2_id: int, gym_id: Optional[int] = None) -> Optional[ChatRoom]:
+        """Obtiene un chat directo entre dos usuarios, opcionalmente filtrado por gym_id
+
+        Args:
+            user1_id: ID interno del primer usuario
+            user2_id: ID interno del segundo usuario
+            gym_id: ID del gimnasio para filtrar (opcional). Si se provee, solo busca chats en ese gym.
+        """
+        # Construir query base
+        query = db.query(ChatRoom).join(ChatMember).filter(
             ChatRoom.is_direct == True,
             ChatMember.user_id.in_([user1_id, user2_id])
-        ).all()
-        
+        )
+
+        # Agregar filtro por gym_id si se especifica
+        if gym_id is not None:
+            query = query.filter(ChatRoom.gym_id == gym_id)
+
+        rooms = query.all()
+
         # Filtrar para encontrar habitaciones donde ambos usuarios son miembros
         for room in rooms:
             members = [member.user_id for member in room.members]
             if user1_id in members and user2_id in members and len(members) == 2:
                 return room
-        
+
         return None
     
     def get_user_rooms(self, db: Session, *, user_id: int) -> List[ChatRoom]:

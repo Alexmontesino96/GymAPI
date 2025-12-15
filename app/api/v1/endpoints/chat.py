@@ -207,24 +207,38 @@ async def get_direct_chat(
             detail="Cannot create a direct chat with yourself"
         )
 
-    # Verificar que el otro usuario también pertenece al mismo gimnasio
+    # Verificar que ambos usuarios comparten al menos un gimnasio (cross-gym support)
     from app.models.user_gym import UserGym
-    other_user_membership = db.query(UserGym).filter(
-        UserGym.user_id == other_user_id,
-        UserGym.gym_id == current_gym.id
-    ).first()
-    
-    if not other_user_membership:
+
+    # Obtener gimnasios del usuario actual
+    current_user_gyms = db.query(UserGym.gym_id).filter(
+        UserGym.user_id == internal_user.id
+    ).all()
+    current_user_gym_ids = {g[0] for g in current_user_gyms}
+
+    # Obtener gimnasios del otro usuario
+    other_user_gyms = db.query(UserGym.gym_id).filter(
+        UserGym.user_id == other_user_id
+    ).all()
+    other_user_gym_ids = {g[0] for g in other_user_gyms}
+
+    # Verificar que comparten al menos un gimnasio
+    common_gyms = current_user_gym_ids & other_user_gym_ids
+
+    if not common_gyms:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"No puedes crear un chat directo con un usuario que no pertenece a tu gimnasio"
+            detail="No compartes ningún gimnasio con este usuario"
         )
+
+    # Usar el gym_id del request si está en común, sino usar el primero compartido
+    shared_gym_id = current_gym.id if current_gym.id in common_gyms else list(common_gyms)[0]
 
     # Use internal IDs (integers) directly
     user1_id = internal_user.id
     user2_id = other_user_id
 
-    return chat_service.get_or_create_direct_chat(db, user1_id, user2_id, current_gym.id)
+    return chat_service.get_or_create_direct_chat(db, user1_id, user2_id, shared_gym_id)
 
 @router.get("/rooms/event/{event_id}", response_model=ChatRoom)
 async def get_event_chat(
@@ -916,26 +930,51 @@ async def get_user_chat_rooms(
 
         # Obtener salas del usuario en el gimnasio actual
         from app.models.chat import ChatRoom, ChatMember, ChatMemberHidden
+        from app.models.user_gym import UserGym
+
+        # Query base: salas donde el usuario es miembro y están activas
         user_rooms_query = db.query(ChatRoom).join(ChatMember).filter(
             and_(
                 ChatMember.user_id == internal_user.id,
-                ChatRoom.gym_id == current_gym.id,
-                ChatRoom.status == "ACTIVE"  # Solo salas activas
+                ChatRoom.status == "ACTIVE"
             )
         )
 
-        # Excluir chats ocultos si no se solicitan explícitamente
+        # Filtrar por gym:
+        # 1. Chats con gym_id == current_gym (comportamiento normal)
+        # 2. Chats directos donde TODOS los miembros están en current_gym (cross-gym)
+        filtered_rooms = []
+        for room in user_rooms_query.all():
+            # Si el chat está en el gym actual, incluirlo
+            if room.gym_id == current_gym.id:
+                filtered_rooms.append(room)
+            # Si es chat directo, verificar que todos los miembros estén en el gym actual
+            elif room.is_direct:
+                # Obtener IDs de todos los miembros del chat
+                member_ids = [member.user_id for member in room.members]
+
+                # Verificar que TODOS los miembros estén en el gym actual
+                members_in_gym = db.query(UserGym).filter(
+                    and_(
+                        UserGym.user_id.in_(member_ids),
+                        UserGym.gym_id == current_gym.id
+                    )
+                ).count()
+
+                # Si todos los miembros están en el gym, incluir el chat
+                if members_in_gym == len(member_ids):
+                    filtered_rooms.append(room)
+
+        # Ahora aplicar filtro de chats ocultos sobre la lista filtrada
         if not include_hidden:
-            # Subconsulta para obtener IDs de salas ocultas
-            hidden_room_ids = db.query(ChatMemberHidden.room_id).filter(
+            # Obtener IDs de salas ocultas
+            hidden_room_ids_query = db.query(ChatMemberHidden.room_id).filter(
                 ChatMemberHidden.user_id == internal_user.id
-            ).subquery()
+            ).all()
+            hidden_room_ids = {room_id for (room_id,) in hidden_room_ids_query}
+            filtered_rooms = [room for room in filtered_rooms if room.id not in hidden_room_ids]
 
-            user_rooms_query = user_rooms_query.filter(
-                ~ChatRoom.id.in_(hidden_room_ids)
-            )
-
-        user_rooms = user_rooms_query.all()
+        user_rooms = filtered_rooms
 
         logger.info(
             f"Usuario {internal_user.id} tiene {len(user_rooms)} salas "

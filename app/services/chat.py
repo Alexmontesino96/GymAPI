@@ -724,8 +724,8 @@ class ChatService:
                 del channel_cache[cache_key]
                 logger.info(f"Cache expirado y limpiado para clave: {cache_key}")
         
-        # Buscar chat existente usando IDs internos
-        db_room = chat_repository.get_direct_chat(db, user1_id=user1_id, user2_id=user2_id)
+        # Buscar chat existente usando IDs internos, filtrado por gym_id
+        db_room = chat_repository.get_direct_chat(db, user1_id=user1_id, user2_id=user2_id, gym_id=gym_id)
         
         if db_room:
             # Usar el canal existente
