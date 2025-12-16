@@ -341,8 +341,11 @@ async def reset_daily_counters():
 
         deleted_count = 0
         for key in daily_keys:
+            # Decodificar key si es bytes
+            key_str = key.decode('utf-8') if isinstance(key, bytes) else key
+
             # No eliminar rankings, tienen su propio TTL
-            if b"ranking" not in key and "ranking" not in str(key):
+            if "ranking" not in key_str:
                 await redis.delete(key)
                 deleted_count += 1
 
