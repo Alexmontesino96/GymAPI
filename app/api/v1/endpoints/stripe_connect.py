@@ -9,6 +9,7 @@ Este módulo proporciona endpoints para:
 """
 
 from typing import Dict, Any
+from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.orm import Session
 
@@ -209,6 +210,92 @@ async def create_onboarding_link(
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Error creando link de onboarding: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error interno del servidor")
+
+
+@router.post("/accounts/dashboard-link")
+@limiter.limit("10 per minute")
+async def create_dashboard_link(
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: Auth0User = Depends(auth.get_user),
+    current_gym: GymSchema = Depends(verify_gym_admin_access)
+) -> Dict[str, Any]:
+    """
+    [ADMIN ONLY] Crear link de acceso al dashboard de Stripe.
+
+    Este endpoint genera un link seguro que permite a los administradores del gym
+    acceder directamente a su dashboard de Stripe Express. El link es válido por
+    60 minutos y permite gestionar pagos, configuración, reportes, etc.
+
+    Requisitos:
+    - El gym debe tener una cuenta de Stripe creada
+    - La configuración inicial (onboarding) debe estar completada
+
+    Args:
+        request: Request object (para rate limiting)
+        db: Sesión de base de datos
+        current_user: Usuario autenticado (Admin)
+        current_gym: Gimnasio verificado
+
+    Returns:
+        dict: URL del dashboard y metadata
+
+    Raises:
+        HTTPException: 404 si no existe cuenta, 400 si no completó onboarding
+
+    Example:
+        ```
+        POST /api/v1/stripe-connect/accounts/dashboard-link
+
+        Response:
+        {
+            "message": "Link de acceso al dashboard creado exitosamente",
+            "dashboard_url": "https://connect.stripe.com/express/...",
+            "created_at": "2025-12-17T04:30:00Z",
+            "expires_in_minutes": 60,
+            "account_id": "acct_xxx"
+        }
+        ```
+    """
+    try:
+        # Verificar que existe cuenta y obtener info
+        gym_account = stripe_connect_service.get_gym_stripe_account(db, current_gym.id)
+        if not gym_account:
+            raise HTTPException(
+                status_code=404,
+                detail="El gimnasio no tiene cuenta de Stripe configurada. Cree una cuenta primero usando /accounts"
+            )
+
+        # Verificar si completó onboarding
+        if not gym_account.onboarding_completed:
+            raise HTTPException(
+                status_code=400,
+                detail="Debe completar la configuración inicial de Stripe antes de acceder al dashboard. Use /accounts/onboarding-link para completar la configuración."
+            )
+
+        # Crear login link al dashboard
+        dashboard_url = await stripe_connect_service.create_dashboard_login_link(
+            db, current_gym.id
+        )
+
+        logger.info(f"Dashboard link creado para gym {current_gym.id} por admin {current_user.id}")
+
+        return {
+            "message": "Link de acceso al dashboard creado exitosamente",
+            "dashboard_url": dashboard_url,
+            "created_at": datetime.now().isoformat(),
+            "expires_in_minutes": 60,
+            "account_id": gym_account.stripe_account_id,
+            "instructions": "El link es válido por 60 minutos. Puede acceder a pagos, reportes, configuración y más."
+        }
+
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error creando dashboard link: {str(e)}")
         raise HTTPException(status_code=500, detail="Error interno del servidor")
 
 

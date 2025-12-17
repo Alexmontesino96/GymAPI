@@ -239,7 +239,60 @@ class StripeConnectService:
         except Exception as e:
             logger.error(f"Error inesperado al actualizar estado de gym {gym_id}: {str(e)}")
             raise
-    
+
+    async def create_dashboard_login_link(
+        self,
+        db: Session,
+        gym_id: int
+    ) -> str:
+        """
+        Crear link de acceso al dashboard de Stripe para el gym.
+
+        Este link permite a los administradores del gym acceder directamente
+        a su dashboard de Stripe Express para ver pagos, configuración, etc.
+
+        Args:
+            db: Sesión de base de datos
+            gym_id: ID del gym
+
+        Returns:
+            str: URL de acceso al dashboard (válida por 60 minutos)
+
+        Raises:
+            ValueError: Si el gym no tiene cuenta de Stripe o no completó onboarding
+        """
+        try:
+            # Obtener cuenta del gym
+            gym_account = db.query(GymStripeAccount).filter(
+                GymStripeAccount.gym_id == gym_id,
+                GymStripeAccount.is_active == True
+            ).first()
+
+            if not gym_account:
+                raise ValueError(f"Gym {gym_id} no tiene cuenta de Stripe configurada")
+
+            # Verificar que completó onboarding
+            if not gym_account.onboarding_completed:
+                raise ValueError(
+                    "Debe completar la configuración inicial de Stripe antes de acceder al dashboard. "
+                    "Use el endpoint /accounts/onboarding-link para obtener el link de configuración."
+                )
+
+            # Crear login link al dashboard de Stripe
+            login_link = stripe.Account.create_login_link(
+                gym_account.stripe_account_id
+            )
+
+            logger.info(f"Login link al dashboard creado para gym {gym_id}")
+            return login_link.url
+
+        except stripe.error.StripeError as e:
+            logger.error(f"Error de Stripe al crear login link para gym {gym_id}: {str(e)}")
+            raise ValueError(f"Error al crear link de acceso al dashboard: {str(e)}")
+        except Exception as e:
+            logger.error(f"Error inesperado al crear login link para gym {gym_id}: {str(e)}")
+            raise
+
     # === GESTIÓN DE CUSTOMERS (SOLUCIÓN A DUPLICACIÓN) ===
     
     async def get_or_create_customer_for_user_gym(
