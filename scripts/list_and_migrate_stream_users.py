@@ -22,6 +22,7 @@ import argparse
 from typing import List, Dict, Any
 from sqlalchemy.orm import Session
 from app.db.session import SessionLocal
+from app.db.base import Base  # Importar Base para cargar todos los modelos
 from app.models.user import User
 from app.models.user_gym import UserGym
 from app.core.stream_client import stream_client
@@ -37,24 +38,41 @@ logger = logging.getLogger(__name__)
 
 def list_all_stream_users() -> List[Dict[str, Any]]:
     """
-    Lista todos los usuarios existentes en Stream.
+    Lista todos los usuarios existentes en Stream con paginación.
 
     Returns:
         Lista de usuarios con sus datos
     """
     try:
-        # Obtener todos los usuarios (limit máximo)
-        response = stream_client.query_users(
-            filter_conditions={},
-            sort=[{"field": "created_at", "direction": -1}],
-            limit=1000  # Ajustar si tienes más usuarios
-        )
+        all_users = []
+        offset = 0
+        limit = 100  # Límite máximo de Stream Chat por query
 
-        users = response.get('users', [])
+        while True:
+            # Obtener página de usuarios
+            response = stream_client.query_users(
+                filter_conditions={},
+                sort=[{"field": "created_at", "direction": -1}],
+                limit=limit,
+                offset=offset
+            )
 
-        logger.info(f"📊 Total de usuarios en Stream: {len(users)}")
+            users = response.get('users', [])
 
-        return users
+            if not users:
+                break  # No hay más usuarios
+
+            all_users.extend(users)
+            logger.info(f"📄 Página {offset//limit + 1}: {len(users)} usuarios obtenidos")
+
+            if len(users) < limit:
+                break  # Última página
+
+            offset += limit
+
+        logger.info(f"📊 Total de usuarios en Stream: {len(all_users)}")
+
+        return all_users
     except Exception as e:
         logger.error(f"Error listando usuarios: {e}")
         return []
