@@ -14,15 +14,25 @@ logger = logging.getLogger(__name__)
 
 T = TypeVar('T', bound=BaseModel)
 
-# Serializador JSON personalizado para manejar objetos datetime y Url
+# Serializador JSON personalizado para manejar objetos datetime, Url y SQLAlchemy models
 def json_serializer(obj):
-    """Serializador JSON personalizado que maneja objetos datetime y Url de Pydantic."""
+    """Serializador JSON personalizado que maneja objetos datetime, Url de Pydantic y SQLAlchemy models."""
     if isinstance(obj, datetime):
         return obj.isoformat()
     if isinstance(obj, Url):
         return str(obj)
     if isinstance(obj, time):
         return obj.isoformat()
+    # Manejar objetos SQLAlchemy anidados (como ClassCategoryCustom)
+    if hasattr(obj, '__dict__') and hasattr(obj, '__tablename__'):
+        # Es un objeto SQLAlchemy, convertir a dict excluyendo atributos internos
+        return {k: v for k, v in obj.__dict__.items() if not k.startswith('_')}
+    # Manejar objetos genéricos con __dict__ (fallback)
+    if hasattr(obj, '__dict__'):
+        try:
+            return {k: v for k, v in obj.__dict__.items() if not k.startswith('_')}
+        except:
+            pass
     raise TypeError(f"Tipo no serializable: {type(obj)}")
 
 class CacheService:
