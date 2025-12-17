@@ -38,16 +38,18 @@ class StreamSecurityWebhook:
             action = payload.get("type", "")
             
             logger.info(f"Validando acceso: user={user_id}, channel={channel_id}, action={action}")
-            
-            # Extraer internal_user_id del stream user_id (formato: user_X)
-            if not user_id.startswith("user_"):
-                logger.error(f"Formato de user_id inválido: {user_id}")
-                return {"allow": False, "reason": "ID de usuario inválido"}
-                
+
+            # Extraer internal_user_id del stream user_id (multi-tenant o legacy)
             try:
-                internal_user_id = int(user_id.replace("user_", ""))
-            except ValueError:
-                logger.error(f"No se pudo extraer user_id numérico de: {user_id}")
+                from app.core.stream_utils import get_internal_id_from_stream, is_internal_id_format
+
+                if not is_internal_id_format(user_id):
+                    logger.error(f"Formato de user_id inválido: {user_id}")
+                    return {"allow": False, "reason": "ID de usuario inválido"}
+
+                internal_user_id = get_internal_id_from_stream(user_id)
+            except (ValueError, ImportError) as e:
+                logger.error(f"No se pudo extraer user_id de: {user_id}. Error: {e}")
                 return {"allow": False, "reason": "ID de usuario malformado"}
             
             # Obtener gym_id del usuario desde la base de datos

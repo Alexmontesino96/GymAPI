@@ -297,15 +297,16 @@ async def send_smart_notifications_with_role_logic_async(
                 logger.info(f"👤 {member_stream_id}: unread={unread_count}, online={is_online}, notify={should_notify}")
                 
                 if should_notify:
-                    # Extraer ID interno del formato user_X
+                    # Extraer ID interno del formato multi-tenant o legacy
                     try:
-                        internal_id = int(member_stream_id.replace("user_", ""))
-                        
+                        from app.core.stream_utils import get_internal_id_from_stream
+                        internal_id = get_internal_id_from_stream(member_stream_id)
+
                         # Obtener auth0_id del usuario para OneSignal
                         from app.models.user import User
                         user_data = async_db.query(User).filter(User.id == internal_id).first()
                         auth0_id = user_data.auth0_id if user_data else None
-                        
+
                         if auth0_id:
                             users_to_notify.append({
                                 "internal_id": internal_id,
@@ -317,8 +318,8 @@ async def send_smart_notifications_with_role_logic_async(
                             })
                         else:
                             logger.warning(f"⚠️ Usuario {internal_id} no tiene auth0_id configurado")
-                    except ValueError:
-                        logger.warning(f"⚠️ No se pudo extraer ID interno de {member_stream_id}")
+                    except ValueError as e:
+                        logger.warning(f"⚠️ No se pudo extraer ID interno de {member_stream_id}: {e}")
             
             logger.info(f"🎯 Usuarios elegibles antes del filtro por roles: {len(users_to_notify)}")
             
@@ -380,15 +381,16 @@ async def send_smart_chat_notifications_async(
                 logger.info(f"👤 {member_stream_id}: unread={unread_count}, online={is_online}, notify={should_notify}")
                 
                 if should_notify:
-                    # Extraer ID interno del formato user_X
+                    # Extraer ID interno del formato multi-tenant o legacy
                     try:
-                        internal_id = int(member_stream_id.replace("user_", ""))
-                        
+                        from app.core.stream_utils import get_internal_id_from_stream
+                        internal_id = get_internal_id_from_stream(member_stream_id)
+
                         # Obtener auth0_id del usuario para OneSignal
                         from app.models.user import User
                         user_data = async_db.query(User).filter(User.id == internal_id).first()
                         auth0_id = user_data.auth0_id if user_data else None
-                        
+
                         if auth0_id:
                             users_to_notify.append({
                                 "internal_id": internal_id,
@@ -400,8 +402,8 @@ async def send_smart_chat_notifications_async(
                             })
                         else:
                             logger.warning(f"⚠️ Usuario {internal_id} no tiene auth0_id configurado")
-                    except ValueError:
-                        logger.warning(f"⚠️ No se pudo extraer ID interno de {member_stream_id}")
+                    except ValueError as e:
+                        logger.warning(f"⚠️ No se pudo extraer ID interno de {member_stream_id}: {e}")
             
             logger.info(f"🎯 Enviando notificaciones a {len(users_to_notify)} usuarios")
             
