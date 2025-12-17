@@ -6,10 +6,13 @@
 
 ## 📊 Resumen Ejecutivo
 
-Se corrigió un bug crítico en el sistema de notificaciones que impedía su funcionamiento correcto con el nuevo formato multi-tenant `gym_{gym_id}_user_{id}`.
+Se corrigieron **2 bugs críticos** en el sistema de notificaciones que impedían su funcionamiento correcto con el nuevo formato multi-tenant `gym_{gym_id}_user_{id}`.
 
-**Problema:** Código legacy usando `int(user_id.replace("user_", ""))` que falla con formato multi-tenant.
-**Solución:** Actualizado para usar `get_internal_id_from_stream()` que soporta ambos formatos.
+**Problema 1:** Código legacy usando `int(user_id.replace("user_", ""))` que falla con formato multi-tenant.
+**Solución 1:** Actualizado para usar `get_internal_id_from_stream()` que soporta ambos formatos.
+
+**Problema 2:** Sender recibiendo notificaciones de sus propios mensajes debido a formato legacy en comparación.
+**Solución 2:** Generación de `sender_stream_id` actualizada a formato multi-tenant `gym_{gym_id}_user_{id}`.
 
 ---
 
@@ -121,6 +124,61 @@ try:
 except (ValueError, ImportError) as e:
     logger.error(f"No se pudo extraer user_id de: {user_id}. Error: {e}")
     return {"allow": False, "reason": "ID de usuario malformado"}
+```
+
+---
+
+## 🐛 Bug #2: Sender Recibiendo Notificaciones de Sus Propios Mensajes
+
+### Descripción del Problema
+
+El sistema de notificaciones tenía un segundo bug donde el remitente recibía notificaciones push de sus propios mensajes. Esto ocurría porque el `sender_stream_id` se generaba en formato legacy mientras que los miembros del canal tenían formato multi-tenant.
+
+```python
+# ❌ CÓDIGO VIEJO (LÍNEAS 279 y 363)
+sender_stream_id = f"user_{sender_id}"  # Genera: "user_10"
+
+# Pero member_stream_id es:
+member_stream_id = "gym_4_user_10"  # Formato multi-tenant
+
+# Comparación:
+member_stream_id != sender_stream_id  # "gym_4_user_10" != "user_10" = True ❌
+```
+
+Este bug causaba que **TODOS los miembros** (incluyendo el remitente) fueran considerados para notificaciones, porque la comparación siempre era `True`.
+
+### Impacto
+
+**Severidad:** 🔴 ALTA
+
+- ❌ Remitente recibe notificaciones de sus propios mensajes
+- ❌ Experiencia de usuario confusa y molesta
+- ❌ Notificaciones duplicadas innecesarias
+
+### Solución Implementada
+
+**Cambio en `stream_webhooks.py` (Líneas 279-280 y 364-365):**
+
+**Antes:**
+```python
+sender_stream_id = f"user_{sender_id}"
+```
+
+**Después:**
+```python
+# Generar sender_stream_id en formato multi-tenant correcto
+sender_stream_id = f"gym_{chat_room.gym_id}_user_{sender_id}"
+```
+
+**Resultado:**
+```python
+# Ahora ambos tienen formato multi-tenant:
+sender_stream_id = "gym_4_user_10"
+member_stream_id = "gym_4_user_10"
+
+# Comparación correcta:
+member_stream_id != sender_stream_id  # "gym_4_user_10" != "gym_4_user_10" = False ✅
+should_notify = False  # ✅ Remitente NO recibe notificación
 ```
 
 ---
@@ -292,11 +350,11 @@ get_internal_id_from_stream("invalid_id")  # → ValueError
 
 ### Archivos Corregidos
 
-| Archivo | Líneas | Estado |
-|---------|--------|--------|
-| `app/api/v1/endpoints/webhooks/stream_webhooks.py` | 302, ~400 | ✅ Corregido |
-| `app/webhooks/stream_security.py` | 48-53 | ✅ Corregido |
-| `app/core/stream_utils.py` | 39-75 | ✅ Ya correcto |
+| Archivo | Líneas Corregidas | Bugs Resueltos | Estado |
+|---------|-------------------|----------------|--------|
+| `app/api/v1/endpoints/webhooks/stream_webhooks.py` | 279-280, 302-303, 364-365, ~400 | Bug #1 (extracción ID), Bug #2 (sender notifications) | ✅ Corregido |
+| `app/webhooks/stream_security.py` | 43-53 | Bug #1 (validación seguridad) | ✅ Corregido |
+| `app/core/stream_utils.py` | 39-75 | N/A (función helper) | ✅ Ya correcto |
 
 ### Compatibilidad
 
@@ -311,9 +369,10 @@ get_internal_id_from_stream("invalid_id")  # → ValueError
 | Componente | Estado |
 |------------|--------|
 | Webhook de Stream | ✅ Funcional |
-| Extracción de IDs | ✅ Multi-tenant |
-| Validación de seguridad | ✅ Multi-tenant |
-| Lógica de notificación | ✅ Correcta (no notifica a usuarios online) |
+| Extracción de IDs | ✅ Multi-tenant (Bug #1 corregido) |
+| Validación de seguridad | ✅ Multi-tenant (Bug #1 corregido) |
+| Filtro de remitente | ✅ Funcional (Bug #2 corregido) |
+| Lógica de notificación | ✅ Correcta (no notifica a sender ni usuarios online) |
 | OneSignal integration | ✅ Funcional |
 
 ---
@@ -344,7 +403,12 @@ Para testing de notificaciones:
 
 ## ✅ Conclusión
 
-El sistema de notificaciones ahora está **100% compatible** con el formato multi-tenant `gym_{gym_id}_user_{id}` y también soporta el formato legacy para compatibilidad con datos existentes.
+El sistema de notificaciones ahora está **100% compatible** con el formato multi-tenant `gym_{gym_id}_user_{id}` después de corregir **2 bugs críticos**:
+
+1. ✅ **Bug #1 - Extracción de IDs**: Ahora usa `get_internal_id_from_stream()` que soporta tanto formato multi-tenant como legacy
+2. ✅ **Bug #2 - Sender Notifications**: El remitente ya NO recibe notificaciones de sus propios mensajes
+
+El sistema también mantiene compatibilidad con formato legacy `user_{id}` para datos existentes.
 
 **Estado:** ✅ **LISTO PARA PRODUCCIÓN**
 

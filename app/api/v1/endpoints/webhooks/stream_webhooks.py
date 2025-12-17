@@ -276,7 +276,8 @@ async def send_smart_notifications_with_role_logic_async(
         
         try:
             # Filtrar usuarios que NO son el remitente y que tienen mensajes no leídos
-            sender_stream_id = f"user_{sender_id}"
+            # Generar sender_stream_id en formato multi-tenant correcto
+            sender_stream_id = f"gym_{chat_room.gym_id}_user_{sender_id}"
             users_to_notify = []
             
             logger.info(f"📊 Analizando {len(members_with_unread)} miembros para notificaciones ({content_type})")
@@ -360,7 +361,8 @@ async def send_smart_chat_notifications_async(
         
         try:
             # Filtrar usuarios que NO son el remitente y que tienen mensajes no leídos
-            sender_stream_id = f"user_{sender_id}"
+            # Generar sender_stream_id en formato multi-tenant correcto
+            sender_stream_id = f"gym_{chat_room.gym_id}_user_{sender_id}"
             users_to_notify = []
             
             logger.info(f"📊 Analizando {len(members_with_unread)} miembros para notificaciones")
