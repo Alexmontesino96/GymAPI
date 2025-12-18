@@ -34,11 +34,11 @@ class StripeConnectService:
     # === GESTIÓN DE CUENTAS DE GYM ===
     
     async def create_gym_stripe_account(
-        self, 
-        db: Session, 
+        self,
+        db: Session,
         gym_id: int,
         country: str = "US",
-        account_type: str = "express"
+        account_type: str = "standard"
     ) -> GymStripeAccount:
         """
         Crear cuenta de Stripe Connect para un gym.
@@ -249,7 +249,10 @@ class StripeConnectService:
         Crear link de acceso al dashboard de Stripe para el gym.
 
         Este link permite a los administradores del gym acceder directamente
-        a su dashboard de Stripe Express para ver pagos, configuración, etc.
+        a su dashboard de Stripe para ver pagos, configuración, reportes, etc.
+
+        NOTA: Para Standard accounts, este link es opcional ya que pueden
+        acceder directamente a https://dashboard.stripe.com.
 
         Args:
             db: Sesión de base de datos

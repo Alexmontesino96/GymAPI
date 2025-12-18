@@ -74,7 +74,7 @@ class GymStripeAccount(Base):
     stripe_account_id = Column(String(255), unique=True, nullable=False)
     
     # Tipo de cuenta
-    account_type = Column(String(50), default="express", nullable=False)  # express, standard, custom
+    account_type = Column(String(50), default="standard", nullable=False)  # express, standard, custom
     
     # Estado de la cuenta
     onboarding_completed = Column(Boolean, default=False, nullable=False)

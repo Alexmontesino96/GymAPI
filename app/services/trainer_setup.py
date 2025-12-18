@@ -235,9 +235,9 @@ class TrainerSetupService:
                 logger.warning("Stripe API key no configurada, omitiendo setup de Stripe")
                 return None
 
-            # Crear cuenta Connect Express
+            # Crear cuenta Connect Standard
             account = stripe.Account.create(
-                type="express",
+                type="standard",
                 country="MX",
                 email=user.email,
                 capabilities={

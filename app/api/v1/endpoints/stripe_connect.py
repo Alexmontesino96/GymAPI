@@ -29,16 +29,23 @@ router = APIRouter()
 async def create_stripe_account(
     request: Request,
     country: str = "US",
-    account_type: str = "express",
+    account_type: str = "standard",
     db: Session = Depends(get_db),
     current_user: Auth0User = Depends(auth.get_user),
     current_gym: GymSchema = Depends(verify_gym_admin_access)
 ) -> Dict[str, Any]:
     """
     [ADMIN ONLY] Crear cuenta de Stripe Connect para el gimnasio.
-    
+
     Este endpoint crea una nueva cuenta de Stripe Connect para el gimnasio actual.
     Solo los administradores pueden crear cuentas de Stripe.
+
+    NOTA: Por defecto se crean cuentas Standard para dar control total al gym.
+    Las cuentas Standard permiten:
+    - Dashboard propio de Stripe (acceso directo a stripe.com)
+    - Independencia de la plataforma
+    - Capacidad de desconectarse si lo desean
+    - Control total sobre su cuenta de Stripe
     
     Args:
         country: Código de país ISO (ej: "US", "ES", "MX")
@@ -213,6 +220,116 @@ async def create_onboarding_link(
         raise HTTPException(status_code=500, detail="Error interno del servidor")
 
 
+@router.get("/accounts/connection-status")
+async def get_connection_status(
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: Auth0User = Depends(auth.get_user),
+    current_gym: GymSchema = Depends(verify_gym_admin_access)
+) -> Dict[str, Any]:
+    """
+    [ADMIN ONLY] Verificar estado de conexión de la cuenta de Stripe.
+
+    Útil especialmente para Standard accounts que pueden desconectarse de la plataforma.
+    Este endpoint verifica tanto el estado en BD como en Stripe directamente.
+
+    Returns:
+        dict: Estado detallado de la conexión incluyendo:
+            - connected: bool - Si la cuenta está conectada y activa
+            - account_id: str - ID de la cuenta en Stripe
+            - account_type: str - Tipo de cuenta (express, standard, custom)
+            - can_disconnect: bool - Si puede desconectarse (True para Standard)
+            - direct_dashboard_access: bool - Si tiene acceso directo al dashboard
+            - charges_enabled: bool - Si puede procesar pagos
+            - payouts_enabled: bool - Si puede recibir transferencias
+            - message: str - Mensaje descriptivo del estado
+            - action_required: str (opcional) - Acción requerida si hay problema
+
+    Examples:
+        >>> # Cuenta conectada y funcionando
+        {
+            "connected": true,
+            "account_id": "acct_xxx",
+            "account_type": "standard",
+            "can_disconnect": true,
+            "direct_dashboard_access": true,
+            "charges_enabled": true,
+            "payouts_enabled": true,
+            "message": "Cuenta conectada y funcionando"
+        }
+
+        >>> # Cuenta desconectada
+        {
+            "connected": false,
+            "account_id": "acct_xxx",
+            "account_type": "standard",
+            "message": "Cuenta desconectada o inactiva",
+            "action_required": "Reconectar cuenta o crear nueva"
+        }
+    """
+    try:
+        gym_account = stripe_connect_service.get_gym_stripe_account(db, current_gym.id)
+
+        if not gym_account:
+            return {
+                "connected": False,
+                "message": "No hay cuenta de Stripe configurada",
+                "action_required": "Crear cuenta de Stripe Connect"
+            }
+
+        if not gym_account.is_active:
+            return {
+                "connected": False,
+                "account_id": gym_account.stripe_account_id,
+                "account_type": gym_account.account_type,
+                "message": "Cuenta desconectada o inactiva",
+                "action_required": "Reconectar cuenta o crear nueva"
+            }
+
+        # Verificar en Stripe si la cuenta sigue existiendo y accesible
+        try:
+            import stripe
+            account = stripe.Account.retrieve(gym_account.stripe_account_id)
+
+            return {
+                "connected": True,
+                "account_id": gym_account.stripe_account_id,
+                "account_type": gym_account.account_type,
+                "charges_enabled": gym_account.charges_enabled,
+                "payouts_enabled": gym_account.payouts_enabled,
+                "can_disconnect": gym_account.account_type == "standard",
+                "direct_dashboard_access": gym_account.account_type == "standard",
+                "message": "Cuenta conectada y funcionando",
+                "onboarding_completed": gym_account.onboarding_completed,
+                "details_submitted": gym_account.details_submitted
+            }
+
+        except stripe.error.PermissionError:
+            # La cuenta fue desautorizada pero el webhook no se procesó
+            # Auto-reparación: marcar como inactiva
+            gym_account.is_active = False
+            gym_account.charges_enabled = False
+            gym_account.payouts_enabled = False
+            db.commit()
+
+            logger.warning(
+                f"Cuenta {gym_account.stripe_account_id} desautorizada detectada en verificación. "
+                f"Marcada como inactiva (gym {current_gym.id})"
+            )
+
+            return {
+                "connected": False,
+                "account_id": gym_account.stripe_account_id,
+                "account_type": gym_account.account_type,
+                "message": "Cuenta desconectada (sin acceso a Stripe)",
+                "action_required": "Reconectar cuenta o crear nueva"
+            }
+
+    except Exception as e:
+        logger.error(f"Error verificando conexión de Stripe: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error verificando estado de conexión")
+
+
 @router.post("/accounts/dashboard-link")
 @limiter.limit("10 per minute")
 async def create_dashboard_link(
@@ -224,9 +341,17 @@ async def create_dashboard_link(
     """
     [ADMIN ONLY] Crear link de acceso al dashboard de Stripe.
 
-    Este endpoint genera un link seguro que permite a los administradores del gym
-    acceder directamente a su dashboard de Stripe Express. El link es válido por
-    60 minutos y permite gestionar pagos, configuración, reportes, etc.
+    Comportamiento según tipo de cuenta:
+
+    **Standard Accounts**:
+    - Tienen acceso directo a https://dashboard.stripe.com con sus credenciales
+    - Este endpoint es opcional (retorna URL directa)
+    - No requiere login link temporal
+
+    **Express Accounts**:
+    - Requieren login link temporal (válido 60 minutos)
+    - No tienen acceso directo al dashboard
+    - Este endpoint es necesario para acceder
 
     Requisitos:
     - El gym debe tener una cuenta de Stripe creada
@@ -239,24 +364,31 @@ async def create_dashboard_link(
         current_gym: Gimnasio verificado
 
     Returns:
-        dict: URL del dashboard y metadata
+        dict: URL del dashboard y metadata según tipo de cuenta
 
     Raises:
         HTTPException: 404 si no existe cuenta, 400 si no completó onboarding
 
-    Example:
-        ```
-        POST /api/v1/stripe-connect/accounts/dashboard-link
+    Examples:
+        Standard Account:
+        {
+            "message": "Acceso directo al dashboard disponible",
+            "dashboard_url": "https://dashboard.stripe.com",
+            "direct_access": true,
+            "account_type": "standard",
+            "note": "Con Standard accounts puede acceder directamente a stripe.com",
+            "instructions": "Acceda a https://dashboard.stripe.com con sus credenciales de Stripe"
+        }
 
-        Response:
+        Express Account:
         {
             "message": "Link de acceso al dashboard creado exitosamente",
             "dashboard_url": "https://connect.stripe.com/express/...",
-            "created_at": "2025-12-17T04:30:00Z",
+            "direct_access": false,
+            "account_type": "express",
             "expires_in_minutes": 60,
-            "account_id": "acct_xxx"
+            "instructions": "El link es válido por 60 minutos"
         }
-        ```
     """
     try:
         # Verificar que existe cuenta y obtener info
@@ -267,6 +399,12 @@ async def create_dashboard_link(
                 detail="El gimnasio no tiene cuenta de Stripe configurada. Cree una cuenta primero usando /accounts"
             )
 
+        if not gym_account.is_active:
+            raise HTTPException(
+                status_code=400,
+                detail="La cuenta de Stripe está desconectada. Use /accounts/connection-status para más información."
+            )
+
         # Verificar si completó onboarding
         if not gym_account.onboarding_completed:
             raise HTTPException(
@@ -274,16 +412,46 @@ async def create_dashboard_link(
                 detail="Debe completar la configuración inicial de Stripe antes de acceder al dashboard. Use /accounts/onboarding-link para completar la configuración."
             )
 
-        # Crear login link al dashboard
+        # Standard accounts: Acceso directo al dashboard
+        if gym_account.account_type == "standard":
+            logger.info(
+                f"Info de dashboard solicitada para Standard account (gym {current_gym.id}) "
+                f"por admin {current_user.id} - acceso directo disponible"
+            )
+
+            return {
+                "message": "Acceso directo al dashboard disponible (Standard Account)",
+                "dashboard_url": "https://dashboard.stripe.com",
+                "direct_access": True,
+                "account_type": "standard",
+                "account_id": gym_account.stripe_account_id,
+                "created_at": datetime.now().isoformat(),
+                "note": (
+                    "Con Standard accounts tiene acceso directo a Stripe sin necesidad de "
+                    "login links temporales. Puede acceder en cualquier momento con sus credenciales."
+                ),
+                "instructions": (
+                    "1. Vaya a https://dashboard.stripe.com\n"
+                    "2. Inicie sesión con sus credenciales de Stripe\n"
+                    "3. Tendrá acceso completo a pagos, reportes, configuración y más"
+                )
+            }
+
+        # Express/Custom accounts: Login link temporal
         dashboard_url = await stripe_connect_service.create_dashboard_login_link(
             db, current_gym.id
         )
 
-        logger.info(f"Dashboard link creado para gym {current_gym.id} por admin {current_user.id}")
+        logger.info(
+            f"Dashboard link creado para {gym_account.account_type} account "
+            f"(gym {current_gym.id}) por admin {current_user.id}"
+        )
 
         return {
             "message": "Link de acceso al dashboard creado exitosamente",
             "dashboard_url": dashboard_url,
+            "direct_access": False,
+            "account_type": gym_account.account_type,
             "created_at": datetime.now().isoformat(),
             "expires_in_minutes": 60,
             "account_id": gym_account.stripe_account_id,

@@ -89,7 +89,7 @@ def migrate_stripe_data():
                     gym_account = GymStripeAccount(
                         gym_id=user_gym.gym_id,
                         stripe_account_id=f"placeholder_{user_gym.gym_id}",
-                        account_type="express",
+                        account_type="standard",
                         onboarding_completed=False,
                         charges_enabled=False,
                         payouts_enabled=False,

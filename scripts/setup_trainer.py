@@ -252,9 +252,9 @@ class TrainerSetup:
                 print("⚠️  Stripe API key no configurada")
                 return None
 
-            # Crear cuenta Connect Express
+            # Crear cuenta Connect Standard
             account = stripe.Account.create(
-                type="express",
+                type="standard",
                 country="MX",
                 email=user.email,
                 capabilities={

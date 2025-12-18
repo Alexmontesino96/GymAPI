@@ -191,6 +191,37 @@ Archivo `.env` debe incluir (ver `.env.example` para plantilla completa):
 - **Customer Portal**: Autogestión de suscripciones
 - **Payment Links**: Generación dinámica para nuevos miembros
 
+## Stripe Connect Standard Accounts
+
+### Configuración Actual
+- **Tipo default**: Standard Accounts (desde Diciembre 2024)
+- **Razón**: Dar control total a gimnasios sobre sus pagos y datos
+
+### Ventajas de Standard:
+- ✅ Dashboard propio en https://dashboard.stripe.com
+- ✅ Independencia de la plataforma
+- ✅ Capacidad de desconectarse cuando deseen
+- ✅ Control total de su cuenta de Stripe
+- ✅ Acceso directo sin login links temporales
+
+### Flujo de Onboarding:
+1. **Crear cuenta**: `POST /api/v1/stripe-connect/accounts` → Crea cuenta Standard
+2. **Link de configuración**: `POST /api/v1/stripe-connect/accounts/onboarding-link` → Link válido 1 hora
+3. **Admin completa en Stripe**: Información del negocio, datos bancarios, verificación (5-10 min)
+4. **Sistema verifica automáticamente**: `GET /api/v1/stripe-connect/accounts/status`
+
+### Endpoints Clave:
+- `GET /accounts/connection-status` - Verificar si cuenta sigue conectada (importante para Standard)
+- `POST /accounts/dashboard-link` - Info de acceso al dashboard (directo para Standard)
+- `POST /webhooks/stripe-connect/connect` - Webhook para desconexiones (CRÍTICO)
+
+### Webhook de Desconexión:
+Standard accounts pueden desconectarse. El sistema maneja esto automáticamente:
+- Evento `account.application.deauthorized` marca cuenta como inactiva
+- Deshabilita pagos automáticamente
+- Notifica a administradores del gym
+- Requiere configurar webhook separado en Stripe Dashboard
+
 ### OpenAI (Nutrición)
 - **Modelo**: GPT-4o-mini para análisis nutricional
 - **Funciones**: Análisis de imágenes de comidas, cálculo de macros

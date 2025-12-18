@@ -4,6 +4,7 @@ from fastapi import APIRouter
 from app.api.v1.endpoints import users, gyms, trainer_member, chat, events, worker, attendance, memberships, payment_pages
 from app.api.v1.endpoints.notification import router as notification_router
 from app.api.v1.endpoints.webhooks.stream_webhooks import router as stream_webhooks_router
+from app.api.v1.endpoints.webhooks.stripe_connect_webhooks import router as stripe_connect_webhooks_router
 from app.api.v1.endpoints.nutrition import router as nutrition_router
 from app.api.v1.endpoints.stripe_connect import router as stripe_connect_router
 from app.api.v1.endpoints.user_dashboard import router as user_dashboard_router
@@ -55,6 +56,9 @@ api_router.include_router(modules_router, prefix="/modules", tags=["modules"])
 
 # Stream webhooks
 api_router.include_router(stream_webhooks_router, prefix="/webhooks", tags=["webhooks"])
+
+# Stripe Connect webhooks (desconexión de cuentas Standard)
+api_router.include_router(stripe_connect_webhooks_router, prefix="/webhooks/stripe-connect", tags=["webhooks", "stripe-connect"])
 
 # Attendance module
 api_router.include_router(attendance.router, prefix="/attendance", tags=["attendance"])
