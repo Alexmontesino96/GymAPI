@@ -34,6 +34,7 @@ from app.schemas.user import User as UserSchema, UserCreate, UserUpdate, UserRol
 from app.services.auth0_mgmt import auth0_mgmt_service
 from app.core.tenant import verify_gym_access, verify_gym_admin_access, verify_gym_trainer_access, get_current_gym, GymSchema
 from app.core.auth0_fastapi import auth, get_current_user, Auth0User
+from app.core.dependencies import verify_public_api_key
 from app.db.session import get_db, get_async_db
 from app.core.config import get_settings
 from app.db.redis_client import get_redis_client, redis
@@ -460,23 +461,26 @@ async def check_email_availability(
     db: Session = Depends(get_db),
     email_check: EmailAvailabilityCheck,
     request: Request,
-    current_user: Auth0User = Security(auth.get_user),
+    api_key: None = Depends(verify_public_api_key),
     redis_client: redis.Redis = Depends(get_redis_client)
 ) -> Any:
-    """Verifica si un email está disponible para ser utilizado por el usuario actual."""
-    auth0_id = current_user.id
-    if not auth0_id:
-         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Token inválido")
+    """
+    Verifica si un email está disponible para registro.
+
+    Endpoint público que requiere API key en header X-API-Key.
+    """
     email = email_check.email
-    user = user_service.get_user_by_auth0_id(db, auth0_id=auth0_id)
-    if user and user.email.lower() == email.lower():
-        return {"status": "error", "message": "Este es tu email actual."}
     try:
-        is_available = await user_service.check_full_email_availability(email=email, calling_user_auth0_id=auth0_id, redis_client=redis_client)
+        # Verificar disponibilidad sin usuario actual (registro nuevo)
+        is_available = await user_service.check_full_email_availability(
+            email=email,
+            calling_user_auth0_id=None,  # No hay usuario actual
+            redis_client=redis_client
+        )
         if is_available:
-            return {"status": "success", "message": "El email parece cumplir con nuestros criterios."}
+            return {"status": "success", "message": "El email está disponible."}
         else:
-            return {"status": "error", "message": "El email no cumple con nuestros criterios."}
+            return {"status": "error", "message": "El email ya está en uso."}
     except HTTPException as e:
          raise e
     except Exception as e:

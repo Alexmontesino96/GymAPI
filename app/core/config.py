@@ -133,6 +133,9 @@ class Settings(BaseSettings):
     AUTH0_WEBHOOK_SECRET: str = os.getenv("AUTH0_WEBHOOK_SECRET", "")
     ADMIN_SECRET_KEY: str = os.getenv("ADMIN_SECRET_KEY", "admin-secret-key")
 
+    # Public API Key (SHA256) para endpoints sin autenticación
+    PUBLIC_API_KEY: str = os.getenv("PUBLIC_API_KEY", "")
+
     @field_validator("AUTH0_ISSUER", mode="before")
     def assemble_auth0_issuer(cls, v: str, info) -> str:
         if v:
