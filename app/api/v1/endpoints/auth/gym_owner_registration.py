@@ -52,17 +52,21 @@ router = APIRouter()
             "model": GymOwnerRegistrationError
         }
     },
-    summary="Registrar nuevo dueño de gimnasio",
+    summary="Registrar nuevo dueño de gimnasio o entrenador personal",
     description="""
-    Registra un nuevo dueño de gimnasio y crea automáticamente:
+    Registra un nuevo dueño de gimnasio o entrenador personal y crea automáticamente:
 
     - ✅ Usuario en Auth0 con contraseña
     - ✅ Usuario en base de datos local con rol ADMIN
-    - ✅ Gimnasio tradicional (tipo 'gym')
+    - ✅ Gimnasio tradicional (tipo 'gym') o workspace de entrenador (tipo 'personal_trainer')
     - ✅ Asociación usuario-gimnasio como OWNER
-    - ✅ Módulos esenciales activados
+    - ✅ Módulos esenciales activados según el tipo
 
-    **Este endpoint no requiere autenticación** - es el punto de entrada para nuevos gimnasios.
+    **Este endpoint no requiere autenticación** - es el punto de entrada para nuevos gimnasios y entrenadores.
+
+    ### Tipos de Gimnasio:
+    - `gym`: Gimnasio tradicional con clases grupales, equipamiento, eventos
+    - `personal_trainer`: Entrenador personal con gestión de clientes 1-a-1
 
     ### Validaciones:
     - Email único (no existe en BD ni Auth0)
@@ -73,12 +77,15 @@ router = APIRouter()
     - Máximo 5 registros por hora por IP
     - Máximo 20 registros por día por IP
 
+    ### Módulos Activados:
+    **Para gym:** users, schedule, events, chat, billing, health, nutrition, surveys, equipment
+    **Para personal_trainer:** users, chat, health, nutrition, billing, appointments, progress, surveys
+
     ### Próximos pasos después del registro:
     1. Verificar email (email de Auth0)
     2. Configurar Stripe Connect para pagos
-    3. Configurar horarios del gimnasio
-    4. Crear clases y horarios
-    5. Agregar primeros miembros
+    3. Configurar horarios del gimnasio (gym) o disponibilidad (personal_trainer)
+    4. Agregar primeros miembros o clientes
     """,
     tags=["auth-registration"]
 )
@@ -109,6 +116,7 @@ async def register_gym_owner(
             last_name=owner_data.last_name,
             phone=owner_data.phone,
             gym_name=owner_data.gym_name,
+            gym_type=owner_data.gym_type.value,
             gym_address=owner_data.gym_address,
             gym_phone=owner_data.gym_phone,
             gym_email=owner_data.gym_email,

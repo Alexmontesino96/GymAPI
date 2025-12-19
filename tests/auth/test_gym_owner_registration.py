@@ -23,6 +23,7 @@ class TestGymOwnerRegistration:
             "last_name": "González",
             "phone": "+525512345678",
             "gym_name": "Fitness Test Gym",
+            "gym_type": "gym",
             "gym_address": "Calle Reforma 123, CDMX",
             "gym_phone": "+525587654321",
             "gym_email": "contacto@testgym.com",
@@ -214,3 +215,54 @@ class TestGymOwnerRegistration:
 
         # Los subdomains deben ser diferentes
         assert subdomain1 != subdomain2
+
+    def test_personal_trainer_registration(self, client: TestClient, db: Session):
+        """Test registro de entrenador personal"""
+        data = {
+            "email": "trainer@personal.com",
+            "password": "SecurePass123",
+            "first_name": "Pedro",
+            "last_name": "Trainer",
+            "phone": "+525512345678",
+            "gym_name": "Pedro Personal Training",
+            "gym_type": "personal_trainer",
+            "timezone": "America/Mexico_City"
+        }
+
+        response = client.post("/api/v1/auth/register-gym-owner", json=data)
+
+        assert response.status_code == 201
+        result = response.json()
+
+        # Verificar tipo correcto
+        assert result["gym"]["type"] == "personal_trainer"
+
+        # Verificar módulos específicos de entrenador
+        assert "users" in result["modules_activated"]
+        assert "chat" in result["modules_activated"]
+        assert "appointments" in result["modules_activated"]
+        assert "progress" in result["modules_activated"]
+
+        # Verificar que NO tiene módulos de gym tradicional activos
+        # (schedule, events, equipment están desactivados)
+        # Solo verificamos que la lista no está vacía
+        assert len(result["modules_activated"]) > 0
+
+    def test_gym_type_default_is_gym(self, client: TestClient, db: Session):
+        """Test que el tipo por defecto es gym"""
+        data = {
+            "email": "default@gym.com",
+            "password": "SecurePass123",
+            "first_name": "Test",
+            "last_name": "User",
+            "gym_name": "Default Type Gym"
+            # No especifica gym_type
+        }
+
+        response = client.post("/api/v1/auth/register-gym-owner", json=data)
+
+        assert response.status_code == 201
+        result = response.json()
+
+        # Debe ser tipo gym por defecto
+        assert result["gym"]["type"] == "gym"

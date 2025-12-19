@@ -38,6 +38,7 @@ class GymOwnerSetupService:
         last_name: str,
         phone: Optional[str],
         gym_name: str,
+        gym_type: str,
         gym_address: Optional[str],
         gym_phone: Optional[str],
         gym_email: Optional[str],
@@ -82,16 +83,16 @@ class GymOwnerSetupService:
 
             # 4. Crear gimnasio
             gym = await self._create_gym(
-                gym_name, gym_address, gym_phone, gym_email or email, timezone
+                gym_name, gym_type, gym_address, gym_phone, gym_email or email, timezone
             )
-            logger.info(f"Gimnasio creado (ID: {gym.id}, Subdomain: {gym.subdomain})")
+            logger.info(f"Gimnasio creado (ID: {gym.id}, Subdomain: {gym.subdomain}, Type: {gym_type})")
 
             # 5. Asociar usuario con gimnasio como OWNER
             user_gym = await self._create_user_gym_relationship(user.id, gym.id)
             logger.info(f"Usuario asignado como OWNER del gimnasio")
 
             # 6. Activar módulos esenciales
-            modules_activated = await self._activate_gym_modules(gym.id)
+            modules_activated = await self._activate_gym_modules(gym.id, gym_type)
             logger.info(f"Módulos activados: {len(modules_activated)}")
 
             # 7. Commit
@@ -212,12 +213,13 @@ class GymOwnerSetupService:
     async def _create_gym(
         self,
         name: str,
+        gym_type: str,
         address: Optional[str],
         phone: Optional[str],
         email: str,
         timezone: str
     ) -> Gym:
-        """Crear gimnasio tradicional en BD"""
+        """Crear gimnasio en BD con tipo especificado"""
         # Generar subdomain único
         subdomain = name.lower().replace(" ", "-")
         subdomain = ''.join(c for c in subdomain if c.isalnum() or c == '-')
@@ -230,9 +232,12 @@ class GymOwnerSetupService:
             subdomain = f"{original_subdomain}-{counter}"
             counter += 1
 
+        # Convertir string a GymType enum
+        gym_type_enum = GymType.gym if gym_type == "gym" else GymType.personal_trainer
+
         gym = Gym(
             name=name,
-            type=GymType.gym,  # Gimnasio tradicional
+            type=gym_type_enum,
             subdomain=subdomain,
             address=address,
             phone=phone,
@@ -259,20 +264,38 @@ class GymOwnerSetupService:
         self.db.flush()
         return user_gym
 
-    async def _activate_gym_modules(self, gym_id: int) -> list:
-        """Activar módulos esenciales para gimnasios tradicionales"""
+    async def _activate_gym_modules(self, gym_id: int, gym_type: str) -> list:
+        """Activar módulos esenciales según el tipo de gimnasio"""
 
-        essential_modules = [
-            ("users", "Gestión de Miembros", True),
-            ("schedule", "Clases y Horarios", True),
-            ("events", "Eventos del Gimnasio", True),
-            ("chat", "Mensajería", True),
-            ("billing", "Pagos y Facturación", True),
-            ("health", "Tracking de Salud", True),
-            ("nutrition", "Planes Nutricionales", True),
-            ("surveys", "Encuestas y Feedback", True),
-            ("equipment", "Gestión de Equipos", True),
-        ]
+        if gym_type == "gym":
+            # Módulos para gimnasios tradicionales
+            essential_modules = [
+                ("users", "Gestión de Miembros", True),
+                ("schedule", "Clases y Horarios", True),
+                ("events", "Eventos del Gimnasio", True),
+                ("chat", "Mensajería", True),
+                ("billing", "Pagos y Facturación", True),
+                ("health", "Tracking de Salud", True),
+                ("nutrition", "Planes Nutricionales", True),
+                ("surveys", "Encuestas y Feedback", True),
+                ("equipment", "Gestión de Equipos", True),
+            ]
+        else:  # personal_trainer
+            # Módulos para entrenadores personales
+            essential_modules = [
+                ("users", "Gestión de Clientes", True),
+                ("chat", "Mensajería", True),
+                ("health", "Tracking de Salud", True),
+                ("nutrition", "Planes Nutricionales", True),
+                ("billing", "Pagos y Facturación", True),
+                ("appointments", "Agenda de Citas", True),
+                ("progress", "Progreso de Clientes", True),
+                ("surveys", "Encuestas y Feedback", True),
+                # Módulos desactivados para entrenadores
+                ("equipment", "Gestión de Equipos", False),
+                ("classes", "Clases Grupales", False),
+                ("schedule", "Horarios del Gimnasio", False),
+            ]
 
         modules_activated = []
         for module_code, description, is_active in essential_modules:

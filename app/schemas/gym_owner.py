@@ -9,6 +9,13 @@ import re
 from typing import Optional, List
 from pydantic import BaseModel, EmailStr, Field, validator
 import pytz
+from enum import Enum
+
+
+class GymTypeEnum(str, Enum):
+    """Tipos de gimnasio disponibles"""
+    gym = "gym"
+    personal_trainer = "personal_trainer"
 
 
 class GymOwnerRegistrationRequest(BaseModel):
@@ -38,6 +45,11 @@ class GymOwnerRegistrationRequest(BaseModel):
         max_length=255,
         title="Nombre del gimnasio",
         description="Nombre comercial del gimnasio"
+    )
+    gym_type: GymTypeEnum = Field(
+        default=GymTypeEnum.gym,
+        title="Tipo de gimnasio",
+        description="Tipo: 'gym' (gimnasio tradicional) o 'personal_trainer' (entrenador personal)"
     )
     gym_address: Optional[str] = Field(None, max_length=255, title="Dirección del gimnasio")
     gym_phone: Optional[str] = Field(None, title="Teléfono del gimnasio")
@@ -89,6 +101,7 @@ class GymOwnerRegistrationRequest(BaseModel):
                 "last_name": "Pérez",
                 "phone": "+525512345678",
                 "gym_name": "Fitness Pro México",
+                "gym_type": "gym",
                 "gym_address": "Av. Reforma 123, CDMX",
                 "gym_phone": "+525587654321",
                 "gym_email": "contacto@fitnesspro.com",
