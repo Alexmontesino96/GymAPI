@@ -15,6 +15,7 @@ from app.models.gym import Gym, GymType
 from app.models.user import User, UserRole
 from app.models.user_gym import UserGym, GymRoleType
 from app.models.gym_module import GymModule
+from app.models.module import Module
 from app.services.auth0_mgmt import Auth0ManagementService
 from app.core.config import get_settings
 from fastapi import HTTPException
@@ -299,15 +300,21 @@ class GymOwnerSetupService:
 
         modules_activated = []
         for module_code, description, is_active in essential_modules:
-            module = GymModule(
+            # Buscar el módulo en la tabla modules por su código
+            module = self.db.query(Module).filter(Module.code == module_code).first()
+
+            if not module:
+                logger.warning(f"Módulo {module_code} no encontrado en la tabla modules, saltando...")
+                continue
+
+            # Crear la relación gym-module
+            gym_module = GymModule(
                 gym_id=gym_id,
-                module_code=module_code,
-                is_active=is_active,
-                description=description,
-                config={},
-                created_at=datetime.utcnow()
+                module_id=module.id,
+                active=is_active,
+                activated_at=datetime.utcnow() if is_active else None
             )
-            self.db.add(module)
+            self.db.add(gym_module)
 
             if is_active:
                 modules_activated.append(module_code)
