@@ -197,6 +197,12 @@ class GymOwnerSetupService:
         auth0_id: str
     ) -> User:
         """Crear usuario en BD local"""
+        # Verificar si el usuario ya existe (puede haber sido creado por el webhook)
+        existing_user = self.db.query(User).filter(User.auth0_id == auth0_id).first()
+        if existing_user:
+            logger.info(f"Usuario ya existe en BD (creado por webhook): {existing_user.id}")
+            return existing_user
+
         user = User(
             email=email,
             first_name=first_name,
@@ -325,6 +331,7 @@ class GymOwnerSetupService:
     async def _cleanup_auth0_user(self, auth0_user_id: str):
         """Eliminar usuario de Auth0 en caso de rollback"""
         try:
+            # 1. Eliminar de Auth0
             token = self.auth0_service.get_auth_token()
             url = f"https://{self.settings.AUTH0_DOMAIN}/api/v2/users/{auth0_user_id}"
             headers = {"Authorization": f"Bearer {token}"}
@@ -334,6 +341,13 @@ class GymOwnerSetupService:
                 logger.info(f"Usuario Auth0 {auth0_user_id} eliminado en rollback")
             else:
                 logger.error(f"Fallo al eliminar usuario Auth0: {response.text}")
+
+            # 2. Eliminar de BD local si existe (puede haber sido creado por webhook)
+            local_user = self.db.query(User).filter(User.auth0_id == auth0_user_id).first()
+            if local_user:
+                logger.info(f"Eliminando usuario local {local_user.id} creado por webhook durante rollback")
+                self.db.delete(local_user)
+                self.db.commit()  # Commit explícito para eliminar usuario del webhook
         except Exception as e:
             logger.error(f"Error en rollback de Auth0: {e}")
 

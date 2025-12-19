@@ -114,7 +114,8 @@ def get_db():
         # Establecer search_path para cada sesión en Supabase
         from sqlalchemy import text
         db.execute(text("SET search_path TO public"))
-        db.commit()  # Commit para que el SET tenga efecto
+        # NO hacer commit aquí - el SET es parte de la configuración de sesión
+        # y no necesita commit explícito
         yield db
     except SQLAlchemyError as e:
         logger.error(f"Error de SQLAlchemy en la sesión: {e}", exc_info=True)
