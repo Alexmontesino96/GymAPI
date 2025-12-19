@@ -845,6 +845,7 @@ async def admin_delete_event(
                         event_title=event.title,
                         event_id=event.id,
                         gym_id=current_gym.id,
+                        gym_name=current_gym.name,
                         participant_user_ids=participant_ids,
                         total_refunded_cents=refund_stats["total_refunded_cents"],
                         currency=event.currency or "EUR",

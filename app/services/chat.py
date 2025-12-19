@@ -1492,14 +1492,21 @@ class ChatService:
                 "stream_channel_id": chat_room.stream_channel_id,
                 "sender_id": str(sender_id)
             }
-            
+
+            # Obtener nombre del gym si está disponible
+            gym_name = None
+            if hasattr(chat_room, 'gym') and chat_room.gym:
+                gym_name = chat_room.gym.name
+
             # Enviar notificación
             result = notification_service.send_to_users(
                 user_ids=recipient_ids,
                 title=title,
                 message=display_message,
                 data=notification_data,
-                db=db
+                db=db,
+                gym_id=chat_room.gym_id,
+                gym_name=gym_name
             )
             
             if result.get("success"):
@@ -1568,6 +1575,11 @@ class ChatService:
             if not mentioned_users:
                 return True
             
+            # Obtener nombre del gym si está disponible
+            gym_name = None
+            if hasattr(chat_room, 'gym') and chat_room.gym:
+                gym_name = chat_room.gym.name
+
             # Enviar notificaciones especiales por menciones
             for user in mentioned_users:
                 notification_data = {
@@ -1577,13 +1589,15 @@ class ChatService:
                     "sender_id": str(sender_id),
                     "mentioned_user_id": str(user.id)
                 }
-                
+
                 result = notification_service.send_to_users(
                     user_ids=[str(user.id)],
                     title=f"🔔 {sender_name} te mencionó",
                     message=f"En {chat_room.name or 'chat'}: {message_text[:80]}...",
                     data=notification_data,
-                    db=db
+                    db=db,
+                    gym_id=chat_room.gym_id,
+                    gym_name=gym_name
                 )
                 
                 if result.get("success"):

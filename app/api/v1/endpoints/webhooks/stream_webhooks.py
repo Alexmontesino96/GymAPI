@@ -578,14 +578,21 @@ async def send_targeted_notifications(
         logger.info(f"📤 Enviando notificación {content_type} a {len(user_ids_for_onesignal)} usuarios:")
         for user in users_to_notify:
             logger.info(f"   👤 {user['name']} (ID: {user['internal_id']}, unread: {user['unread_count']})")
-        
+
+        # Obtener nombre del gym si está disponible
+        gym_name = None
+        if hasattr(chat_room, 'gym') and chat_room.gym:
+            gym_name = chat_room.gym.name
+
         # Enviar via OneSignal
         result = notification_service.send_to_users(
             user_ids=user_ids_for_onesignal,
             title=notification_title,
             message=truncated_message,
             data=notification_data,
-            db=db
+            db=db,
+            gym_id=chat_room.gym_id,
+            gym_name=gym_name
         )
         
         if result.get("success"):

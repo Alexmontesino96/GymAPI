@@ -80,12 +80,14 @@ async def send_notification(
         title=notification_data.title,
         message=notification_data.message,
         data=notification_data.data,
-        db=db
+        db=db,
+        gym_id=gym.id,
+        gym_name=gym.name
     )
-    
+
     return {
         "success": True,
-        "message": f"Notification queued for {len(notification_data.user_ids)} recipients"
+        "message": f"Notificación programada para {len(notification_data.user_ids)} usuarios desde '{gym.name}'"
     }
 
 @router.post("/send-to-gym", response_model=NotificationResponse)
@@ -101,10 +103,10 @@ async def send_notification_to_gym_users(
     """
     # Obtener todos los IDs de usuarios del gimnasio
     user_ids = user_service.get_all_gym_user_ids(db, gym_id)
-    
+
     if not user_ids:
         return {"success": False, "errors": ["No hay usuarios registrados en este gimnasio"]}
-    
+
     # Enviar en segundo plano para no bloquear la respuesta
     background_tasks.add_task(
         notification_service.send_to_users,
@@ -112,10 +114,12 @@ async def send_notification_to_gym_users(
         title=notification_data.title,
         message=notification_data.message,
         data=notification_data.data,
-        db=db
+        db=db,
+        gym_id=gym.id,
+        gym_name=gym.name
     )
-    
+
     return {
         "success": True,
-        "message": f"Notificación programada para {len(user_ids)} usuarios del gimnasio"
+        "message": f"Notificación de '{gym.name}' programada para {len(user_ids)} usuarios"
     } 

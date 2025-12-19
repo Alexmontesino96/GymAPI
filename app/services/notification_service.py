@@ -29,51 +29,87 @@ class OneSignalService:
             "Content-Type": "application/json; charset=utf-8"
         }
     
-    def send_to_users(self, user_ids: List[str], title: str, message: str, 
-                      data: Optional[Dict[str, Any]] = None, db: Optional[Session] = None) -> Dict[str, Any]:
+    def send_to_users(
+        self,
+        user_ids: List[str],
+        title: str,
+        message: str,
+        data: Optional[Dict[str, Any]] = None,
+        db: Optional[Session] = None,
+        gym_id: Optional[int] = None,
+        gym_name: Optional[str] = None
+    ) -> Dict[str, Any]:
         """
-        Envía notificación a múltiples usuarios por su user_id
+        Envía notificación a múltiples usuarios por su user_id.
+
+        Args:
+            user_ids: Lista de IDs de usuarios (strings)
+            title: Título de la notificación
+            message: Cuerpo del mensaje
+            data: Data adicional para la notificación
+            db: Sesión de base de datos (opcional)
+            gym_id: ID del gimnasio que envía la notificación (opcional)
+            gym_name: Nombre del gimnasio para mostrar en el header (opcional)
+
+        Returns:
+            Diccionario con resultado del envío
         """
         if not user_ids:
             return {"success": False, "errors": ["No user IDs provided"]}
-        
+
         try:
+            # Agregar contexto del gimnasio al data payload
+            notification_data = data or {}
+            if gym_id is not None:
+                notification_data["gym_id"] = gym_id
+            if gym_name:
+                notification_data["gym_name"] = gym_name
+
+            # Prefijo del gimnasio en el título si está disponible
+            formatted_title = f"{gym_name}: {title}" if gym_name else title
+
             payload = {
                 "app_id": self.app_id,
                 "include_external_user_ids": user_ids,
                 "channel_for_external_user_ids": "push",
-                "headings": {"en": title, "es": title},
+                "headings": {"en": formatted_title, "es": formatted_title},
                 "contents": {"en": message, "es": message},
-                "data": data or {}
+                "data": notification_data
             }
-            
-            logger.info(f"Sending notification to {len(user_ids)} users: {title}")
+
+            log_msg = f"Sending notification to {len(user_ids)} users"
+            if gym_name:
+                log_msg += f" from '{gym_name}' (gym_id: {gym_id})"
+            log_msg += f": {formatted_title}"
+            logger.info(log_msg)
+
             response = requests.post(
                 self.base_url,
                 headers=self.headers,
                 data=json.dumps(payload)
             )
-            
+
             logger.debug(f"OneSignal response: {response.status_code} - {response.text}")
-            
+
             if response.status_code == 200:
                 result = response.json()
-                
+
                 # Actualizar último uso en BD si se proporciona sesión
                 if db and result.get("id"):
                     if "errors" not in result or not result["errors"]:
                         self._update_tokens_last_used(db, user_ids)
-                
+
                 return {
                     "success": True,
                     "notification_id": result.get("id"),
-                    "recipients": result.get("recipients")
+                    "recipients": result.get("recipients"),
+                    "gym_id": gym_id
                 }
             else:
                 error_msg = f"OneSignal error: {response.status_code} - {response.text}"
                 logger.error(error_msg)
                 return {"success": False, "errors": [error_msg]}
-                
+
         except Exception as e:
             error_msg = f"Error sending notification: {str(e)}"
             logger.error(error_msg, exc_info=True)
@@ -179,6 +215,7 @@ class OneSignalService:
         event_title: str,
         event_id: int,
         gym_id: int,
+        gym_name: str,
         participant_user_ids: List[int],
         total_refunded_cents: int = 0,
         currency: str = "EUR",
@@ -250,11 +287,12 @@ class OneSignalService:
                 data={
                     "type": "event_cancelled",
                     "event_id": event_id,
-                    "gym_id": gym_id,
                     "refund_cents": total_refunded_cents,
                     "currency": currency
                 },
-                db=db
+                db=db,
+                gym_id=gym_id,
+                gym_name=gym_name
             )
 
             if push_result.get("success"):
