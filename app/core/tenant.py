@@ -288,4 +288,51 @@ async def verify_admin_role(request: Request, gym: GymSchema = Depends(verify_gy
 async def verify_trainer_role(request: Request, gym: GymSchema = Depends(verify_gym_trainer_access)) -> GymSchema:
     return gym
 async def verify_member_role(request: Request, gym: GymSchema = Depends(verify_gym_access)) -> GymSchema:
-    return gym 
+    return gym
+
+async def verify_super_admin_access(
+    db: Session = Depends(get_db),
+    current_user: Auth0User = Depends(get_current_user)
+) -> User:
+    """
+    Dependencia: Verifica que el usuario tiene rol SUPER_ADMIN.
+
+    Esta función se utiliza para endpoints que solo deben ser accesibles
+    por administradores de la plataforma (no administradores de gimnasio).
+
+    Args:
+        db: Sesión de base de datos
+        current_user: Usuario actual autenticado de Auth0
+
+    Returns:
+        User: El usuario con rol SUPER_ADMIN
+
+    Raises:
+        HTTPException: 403 si el usuario no tiene rol SUPER_ADMIN
+    """
+    logger = logging.getLogger("tenant_verification")
+
+    # Obtener usuario desde la base de datos
+    local_user = user_service.get_user_by_auth0_id(db, current_user.id)
+
+    if not local_user:
+        logger.warning(f"Usuario Auth0 {current_user.id} no encontrado en base de datos")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Usuario no encontrado en el sistema"
+        )
+
+    if local_user.role != UserRole.SUPER_ADMIN:
+        logger.warning(
+            f"Acceso denegado a operación de plataforma. "
+            f"User {local_user.id} (Auth0: {current_user.id}) tiene rol {local_user.role}, "
+            f"se requiere SUPER_ADMIN"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Esta operación está restringida a administradores de la plataforma (SUPER_ADMIN). "
+                   f"Tu rol actual es: {local_user.role}"
+        )
+
+    logger.debug(f"Acceso de SUPER_ADMIN verificado para usuario {local_user.id}")
+    return local_user 

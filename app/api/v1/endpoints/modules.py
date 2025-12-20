@@ -7,11 +7,11 @@ from app.core.auth0_fastapi import get_current_user, Auth0User, auth
 from app.services.module import module_service
 from app.services.billing_module import billing_module_service
 from app.schemas.module import Module, ModuleCreate, ModuleUpdate, ModuleStatus, GymModuleList
-from app.core.tenant import get_tenant_id, verify_gym_admin_access
+from app.core.tenant import get_tenant_id, verify_gym_admin_access, verify_super_admin_access
 from app.schemas.gym import GymSchema
 from app.db.redis_client import get_redis_client, Redis
 from app.core.tenant_cache import verify_gym_access_cached
-from app.core.auth0_fastapi import get_current_user
+from app.models.user import User
 
 router = APIRouter()
 
@@ -55,12 +55,26 @@ async def activate_module(
     db: Session = Depends(get_db),
     gym_id: int = Depends(get_tenant_id),
     module_code: str = Path(..., title="Código del módulo a activar"),
-    current_user: Auth0User = Security(auth.get_user)
+    super_admin: User = Depends(verify_super_admin_access)
 ):
     """
     Activar un módulo para el gimnasio actual.
-    
-    Solo los administradores pueden activar módulos.
+
+    IMPORTANTE: Solo los administradores de la plataforma (SUPER_ADMIN) pueden activar módulos.
+    Los administradores de gimnasio (ADMIN/OWNER) no tienen este permiso.
+
+    Args:
+        gym_id: ID del gimnasio (del header X-Gym-ID)
+        module_code: Código del módulo a activar (ej: "events", "nutrition")
+        super_admin: Usuario verificado con rol SUPER_ADMIN
+
+    Returns:
+        Mensaje de éxito si el módulo fue activado correctamente
+
+    Raises:
+        HTTPException 403: Si el usuario no es SUPER_ADMIN
+        HTTPException 404: Si el módulo no existe
+        HTTPException 500: Si hay un error al activar el módulo
     """
     # Verificar que el módulo existe
     module = module_service.get_module_by_code(db, module_code)
@@ -69,10 +83,10 @@ async def activate_module(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Módulo con código {module_code} no encontrado"
         )
-    
-    # Activar módulo - Verificación de admin ya realizada por verify_gym_admin_access
+
+    # Activar módulo (verificación de SUPER_ADMIN ya realizada por verify_super_admin_access)
     if module_service.activate_module_for_gym(db, gym_id, module_code):
-        return {"status": "success", "message": f"Módulo {module_code} activado correctamente"}
+        return {"status": "success", "message": f"Módulo {module_code} activado correctamente para gimnasio {gym_id}"}
     else:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -85,12 +99,26 @@ async def deactivate_module(
     db: Session = Depends(get_db),
     gym_id: int = Depends(get_tenant_id),
     module_code: str = Path(..., title="Código del módulo a desactivar"),
-    current_user: Auth0User = Security(auth.get_user, scopes=["admin:modules"])
+    super_admin: User = Depends(verify_super_admin_access)
 ):
     """
     Desactivar un módulo para el gimnasio actual.
-    
-    Solo los administradores pueden desactivar módulos.
+
+    IMPORTANTE: Solo los administradores de la plataforma (SUPER_ADMIN) pueden desactivar módulos.
+    Los administradores de gimnasio (ADMIN/OWNER) no tienen este permiso.
+
+    Args:
+        gym_id: ID del gimnasio (del header X-Gym-ID)
+        module_code: Código del módulo a desactivar (ej: "events", "nutrition")
+        super_admin: Usuario verificado con rol SUPER_ADMIN
+
+    Returns:
+        Mensaje de éxito si el módulo fue desactivado correctamente
+
+    Raises:
+        HTTPException 403: Si el usuario no es SUPER_ADMIN
+        HTTPException 404: Si el módulo no existe
+        HTTPException 500: Si hay un error al desactivar el módulo
     """
     # Verificar que el módulo existe
     module = module_service.get_module_by_code(db, module_code)
@@ -99,10 +127,10 @@ async def deactivate_module(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Módulo con código {module_code} no encontrado"
         )
-    
-    # Desactivar módulo - Verificación de admin ya realizada por verify_gym_admin_access
+
+    # Desactivar módulo (verificación de SUPER_ADMIN ya realizada por verify_super_admin_access)
     if module_service.deactivate_module_for_gym(db, gym_id, module_code):
-        return {"status": "success", "message": f"Módulo {module_code} desactivado correctamente"}
+        return {"status": "success", "message": f"Módulo {module_code} desactivado correctamente para gimnasio {gym_id}"}
     else:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
