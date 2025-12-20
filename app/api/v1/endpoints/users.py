@@ -44,9 +44,8 @@ from app.services.user_stats import user_stats_service
 from app.core.security import verify_auth0_webhook_secret
 from app.middleware.rate_limit import limiter
 from app.services.health import health_service
-from app.models.health import UserAchievement, AchievementType
+from app.models.health import UserAchievement, AchievementType, UserHealthSnapshot
 from app.schemas.health import UserAchievementsResponse, AchievementResponse, AchievementsByRarity, NextMilestonesResponse, NextMilestone
-from app.models.attendance import Attendance
 from app.models.schedule import ClassParticipation, ClassParticipationStatus
 
 router = APIRouter()
@@ -1446,12 +1445,12 @@ async def get_next_milestones(
 
     # === 1. Calcular racha de asistencia actual ===
     try:
-        latest_attendance = db.query(Attendance).filter(
-            Attendance.user_id == user_id,
-            Attendance.gym_id == gym_id
-        ).order_by(Attendance.date.desc()).first()
+        latest_snapshot = db.query(UserHealthSnapshot).filter(
+            UserHealthSnapshot.user_id == user_id,
+            UserHealthSnapshot.gym_id == gym_id
+        ).order_by(UserHealthSnapshot.snapshot_date.desc()).first()
 
-        current_streak = latest_attendance.current_streak if latest_attendance else 0
+        current_streak = latest_snapshot.current_streak if latest_snapshot else 0
 
         # Milestones de racha: 3, 7, 14, 30, 60, 90, 180, 365 días
         streak_milestones = [3, 7, 14, 30, 60, 90, 180, 365]
