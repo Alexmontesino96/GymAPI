@@ -43,6 +43,11 @@ from app.services.gym import gym_service
 from app.services.user_stats import user_stats_service
 from app.core.security import verify_auth0_webhook_secret
 from app.middleware.rate_limit import limiter
+from app.services.health import health_service
+from app.models.health import UserAchievement, AchievementType
+from app.schemas.health import UserAchievementsResponse, AchievementResponse, AchievementsByRarity, NextMilestonesResponse, NextMilestone
+from app.models.attendance import Attendance
+from app.models.schedule import ClassParticipation, ClassParticipationStatus
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -1305,4 +1310,250 @@ async def read_gym_participant_by_id(
         logger.warning(f"No se pudo asignar gym_role/role en la respuesta de usuario {user_id}: {e}")
 
     return user_data
+
+
+# === Endpoints de Logros/Achievements ===
+
+@router.get("/me/achievements", response_model=UserAchievementsResponse, tags=["Achievements"])
+async def get_user_achievements(
+    *,
+    db: Session = Depends(get_db),
+    current_user: Auth0User = Security(auth.get_user),
+    current_gym: GymSchema = Depends(verify_gym_access),
+    redis_client: redis.Redis = Depends(get_redis_client)
+):
+    """
+    Obtener todos los logros del usuario actual.
+
+    Devuelve los logros agrupados por rareza (common, rare, epic, legendary)
+    junto con estadísticas totales de puntos y achievements obtenidos.
+
+    Returns:
+        UserAchievementsResponse: Logros del usuario agrupados por rareza
+    """
+    gym_id = current_gym.id
+
+    # Obtener usuario local desde Auth0 ID
+    local_user = await user_service.get_user_by_auth0_id_cached(
+        db=db, auth0_id=current_user.id, redis_client=redis_client
+    )
+
+    if not local_user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Usuario no encontrado en el sistema"
+        )
+
+    user_id = local_user.id
+
+    # Obtener todos los achievements del usuario
+    all_achievements = db.query(UserAchievement).filter(
+        UserAchievement.user_id == user_id,
+        UserAchievement.gym_id == gym_id
+    ).order_by(UserAchievement.earned_at.desc()).all()
+
+    # Agrupar por rareza
+    achievements_by_rarity = {
+        "common": [],
+        "rare": [],
+        "epic": [],
+        "legendary": []
+    }
+
+    total_points = 0
+
+    for achievement in all_achievements:
+        achievement_response = AchievementResponse(
+            id=achievement.id,
+            achievement_type=achievement.achievement_type.value,
+            title=achievement.title,
+            description=achievement.description,
+            icon=achievement.icon,
+            value=achievement.value,
+            unit=achievement.unit,
+            rarity=achievement.rarity,
+            is_milestone=achievement.is_milestone,
+            points_awarded=achievement.points_awarded,
+            earned_at=achievement.earned_at
+        )
+
+        # Agregar a la categoría correspondiente
+        rarity = achievement.rarity.lower()
+        if rarity in achievements_by_rarity:
+            achievements_by_rarity[rarity].append(achievement_response)
+
+        total_points += achievement.points_awarded
+
+    # Últimos 5 logros
+    recent_achievements = []
+    for achievement in all_achievements[:5]:
+        recent_achievements.append(AchievementResponse(
+            id=achievement.id,
+            achievement_type=achievement.achievement_type.value,
+            title=achievement.title,
+            description=achievement.description,
+            icon=achievement.icon,
+            value=achievement.value,
+            unit=achievement.unit,
+            rarity=achievement.rarity,
+            is_milestone=achievement.is_milestone,
+            points_awarded=achievement.points_awarded,
+            earned_at=achievement.earned_at
+        ))
+
+    return UserAchievementsResponse(
+        user_id=user_id,
+        gym_id=gym_id,
+        total_achievements=len(all_achievements),
+        total_points=total_points,
+        achievements_by_rarity=AchievementsByRarity(**achievements_by_rarity),
+        recent_achievements=recent_achievements
+    )
+
+
+@router.get("/me/achievements/next-milestones", response_model=NextMilestonesResponse, tags=["Achievements"])
+async def get_next_milestones(
+    *,
+    db: Session = Depends(get_db),
+    current_user: Auth0User = Security(auth.get_user),
+    current_gym: GymSchema = Depends(verify_gym_access),
+    redis_client: redis.Redis = Depends(get_redis_client)
+):
+    """
+    Obtener los próximos milestones/logros a desbloquear.
+
+    Calcula el progreso actual del usuario hacia los siguientes achievements
+    disponibles para motivar la continuidad.
+
+    Returns:
+        NextMilestonesResponse: Próximos milestones ordenados por cercanía
+    """
+    gym_id = current_gym.id
+
+    # Obtener usuario local desde Auth0 ID
+    local_user = await user_service.get_user_by_auth0_id_cached(
+        db=db, auth0_id=current_user.id, redis_client=redis_client
+    )
+
+    if not local_user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Usuario no encontrado en el sistema"
+        )
+
+    user_id = local_user.id
+    next_milestones = []
+
+    # === 1. Calcular racha de asistencia actual ===
+    try:
+        latest_attendance = db.query(Attendance).filter(
+            Attendance.user_id == user_id,
+            Attendance.gym_id == gym_id
+        ).order_by(Attendance.date.desc()).first()
+
+        current_streak = latest_attendance.current_streak if latest_attendance else 0
+
+        # Milestones de racha: 3, 7, 14, 30, 60, 90, 180, 365 días
+        streak_milestones = [3, 7, 14, 30, 60, 90, 180, 365]
+
+        # Encontrar el siguiente milestone de racha
+        for milestone in streak_milestones:
+            if current_streak < milestone:
+                # Verificar que no exista ya
+                existing = db.query(UserAchievement).filter(
+                    UserAchievement.user_id == user_id,
+                    UserAchievement.gym_id == gym_id,
+                    UserAchievement.achievement_type == AchievementType.ATTENDANCE_STREAK,
+                    UserAchievement.value == milestone
+                ).first()
+
+                if not existing:
+                    rarity = "common"
+                    points = 10
+                    if milestone >= 180:
+                        rarity = "legendary"
+                        points = 100
+                    elif milestone >= 60:
+                        rarity = "epic"
+                        points = 50
+                    elif milestone >= 14:
+                        rarity = "rare"
+                        points = 25
+
+                    progress = (current_streak / milestone) * 100
+
+                    next_milestones.append(NextMilestone(
+                        achievement_type="attendance_streak",
+                        title=f"Racha de {milestone} Días",
+                        description=f"Asiste al gimnasio {milestone} días seguidos",
+                        icon="🔥",
+                        current_value=current_streak,
+                        target_value=milestone,
+                        unit="días",
+                        progress_percentage=min(progress, 100),
+                        rarity=rarity,
+                        points_to_earn=points
+                    ))
+                    break  # Solo mostrar el siguiente milestone de racha
+    except Exception as e:
+        logger.warning(f"Error calculando racha de asistencia para usuario {user_id}: {e}")
+
+    # === 2. Calcular total de clases asistidas ===
+    try:
+        total_classes = db.query(ClassParticipation).filter(
+            ClassParticipation.member_id == user_id,
+            ClassParticipation.gym_id == gym_id,
+            ClassParticipation.status == ClassParticipationStatus.ATTENDED
+        ).count()
+
+        # Milestones de clases: 10, 25, 50, 100, 250, 500
+        class_milestones = [10, 25, 50, 100, 250, 500]
+
+        # Encontrar el siguiente milestone de clases
+        for milestone in class_milestones:
+            if total_classes < milestone:
+                # Verificar que no exista ya
+                existing = db.query(UserAchievement).filter(
+                    UserAchievement.user_id == user_id,
+                    UserAchievement.gym_id == gym_id,
+                    UserAchievement.achievement_type == AchievementType.CLASS_MILESTONE,
+                    UserAchievement.value == milestone
+                ).first()
+
+                if not existing:
+                    rarity = "common"
+                    points = milestone // 2
+                    if milestone >= 250:
+                        rarity = "legendary"
+                    elif milestone >= 100:
+                        rarity = "epic"
+                    elif milestone >= 50:
+                        rarity = "rare"
+
+                    progress = (total_classes / milestone) * 100
+
+                    next_milestones.append(NextMilestone(
+                        achievement_type="class_milestone",
+                        title=f"{milestone} Clases Completadas",
+                        description=f"Completa {milestone} clases en el gimnasio",
+                        icon="🏆",
+                        current_value=total_classes,
+                        target_value=milestone,
+                        unit="clases",
+                        progress_percentage=min(progress, 100),
+                        rarity=rarity,
+                        points_to_earn=points
+                    ))
+                    break  # Solo mostrar el siguiente milestone de clases
+    except Exception as e:
+        logger.warning(f"Error calculando milestones de clases para usuario {user_id}: {e}")
+
+    # Ordenar por progreso (más cercanos primero)
+    next_milestones.sort(key=lambda x: x.progress_percentage, reverse=True)
+
+    return NextMilestonesResponse(
+        user_id=user_id,
+        gym_id=gym_id,
+        next_milestones=next_milestones[:5]  # Máximo 5 milestones
+    )
 
