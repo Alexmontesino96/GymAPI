@@ -19,6 +19,9 @@ import logging
 import asyncio
 import json
 
+# Timezone utilities para manejo correcto de zonas horarias
+from app.core.timezone_utils import get_current_time_in_gym_timezone
+
 from app.models.nutrition import (
     NutritionPlan,
     NutritionPlanFollower,
@@ -30,9 +33,11 @@ from app.models.nutrition import (
     MealType
 )
 from app.models.user import User
+from app.models.gym import Gym
 from app.services.notification_service import notification_service
 from app.db.redis_client import get_redis_client
 from app.services.nutrition import NutritionService
+from app.services.meal_notification_cache import get_meal_notification_cache
 
 logger = logging.getLogger(__name__)
 
@@ -203,24 +208,24 @@ class NutritionNotificationService:
         self,
         db: Session,
         user_id: int,
-        meal_type: str,
-        meal_name: str,
-        plan_title: str,
+        meal_id: int,
+        meal: Meal,
+        plan: Optional[NutritionPlan],
         gym_id: int,
         force_direct: bool = False
     ) -> bool:
         """
         Enviar recordatorio de comida a un usuario.
 
-        Si SQS está habilitado y force_direct=False, encola el mensaje para
-        procesamiento asíncrono. Si no, envía directamente via OneSignal.
+        Usa cache por meal_id para generar notificación una vez y reutilizarla
+        para todos los usuarios con el mismo meal (estrategia optimizada).
 
         Args:
             db: Sesión de base de datos
             user_id: ID del usuario
-            meal_type: Tipo de comida (breakfast, lunch, dinner, etc)
-            meal_name: Nombre de la comida
-            plan_title: Título del plan nutricional
+            meal_id: ID del meal
+            meal: Objeto Meal completo
+            plan: Objeto NutritionPlan (opcional)
             gym_id: ID del gimnasio
             force_direct: Si True, envía directamente sin usar SQS
 
@@ -234,38 +239,43 @@ class NutritionNotificationService:
 
             # Verificar si ya se envió esta notificación hoy (evitar duplicados)
             if self._check_notification_already_sent(
-                redis_client, user_id, f"meal_{meal_type}", today_str
+                redis_client, user_id, f"meal_{meal.meal_type}", today_str
             ):
                 logger.debug(f"Skipping duplicate meal reminder for user {user_id}")
                 return False
 
-            # Mapeo de tipos de comida a emojis y textos
-            meal_emojis = {
-                "breakfast": "🌅",
-                "mid_morning": "🥤",
-                "lunch": "🍽️",
-                "afternoon": "☕",
-                "dinner": "🌙",
-                "post_workout": "💪",
-                "late_snack": "🍿"
-            }
+            # Obtener gym para tono de notificación
+            gym = db.query(Gym).filter(Gym.id == gym_id).first()
+            gym_tone = gym.notification_tone if gym and hasattr(gym, 'notification_tone') else "motivational"
 
-            meal_texts = {
-                "breakfast": "desayuno",
-                "mid_morning": "snack de media mañana",
-                "lunch": "almuerzo",
-                "afternoon": "merienda",
-                "dinner": "cena",
-                "post_workout": "comida post-entreno",
-                "late_snack": "snack nocturno"
-            }
+            # Obtener notificación de cache o generar con IA
+            # Esto se ejecuta UNA VEZ por meal y se cachea (todos los usuarios reciben la misma)
+            meal_cache_service = get_meal_notification_cache()
 
-            emoji = meal_emojis.get(meal_type, "🍽️")
-            meal_text = meal_texts.get(meal_type, "comida")
+            # Ejecutar de forma síncrona (convertir async a sync)
+            import asyncio
+            try:
+                loop = asyncio.get_event_loop()
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
 
-            # Crear notificación
-            title = f"{emoji} Hora de tu {meal_text}"
-            message = f"{meal_name} - {plan_title}"
+            notification = loop.run_until_complete(
+                meal_cache_service.get_or_generate_notification(
+                    meal_id=meal_id,
+                    meal=meal,
+                    plan=plan,
+                    gym_tone=gym_tone
+                )
+            )
+
+            # Extraer título y mensaje generados
+            title = notification["title"]
+            message = notification["message"]
+
+            # Para backward compatibility, también guardar valores antiguos
+            meal_name = meal.name
+            plan_title = plan.title if plan else "Tu plan nutricional"
 
             # Intentar usar SQS si está habilitado
             sqs_service = self._get_sqs_service()
@@ -274,7 +284,7 @@ class NutritionNotificationService:
                 success = sqs_service.enqueue_meal_reminder(
                     user_id=user_id,
                     gym_id=gym_id,
-                    meal_type=meal_type,
+                    meal_type=meal.meal_type,
                     meal_name=meal_name,
                     plan_title=plan_title
                 )
@@ -282,16 +292,16 @@ class NutritionNotificationService:
                 if success:
                     # Marcar como enviada en cache (prevenir duplicados)
                     self._mark_notification_sent(
-                        redis_client, user_id, f"meal_{meal_type}", today_str
+                        redis_client, user_id, f"meal_{meal.meal_type}", today_str
                     )
-                    self._increment_metric(redis_client, gym_id, f"meal_reminder_{meal_type}_queued")
+                    self._increment_metric(redis_client, gym_id, f"meal_reminder_{meal.meal_type}_queued")
                     # Auditoría
                     self._audit_notification(
                         redis_client, gym_id, user_id,
-                        f"meal_reminder_{meal_type}", "queued",
-                        {"meal_name": meal_name, "plan_title": plan_title}
+                        f"meal_reminder_{meal.meal_type}", "queued",
+                        {"meal_id": meal_id, "meal_name": meal_name, "plan_title": plan_title, "ai_generated": True}
                     )
-                    logger.info(f"Meal reminder queued in SQS for user {user_id}, meal {meal_type}")
+                    logger.info(f"Meal reminder queued in SQS for user {user_id}, meal {meal_id}")
                     return True
                 else:
                     # Si falla SQS, hacer fallback a envío directo
@@ -304,7 +314,8 @@ class NutritionNotificationService:
                 message=message,
                 data={
                     "type": "meal_reminder",
-                    "meal_type": meal_type,
+                    "meal_id": meal_id,
+                    "meal_type": meal.meal_type,
                     "action": "open_meal_plan"
                 },
                 db=db
@@ -313,26 +324,26 @@ class NutritionNotificationService:
             if result.get("success"):
                 # Marcar como enviada en cache
                 self._mark_notification_sent(
-                    redis_client, user_id, f"meal_{meal_type}", today_str
+                    redis_client, user_id, f"meal_{meal.meal_type}", today_str
                 )
                 # Incrementar métrica
-                self._increment_metric(redis_client, gym_id, f"meal_reminder_{meal_type}_sent")
+                self._increment_metric(redis_client, gym_id, f"meal_reminder_{meal.meal_type}_sent")
                 # Auditoría
                 self._audit_notification(
                     redis_client, gym_id, user_id,
-                    f"meal_reminder_{meal_type}", "sent",
-                    {"meal_name": meal_name, "plan_title": plan_title, "direct": True}
+                    f"meal_reminder_{meal.meal_type}", "sent",
+                    {"meal_id": meal_id, "meal_name": meal_name, "plan_title": plan_title, "direct": True, "ai_generated": True}
                 )
-                logger.info(f"Meal reminder sent directly to user {user_id} for {meal_type}")
+                logger.info(f"Meal reminder sent directly to user {user_id} for meal {meal_id}")
                 return True
 
             # Incrementar métrica de fallo
-            self._increment_metric(redis_client, gym_id, f"meal_reminder_{meal_type}_failed")
+            self._increment_metric(redis_client, gym_id, f"meal_reminder_{meal.meal_type}_failed")
             # Auditoría de fallo
             self._audit_notification(
                 redis_client, gym_id, user_id,
-                f"meal_reminder_{meal_type}", "failed",
-                {"meal_name": meal_name, "error": result.get("errors", "Unknown error")}
+                f"meal_reminder_{meal.meal_type}", "failed",
+                {"meal_id": meal_id, "meal_name": meal_name, "error": result.get("errors", "Unknown error")}
             )
             return False
 
@@ -866,18 +877,21 @@ class NutritionNotificationService:
                         messages_to_queue.append({
                             "user_id": follower.user_id,
                             "gym_id": gym_id,
+                            "meal_id": meal.id,
+                            "meal": meal,
+                            "plan": plan,
                             "meal_type": meal_type,
                             "meal_name": meal.name,
                             "plan_title": plan.title
                         })
                     else:
-                        # Envío directo
+                        # Envío directo con nueva API (meal_id + objeto meal)
                         success = self.send_meal_reminder(
                             db=db,
                             user_id=follower.user_id,
-                            meal_type=meal_type,
-                            meal_name=meal.name,
-                            plan_title=plan.title,
+                            meal_id=meal.id,
+                            meal=meal,
+                            plan=plan,
                             gym_id=gym_id,
                             force_direct=True
                         )
@@ -961,6 +975,47 @@ def get_active_gyms_with_nutrition() -> List[int]:
         db.close()
 
 
+def get_active_gyms_with_nutrition_full():
+    """
+    Obtener objetos Gym completos de gimnasios activos con módulo de nutrición.
+
+    Returns:
+        Lista de objetos Gym con nutrición activa
+    """
+    from app.db.session import SessionLocal
+    from app.models.gym import Gym
+
+    db = SessionLocal()
+    try:
+        # Obtener gym_ids con nutrición activa
+        gym_ids_with_nutrition = db.query(NutritionPlan.gym_id).filter(
+            NutritionPlan.is_active == True
+        ).distinct().all()
+
+        gym_ids = [g[0] for g in gym_ids_with_nutrition]
+
+        if not gym_ids:
+            return []
+
+        # Obtener objetos Gym completos
+        gyms = db.query(Gym).filter(
+            and_(
+                Gym.id.in_(gym_ids),
+                Gym.is_active == True
+            )
+        ).all()
+
+        logger.debug(f"Found {len(gyms)} active gyms with nutrition plans")
+        return gyms
+
+    except Exception as e:
+        logger.error(f"Error getting active gyms: {e}")
+        return []
+    finally:
+        db.close()
+        db.close()
+
+
 def send_meal_reminders_job_single_gym(gym_id: int, meal_type: str, scheduled_time: str):
     """
     Job para enviar recordatorios de comidas a un gimnasio específico.
@@ -1015,41 +1070,65 @@ def send_meal_reminders_job(gym_id: int, meal_type: str, scheduled_time: str):
 def send_meal_reminders_all_gyms_job(meal_type: str, scheduled_time: str):
     """
     Job para enviar recordatorios de comidas a TODOS los gimnasios activos.
-    Este es el job recomendado para el scheduler.
+
+    IMPORTANTE: Este job ahora maneja correctamente timezones. Ejecuta para cada gym
+    solo si la hora local del gym coincide con scheduled_time.
 
     Args:
         meal_type: Tipo de comida (breakfast, lunch, dinner)
-        scheduled_time: Hora programada (formato HH:MM)
+        scheduled_time: Hora programada en hora LOCAL del gym (formato HH:MM)
     """
     logger.info(f"Running meal reminders for ALL gyms: {meal_type} at {scheduled_time}")
 
-    gym_ids = get_active_gyms_with_nutrition()
+    # Obtener objetos Gym completos (con timezone)
+    gyms = get_active_gyms_with_nutrition_full()
 
-    if not gym_ids:
+    if not gyms:
         logger.info("No active gyms with nutrition found")
         return
 
     total_stats = {
         "gyms_processed": 0,
+        "gyms_skipped_timezone": 0,
         "total_users": 0,
         "total_queued": 0,
         "total_failed": 0
     }
 
-    for gym_id in gym_ids:
+    for gym in gyms:
         try:
-            results = send_meal_reminders_job_single_gym(gym_id, meal_type, scheduled_time)
-            if "error" not in results:
-                total_stats["gyms_processed"] += 1
-                total_stats["total_users"] += results.get("users_found", 0)
-                total_stats["total_queued"] += results.get("queued", 0)
-                total_stats["total_failed"] += results.get("failed", 0)
+            # Obtener hora actual en timezone del gym
+            now_local = get_current_time_in_gym_timezone(gym.timezone)
+            current_time_local = now_local.strftime("%H:%M")
+
+            # Solo ejecutar si la hora local del gym coincide con scheduled_time
+            if current_time_local == scheduled_time:
+                logger.info(
+                    f"Gym {gym.id} ({gym.name}): hora local {current_time_local} "
+                    f"coincide con scheduled {scheduled_time} (timezone: {gym.timezone})"
+                )
+                results = send_meal_reminders_job_single_gym(gym.id, meal_type, scheduled_time)
+                if "error" not in results:
+                    total_stats["gyms_processed"] += 1
+                    total_stats["total_users"] += results.get("users_found", 0)
+                    total_stats["total_queued"] += results.get("queued", 0)
+                    total_stats["total_failed"] += results.get("failed", 0)
+            else:
+                # Hora local no coincide, skip
+                total_stats["gyms_skipped_timezone"] += 1
+                logger.debug(
+                    f"Gym {gym.id} ({gym.name}): hora local {current_time_local} "
+                    f"!= scheduled {scheduled_time} (timezone: {gym.timezone}) - skipping"
+                )
+
         except Exception as e:
-            logger.error(f"Error processing gym {gym_id}: {e}")
+            logger.error(f"Error processing gym {gym.id}: {e}")
 
     logger.info(
         f"Meal reminders ALL GYMS completed for {meal_type} at {scheduled_time}: "
-        f"gyms={total_stats['gyms_processed']}, users={total_stats['total_users']}, "
+        f"gyms_processed={total_stats['gyms_processed']}, "
+        f"gyms_skipped={total_stats['gyms_skipped_timezone']}, "
+        f"users={total_stats['total_users']}, "
         f"queued={total_stats['total_queued']}, failed={total_stats['total_failed']}"
     )
 
