@@ -23,6 +23,10 @@ class Settings(BaseSettings):
     SECRET_KEY: str
     # 60 minutos * 24 horas * 8 días = 8 días
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 8
+
+    # URLs de la aplicación
+    BASE_URL: str = os.getenv("BASE_URL", "https://gymapi-eh6m.onrender.com")
+    FRONTEND_URL: Optional[str] = os.getenv("FRONTEND_URL", None)
     
     # Información del proyecto
     PROJECT_NAME: str = "GymAPI"
