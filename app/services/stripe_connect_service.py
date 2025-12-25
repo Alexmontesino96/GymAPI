@@ -136,33 +136,41 @@ class StripeConnectService:
             raise
     
     async def create_onboarding_link(
-        self, 
-        db: Session, 
+        self,
+        db: Session,
         gym_id: int,
         refresh_url: Optional[str] = None,
         return_url: Optional[str] = None
     ) -> str:
         """
         Crear link de onboarding para que el gym complete su configuración.
-        
+
+        Funciona tanto para configuración inicial como para RECONEXIÓN de cuentas desconectadas.
+
         Args:
             db: Sesión de base de datos
             gym_id: ID del gym
             refresh_url: URL de refresh (opcional)
             return_url: URL de retorno (opcional)
-            
+
         Returns:
             str: URL de onboarding
+
+        Note:
+            Este método permite generar links para cuentas inactivas,
+            lo cual es necesario para reconectar Standard accounts desconectadas.
         """
         try:
-            # Obtener cuenta del gym
+            # Obtener cuenta del gym (incluyendo inactivas para permitir reconexión)
             gym_account = db.query(GymStripeAccount).filter(
-                GymStripeAccount.gym_id == gym_id,
-                GymStripeAccount.is_active == True
+                GymStripeAccount.gym_id == gym_id
             ).first()
-            
+
             if not gym_account:
-                raise ValueError(f"Gym {gym_id} no tiene cuenta de Stripe")
+                raise ValueError(
+                    f"Gym {gym_id} no tiene cuenta de Stripe. "
+                    "Debe crear una cuenta primero."
+                )
             
             # URLs por defecto
             base_url = settings.FRONTEND_URL or settings.BASE_URL
@@ -535,12 +543,33 @@ class StripeConnectService:
     
     # === MÉTODOS DE UTILIDAD ===
     
-    def get_gym_stripe_account(self, db: Session, gym_id: int) -> Optional[GymStripeAccount]:
-        """Obtener cuenta de Stripe de un gym"""
-        return db.query(GymStripeAccount).filter(
-            GymStripeAccount.gym_id == gym_id,
-            GymStripeAccount.is_active == True
-        ).first()
+    def get_gym_stripe_account(
+        self,
+        db: Session,
+        gym_id: int,
+        include_inactive: bool = False
+    ) -> Optional[GymStripeAccount]:
+        """
+        Obtener cuenta de Stripe de un gym.
+
+        Args:
+            db: Sesión de base de datos
+            gym_id: ID del gimnasio
+            include_inactive: Si es True, incluye cuentas inactivas/desconectadas
+                            Útil para endpoints de diagnóstico y reconexión
+
+        Returns:
+            Cuenta de Stripe o None si no existe
+        """
+        query = db.query(GymStripeAccount).filter(
+            GymStripeAccount.gym_id == gym_id
+        )
+
+        # Por defecto, solo devolver cuentas activas (para operaciones de pago)
+        if not include_inactive:
+            query = query.filter(GymStripeAccount.is_active == True)
+
+        return query.first()
     
     def get_user_stripe_profile(
         self, 

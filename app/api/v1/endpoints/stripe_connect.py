@@ -184,33 +184,58 @@ async def create_onboarding_link(
         HTTPException: 404 si no existe cuenta, 400 si ya completó onboarding
     """
     try:
-        # Verificar que existe cuenta
-        gym_account = stripe_connect_service.get_gym_stripe_account(db, current_gym.id)
+        # Verificar que existe cuenta (incluyendo inactivas para permitir reconexión)
+        gym_account = stripe_connect_service.get_gym_stripe_account(
+            db,
+            current_gym.id,
+            include_inactive=True  # ✅ Permitir reconectar cuentas desconectadas
+        )
         if not gym_account:
             raise HTTPException(
                 status_code=404,
-                detail="Debe crear una cuenta de Stripe primero"
+                detail="Debe crear una cuenta de Stripe primero usando POST /api/v1/stripe-connect/accounts"
             )
-        
-        # Verificar si ya completó onboarding
-        if gym_account.onboarding_completed:
+
+        # Si la cuenta está activa Y ya completó onboarding, no necesita volver a hacerlo
+        if gym_account.is_active and gym_account.onboarding_completed:
             raise HTTPException(
                 status_code=400,
-                detail="El gimnasio ya completó la configuración de Stripe"
+                detail=(
+                    "La cuenta ya está activa y configurada. "
+                    "Use GET /api/v1/stripe-connect/accounts/connection-status para verificar el estado."
+                )
             )
         
         # Crear link de onboarding
         onboarding_url = await stripe_connect_service.create_onboarding_link(
             db, current_gym.id, refresh_url, return_url
         )
-        
-        logger.info(f"Link de onboarding creado para gym {current_gym.id} por admin {current_user.id}")
-        
+
+        # Determinar si es reconexión o configuración inicial
+        is_reconnection = gym_account.onboarding_completed and not gym_account.is_active
+
+        logger.info(
+            f"Link de {'reconexión' if is_reconnection else 'onboarding'} creado "
+            f"para gym {current_gym.id} (account: {gym_account.stripe_account_id}) "
+            f"por admin {current_user.id}"
+        )
+
         return {
-            "message": "Link de onboarding creado exitosamente",
+            "message": (
+                "Link de reconexión creado exitosamente"
+                if is_reconnection
+                else "Link de onboarding creado exitosamente"
+            ),
             "onboarding_url": onboarding_url,
             "expires_in_minutes": 60,
-            "instructions": "Complete la configuración de Stripe siguiendo el link. El proceso toma 5-10 minutos."
+            "is_reconnection": is_reconnection,
+            "account_id": gym_account.stripe_account_id,
+            "instructions": (
+                "Autoriza nuevamente el acceso a tu cuenta de Stripe siguiendo el link. "
+                "Esto reconectará tu cuenta Standard existente."
+                if is_reconnection
+                else "Complete la configuración de Stripe siguiendo el link. El proceso toma 5-10 minutos."
+            )
         }
         
     except ValueError as e:
@@ -268,7 +293,12 @@ async def get_connection_status(
         }
     """
     try:
-        gym_account = stripe_connect_service.get_gym_stripe_account(db, current_gym.id)
+        # Consultar cuenta incluyendo inactivas para mostrar estado real
+        gym_account = stripe_connect_service.get_gym_stripe_account(
+            db,
+            current_gym.id,
+            include_inactive=True  # ✅ Incluir cuentas desconectadas
+        )
 
         if not gym_account:
             return {
@@ -278,12 +308,19 @@ async def get_connection_status(
             }
 
         if not gym_account.is_active:
+            # Cuenta existe pero está desconectada - necesita RECONECTAR
             return {
                 "connected": False,
                 "account_id": gym_account.stripe_account_id,
                 "account_type": gym_account.account_type,
-                "message": "Cuenta desconectada o inactiva",
-                "action_required": "Reconectar cuenta o crear nueva"
+                "onboarding_completed": gym_account.onboarding_completed,
+                "message": "Cuenta desconectada - requiere reconexión",
+                "action_required": (
+                    "Reconectar usando POST /api/v1/stripe-connect/accounts/onboarding-link. "
+                    "Esta cuenta fue configurada previamente pero está desconectada. "
+                    "El administrador debe completar el proceso de reconexión en Stripe."
+                ),
+                "can_reconnect": True
             }
 
         # Verificar en Stripe si la cuenta sigue existiendo y accesible
@@ -321,8 +358,15 @@ async def get_connection_status(
                 "connected": False,
                 "account_id": gym_account.stripe_account_id,
                 "account_type": gym_account.account_type,
-                "message": "Cuenta desconectada (sin acceso a Stripe)",
-                "action_required": "Reconectar cuenta o crear nueva"
+                "onboarding_completed": gym_account.onboarding_completed,
+                "message": "Cuenta desconectada - sin acceso a Stripe",
+                "action_required": (
+                    "Reconectar usando POST /api/v1/stripe-connect/accounts/onboarding-link. "
+                    "La cuenta Standard fue desconectada desde Stripe Dashboard. "
+                    "El administrador debe autorizar nuevamente el acceso."
+                ),
+                "can_reconnect": True,
+                "disconnect_reason": "Standard account desautorizada o eliminada"
             }
 
     except Exception as e:
