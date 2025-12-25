@@ -184,15 +184,34 @@ class StripeConnectService:
                 return_url=return_url,
                 type="account_onboarding"
             )
-            
+
             # Actualizar información en BD
             gym_account.onboarding_url = account_link.url
             gym_account.onboarding_expires_at = datetime.utcnow() + timedelta(hours=1)  # Expira en 1 hora
             db.commit()
-            
+
             logger.info(f"Link de onboarding creado para gym {gym_id}")
             return account_link.url
-            
+
+        except stripe.error.InvalidRequestError as e:
+            error_msg = str(e)
+
+            # Detectar cuenta desconectada (Standard Accounts que revocaron acceso)
+            if "not connected to your platform" in error_msg.lower() or "does not exist" in error_msg.lower():
+                logger.warning(
+                    f"Cuenta {gym_account.stripe_account_id} está desconectada y NO se puede reconectar. "
+                    f"Gym {gym_id} necesita crear nueva cuenta."
+                )
+                raise ValueError(
+                    "Esta cuenta Standard fue desconectada y NO puede ser reconectada. "
+                    "Las cuentas Standard tienen control total y pueden revocar el acceso permanentemente. "
+                    "Debe crear una nueva cuenta de Stripe Connect usando POST /api/v1/stripe-connect/accounts."
+                )
+
+            # Otros errores de InvalidRequest
+            logger.error(f"Error de Stripe (InvalidRequest) al crear link para gym {gym_id}: {error_msg}")
+            raise ValueError(f"Error al crear link de onboarding: {error_msg}")
+
         except stripe.error.StripeError as e:
             logger.error(f"Error de Stripe al crear link de onboarding para gym {gym_id}: {str(e)}")
             raise ValueError(f"Error al crear link de onboarding: {str(e)}")

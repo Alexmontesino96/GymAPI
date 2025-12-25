@@ -205,6 +205,17 @@ async def create_onboarding_link(
                     "Use GET /api/v1/stripe-connect/accounts/connection-status para verificar el estado."
                 )
             )
+
+        # VALIDACIÓN CRÍTICA: Standard Accounts desconectadas NO se pueden reconectar
+        if not gym_account.is_active and gym_account.account_type == "standard":
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Esta cuenta Standard fue desconectada y NO puede ser reconectada. "
+                    "Las cuentas Standard tienen control total y pueden revocar el acceso permanentemente. "
+                    "Debe crear una nueva cuenta usando POST /api/v1/stripe-connect/accounts."
+                )
+            )
         
         # Crear link de onboarding
         onboarding_url = await stripe_connect_service.create_onboarding_link(
@@ -308,19 +319,35 @@ async def get_connection_status(
             }
 
         if not gym_account.is_active:
-            # Cuenta existe pero está desconectada - necesita RECONECTAR
+            # Cuenta existe pero está desconectada
+            # Para Standard Accounts, verificar si se puede reconectar o no
+            can_reconnect = False
+            action_message = ""
+
+            if gym_account.account_type == "standard":
+                # Standard Accounts que revocan acceso NO se pueden reconectar
+                action_message = (
+                    "Esta cuenta Standard fue desconectada y NO puede ser reconectada. "
+                    "Las cuentas Standard pueden revocar el acceso permanentemente. "
+                    "Debe crear una nueva cuenta usando POST /api/v1/stripe-connect/accounts."
+                )
+                can_reconnect = False
+            else:
+                # Express/Custom accounts pueden reconectarse
+                action_message = (
+                    "Reconectar usando POST /api/v1/stripe-connect/accounts/onboarding-link. "
+                    "Esta cuenta fue configurada previamente pero está inactiva."
+                )
+                can_reconnect = True
+
             return {
                 "connected": False,
                 "account_id": gym_account.stripe_account_id,
                 "account_type": gym_account.account_type,
                 "onboarding_completed": gym_account.onboarding_completed,
-                "message": "Cuenta desconectada - requiere reconexión",
-                "action_required": (
-                    "Reconectar usando POST /api/v1/stripe-connect/accounts/onboarding-link. "
-                    "Esta cuenta fue configurada previamente pero está desconectada. "
-                    "El administrador debe completar el proceso de reconexión en Stripe."
-                ),
-                "can_reconnect": True
+                "message": f"Cuenta {gym_account.account_type} desconectada",
+                "action_required": action_message,
+                "can_reconnect": can_reconnect
             }
 
         # Verificar en Stripe si la cuenta sigue existiendo y accesible
@@ -354,20 +381,36 @@ async def get_connection_status(
                 f"Marcada como inactiva (gym {current_gym.id})"
             )
 
-            return {
-                "connected": False,
-                "account_id": gym_account.stripe_account_id,
-                "account_type": gym_account.account_type,
-                "onboarding_completed": gym_account.onboarding_completed,
-                "message": "Cuenta desconectada - sin acceso a Stripe",
-                "action_required": (
-                    "Reconectar usando POST /api/v1/stripe-connect/accounts/onboarding-link. "
-                    "La cuenta Standard fue desconectada desde Stripe Dashboard. "
-                    "El administrador debe autorizar nuevamente el acceso."
-                ),
-                "can_reconnect": True,
-                "disconnect_reason": "Standard account desautorizada o eliminada"
-            }
+            # Para Standard Accounts desconectadas, NO se puede reconectar
+            if gym_account.account_type == "standard":
+                return {
+                    "connected": False,
+                    "account_id": gym_account.stripe_account_id,
+                    "account_type": gym_account.account_type,
+                    "onboarding_completed": gym_account.onboarding_completed,
+                    "message": "Cuenta Standard desconectada - sin acceso",
+                    "action_required": (
+                        "Esta cuenta Standard fue desconectada y NO puede ser reconectada. "
+                        "Las cuentas Standard pueden revocar el acceso permanentemente desde su Stripe Dashboard. "
+                        "Debe crear una nueva cuenta usando POST /api/v1/stripe-connect/accounts."
+                    ),
+                    "can_reconnect": False,
+                    "disconnect_reason": "Standard account desautorizada o eliminada"
+                }
+            else:
+                # Express/Custom accounts pueden reconectarse
+                return {
+                    "connected": False,
+                    "account_id": gym_account.stripe_account_id,
+                    "account_type": gym_account.account_type,
+                    "onboarding_completed": gym_account.onboarding_completed,
+                    "message": "Cuenta desconectada - sin acceso a Stripe",
+                    "action_required": (
+                        "Reconectar usando POST /api/v1/stripe-connect/accounts/onboarding-link."
+                    ),
+                    "can_reconnect": True,
+                    "disconnect_reason": "Cuenta desautorizada o inactiva"
+                }
 
     except Exception as e:
         logger.error(f"Error verificando conexión de Stripe: {str(e)}")
