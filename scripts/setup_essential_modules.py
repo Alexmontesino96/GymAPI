@@ -74,7 +74,7 @@ def setup_essential_modules():
             "code": "surveys",
             "name": "Encuestas y Feedback",
             "description": "Sistema de encuestas para recopilar feedback de miembros",
-            "is_premium": False
+            "is_premium": True
         },
         {
             "code": "equipment",
@@ -104,13 +104,19 @@ def setup_essential_modules():
             "code": "stories",
             "name": "Historias",
             "description": "Historias estilo Instagram (24h)",
-            "is_premium": False
+            "is_premium": True
         },
         {
             "code": "posts",
             "name": "Publicaciones",
             "description": "Feed social del gimnasio",
-            "is_premium": False
+            "is_premium": True
+        },
+        {
+            "code": "activity_feed",
+            "name": "Feed de Actividades",
+            "description": "Feed en tiempo real de actividades del gimnasio",
+            "is_premium": True
         },
         {
             "code": "attendance",

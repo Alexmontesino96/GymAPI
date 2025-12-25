@@ -65,11 +65,22 @@ class EventPaymentService:
 
         # Verificar cuenta de Stripe Connect
         stripe_account = db.query(GymStripeAccount).filter(
-            GymStripeAccount.gym_id == gym_id
+            GymStripeAccount.gym_id == gym_id,
+            GymStripeAccount.is_active == True
         ).first()
 
-        if not stripe_account or not stripe_account.charges_enabled:
-            logger.warning(f"Cuenta Stripe no configurada o no habilitada para gym {gym_id}")
+        if not stripe_account:
+            logger.warning(
+                f"Cuenta Stripe no configurada o inactiva para gym {gym_id}. "
+                f"Use GET /api/v1/stripe-connect/accounts/connection-status para verificar."
+            )
+            return False
+
+        if not stripe_account.charges_enabled:
+            logger.warning(
+                f"Cuenta Stripe no habilitada para cargos en gym {gym_id}. "
+                f"Onboarding completado: {stripe_account.onboarding_completed}"
+            )
             return False
 
         return True
@@ -104,8 +115,15 @@ class EventPaymentService:
 
             # Obtener cuenta de Stripe Connect del gym
             stripe_account = db.query(GymStripeAccount).filter(
-                GymStripeAccount.gym_id == gym_id
+                GymStripeAccount.gym_id == gym_id,
+                GymStripeAccount.is_active == True
             ).first()
+
+            if not stripe_account:
+                raise ValueError(
+                    "Cuenta de Stripe no configurada o inactiva. "
+                    "Contacte al administrador."
+                )
 
             logger.info(
                 f"[Stripe Account] Usando cuenta de Stripe Connect del gym {gym_id}: "
@@ -145,6 +163,26 @@ class EventPaymentService:
                 "currency": event.currency
             }
 
+        except stripe.error.PermissionError as e:
+            # Cuenta desautorizada o inactiva
+            logger.error(
+                f"Cuenta de Stripe desconectada o sin permisos: {e}. "
+                f"Gym {gym_id}, Account: {stripe_account.stripe_account_id if stripe_account else 'N/A'}. "
+                f"Verifique /api/v1/stripe-connect/accounts/connection-status"
+            )
+            raise ValueError(
+                "La cuenta de Stripe del gimnasio está desconectada o sin permisos. "
+                "Contacte al administrador para reconectar la cuenta usando "
+                "/api/v1/stripe-connect/accounts/connection-status"
+            )
+        except stripe.error.InvalidRequestError as e:
+            if "account" in str(e).lower():
+                logger.error(f"Cuenta de Stripe inválida para gym {gym_id}: {e}")
+                raise ValueError(
+                    "La cuenta de Stripe del gimnasio no está disponible o es inválida. "
+                    "Contacte al administrador. Error: " + str(e)
+                )
+            raise
         except stripe.error.StripeError as e:
             logger.error(f"Error de Stripe creando Payment Intent: {e}")
             raise ValueError(f"Error procesando pago: {str(e)}")
@@ -179,11 +217,15 @@ class EventPaymentService:
         try:
             # Obtener cuenta de Stripe Connect
             stripe_account = db.query(GymStripeAccount).filter(
-                GymStripeAccount.gym_id == gym_id
+                GymStripeAccount.gym_id == gym_id,
+                GymStripeAccount.is_active == True
             ).first()
 
             if not stripe_account:
-                raise ValueError("Cuenta de Stripe no configurada")
+                raise ValueError(
+                    "Cuenta de Stripe no configurada o inactiva. "
+                    "Verifique el estado con GET /api/v1/stripe-connect/accounts/connection-status"
+                )
 
             logger.info(
                 f"[Stripe Account] Verificando Payment Intent para gym {gym_id} "
@@ -398,11 +440,15 @@ class EventPaymentService:
             # Obtener datos necesarios
             event = db.query(Event).filter(Event.id == participation.event_id).first()
             stripe_account = db.query(GymStripeAccount).filter(
-                GymStripeAccount.gym_id == participation.gym_id
+                GymStripeAccount.gym_id == participation.gym_id,
+                GymStripeAccount.is_active == True
             ).first()
 
             if not stripe_account:
-                raise ValueError("Cuenta de Stripe no configurada")
+                raise ValueError(
+                    "Cuenta de Stripe no configurada o inactiva. "
+                    "Contacte al administrador del gimnasio."
+                )
 
             # ========================================
             # NIVEL 1: POLLING - Esperar que webhook actualice
@@ -690,8 +736,15 @@ class EventPaymentService:
 
             # Procesar reembolso en Stripe
             stripe_account = db.query(GymStripeAccount).filter(
-                GymStripeAccount.gym_id == event.gym_id
+                GymStripeAccount.gym_id == event.gym_id,
+                GymStripeAccount.is_active == True
             ).first()
+
+            if not stripe_account:
+                raise ValueError(
+                    "Cuenta de Stripe no configurada o inactiva. "
+                    "No se puede procesar el reembolso."
+                )
 
             refund = stripe.Refund.create(
                 payment_intent=participation.stripe_payment_intent_id,
@@ -972,11 +1025,15 @@ class EventPaymentService:
 
             # Obtener cuenta de Stripe del gimnasio
             stripe_account = db.query(GymStripeAccount).filter(
-                GymStripeAccount.gym_id == gym_id
+                GymStripeAccount.gym_id == gym_id,
+                GymStripeAccount.is_active == True
             ).first()
 
             if not stripe_account and event.is_paid:
-                raise ValueError("No se encontró cuenta de Stripe para el gimnasio")
+                raise ValueError(
+                    "No se encontró cuenta de Stripe activa para el gimnasio. "
+                    "Verifique la configuración de Stripe Connect."
+                )
 
             # Obtener todas las participaciones activas del evento
             participations = db.query(EventParticipation).filter(
