@@ -21,6 +21,7 @@ import logging # Import logging
 from app.db.session import get_db
 from app.core.auth0_fastapi import get_current_user, Auth0User, auth
 from app.core.config import get_settings
+from app.core.dependencies import module_enabled
 from app.core.tenant import verify_gym_admin_access, verify_gym_access, verify_gym_trainer_access, get_current_gym, get_tenant_id
 from app.schemas.gym import GymSchema
 from app.models.user_gym import UserGym, GymRoleType
@@ -42,7 +43,7 @@ from app.models.user import User
 from app.models.chat import ChatRoom as ChatRoomModel, ChatRoomStatus
 from app.models.event import Event
 
-router = APIRouter()
+router = APIRouter(dependencies=[module_enabled("chat")])
 logger = logging.getLogger("chat_api") # Initialize logger at the module level
 
 @router.get("/token", response_model=StreamTokenResponse)

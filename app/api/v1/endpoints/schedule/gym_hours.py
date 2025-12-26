@@ -16,11 +16,12 @@ from app.schemas.schedule import (
     DailyScheduleResponse
 )
 from app.services import schedule
+from app.core.dependencies import module_enabled
 from app.models.user import User, UserRole
 from app.models.user_gym import UserGym, GymRoleType
 from app.db.redis_client import get_redis_client
 from redis import Redis
-router = APIRouter()
+router = APIRouter(dependencies=[module_enabled("schedule")])
 
 @router.get("/regular", response_model=List[GymHours])
 async def get_all_gym_hours(

@@ -656,7 +656,7 @@ async def get_stripe_dashboard(
             "needs_onboarding": gym_account and not gym_account.onboarding_completed,
             "ready_for_payments": gym_account and gym_account.onboarding_completed and gym_account.charges_enabled
         }
-        
+
     except Exception as e:
         logger.error(f"Error obteniendo dashboard de Stripe: {str(e)}")
         raise HTTPException(status_code=500, detail="Error interno del servidor") 

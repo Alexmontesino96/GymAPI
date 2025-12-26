@@ -14,6 +14,7 @@ from redis.asyncio import Redis
 from app.db.session import get_db
 from app.db.redis_client import get_redis_client
 from app.core.auth0_fastapi import get_current_user, Auth0User, auth
+from app.core.dependencies import module_enabled
 from app.core.tenant import verify_gym_access, GymSchema
 from app.models.user import User
 from app.models.survey import SurveyStatus
@@ -37,7 +38,7 @@ import logging
 
 logger = logging.getLogger("surveys_api")
 
-router = APIRouter()
+router = APIRouter(dependencies=[module_enabled("surveys")])
 
 
 # ============= Public Survey Endpoints (for users) =============

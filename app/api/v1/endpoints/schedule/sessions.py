@@ -1,12 +1,13 @@
 from app.api.v1.endpoints.schedule.common import *
 from app.core.tenant import verify_gym_access
+from app.core.dependencies import module_enabled
 from app.models.gym import Gym
 from app.models.user import UserRole
 from app.models.user_gym import GymRoleType
 from app.services.gym import gym_service
 from app.schemas.schedule import ClassSessionWithTimezone, format_session_with_timezone, SessionWithClassAndTimezone, format_session_with_class_and_timezone
 
-router = APIRouter()
+router = APIRouter(dependencies=[module_enabled("schedule")])
 
 @router.get("/sessions", response_model=List[SessionWithClass])
 async def get_upcoming_sessions(

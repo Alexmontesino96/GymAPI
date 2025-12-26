@@ -25,6 +25,7 @@ from app.db.redis_client import get_redis_client
 from app.core.auth0_fastapi import get_current_user, get_current_user_with_permissions, Auth0User, auth
 from app.core.tenant import verify_gym_access, get_current_gym, GymSchema
 from app.core.tenant_cache import verify_gym_access_cached
+from app.core.dependencies import module_enabled
 from app.models.gym import Gym
 from app.schemas.event import (
     Event as EventSchema,
@@ -58,7 +59,7 @@ from app.services import sqs_service, queue_service
 
 logger = logging.getLogger("events_api")
 
-router = APIRouter()
+router = APIRouter(dependencies=[module_enabled("events")])
 
 # Constante para el tipo de acción SQS
 CREATE_EVENT_CHAT = "create_event_chat"

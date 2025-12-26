@@ -1,10 +1,11 @@
 from app.api.v1.endpoints.schedule.common import *
 from app.core.tenant import verify_gym_access
+from app.core.dependencies import module_enabled
 from app.models.gym import Gym
 from app.db.redis_client import get_redis_client
 from redis.asyncio import Redis
 
-router = APIRouter()
+router = APIRouter(dependencies=[module_enabled("schedule")])
 
 @router.get("/classes", response_model=List[Class])
 async def get_classes(

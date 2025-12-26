@@ -438,35 +438,45 @@ def init_scheduler():
             check_daily_achievements_job
         )
 
-        # Recordatorios de comidas - ejecutar cada hora para TODOS los gimnasios
-        # El job itera sobre todos los gyms con nutrición activa
+        # Recordatorios de comidas - ejecutar cada 30 minutos con soporte de timezone
+        # IMPORTANTE: Ahora el job maneja timezone correctamente, ejecutando solo
+        # para gyms cuya hora local coincide con el scheduled_time
+        #
+        # Estrategia: Ejecutar cada 30 min y verificar todas las horas posibles
+        # Esto permite que usuarios configuren horarios como 08:30, 13:30, etc.
 
-        # Desayuno - típicamente entre 6-10 AM
-        for hour in [6, 7, 8, 9, 10]:
-            _scheduler.add_job(
-                lambda h=hour: send_meal_reminders_all_gyms_job("breakfast", f"{h:02d}:00"),
-                trigger=CronTrigger(hour=hour, minute=0),
-                id=f'nutrition_breakfast_{hour:02d}00',
-                replace_existing=True
-            )
+        # Helper function para ejecutar recordatorios con timezone awareness
+        def check_and_send_meal_reminders():
+            """
+            Verifica la hora actual y envía recordatorios para los horarios correspondientes.
+            Se ejecuta cada 30 minutos y maneja timezone automáticamente.
+            """
+            from datetime import datetime
+            current_hour = datetime.utcnow().hour
+            current_minute = datetime.utcnow().minute
 
-        # Almuerzo - típicamente entre 12-15 PM
-        for hour in [12, 13, 14, 15]:
-            _scheduler.add_job(
-                lambda h=hour: send_meal_reminders_all_gyms_job("lunch", f"{h:02d}:00"),
-                trigger=CronTrigger(hour=hour, minute=0),
-                id=f'nutrition_lunch_{hour:02d}00',
-                replace_existing=True
-            )
+            # Generar scheduled_time basado en hora UTC actual
+            scheduled_time = f"{current_hour:02d}:{current_minute:02d}"
 
-        # Cena - típicamente entre 19-22 PM
-        for hour in [19, 20, 21, 22]:
-            _scheduler.add_job(
-                lambda h=hour: send_meal_reminders_all_gyms_job("dinner", f"{h:02d}:00"),
-                trigger=CronTrigger(hour=hour, minute=0),
-                id=f'nutrition_dinner_{hour:02d}00',
-                replace_existing=True
-            )
+            # Desayuno - ejecutar entre 6-10 AM UTC (cualquier minuto)
+            if 6 <= current_hour <= 10:
+                send_meal_reminders_all_gyms_job("breakfast", scheduled_time)
+
+            # Almuerzo - ejecutar entre 12-15 PM UTC (cualquier minuto)
+            elif 12 <= current_hour <= 15:
+                send_meal_reminders_all_gyms_job("lunch", scheduled_time)
+
+            # Cena - ejecutar entre 19-22 PM UTC (cualquier minuto)
+            elif 19 <= current_hour <= 22:
+                send_meal_reminders_all_gyms_job("dinner", scheduled_time)
+
+        # Ejecutar cada 30 minutos (minute 0 y 30)
+        _scheduler.add_job(
+            check_and_send_meal_reminders,
+            trigger=CronTrigger(minute='0,30'),
+            id='nutrition_meal_reminders_timezone_aware',
+            replace_existing=True
+        )
 
         # Verificar estado de planes live - ejecutar diariamente a las 6 AM UTC
         _scheduler.add_job(

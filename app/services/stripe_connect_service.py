@@ -174,8 +174,9 @@ class StripeConnectService:
             
             # URLs por defecto
             base_url = settings.FRONTEND_URL or settings.BASE_URL
-            refresh_url = refresh_url or f"{base_url}/admin/stripe/reauth"
-            return_url = return_url or f"{base_url}/admin/stripe/return"
+            # Incluir gym_id en ambas URLs para identificar la cuenta
+            refresh_url = refresh_url or f"{base_url}/admin/stripe/reauth?gym_id={gym_id}"
+            return_url = return_url or f"{base_url}/admin/stripe/return?gym_id={gym_id}&status=completed"
             
             # Crear link de onboarding
             account_link = stripe.AccountLink.create(

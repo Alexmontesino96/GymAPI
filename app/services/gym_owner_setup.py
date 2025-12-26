@@ -283,9 +283,14 @@ class GymOwnerSetupService:
                 ("chat", "Mensajería", True),
                 ("billing", "Pagos y Facturación", True),
                 ("health", "Tracking de Salud", True),
-                ("nutrition", "Planes Nutricionales", True),
-                ("surveys", "Encuestas y Feedback", True),
                 ("equipment", "Gestión de Equipos", True),
+                ("classes", "Clases Grupales", True),
+                ("attendance", "Asistencia", True),
+                # Módulos premium - desactivados por defecto
+                ("nutrition", "Planes Nutricionales", False),
+                ("surveys", "Encuestas y Feedback", False),
+                ("stories", "Historias", False),
+                ("posts", "Publicaciones", False),
             ]
         else:  # personal_trainer
             # Módulos para entrenadores personales
@@ -297,8 +302,11 @@ class GymOwnerSetupService:
                 ("billing", "Pagos y Facturación", True),
                 ("appointments", "Agenda de Citas", True),
                 ("progress", "Progreso de Clientes", True),
-                ("surveys", "Encuestas y Feedback", True),
-                # Módulos desactivados para entrenadores
+                # Módulos premium - desactivados por defecto
+                ("surveys", "Encuestas y Feedback", False),
+                ("stories", "Historias", False),
+                ("posts", "Publicaciones", False),
+                # Módulos no aplicables para entrenadores
                 ("equipment", "Gestión de Equipos", False),
                 ("classes", "Clases Grupales", False),
                 ("schedule", "Horarios del Gimnasio", False),

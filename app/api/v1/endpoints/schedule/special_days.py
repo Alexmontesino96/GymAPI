@@ -5,11 +5,12 @@ from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.core.auth0_fastapi import auth, get_current_user, Auth0User
+from app.core.dependencies import module_enabled
 from app.models.gym import Gym
 from app.core.tenant import verify_gym_access
 from app.schemas.schedule import (
-    GymSpecialHours, 
-    GymSpecialHoursCreate, 
+    GymSpecialHours,
+    GymSpecialHoursCreate,
     GymSpecialHoursUpdate
 )
 from app.services import schedule
@@ -18,7 +19,7 @@ from app.models.user_gym import UserGym, GymRoleType
 from app.db.redis_client import get_redis_client
 from redis.asyncio import Redis
 
-router = APIRouter()
+router = APIRouter(dependencies=[module_enabled("schedule")])
 
 
 @router.get("/", response_model=List[GymSpecialHours])

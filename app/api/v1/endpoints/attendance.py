@@ -5,6 +5,7 @@ from pydantic import BaseModel
 
 from app.db.session import get_db
 from app.core.auth0_fastapi import Auth0User, auth
+from app.core.dependencies import module_enabled
 from app.core.tenant import verify_gym_access
 from app.models.gym import Gym
 from app.services.attendance import attendance_service
@@ -12,7 +13,7 @@ from app.services.user import user_service
 from app.db.redis_client import get_redis_client
 from redis.asyncio import Redis
 
-router = APIRouter()
+router = APIRouter(dependencies=[module_enabled("attendance")])
 
 class QRCheckInRequest(BaseModel):
     qr_code: str

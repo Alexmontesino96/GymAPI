@@ -299,8 +299,11 @@ class TrainerSetupService:
             ("billing", "Pagos y Facturación", True),
             ("appointments", "Agenda de Citas", True),
             ("progress", "Progreso de Clientes", True),
-            ("surveys", "Encuestas y Feedback", True),
-            # Módulos desactivados para entrenadores
+            # Módulos premium - desactivados por defecto
+            ("surveys", "Encuestas y Feedback", False),
+            ("stories", "Historias", False),
+            ("posts", "Publicaciones", False),
+            # Módulos no aplicables para entrenadores
             ("equipment", "Gestión de Equipos", False),
             ("classes", "Clases Grupales", False),
             ("schedule", "Horarios del Gimnasio", False)

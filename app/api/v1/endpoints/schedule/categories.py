@@ -1,4 +1,5 @@
 from app.api.v1.endpoints.schedule.common import *
+from app.core.dependencies import module_enabled
 from app.models.schedule import ClassCategoryCustom, Class
 from app.schemas.schedule import ClassCategoryCustomCreate, ClassCategoryCustomUpdate, ClassCategoryCustom as ClassCategoryCustomSchema
 from app.models.gym import Gym
@@ -13,7 +14,7 @@ from app.services.user import user_service
 from app.db.redis_client import get_redis_client
 from redis.asyncio import Redis
 
-router = APIRouter()
+router = APIRouter(dependencies=[module_enabled("schedule")])
 
 @router.get("/categories", response_model=List[ClassCategoryCustomSchema])
 async def get_categories(

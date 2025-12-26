@@ -1,5 +1,6 @@
 from app.api.v1.endpoints.schedule.common import *
 from app.core.tenant import verify_gym_access
+from app.core.dependencies import module_enabled
 from app.models.gym import Gym
 from typing import Optional, Dict, Any, List
 from datetime import datetime, date, timezone
@@ -8,7 +9,7 @@ from pydantic import BaseModel
 # Importar los esquemas necesarios
 from app.schemas.schedule import (
     ClassParticipation as ClassParticipationSchema,
-    ParticipationWithSessionInfo, 
+    ParticipationWithSessionInfo,
     format_participation_with_session_info,
     Class as ClassSchema,
     ClassSession as ClassSessionSchema
@@ -20,7 +21,7 @@ from app.models.user import User
 from app.models.user_gym import UserGym as Member
 from app.services.schedule import ClassParticipationService
 
-router = APIRouter()
+router = APIRouter(dependencies=[module_enabled("schedule")])
 
 @router.post("/register/{session_id}", response_model=ClassParticipationSchema)
 async def register_for_class(
