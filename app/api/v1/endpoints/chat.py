@@ -43,7 +43,7 @@ from app.models.user import User
 from app.models.chat import ChatRoom as ChatRoomModel, ChatRoomStatus
 from app.models.event import Event
 
-router = APIRouter(dependencies=[module_enabled("chat")])
+router = APIRouter()
 logger = logging.getLogger("chat_api") # Initialize logger at the module level
 
 @router.get("/token", response_model=StreamTokenResponse)

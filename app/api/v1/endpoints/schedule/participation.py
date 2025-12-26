@@ -21,7 +21,7 @@ from app.models.user import User
 from app.models.user_gym import UserGym as Member
 from app.services.schedule import ClassParticipationService
 
-router = APIRouter(dependencies=[module_enabled("schedule")])
+router = APIRouter()
 
 @router.post("/register/{session_id}", response_model=ClassParticipationSchema)
 async def register_for_class(

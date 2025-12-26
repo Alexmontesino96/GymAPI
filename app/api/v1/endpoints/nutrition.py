@@ -34,7 +34,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(dependencies=[module_enabled("nutrition")])
+router = APIRouter()
 
 
 @router.get("/plans", response_model=NutritionPlanListResponse)

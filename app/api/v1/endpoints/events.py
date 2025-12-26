@@ -59,7 +59,7 @@ from app.services import sqs_service, queue_service
 
 logger = logging.getLogger("events_api")
 
-router = APIRouter(dependencies=[module_enabled("events")])
+router = APIRouter()
 
 # Constante para el tipo de acción SQS
 CREATE_EVENT_CHAT = "create_event_chat"

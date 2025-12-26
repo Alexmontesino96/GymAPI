@@ -7,7 +7,7 @@ from app.models.user_gym import GymRoleType
 from app.services.gym import gym_service
 from app.schemas.schedule import ClassSessionWithTimezone, format_session_with_timezone, SessionWithClassAndTimezone, format_session_with_class_and_timezone
 
-router = APIRouter(dependencies=[module_enabled("schedule")])
+router = APIRouter()
 
 @router.get("/sessions", response_model=List[SessionWithClass])
 async def get_upcoming_sessions(

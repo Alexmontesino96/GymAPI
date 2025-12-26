@@ -19,7 +19,7 @@ from app.models.user_gym import UserGym, GymRoleType
 from app.db.redis_client import get_redis_client
 from redis.asyncio import Redis
 
-router = APIRouter(dependencies=[module_enabled("schedule")])
+router = APIRouter()
 
 
 @router.get("/", response_model=List[GymSpecialHours])

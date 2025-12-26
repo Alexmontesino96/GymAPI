@@ -14,7 +14,7 @@ from app.services.user import user_service
 from app.db.redis_client import get_redis_client
 from redis.asyncio import Redis
 
-router = APIRouter(dependencies=[module_enabled("schedule")])
+router = APIRouter()
 
 @router.get("/categories", response_model=List[ClassCategoryCustomSchema])
 async def get_categories(

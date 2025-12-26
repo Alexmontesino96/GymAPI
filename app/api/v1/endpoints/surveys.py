@@ -38,7 +38,7 @@ import logging
 
 logger = logging.getLogger("surveys_api")
 
-router = APIRouter(dependencies=[module_enabled("surveys")])
+router = APIRouter()
 
 
 # ============= Public Survey Endpoints (for users) =============

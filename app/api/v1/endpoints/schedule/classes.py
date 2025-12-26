@@ -5,7 +5,7 @@ from app.models.gym import Gym
 from app.db.redis_client import get_redis_client
 from redis.asyncio import Redis
 
-router = APIRouter(dependencies=[module_enabled("schedule")])
+router = APIRouter()
 
 @router.get("/classes", response_model=List[Class])
 async def get_classes(

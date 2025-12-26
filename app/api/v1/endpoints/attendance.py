@@ -13,7 +13,7 @@ from app.services.user import user_service
 from app.db.redis_client import get_redis_client
 from redis.asyncio import Redis
 
-router = APIRouter(dependencies=[module_enabled("attendance")])
+router = APIRouter()
 
 class QRCheckInRequest(BaseModel):
     qr_code: str
