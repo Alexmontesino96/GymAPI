@@ -31,8 +31,9 @@ from app.services.user import user_service
 from app.db.session import get_db
 from app.models.gym import Gym 
 from app.core.profiling import register_cache_hit, register_cache_miss, time_db_query, time_redis_operation
-from app.core.auth0_fastapi import get_current_user
+from app.core.auth0_fastapi import auth, Auth0User, Auth0UnauthenticatedException
 from fastapi import Security
+from fastapi.security import SecurityScopes
 
 
 logger = logging.getLogger("tenant_auth_middleware")
@@ -113,22 +114,47 @@ class TenantAuthMiddleware(BaseHTTPMiddleware):
         # 3. Autenticación: verificar token y obtener usuario
         auth0_id = None
         user = None
-        
+
         if not any(path.startswith(exempt) for exempt in AUTH_EXEMPT_PATHS):
             try:
-                # Usar la función de autenticación existente
-                user = await get_current_user(
-                    db=db,
-                    user=Security(auth.get_user, scopes=[]),
-                    redis_client=redis_client
-                )
+                # Obtener el token del header Authorization
+                auth_header = request.headers.get("Authorization", "")
+                if not auth_header or not auth_header.startswith("Bearer "):
+                    logger.warning(f"Acceso a {path} denegado: Token no encontrado o formato inválido")
+                    return Response(
+                        content=json.dumps({"detail": "Token de autenticación requerido"}),
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        media_type="application/json"
+                    )
 
-                auth0_id = user.id if user else None
-                
-            except Exception as e:
-                logger.error(f"Error de autenticación en middleware: {str(e)}")
+                # Validar el token con Auth0
+                token = auth_header[7:]  # Quitar "Bearer " del inicio
+                security_scopes = SecurityScopes(scopes=[])
+
+                # Usar el método get_user de auth directamente
+                auth0_user = await auth.get_user(security_scopes, token=token)
+
+                if auth0_user is None:
+                    logger.warning(f"Acceso a {path} denegado: Token inválido")
+                    return Response(
+                        content=json.dumps({"detail": "Token de autenticación inválido"}),
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        media_type="application/json"
+                    )
+
+                auth0_id = auth0_user.id
+
+            except Auth0UnauthenticatedException as e:
+                logger.warning(f"Error de autenticación en middleware: {str(e)}")
                 return Response(
-                    content=json.dumps({"detail": "Token de autenticación inválido"}),
+                    content=json.dumps({"detail": str(e.detail)}),
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    media_type="application/json"
+                )
+            except Exception as e:
+                logger.error(f"Error de autenticación en middleware: {str(e)}", exc_info=True)
+                return Response(
+                    content=json.dumps({"detail": "Error al validar token de autenticación"}),
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     media_type="application/json"
                 )
@@ -150,6 +176,10 @@ class TenantAuthMiddleware(BaseHTTPMiddleware):
                 
                 # Precargamos el usuario en todos los casos para evitar llamadas duplicadas
                 user = await user_service.get_user_by_auth0_id_cached(db, auth0_id, redis_client)
+
+                # Guardamos el usuario en request.state de inmediato para endpoints que no requieren gym
+                if user and not requires_gym:
+                    request.state.user = user
                 
                 if requires_gym and gym_id is not None:
                     # Necesitamos verificar acceso al gimnasio
@@ -171,13 +201,10 @@ class TenantAuthMiddleware(BaseHTTPMiddleware):
                             media_type="application/json"
                         )
                 else:
-                    # Solo se necesita el usuario (sin gimnasio)
-                    if user:
-                        request.state.user = user
-                    else:
+                    # Solo se necesita el usuario (sin gimnasio) - ya fue asignado arriba
+                    if not user:
                         logger.warning(f"Usuario autenticado {auth0_id} no encontrado en DB local")
-                        # Permitir continuar o devolver error? Depende del caso de uso.
-                        # Por ahora, permitimos continuar pero sin usuario en state.
+                        # Permitir continuar sin usuario en state para evitar romper flujos de creación inicial
                         pass
                 
                 # Trackear acceso a la app si tenemos usuario y gimnasio
