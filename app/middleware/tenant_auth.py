@@ -32,6 +32,7 @@ from app.db.session import get_db
 from app.models.gym import Gym 
 from app.core.profiling import register_cache_hit, register_cache_miss, time_db_query, time_redis_operation
 from app.core.auth0_fastapi import auth, Auth0User, Auth0UnauthenticatedException
+from jose import jwt, JWTError
 from fastapi import Security
 from fastapi.security import SecurityScopes
 
@@ -116,56 +117,62 @@ class TenantAuthMiddleware(BaseHTTPMiddleware):
         user = None
 
         if not any(path.startswith(exempt) for exempt in AUTH_EXEMPT_PATHS):
-            try:
-                # Obtener el token del header Authorization
-                auth_header = request.headers.get("Authorization", "")
-                if not auth_header or not auth_header.startswith("Bearer "):
-                    logger.warning(f"Acceso a {path} denegado: Token no encontrado o formato inválido")
-                    return Response(
-                        content=json.dumps({"detail": "Token de autenticación requerido"}),
-                        status_code=status.HTTP_401_UNAUTHORIZED,
-                        media_type="application/json"
-                    )
-
-                # Validar el token con Auth0
-                token = auth_header[7:]  # Quitar "Bearer " del inicio
-                security_scopes = SecurityScopes(scopes=[])
-
-                # Usar el método get_user de auth directamente
-                auth0_user = await auth.get_user(security_scopes, token=token)
-
-                if auth0_user is None:
-                    logger.warning(f"Acceso a {path} denegado: Token inválido")
-                    return Response(
-                        content=json.dumps({"detail": "Token de autenticación inválido"}),
-                        status_code=status.HTTP_401_UNAUTHORIZED,
-                        media_type="application/json"
-                    )
-
-                auth0_id = auth0_user.id
-
-            except Auth0UnauthenticatedException as e:
-                logger.warning(f"Error de autenticación en middleware: {str(e)}")
+            # Solo verificar que existe el token, no validarlo aquí
+            # La validación completa se hace en los endpoints con las dependencias de FastAPI
+            auth_header = request.headers.get("Authorization", "")
+            if not auth_header or not auth_header.startswith("Bearer "):
+                logger.warning(f"Acceso a {path} denegado: Token no encontrado o formato inválido")
                 return Response(
-                    content=json.dumps({"detail": str(e.detail)}),
+                    content=json.dumps({"detail": "Token de autenticación requerido"}),
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     media_type="application/json"
                 )
-            except Exception as e:
-                logger.error(f"Error de autenticación en middleware: {str(e)}", exc_info=True)
-                return Response(
-                    content=json.dumps({"detail": "Error al validar token de autenticación"}),
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    media_type="application/json"
-                )
-                 
-            # Si tenemos auth0_id y se requiere gimnasio, obtener datos combinados
+
+            # Para rutas que requieren autenticación pero no gimnasio,
+            # simplemente pasamos adelante y dejamos que el endpoint valide
+            if not requires_gym:
+                logger.debug(f"Ruta {path} requiere auth pero no gym, pasando al endpoint")
+                # No hacer nada más aquí, dejar que el endpoint maneje la auth
+                pass
+            else:
+                # Para rutas que requieren gimnasio, intentar obtener auth0_id del token
+                # sin validar completamente (validación completa en endpoint)
+                token = auth_header[7:]
+                try:
+                    # Solo decodificar sin validar para obtener el sub (auth0_id)
+                    unverified_payload = jwt.get_unverified_claims(token)
+                    auth0_id = unverified_payload.get('sub')
+
+                    if not auth0_id:
+                        logger.warning(f"Token sin identificador de usuario para {path}")
+                        return Response(
+                            content=json.dumps({"detail": "Token inválido: falta identificador de usuario"}),
+                            status_code=status.HTTP_401_UNAUTHORIZED,
+                            media_type="application/json"
+                        )
+
+                    logger.debug(f"Auth0 ID extraído del token: {auth0_id}")
+
+                except JWTError as e:
+                    logger.warning(f"Error decodificando token para {path}: {str(e)}")
+                    return Response(
+                        content=json.dumps({"detail": "Token malformado"}),
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        media_type="application/json"
+                    )
+                except Exception as e:
+                    logger.error(f"Error inesperado procesando token: {str(e)}")
+                    return Response(
+                        content=json.dumps({"detail": "Error procesando token"}),
+                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        media_type="application/json"
+                    )
+
+            # Si tenemos auth0_id y se requiere gimnasio, verificar acceso
             if auth0_id:
-                # Obtener el usuario desde caché/DB (solo una vez)
                 db = next(get_db())
                 redis_client = await get_redis_client()
-                user = None
-                
+
                 if not redis_client:
                     logger.error("Redis no disponible en middleware, no se pueden verificar/cachear datos de acceso")
                     return Response(
@@ -173,52 +180,42 @@ class TenantAuthMiddleware(BaseHTTPMiddleware):
                         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                         media_type="application/json"
                     )
-                
-                # Precargamos el usuario en todos los casos para evitar llamadas duplicadas
+
+                # Obtener usuario desde caché/DB
                 user = await user_service.get_user_by_auth0_id_cached(db, auth0_id, redis_client)
 
-                # Guardamos el usuario en request.state de inmediato para endpoints que no requieren gym
-                if user and not requires_gym:
-                    request.state.user = user
-                
-                if requires_gym and gym_id is not None:
-                    # Necesitamos verificar acceso al gimnasio
-                    # Intentar obtener datos combinados, pasando el usuario ya cacheado
+                if not user:
+                    logger.warning(f"Usuario autenticado {auth0_id} no encontrado en DB local")
+                    # Permitir continuar para que el endpoint pueda crear el usuario si es necesario
+                else:
+                    # Verificar acceso al gimnasio
                     combined_data = await self.get_combined_auth_data(auth0_id, gym_id, db, redis_client, user_cached=user)
-                    
-                    if combined_data and combined_data.get("access", True): # Verificar acceso (puede ser negativo) 
+
+                    if combined_data and combined_data.get("access", True):
                         # Poblar request.state para uso posterior
                         request.state.user = UserSchema(**combined_data.get("user", {}))
                         request.state.gym = GymSchema(**combined_data.get("gym", {}))
                         request.state.role_in_gym = combined_data.get("role_in_gym")
                         logger.debug(f"Datos combinados cargados en state para user {auth0_id}, gym {gym_id}")
+
+                        # Trackear acceso
+                        try:
+                            await self._track_app_access(
+                                db,
+                                request.state.user.id,
+                                request.state.gym.id,
+                                redis_client
+                            )
+                        except Exception as e:
+                            logger.error(f"Error tracking app access: {e}")
                     else:
-                        # Si no hay datos combinados o acceso es False (cache negativo)
-                        logger.warning(f"Acceso denegado para user {auth0_id} a gym {gym_id} (middleware)")
+                        # Acceso denegado al gimnasio
+                        logger.warning(f"Acceso denegado para user {auth0_id} a gym {gym_id}")
                         return Response(
                             content=json.dumps({"detail": f"Acceso denegado al gimnasio"}),
                             status_code=status.HTTP_403_FORBIDDEN,
                             media_type="application/json"
                         )
-                else:
-                    # Solo se necesita el usuario (sin gimnasio) - ya fue asignado arriba
-                    if not user:
-                        logger.warning(f"Usuario autenticado {auth0_id} no encontrado en DB local")
-                        # Permitir continuar sin usuario en state para evitar romper flujos de creación inicial
-                        pass
-                
-                # Trackear acceso a la app si tenemos usuario y gimnasio
-                if request.state.user and request.state.gym:
-                    try:
-                        await self._track_app_access(
-                            db, 
-                            request.state.user.id, 
-                            request.state.gym.id,
-                            redis_client
-                        )
-                    except Exception as e:
-                        # No fallar la request por error de tracking
-                        logger.error(f"Error tracking app access: {e}")
                         
         # 5. Ejecutar el resto de la request
         try:

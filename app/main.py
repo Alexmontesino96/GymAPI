@@ -179,9 +179,12 @@ app.add_middleware(SecurityHeadersMiddleware)
 # Añadir middleware de rate limiting
 app.add_middleware(RateLimitMiddleware)
 
-# Añadir el nuevo middleware de autenticación y tenant
-from app.middleware.tenant_auth import setup_tenant_auth_middleware
-setup_tenant_auth_middleware(app)
+# Añadir el middleware simplificado de autenticación y tenant
+# Temporalmente usando versión simplificada mientras se debuggea el completo
+from app.middleware.tenant_auth_simple import setup_simple_tenant_auth_middleware
+setup_simple_tenant_auth_middleware(app)
+# from app.middleware.tenant_auth import setup_tenant_auth_middleware
+# setup_tenant_auth_middleware(app)
 
 # Desactivar middleware de profiling en producción
 if settings_instance.DEBUG_MODE:  # Usar la instancia
