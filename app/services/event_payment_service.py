@@ -379,7 +379,29 @@ class EventPaymentService:
         ).first()
 
         if stripe_profile:
-            return stripe_profile
+            # Verificar que el customer existe en la cuenta Connect actual
+            try:
+                # Intentar recuperar el customer de la cuenta Connect
+                stripe.Customer.retrieve(
+                    stripe_profile.stripe_customer_id,
+                    stripe_account=stripe_account_id
+                )
+                logger.info(
+                    f"Customer {stripe_profile.stripe_customer_id} válido en cuenta {stripe_account_id}"
+                )
+                return stripe_profile
+            except stripe.error.InvalidRequestError as e:
+                if "No such customer" in str(e):
+                    logger.warning(
+                        f"Customer {stripe_profile.stripe_customer_id} no existe en cuenta "
+                        f"{stripe_account_id}. Creando nuevo customer y actualizando perfil."
+                    )
+                    # El customer no existe en esta cuenta Connect, eliminar el perfil viejo
+                    db.delete(stripe_profile)
+                    db.commit()
+                    # Continuar para crear uno nuevo
+                else:
+                    raise
 
         # Crear nuevo customer en Stripe
         try:

@@ -43,6 +43,7 @@ from app.schemas.event import (
 )
 from app.models.event import EventStatus, EventParticipationStatus, Event, EventParticipation, RefundPolicyType, PaymentStatusType
 from app.models.user import UserRole, User
+from app.models.user_gym import GymRoleType
 from app.models.stripe_profile import GymStripeAccount
 from app.repositories.event import event_repository, event_participation_repository
 import stripe
@@ -1622,10 +1623,14 @@ async def read_event_participations(
     # Verificar permisos de acceso
     internal_user_id = result.user_id
     event_creator_id = result.creator_id
-    
-    # Verificar si es admin o creador del evento
-    if not (is_admin or event_creator_id == internal_user_id):
-        logger.warning(f"Permiso denegado - user_id: {internal_user_id}, creator_id: {event_creator_id}")
+    user_role = result.role
+
+    # Permitir acceso a: admins, trainers, y el creador del evento
+    # Los trainers pueden ver participaciones de todos los eventos del gimnasio
+    is_trainer = user_role in [GymRoleType.TRAINER.value, GymRoleType.OWNER.value]
+
+    if not (is_admin or is_trainer or event_creator_id == internal_user_id):
+        logger.warning(f"Permiso denegado - user_id: {internal_user_id}, creator_id: {event_creator_id}, role: {user_role}")
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You don't have permission to view participants for this event"
