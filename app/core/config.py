@@ -161,7 +161,7 @@ class Settings(BaseSettings):
     ONESIGNAL_REST_API_KEY: Optional[str] = None
 
     # Configuración de OpenAI para IA nutricional
-    OPENAI_API_KEY: str = os.getenv("CHAT_GPT_MODEL", "")
+    OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
     OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
     OPENAI_MAX_TOKENS: int = int(os.getenv("OPENAI_MAX_TOKENS", "1500"))
     OPENAI_TEMPERATURE: float = float(os.getenv("OPENAI_TEMPERATURE", "0.1"))
