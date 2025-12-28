@@ -33,8 +33,8 @@ from app.models.nutrition import (
     DailyNutritionPlan as DailyNutritionPlanModel,
     MealIngredient as MealIngredientModel,
     NutritionPlan as NutritionPlanModel,
-    NutritionPlanFollower,
-    UserMealCompletion
+    NutritionPlanFollower as NutritionPlanFollowerModel,
+    UserMealCompletion as UserMealCompletionModel
 )
 from app.models.user_gym import UserGym, GymRoleType
 from sqlalchemy.orm import joinedload
@@ -2392,11 +2392,10 @@ def get_plan_status(
         # Obtener información de seguimiento del usuario
         follower = None
         if db_user.id != plan.creator_id:
-            from app.models.nutrition import NutritionPlanFollower
-            follower = service.db.query(NutritionPlanFollower).filter(
-                NutritionPlanFollower.plan_id == plan_id,
-                NutritionPlanFollower.user_id == db_user.id,
-                NutritionPlanFollower.is_active == True
+            follower = service.db.query(NutritionPlanFollowerModel).filter(
+                NutritionPlanFollowerModel.plan_id == plan_id,
+                NutritionPlanFollowerModel.user_id == db_user.id,
+                NutritionPlanFollowerModel.is_active == True
             ).first()
         
         # Calcular estado
@@ -2454,14 +2453,12 @@ def get_notification_settings(
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
 
     # Obtener planes activos del usuario
-    from app.models.nutrition import NutritionPlanFollower, NutritionPlan
-
-    active_followers = db.query(NutritionPlanFollower).join(
-        NutritionPlan
+    active_followers = db.query(NutritionPlanFollowerModel).join(
+        NutritionPlanModel
     ).filter(
-        NutritionPlanFollower.user_id == db_user.id,
-        NutritionPlanFollower.is_active == True,
-        NutritionPlan.gym_id == current_gym.id
+        NutritionPlanFollowerModel.user_id == db_user.id,
+        NutritionPlanFollowerModel.is_active == True,
+        NutritionPlanModel.gym_id == current_gym.id
     ).all()
 
     # Si no hay planes activos, devolver configuración por defecto
@@ -2557,24 +2554,23 @@ def update_notification_settings(
                 detail=f"Formato de hora inválido para {meal_type}: {time_str}. Use formato HH:MM"
             )
 
-    from app.models.nutrition import NutritionPlanFollower, NutritionPlan
 
     # Si se especifica un plan, actualizar solo ese
     if plan_id:
         # Verificar que el plan existe y pertenece al gimnasio
-        plan = db.query(NutritionPlan).filter(
-            NutritionPlan.id == plan_id,
-            NutritionPlan.gym_id == current_gym.id
+        plan = db.query(NutritionPlanModel).filter(
+            NutritionPlanModel.id == plan_id,
+            NutritionPlanModel.gym_id == current_gym.id
         ).first()
 
         if not plan:
             raise HTTPException(status_code=404, detail="Plan no encontrado")
 
         # Obtener la relación follower
-        follower = db.query(NutritionPlanFollower).filter(
-            NutritionPlanFollower.plan_id == plan_id,
-            NutritionPlanFollower.user_id == db_user.id,
-            NutritionPlanFollower.is_active == True
+        follower = db.query(NutritionPlanFollowerModel).filter(
+            NutritionPlanFollowerModel.plan_id == plan_id,
+            NutritionPlanFollowerModel.user_id == db_user.id,
+            NutritionPlanFollowerModel.is_active == True
         ).first()
 
         if not follower:
@@ -2611,12 +2607,12 @@ def update_notification_settings(
 
     else:
         # Actualizar todos los planes activos del usuario
-        active_followers = db.query(NutritionPlanFollower).join(
-            NutritionPlan
+        active_followers = db.query(NutritionPlanFollowerModel).join(
+            NutritionPlanModel
         ).filter(
-            NutritionPlanFollower.user_id == db_user.id,
-            NutritionPlanFollower.is_active == True,
-            NutritionPlan.gym_id == current_gym.id
+            NutritionPlanFollowerModel.user_id == db_user.id,
+            NutritionPlanFollowerModel.is_active == True,
+            NutritionPlanModel.gym_id == current_gym.id
         ).all()
 
         if not active_followers:
@@ -2983,10 +2979,10 @@ async def get_meal(
             is_creator = nutrition_plan.created_by == db_user.id
 
             # Verificar si es seguidor activo
-            is_follower = db.query(NutritionPlanFollower).filter(
-                NutritionPlanFollower.plan_id == nutrition_plan.id,
-                NutritionPlanFollower.user_id == db_user.id,
-                NutritionPlanFollower.is_active == True
+            is_follower = db.query(NutritionPlanFollowerModel).filter(
+                NutritionPlanFollowerModel.plan_id == nutrition_plan.id,
+                NutritionPlanFollowerModel.user_id == db_user.id,
+                NutritionPlanFollowerModel.is_active == True
             ).first() is not None
 
             # Verificar si es admin del gimnasio
@@ -3210,8 +3206,8 @@ async def delete_meal(
 
     try:
         # Eliminar registros de completación
-        db.query(UserMealCompletion).filter(
-            UserMealCompletion.meal_id == meal_id
+        db.query(UserMealCompletionModel).filter(
+            UserMealCompletionModel.meal_id == meal_id
         ).delete()
 
         # Eliminar ingredientes
@@ -3302,10 +3298,10 @@ async def get_daily_plan(
         if db_user:
             is_creator = nutrition_plan.created_by == db_user.id
 
-            is_follower = db.query(NutritionPlanFollower).filter(
-                NutritionPlanFollower.plan_id == nutrition_plan.id,
-                NutritionPlanFollower.user_id == db_user.id,
-                NutritionPlanFollower.is_active == True
+            is_follower = db.query(NutritionPlanFollowerModel).filter(
+                NutritionPlanFollowerModel.plan_id == nutrition_plan.id,
+                NutritionPlanFollowerModel.user_id == db_user.id,
+                NutritionPlanFollowerModel.is_active == True
             ).first() is not None
 
             is_admin = db.query(UserGym).filter(
@@ -3373,10 +3369,10 @@ async def list_plan_days(
         if db_user:
             is_creator = nutrition_plan.created_by == db_user.id
 
-            is_follower = db.query(NutritionPlanFollower).filter(
-                NutritionPlanFollower.plan_id == nutrition_plan.id,
-                NutritionPlanFollower.user_id == db_user.id,
-                NutritionPlanFollower.is_active == True
+            is_follower = db.query(NutritionPlanFollowerModel).filter(
+                NutritionPlanFollowerModel.plan_id == nutrition_plan.id,
+                NutritionPlanFollowerModel.user_id == db_user.id,
+                NutritionPlanFollowerModel.is_active == True
             ).first() is not None
 
             is_admin = db.query(UserGym).filter(
@@ -3592,8 +3588,8 @@ async def delete_daily_plan(
 
         # Eliminar completaciones e ingredientes de cada comida
         for meal in meals:
-            db.query(UserMealCompletion).filter(
-                UserMealCompletion.meal_id == meal.id
+            db.query(UserMealCompletionModel).filter(
+                UserMealCompletionModel.meal_id == meal.id
             ).delete()
 
             db.query(MealIngredientModel).filter(
