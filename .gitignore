@@ -72,3 +72,6 @@ htmlcov/
 # OS específicos
 .DS_Store
 Thumbs.db 
+# Grafana config files (may contain secrets)
+grafana-agent-*.yml
+

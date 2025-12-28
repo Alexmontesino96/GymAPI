@@ -1,0 +1,125 @@
+{
+  "timestamp": "2025-12-17T02:49:48.419138",
+  "total_channels_stream": 10,
+  "channels": [
+    {
+      "channel_id": "room_General_1",
+      "channel_name": "General",
+      "channel_type": "messaging",
+      "team": null,
+      "expected_gym_id": 1,
+      "member_count": 0,
+      "members": [],
+      "has_issues": false,
+      "cross_gym_users": []
+    },
+    {
+      "channel_id": "direct_gym_4_user_10_gym_4_user_11",
+      "channel_name": "Chat Alex Montesino - Denise Villanueva",
+      "channel_type": "messaging",
+      "team": "gym_4",
+      "expected_gym_id": 4,
+      "member_count": 0,
+      "members": [],
+      "has_issues": false,
+      "cross_gym_users": []
+    },
+    {
+      "channel_id": "direct_gym_4_user_10_gym_4_user_8",
+      "channel_name": "Chat Alex Montesino - Jose Paul Rodriguez",
+      "channel_type": "messaging",
+      "team": "gym_4",
+      "expected_gym_id": 4,
+      "member_count": 0,
+      "members": [],
+      "has_issues": false,
+      "cross_gym_users": []
+    },
+    {
+      "channel_id": "direct_gym_4_user_10_gym_4_user_17",
+      "channel_name": "Chat Alex Montesino - Ram\u00f3n Jesus",
+      "channel_type": "messaging",
+      "team": "gym_4",
+      "expected_gym_id": 4,
+      "member_count": 0,
+      "members": [],
+      "has_issues": false,
+      "cross_gym_users": []
+    },
+    {
+      "channel_id": "direct_gym_4_user_11_gym_4_user_8",
+      "channel_name": "Chat Denise Villanueva - Jose Paul Rodriguez",
+      "channel_type": "messaging",
+      "team": "gym_4",
+      "expected_gym_id": 4,
+      "member_count": 0,
+      "members": [],
+      "has_issues": false,
+      "cross_gym_users": []
+    },
+    {
+      "channel_id": "event_639_d3d94468",
+      "channel_name": "Evento Entrenamiento de Fue",
+      "channel_type": "messaging",
+      "team": "gym_4",
+      "expected_gym_id": 4,
+      "member_count": 0,
+      "members": [],
+      "has_issues": false,
+      "cross_gym_users": []
+    },
+    {
+      "channel_id": "event_661_d3d94468",
+      "channel_name": "Evento Entrenamiento de Kic",
+      "channel_type": "messaging",
+      "team": "gym_4",
+      "expected_gym_id": 4,
+      "member_count": 0,
+      "members": [],
+      "has_issues": false,
+      "cross_gym_users": []
+    },
+    {
+      "channel_id": "event_660_d3d94468",
+      "channel_name": "Evento Striking Brickel",
+      "channel_type": "messaging",
+      "team": "gym_4",
+      "expected_gym_id": 4,
+      "member_count": 0,
+      "members": [],
+      "has_issues": false,
+      "cross_gym_users": []
+    },
+    {
+      "channel_id": "event_659_d3d94468",
+      "channel_name": "Evento Yoga Matutina",
+      "channel_type": "messaging",
+      "team": "gym_4",
+      "expected_gym_id": 4,
+      "member_count": 0,
+      "members": [],
+      "has_issues": false,
+      "cross_gym_users": []
+    },
+    {
+      "channel_id": "event_658_d3d94468",
+      "channel_name": "Evento T\u00e9cnicas de Defensa ",
+      "channel_type": "messaging",
+      "team": null,
+      "expected_gym_id": null,
+      "member_count": 0,
+      "members": [],
+      "has_issues": false,
+      "cross_gym_users": []
+    }
+  ],
+  "issues": [],
+  "summary": {
+    "channels_ok": 10,
+    "channels_with_issues": 0,
+    "cross_gym_contamination": 0,
+    "legacy_users": 0,
+    "channels_without_team": 2,
+    "total_issues": 2
+  }
+}

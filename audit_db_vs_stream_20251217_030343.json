@@ -1,0 +1,74 @@
+{
+  "timestamp": "2025-12-17T03:03:41.913824",
+  "total_chatrooms_db": 7,
+  "rooms": [
+    {
+      "room_id": 666,
+      "room_name": "General",
+      "gym_id": 1,
+      "stream_channel_id": "room_General_1",
+      "has_issues": false,
+      "issues": []
+    },
+    {
+      "room_id": 663,
+      "room_name": "Chat Alex Montesino - Denise Villanueva",
+      "gym_id": 4,
+      "stream_channel_id": "direct_gym_4_user_10_gym_4_user_11",
+      "has_issues": false,
+      "issues": []
+    },
+    {
+      "room_id": 638,
+      "room_name": "Chat Alex Montesino - Jose Paul Rodriguez",
+      "gym_id": 4,
+      "stream_channel_id": "direct_gym_4_user_10_gym_4_user_8",
+      "has_issues": false,
+      "issues": []
+    },
+    {
+      "room_id": 664,
+      "room_name": "Chat Alex Montesino - Ram\u00f3n Jesus",
+      "gym_id": 4,
+      "stream_channel_id": "direct_gym_4_user_10_gym_4_user_17",
+      "has_issues": false,
+      "issues": []
+    },
+    {
+      "room_id": 662,
+      "room_name": "Chat Denise Villanueva - Jose Paul Rodriguez",
+      "gym_id": 4,
+      "stream_channel_id": "direct_gym_4_user_11_gym_4_user_8",
+      "has_issues": false,
+      "issues": []
+    },
+    {
+      "room_id": 639,
+      "room_name": "General",
+      "gym_id": 4,
+      "stream_channel_id": "room_General_10",
+      "has_issues": false,
+      "issues": []
+    },
+    {
+      "room_id": 643,
+      "room_name": "General",
+      "gym_id": 5,
+      "stream_channel_id": "room_General_5",
+      "has_issues": false,
+      "issues": []
+    }
+  ],
+  "issues": {
+    "wrong_team": [],
+    "wrong_members": [],
+    "missing_members": [],
+    "extra_members": [],
+    "not_in_stream": []
+  },
+  "summary": {
+    "rooms_ok": 7,
+    "rooms_with_issues": 0,
+    "total_issues": 0
+  }
+}

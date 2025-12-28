@@ -1,0 +1,38 @@
+{
+  "timestamp": "2025-12-14T20:43:21.985284",
+  "gym_id": 1,
+  "summary": {
+    "total_stream_channels": 1,
+    "total_db_chatrooms": 0,
+    "synced": 0,
+    "stream_only": 1,
+    "db_only": 0
+  },
+  "stream_only_channels": [
+    {
+      "stream_channel_id": "",
+      "type": "messaging",
+      "created_at": null,
+      "last_message_at": null,
+      "members_count": 0,
+      "members": [
+        "user_4",
+        "user_8"
+      ],
+      "analysis": {
+        "category": "unknown",
+        "raw_id": "",
+        "recommendation": "INVESTIGATE",
+        "reason": "Formato de canal desconocido"
+      }
+    }
+  ],
+  "db_only_chatrooms": [],
+  "synced_channels": [],
+  "recommendations": {
+    "investigate": 1,
+    "create_chatrooms": 0,
+    "delete_from_stream": 0,
+    "delete_from_db": 0
+  }
+}

@@ -1,0 +1,351 @@
+{
+  "timestamp": "2025-12-15T00:44:20.454149",
+  "gym_id": 4,
+  "summary": {
+    "total_stream_channels": 7,
+    "total_db_chatrooms": 14,
+    "synced": 0,
+    "stream_only": 7,
+    "db_only": 14
+  },
+  "stream_only_channels": [
+    {
+      "stream_channel_id": "direct_user_10_user_17",
+      "type": "messaging",
+      "created_at": "2025-12-04T00:27:28.240762Z",
+      "last_message_at": "2025-12-15T01:20:44.485691Z",
+      "members_count": 2,
+      "members": [
+        "user_10",
+        "user_17"
+      ],
+      "analysis": {
+        "category": "direct_chat",
+        "user1_id": 10,
+        "user2_id": 17,
+        "user1_exists": true,
+        "user2_exists": true,
+        "recommendation": "CREATE_CHATROOM",
+        "command": "python scripts/sync_channel_to_db.py --channel-id direct_user_10_user_17"
+      }
+    },
+    {
+      "stream_channel_id": "direct_user_10_user_11",
+      "type": "messaging",
+      "created_at": "2025-12-03T06:47:12.549098Z",
+      "last_message_at": "2025-12-15T01:17:53.578542Z",
+      "members_count": 2,
+      "members": [
+        "user_10",
+        "user_11"
+      ],
+      "analysis": {
+        "category": "direct_chat",
+        "user1_id": 10,
+        "user2_id": 11,
+        "user1_exists": true,
+        "user2_exists": true,
+        "recommendation": "CREATE_CHATROOM",
+        "command": "python scripts/sync_channel_to_db.py --channel-id direct_user_10_user_11"
+      }
+    },
+    {
+      "stream_channel_id": "direct_user_11_user_8",
+      "type": "messaging",
+      "created_at": "2025-11-28T03:46:43.404757Z",
+      "last_message_at": "2025-12-12T03:14:38.70092Z",
+      "members_count": 2,
+      "members": [
+        "user_11",
+        "user_8"
+      ],
+      "analysis": {
+        "category": "direct_chat",
+        "user1_id": 11,
+        "user2_id": 8,
+        "user1_exists": true,
+        "user2_exists": true,
+        "recommendation": "CREATE_CHATROOM",
+        "command": "python scripts/sync_channel_to_db.py --channel-id direct_user_11_user_8"
+      }
+    },
+    {
+      "stream_channel_id": "event_656_d3d94468",
+      "type": "messaging",
+      "created_at": "2025-10-31T04:57:29.966959Z",
+      "last_message_at": null,
+      "members_count": 1,
+      "members": [
+        "user_10"
+      ],
+      "analysis": {
+        "category": "event_chat",
+        "event_id": 656,
+        "hash": "d3d94468",
+        "event_exists": false,
+        "has_messages": false,
+        "recommendation": "DELETE_FROM_STREAM",
+        "reason": "Evento no existe en BD",
+        "command": "python scripts/delete_orphan_channel.py --channel-id event_656_d3d94468"
+      }
+    },
+    {
+      "stream_channel_id": "event_644_d3d94468",
+      "type": "messaging",
+      "created_at": "2025-10-30T15:09:45.912309Z",
+      "last_message_at": null,
+      "members_count": 2,
+      "members": [
+        "user_10",
+        "user_8"
+      ],
+      "analysis": {
+        "category": "event_chat",
+        "event_id": 644,
+        "hash": "d3d94468",
+        "event_exists": false,
+        "has_messages": false,
+        "recommendation": "DELETE_FROM_STREAM",
+        "reason": "Evento no existe en BD",
+        "command": "python scripts/delete_orphan_channel.py --channel-id event_644_d3d94468"
+      }
+    },
+    {
+      "stream_channel_id": "direct_user_10_user_8",
+      "type": "messaging",
+      "created_at": "2025-08-11T04:47:28.722502Z",
+      "last_message_at": "2025-12-15T01:20:39.378788Z",
+      "members_count": 2,
+      "members": [
+        "user_10",
+        "user_8"
+      ],
+      "analysis": {
+        "category": "direct_chat",
+        "user1_id": 10,
+        "user2_id": 8,
+        "user1_exists": true,
+        "user2_exists": true,
+        "recommendation": "CREATE_CHATROOM",
+        "command": "python scripts/sync_channel_to_db.py --channel-id direct_user_10_user_8"
+      }
+    },
+    {
+      "stream_channel_id": "room_General_10",
+      "type": "messaging",
+      "created_at": "2025-07-03T01:33:08.660433Z",
+      "last_message_at": "2025-12-15T00:07:29.998928Z",
+      "members_count": 9,
+      "members": [
+        "user_10",
+        "user_14",
+        "user_2",
+        "user_5",
+        "user_8",
+        "user_16",
+        "user_17",
+        "user_18",
+        "user_11"
+      ],
+      "analysis": {
+        "category": "group_chat",
+        "name": "General",
+        "creator_id": 10,
+        "creator_exists": true,
+        "recommendation": "CREATE_CHATROOM",
+        "command": "python scripts/sync_channel_to_db.py --channel-id room_General_10"
+      }
+    }
+  ],
+  "db_only_chatrooms": [
+    {
+      "chatroom_id": 639,
+      "stream_channel_id": "messaging:room_General_10",
+      "type": "messaging",
+      "name": "General",
+      "created_at": "2025-08-15T03:43:48.986230",
+      "is_direct": false,
+      "event_id": null,
+      "status": "ACTIVE",
+      "recommendation": "DELETE_FROM_DB",
+      "reason": "Canal no existe en Stream (eliminado manualmente)",
+      "command": "# Eliminar ChatRoom ID 639 de la BD"
+    },
+    {
+      "chatroom_id": 641,
+      "stream_channel_id": "messaging:event_604_d3d94468",
+      "type": "messaging",
+      "name": "Evento Yoga Matutina",
+      "created_at": "2025-10-06T19:00:44.402332",
+      "is_direct": false,
+      "event_id": 604,
+      "status": "CLOSED",
+      "recommendation": "DELETE_FROM_DB",
+      "reason": "Canal no existe en Stream (eliminado manualmente)",
+      "command": "# Eliminar ChatRoom ID 641 de la BD"
+    },
+    {
+      "chatroom_id": 657,
+      "stream_channel_id": "messaging:event_657_d3d94468",
+      "type": "messaging",
+      "name": "Evento Sparring Controlado ",
+      "created_at": "2025-10-31T05:09:40.098888",
+      "is_direct": false,
+      "event_id": 657,
+      "status": "CLOSED",
+      "recommendation": "DELETE_FROM_DB",
+      "reason": "Canal no existe en Stream (eliminado manualmente)",
+      "command": "# Eliminar ChatRoom ID 657 de la BD"
+    },
+    {
+      "chatroom_id": 658,
+      "stream_channel_id": "messaging:event_658_d3d94468",
+      "type": "messaging",
+      "name": "Evento Técnicas de Defensa ",
+      "created_at": "2025-10-31T05:10:31.733026",
+      "is_direct": false,
+      "event_id": 658,
+      "status": "CLOSED",
+      "recommendation": "DELETE_FROM_DB",
+      "reason": "Canal no existe en Stream (eliminado manualmente)",
+      "command": "# Eliminar ChatRoom ID 658 de la BD"
+    },
+    {
+      "chatroom_id": 660,
+      "stream_channel_id": "messaging:event_660_d3d94468",
+      "type": "messaging",
+      "name": "Evento Striking Brickel",
+      "created_at": "2025-11-17T15:40:04.608787",
+      "is_direct": false,
+      "event_id": 660,
+      "status": "CLOSED",
+      "recommendation": "DELETE_FROM_DB",
+      "reason": "Canal no existe en Stream (eliminado manualmente)",
+      "command": "# Eliminar ChatRoom ID 660 de la BD"
+    },
+    {
+      "chatroom_id": 662,
+      "stream_channel_id": "messaging:direct_user_11_user_8",
+      "type": "messaging",
+      "name": "Chat Denise Villanueva - Jose Paul Rodriguez",
+      "created_at": "2025-11-28T03:46:43.588423",
+      "is_direct": true,
+      "event_id": null,
+      "status": "ACTIVE",
+      "recommendation": "DELETE_FROM_DB",
+      "reason": "Canal no existe en Stream (eliminado manualmente)",
+      "command": "# Eliminar ChatRoom ID 662 de la BD"
+    },
+    {
+      "chatroom_id": 664,
+      "stream_channel_id": "messaging:direct_user_10_user_17",
+      "type": "messaging",
+      "name": "Chat Alex Montesino - Ramón Jesus",
+      "created_at": "2025-12-04T00:27:28.438245",
+      "is_direct": true,
+      "event_id": null,
+      "status": "ACTIVE",
+      "recommendation": "DELETE_FROM_DB",
+      "reason": "Canal no existe en Stream (eliminado manualmente)",
+      "command": "# Eliminar ChatRoom ID 664 de la BD"
+    },
+    {
+      "chatroom_id": 638,
+      "stream_channel_id": "messaging:direct_user_10_user_8",
+      "type": "messaging",
+      "name": "Chat Alex Montesino - Jose Paul Rodriguez",
+      "created_at": "2025-08-11T04:47:28.871382",
+      "is_direct": true,
+      "event_id": null,
+      "status": "ACTIVE",
+      "recommendation": "DELETE_FROM_DB",
+      "reason": "Canal no existe en Stream (eliminado manualmente)",
+      "command": "# Eliminar ChatRoom ID 638 de la BD"
+    },
+    {
+      "chatroom_id": 634,
+      "stream_channel_id": "messaging:event_616_d3d94468",
+      "type": "messaging",
+      "name": "Evento Técnicas de Defensa ",
+      "created_at": "2025-08-11T03:02:12.307326",
+      "is_direct": false,
+      "event_id": 616,
+      "status": "CLOSED",
+      "recommendation": "DELETE_FROM_DB",
+      "reason": "Canal no existe en Stream (eliminado manualmente)",
+      "command": "# Eliminar ChatRoom ID 634 de la BD"
+    },
+    {
+      "chatroom_id": 640,
+      "stream_channel_id": "messaging:event_617_d3d94468",
+      "type": "messaging",
+      "name": "Evento Yoga Matutina",
+      "created_at": "2025-08-17T15:32:38.050016",
+      "is_direct": false,
+      "event_id": 617,
+      "status": "CLOSED",
+      "recommendation": "DELETE_FROM_DB",
+      "reason": "Canal no existe en Stream (eliminado manualmente)",
+      "command": "# Eliminar ChatRoom ID 640 de la BD"
+    },
+    {
+      "chatroom_id": 642,
+      "stream_channel_id": "messaging:event_641_d3d94468",
+      "type": "messaging",
+      "name": "Evento Sesión de Yoga",
+      "created_at": "2025-10-21T20:51:00.880518",
+      "is_direct": false,
+      "event_id": 641,
+      "status": "CLOSED",
+      "recommendation": "DELETE_FROM_DB",
+      "reason": "Canal no existe en Stream (eliminado manualmente)",
+      "command": "# Eliminar ChatRoom ID 642 de la BD"
+    },
+    {
+      "chatroom_id": 659,
+      "stream_channel_id": "messaging:event_659_d3d94468",
+      "type": "messaging",
+      "name": "Evento Yoga Matutina",
+      "created_at": "2025-11-10T18:17:59.667389",
+      "is_direct": false,
+      "event_id": 659,
+      "status": "CLOSED",
+      "recommendation": "DELETE_FROM_DB",
+      "reason": "Canal no existe en Stream (eliminado manualmente)",
+      "command": "# Eliminar ChatRoom ID 659 de la BD"
+    },
+    {
+      "chatroom_id": 661,
+      "stream_channel_id": "messaging:event_661_d3d94468",
+      "type": "messaging",
+      "name": "Evento Entrenamiento de Kic",
+      "created_at": "2025-11-17T16:06:40.740353",
+      "is_direct": false,
+      "event_id": 661,
+      "status": "CLOSED",
+      "recommendation": "DELETE_FROM_DB",
+      "reason": "Canal no existe en Stream (eliminado manualmente)",
+      "command": "# Eliminar ChatRoom ID 661 de la BD"
+    },
+    {
+      "chatroom_id": 663,
+      "stream_channel_id": "messaging:direct_user_10_user_11",
+      "type": "messaging",
+      "name": "Chat Alex Montesino - Denise Villanueva",
+      "created_at": "2025-12-03T06:47:12.718999",
+      "is_direct": true,
+      "event_id": null,
+      "status": "ACTIVE",
+      "recommendation": "DELETE_FROM_DB",
+      "reason": "Canal no existe en Stream (eliminado manualmente)",
+      "command": "# Eliminar ChatRoom ID 663 de la BD"
+    }
+  ],
+  "synced_channels": [],
+  "recommendations": {
+    "create_chatrooms": 5,
+    "delete_from_stream": 2,
+    "delete_from_db": 14,
+    "investigate": 0
+  }
+}

@@ -3,7 +3,7 @@ Endpoints para el sistema de planes nutricionales.
 """
 
 from typing import List, Optional, Any, Dict
-from fastapi import APIRouter, Depends, HTTPException, Query, Path, Header
+from fastapi import APIRouter, Depends, HTTPException, Query, Path, Header, Response, Body
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
@@ -14,8 +14,8 @@ from app.models.gym import Gym
 from app.schemas.nutrition import (
     NutritionPlan, NutritionPlanCreate, NutritionPlanUpdate, NutritionPlanFilters,
     NutritionPlanListResponse, NutritionPlanWithDetails, NutritionPlanListResponseHybrid,
-    DailyNutritionPlan, DailyNutritionPlanCreate, DailyNutritionPlanWithMeals,
-    Meal, MealCreate, MealWithIngredients, MealIngredient, MealIngredientCreate,
+    DailyNutritionPlan, DailyNutritionPlanCreate, DailyNutritionPlanWithMeals, DailyNutritionPlanUpdate,
+    Meal, MealCreate, MealWithIngredients, MealUpdate, MealIngredient, MealIngredientCreate, MealIngredientUpdate,
     NutritionPlanFollower, NutritionPlanFollowerCreate,
     UserMealCompletion, UserMealCompletionCreate,
     TodayMealPlan, UserNutritionDashboard, NutritionAnalytics, NutritionDashboardHybrid,
@@ -28,8 +28,17 @@ from app.schemas.nutrition_ai import (
 from app.services.nutrition import NutritionService, NotFoundError, ValidationError, PermissionError
 from app.services.user import user_service
 from app.core.dependencies import module_enabled
-from app.models.nutrition import Meal as MealModel, DailyNutritionPlan as DailyNutritionPlanModel, MealIngredient as MealIngredientModel
+from app.models.nutrition import (
+    Meal as MealModel,
+    DailyNutritionPlan as DailyNutritionPlanModel,
+    MealIngredient as MealIngredientModel,
+    NutritionPlan as NutritionPlanModel,
+    NutritionPlanFollower,
+    UserMealCompletion
+)
+from app.models.user_gym import UserGym, GymRoleType
 from sqlalchemy.orm import joinedload
+from datetime import datetime
 import logging
 
 logger = logging.getLogger(__name__)
@@ -2891,3 +2900,1017 @@ async def get_audit_summary(
     )
 
     return summary
+
+
+# ============================================================================
+# CRUD ENDPOINTS PARA MEALS
+# ============================================================================
+
+@router.get("/meals/{meal_id}", response_model=MealWithIngredients)
+async def get_meal(
+    meal_id: int = Path(..., description="ID único de la comida"),
+    db: Session = Depends(get_db),
+    current_gym: Gym = Depends(verify_gym_access),
+    current_user: Auth0User = Depends(get_current_user)
+):
+    """
+    🍽️ **Obtener Comida Específica con Ingredientes**
+
+    **Descripción:**
+    Obtiene la información completa de una comida individual, incluyendo
+    todos sus ingredientes con información nutricional detallada.
+
+    **Validaciones:**
+    - La comida debe existir en el sistema
+    - El plan debe pertenecer al gimnasio actual
+    - El usuario debe tener acceso al plan (público o ser seguidor/creador)
+
+    **Respuesta incluye:**
+    - Información básica de la comida (nombre, tipo, instrucciones)
+    - Lista completa de ingredientes con valores nutricionales
+    - Totales nutricionales calculados
+    - Metadatos (fecha de creación, última actualización)
+
+    **Casos de error:**
+    - 404: Comida no encontrada
+    - 403: Sin acceso (plan privado y usuario no autorizado)
+    - 403: Comida de otro gimnasio
+    """
+    # Obtener la comida con sus ingredientes usando joinedload para optimización
+    meal = db.query(MealModel).filter(
+        MealModel.id == meal_id
+    ).options(
+        joinedload(MealModel.ingredients)
+    ).first()
+
+    if not meal:
+        logger.warning(f"Meal {meal_id} not found for user {current_user.id}")
+        raise HTTPException(
+            status_code=404,
+            detail="Comida no encontrada"
+        )
+
+    # Verificar acceso a través del plan
+    daily_plan = db.query(DailyNutritionPlanModel).filter(
+        DailyNutritionPlanModel.id == meal.daily_plan_id
+    ).first()
+
+    if not daily_plan:
+        logger.error(f"Daily plan not found for meal {meal_id}")
+        raise HTTPException(
+            status_code=404,
+            detail="Plan diario no encontrado para esta comida"
+        )
+
+    # Verificar que el plan pertenece al gimnasio actual
+    nutrition_plan = db.query(NutritionPlanModel).filter(
+        NutritionPlanModel.id == daily_plan.plan_id,
+        NutritionPlanModel.gym_id == current_gym.id
+    ).first()
+
+    if not nutrition_plan:
+        logger.warning(f"Access denied to meal {meal_id} for user {current_user.id} - wrong gym")
+        raise HTTPException(
+            status_code=403,
+            detail="Sin acceso a esta comida - pertenece a otro gimnasio"
+        )
+
+    # Verificar acceso si el plan es privado
+    if not nutrition_plan.is_public:
+        db_user = user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
+        if db_user:
+            # Verificar si es el creador
+            is_creator = nutrition_plan.created_by == db_user.id
+
+            # Verificar si es seguidor activo
+            is_follower = db.query(NutritionPlanFollower).filter(
+                NutritionPlanFollower.plan_id == nutrition_plan.id,
+                NutritionPlanFollower.user_id == db_user.id,
+                NutritionPlanFollower.is_active == True
+            ).first() is not None
+
+            # Verificar si es admin del gimnasio
+            is_admin = db.query(UserGym).filter(
+                UserGym.user_id == db_user.id,
+                UserGym.gym_id == current_gym.id,
+                UserGym.role.in_([GymRoleType.ADMIN, GymRoleType.OWNER])
+            ).first() is not None
+
+            if not (is_creator or is_follower or is_admin):
+                logger.warning(f"Access denied to private plan meal {meal_id} for user {current_user.id}")
+                raise HTTPException(
+                    status_code=403,
+                    detail="Plan privado - no tienes acceso a esta comida"
+                )
+
+    logger.info(f"Successfully retrieved meal {meal_id} for user {current_user.id}")
+    return meal
+
+
+@router.put("/meals/{meal_id}", response_model=Meal)
+async def update_meal(
+    meal_id: int = Path(..., description="ID de la comida a actualizar"),
+    meal_update: MealUpdate = Body(...),
+    db: Session = Depends(get_db),
+    current_gym: Gym = Depends(verify_gym_access),
+    current_user: Auth0User = Depends(get_current_user)
+):
+    """
+    ✏️ **Actualizar Información de una Comida**
+
+    **Descripción:**
+    Actualiza los campos de una comida existente. Solo el creador del plan
+    o administradores del gimnasio pueden realizar esta operación.
+
+    **Campos actualizables:**
+    - name: Nombre de la comida
+    - meal_type: Tipo (breakfast, lunch, dinner, snack, other)
+    - description: Descripción detallada
+    - preparation_time_minutes: Tiempo de preparación
+    - cooking_instructions: Instrucciones de preparación
+    - calories, protein_g, carbs_g, fat_g, fiber_g: Valores nutricionales
+    - image_url, video_url: Recursos multimedia
+    - order_in_day: Orden de la comida en el día
+
+    **Permisos requeridos:**
+    - Ser el creador del plan
+    - O ser administrador/owner del gimnasio
+
+    **Validaciones:**
+    - Todos los campos son opcionales (actualización parcial)
+    - Los valores nutricionales deben ser >= 0
+    - El nombre debe tener entre 1 y 200 caracteres si se proporciona
+    """
+    # Buscar la comida
+    meal = db.query(MealModel).filter(MealModel.id == meal_id).first()
+
+    if not meal:
+        logger.warning(f"Meal {meal_id} not found for update by user {current_user.id}")
+        raise HTTPException(
+            status_code=404,
+            detail="Comida no encontrada"
+        )
+
+    # Verificar acceso y permisos a través del plan
+    daily_plan = db.query(DailyNutritionPlanModel).filter(
+        DailyNutritionPlanModel.id == meal.daily_plan_id
+    ).first()
+
+    if not daily_plan:
+        raise HTTPException(
+            status_code=404,
+            detail="Plan diario no encontrado"
+        )
+
+    nutrition_plan = db.query(NutritionPlanModel).filter(
+        NutritionPlanModel.id == daily_plan.plan_id,
+        NutritionPlanModel.gym_id == current_gym.id
+    ).first()
+
+    if not nutrition_plan:
+        logger.warning(f"Access denied to update meal {meal_id} - wrong gym")
+        raise HTTPException(
+            status_code=403,
+            detail="Sin acceso a esta comida - pertenece a otro gimnasio"
+        )
+
+    # Verificar permisos de modificación
+    db_user = user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
+    if not db_user:
+        raise HTTPException(
+            status_code=403,
+            detail="Usuario no encontrado"
+        )
+
+    # Verificar si es el creador del plan
+    is_creator = nutrition_plan.created_by == db_user.id
+
+    # Verificar si es admin/owner del gimnasio
+    user_gym = db.query(UserGym).filter(
+        UserGym.user_id == db_user.id,
+        UserGym.gym_id == current_gym.id
+    ).first()
+
+    is_admin = user_gym and user_gym.role in [GymRoleType.ADMIN, GymRoleType.OWNER]
+
+    if not (is_creator or is_admin):
+        logger.warning(f"Permission denied to update meal {meal_id} for user {current_user.id}")
+        raise HTTPException(
+            status_code=403,
+            detail="Solo el creador del plan o administradores pueden actualizar comidas"
+        )
+
+    # Actualizar solo los campos proporcionados
+    update_data = meal_update.dict(exclude_unset=True)
+
+    for field, value in update_data.items():
+        setattr(meal, field, value)
+
+    # Actualizar timestamp
+    meal.updated_at = datetime.utcnow()
+
+    try:
+        db.commit()
+        db.refresh(meal)
+        logger.info(f"Meal {meal_id} updated successfully by user {db_user.id}")
+    except Exception as e:
+        logger.error(f"Error updating meal {meal_id}: {str(e)}")
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail="Error al actualizar la comida"
+        )
+
+    return meal
+
+
+@router.delete("/meals/{meal_id}", status_code=204)
+async def delete_meal(
+    meal_id: int = Path(..., description="ID de la comida a eliminar"),
+    db: Session = Depends(get_db),
+    current_gym: Gym = Depends(verify_gym_access),
+    current_user: Auth0User = Depends(get_current_user)
+):
+    """
+    🗑️ **Eliminar una Comida**
+
+    **Descripción:**
+    Elimina permanentemente una comida y todos sus datos asociados (ingredientes,
+    registros de completación). Esta acción es irreversible.
+
+    **Permisos requeridos:**
+    - Ser el creador del plan
+    - O ser administrador/owner del gimnasio
+
+    **Efectos de la eliminación:**
+    - Se eliminan todos los ingredientes de la comida
+    - Se eliminan todos los registros de completación de usuarios
+    - Se recalculan los totales nutricionales del día (si aplica)
+
+    **Respuesta:**
+    - 204 No Content: Eliminación exitosa
+    - 404: Comida no encontrada
+    - 403: Sin permisos para eliminar
+    """
+    # Buscar la comida
+    meal = db.query(MealModel).filter(MealModel.id == meal_id).first()
+
+    if not meal:
+        logger.warning(f"Meal {meal_id} not found for deletion")
+        raise HTTPException(
+            status_code=404,
+            detail="Comida no encontrada"
+        )
+
+    # Verificar acceso y permisos
+    daily_plan = db.query(DailyNutritionPlanModel).filter(
+        DailyNutritionPlanModel.id == meal.daily_plan_id
+    ).first()
+
+    if not daily_plan:
+        raise HTTPException(
+            status_code=404,
+            detail="Plan diario no encontrado"
+        )
+
+    nutrition_plan = db.query(NutritionPlanModel).filter(
+        NutritionPlanModel.id == daily_plan.plan_id,
+        NutritionPlanModel.gym_id == current_gym.id
+    ).first()
+
+    if not nutrition_plan:
+        raise HTTPException(
+            status_code=403,
+            detail="Sin acceso a esta comida"
+        )
+
+    # Verificar permisos
+    db_user = user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
+    if not db_user:
+        raise HTTPException(
+            status_code=403,
+            detail="Usuario no encontrado"
+        )
+
+    is_creator = nutrition_plan.created_by == db_user.id
+
+    user_gym = db.query(UserGym).filter(
+        UserGym.user_id == db_user.id,
+        UserGym.gym_id == current_gym.id
+    ).first()
+
+    is_admin = user_gym and user_gym.role in [GymRoleType.ADMIN, GymRoleType.OWNER]
+
+    if not (is_creator or is_admin):
+        logger.warning(f"Permission denied to delete meal {meal_id} for user {current_user.id}")
+        raise HTTPException(
+            status_code=403,
+            detail="Solo el creador del plan o administradores pueden eliminar comidas"
+        )
+
+    try:
+        # Eliminar registros de completación
+        db.query(UserMealCompletion).filter(
+            UserMealCompletion.meal_id == meal_id
+        ).delete()
+
+        # Eliminar ingredientes
+        db.query(MealIngredientModel).filter(
+            MealIngredientModel.meal_id == meal_id
+        ).delete()
+
+        # Eliminar la comida
+        db.delete(meal)
+        db.commit()
+
+        logger.info(f"Meal {meal_id} deleted successfully by user {db_user.id}")
+
+    except Exception as e:
+        logger.error(f"Error deleting meal {meal_id}: {str(e)}")
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail="Error al eliminar la comida"
+        )
+
+    return Response(status_code=204)
+
+
+# ============================================================================
+# CRUD ENDPOINTS PARA DAILY PLANS
+# ============================================================================
+
+@router.get("/days/{daily_plan_id}", response_model=DailyNutritionPlanWithMeals)
+async def get_daily_plan(
+    daily_plan_id: int = Path(..., description="ID del día del plan"),
+    db: Session = Depends(get_db),
+    current_gym: Gym = Depends(verify_gym_access),
+    current_user: Auth0User = Depends(get_current_user)
+):
+    """
+    📅 **Obtener Día Específico del Plan con Comidas**
+
+    **Descripción:**
+    Obtiene la información completa de un día del plan nutricional,
+    incluyendo todas sus comidas con ingredientes detallados.
+
+    **Respuesta incluye:**
+    - Información del día (número, fecha planificada, notas)
+    - Lista completa de comidas del día ordenadas
+    - Ingredientes de cada comida con valores nutricionales
+    - Totales nutricionales del día
+    - Estado de publicación
+
+    **Validaciones:**
+    - El día debe existir
+    - El plan debe pertenecer al gimnasio actual
+    - El usuario debe tener acceso (plan público o ser seguidor/creador)
+
+    **Optimización:**
+    Utiliza eager loading para minimizar consultas a la base de datos.
+    """
+    # Obtener el día con sus comidas e ingredientes
+    daily_plan = db.query(DailyNutritionPlanModel).filter(
+        DailyNutritionPlanModel.id == daily_plan_id
+    ).options(
+        joinedload(DailyNutritionPlanModel.meals).joinedload(MealModel.ingredients)
+    ).first()
+
+    if not daily_plan:
+        logger.warning(f"Daily plan {daily_plan_id} not found")
+        raise HTTPException(
+            status_code=404,
+            detail="Día del plan no encontrado"
+        )
+
+    # Verificar acceso a través del plan
+    nutrition_plan = db.query(NutritionPlanModel).filter(
+        NutritionPlanModel.id == daily_plan.plan_id,
+        NutritionPlanModel.gym_id == current_gym.id
+    ).first()
+
+    if not nutrition_plan:
+        logger.warning(f"Access denied to daily plan {daily_plan_id} - wrong gym")
+        raise HTTPException(
+            status_code=403,
+            detail="Sin acceso a este día - pertenece a otro gimnasio"
+        )
+
+    # Verificar acceso si el plan es privado
+    if not nutrition_plan.is_public:
+        db_user = user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
+        if db_user:
+            is_creator = nutrition_plan.created_by == db_user.id
+
+            is_follower = db.query(NutritionPlanFollower).filter(
+                NutritionPlanFollower.plan_id == nutrition_plan.id,
+                NutritionPlanFollower.user_id == db_user.id,
+                NutritionPlanFollower.is_active == True
+            ).first() is not None
+
+            is_admin = db.query(UserGym).filter(
+                UserGym.user_id == db_user.id,
+                UserGym.gym_id == current_gym.id,
+                UserGym.role.in_([GymRoleType.ADMIN, GymRoleType.OWNER])
+            ).first() is not None
+
+            if not (is_creator or is_follower or is_admin):
+                logger.warning(f"Access denied to private plan daily {daily_plan_id}")
+                raise HTTPException(
+                    status_code=403,
+                    detail="Plan privado - no tienes acceso a este día"
+                )
+
+    logger.info(f"Successfully retrieved daily plan {daily_plan_id}")
+    return daily_plan
+
+
+@router.get("/plans/{plan_id}/days", response_model=List[DailyNutritionPlanWithMeals])
+async def list_plan_days(
+    plan_id: int = Path(..., description="ID del plan nutricional"),
+    db: Session = Depends(get_db),
+    current_gym: Gym = Depends(verify_gym_access),
+    current_user: Auth0User = Depends(get_current_user)
+):
+    """
+    📋 **Listar Todos los Días de un Plan**
+
+    **Descripción:**
+    Obtiene todos los días de un plan nutricional con sus comidas completas,
+    ordenados por número de día.
+
+    **Respuesta:**
+    Array de días, cada uno incluyendo:
+    - Información del día
+    - Todas las comidas del día
+    - Ingredientes de cada comida
+    - Totales nutricionales
+
+    **Casos de uso:**
+    - Vista completa del plan
+    - Exportación del plan
+    - Análisis nutricional completo
+
+    **Performance:**
+    Usa eager loading para obtener toda la información en una sola consulta.
+    """
+    # Verificar que el plan existe y pertenece al gym
+    nutrition_plan = db.query(NutritionPlanModel).filter(
+        NutritionPlanModel.id == plan_id,
+        NutritionPlanModel.gym_id == current_gym.id
+    ).first()
+
+    if not nutrition_plan:
+        logger.warning(f"Plan {plan_id} not found or wrong gym")
+        raise HTTPException(
+            status_code=404,
+            detail="Plan nutricional no encontrado"
+        )
+
+    # Verificar acceso si el plan es privado
+    if not nutrition_plan.is_public:
+        db_user = user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
+        if db_user:
+            is_creator = nutrition_plan.created_by == db_user.id
+
+            is_follower = db.query(NutritionPlanFollower).filter(
+                NutritionPlanFollower.plan_id == nutrition_plan.id,
+                NutritionPlanFollower.user_id == db_user.id,
+                NutritionPlanFollower.is_active == True
+            ).first() is not None
+
+            is_admin = db.query(UserGym).filter(
+                UserGym.user_id == db_user.id,
+                UserGym.gym_id == current_gym.id,
+                UserGym.role.in_([GymRoleType.ADMIN, GymRoleType.OWNER])
+            ).first() is not None
+
+            if not (is_creator or is_follower or is_admin):
+                raise HTTPException(
+                    status_code=403,
+                    detail="Plan privado - no tienes acceso"
+                )
+
+    # Obtener todos los días con sus comidas e ingredientes
+    daily_plans = db.query(DailyNutritionPlanModel).filter(
+        DailyNutritionPlanModel.plan_id == plan_id
+    ).options(
+        joinedload(DailyNutritionPlanModel.meals).joinedload(MealModel.ingredients)
+    ).order_by(DailyNutritionPlanModel.day_number).all()
+
+    logger.info(f"Retrieved {len(daily_plans)} days for plan {plan_id}")
+    return daily_plans
+
+
+@router.put("/days/{daily_plan_id}", response_model=DailyNutritionPlan)
+async def update_daily_plan(
+    daily_plan_id: int = Path(..., description="ID del día a actualizar"),
+    day_update: DailyNutritionPlanUpdate = Body(...),
+    db: Session = Depends(get_db),
+    current_gym: Gym = Depends(verify_gym_access),
+    current_user: Auth0User = Depends(get_current_user)
+):
+    """
+    ✏️ **Actualizar Información de un Día del Plan**
+
+    **Descripción:**
+    Actualiza los metadatos de un día específico del plan nutricional.
+    No modifica las comidas, solo la información del día.
+
+    **Campos actualizables:**
+    - day_number: Número del día (reorganización)
+    - planned_date: Fecha planificada
+    - total_calories, total_protein_g, etc: Totales nutricionales
+    - notes: Notas del día
+    - is_published: Estado de publicación
+
+    **Permisos:**
+    - Creador del plan
+    - Administrador/owner del gimnasio
+
+    **Validaciones:**
+    - day_number debe ser >= 1
+    - Valores nutricionales >= 0
+    """
+    # Buscar el día
+    daily_plan = db.query(DailyNutritionPlanModel).filter(
+        DailyNutritionPlanModel.id == daily_plan_id
+    ).first()
+
+    if not daily_plan:
+        logger.warning(f"Daily plan {daily_plan_id} not found for update")
+        raise HTTPException(
+            status_code=404,
+            detail="Día del plan no encontrado"
+        )
+
+    # Verificar permisos
+    nutrition_plan = db.query(NutritionPlanModel).filter(
+        NutritionPlanModel.id == daily_plan.plan_id,
+        NutritionPlanModel.gym_id == current_gym.id
+    ).first()
+
+    if not nutrition_plan:
+        raise HTTPException(
+            status_code=403,
+            detail="Sin acceso a este día"
+        )
+
+    db_user = user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
+    if not db_user:
+        raise HTTPException(
+            status_code=403,
+            detail="Usuario no encontrado"
+        )
+
+    is_creator = nutrition_plan.created_by == db_user.id
+
+    user_gym = db.query(UserGym).filter(
+        UserGym.user_id == db_user.id,
+        UserGym.gym_id == current_gym.id
+    ).first()
+
+    is_admin = user_gym and user_gym.role in [GymRoleType.ADMIN, GymRoleType.OWNER]
+
+    if not (is_creator or is_admin):
+        logger.warning(f"Permission denied to update daily plan {daily_plan_id}")
+        raise HTTPException(
+            status_code=403,
+            detail="Solo el creador del plan o administradores pueden actualizar"
+        )
+
+    # Actualizar campos
+    update_data = day_update.dict(exclude_unset=True)
+
+    # Si se actualiza is_published a True, marcar fecha de publicación
+    if 'is_published' in update_data and update_data['is_published'] and not daily_plan.is_published:
+        daily_plan.published_at = datetime.utcnow()
+
+    for field, value in update_data.items():
+        setattr(daily_plan, field, value)
+
+    daily_plan.updated_at = datetime.utcnow()
+
+    try:
+        db.commit()
+        db.refresh(daily_plan)
+        logger.info(f"Daily plan {daily_plan_id} updated by user {db_user.id}")
+    except Exception as e:
+        logger.error(f"Error updating daily plan {daily_plan_id}: {str(e)}")
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail="Error al actualizar el día del plan"
+        )
+
+    return daily_plan
+
+
+@router.delete("/days/{daily_plan_id}", status_code=204)
+async def delete_daily_plan(
+    daily_plan_id: int = Path(..., description="ID del día a eliminar"),
+    db: Session = Depends(get_db),
+    current_gym: Gym = Depends(verify_gym_access),
+    current_user: Auth0User = Depends(get_current_user)
+):
+    """
+    🗑️ **Eliminar un Día del Plan**
+
+    **Descripción:**
+    Elimina permanentemente un día del plan con todas sus comidas e ingredientes.
+    Los días posteriores se renumeran automáticamente.
+
+    **Efectos:**
+    - Elimina todas las comidas del día
+    - Elimina todos los ingredientes de las comidas
+    - Elimina registros de completación
+    - Renumera días posteriores (día 5 se convierte en día 4, etc.)
+    - Actualiza duration_days del plan
+
+    **Permisos:**
+    - Creador del plan
+    - Administrador/owner del gimnasio
+
+    **Importante:**
+    Esta acción es irreversible y afecta la estructura completa del plan.
+    """
+    # Buscar el día
+    daily_plan = db.query(DailyNutritionPlanModel).filter(
+        DailyNutritionPlanModel.id == daily_plan_id
+    ).first()
+
+    if not daily_plan:
+        logger.warning(f"Daily plan {daily_plan_id} not found for deletion")
+        raise HTTPException(
+            status_code=404,
+            detail="Día del plan no encontrado"
+        )
+
+    # Verificar permisos
+    nutrition_plan = db.query(NutritionPlanModel).filter(
+        NutritionPlanModel.id == daily_plan.plan_id,
+        NutritionPlanModel.gym_id == current_gym.id
+    ).first()
+
+    if not nutrition_plan:
+        raise HTTPException(
+            status_code=403,
+            detail="Sin acceso a este día"
+        )
+
+    db_user = user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
+    if not db_user:
+        raise HTTPException(
+            status_code=403,
+            detail="Usuario no encontrado"
+        )
+
+    is_creator = nutrition_plan.created_by == db_user.id
+
+    user_gym = db.query(UserGym).filter(
+        UserGym.user_id == db_user.id,
+        UserGym.gym_id == current_gym.id
+    ).first()
+
+    is_admin = user_gym and user_gym.role in [GymRoleType.ADMIN, GymRoleType.OWNER]
+
+    if not (is_creator or is_admin):
+        logger.warning(f"Permission denied to delete daily plan {daily_plan_id}")
+        raise HTTPException(
+            status_code=403,
+            detail="Solo el creador del plan o administradores pueden eliminar días"
+        )
+
+    try:
+        # Guardar el número del día para renumerar
+        deleted_day_number = daily_plan.day_number
+
+        # Obtener todas las comidas del día
+        meals = db.query(MealModel).filter(
+            MealModel.daily_plan_id == daily_plan_id
+        ).all()
+
+        # Eliminar completaciones e ingredientes de cada comida
+        for meal in meals:
+            db.query(UserMealCompletion).filter(
+                UserMealCompletion.meal_id == meal.id
+            ).delete()
+
+            db.query(MealIngredientModel).filter(
+                MealIngredientModel.meal_id == meal.id
+            ).delete()
+
+            db.delete(meal)
+
+        # Eliminar el día
+        db.delete(daily_plan)
+
+        # Renumerar días posteriores
+        subsequent_days = db.query(DailyNutritionPlanModel).filter(
+            DailyNutritionPlanModel.plan_id == nutrition_plan.id,
+            DailyNutritionPlanModel.day_number > deleted_day_number
+        ).all()
+
+        for day in subsequent_days:
+            day.day_number -= 1
+            day.updated_at = datetime.utcnow()
+
+        # Actualizar duración del plan
+        nutrition_plan.duration_days = max(0, nutrition_plan.duration_days - 1)
+        nutrition_plan.updated_at = datetime.utcnow()
+
+        db.commit()
+
+        logger.info(f"Daily plan {daily_plan_id} deleted by user {db_user.id}")
+
+    except Exception as e:
+        logger.error(f"Error deleting daily plan {daily_plan_id}: {str(e)}")
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail="Error al eliminar el día del plan"
+        )
+
+    return Response(status_code=204)
+
+
+# ============================================================================
+# CRUD ENDPOINTS PARA INGREDIENTS
+# ============================================================================
+
+@router.put("/ingredients/{ingredient_id}", response_model=MealIngredient)
+async def update_ingredient(
+    ingredient_id: int = Path(..., description="ID del ingrediente"),
+    ingredient_update: MealIngredientUpdate = Body(...),
+    db: Session = Depends(get_db),
+    current_gym: Gym = Depends(verify_gym_access),
+    current_user: Auth0User = Depends(get_current_user)
+):
+    """
+    ✏️ **Actualizar Ingrediente de una Comida**
+
+    **Descripción:**
+    Actualiza la información de un ingrediente específico en una comida.
+    Útil para corregir cantidades o valores nutricionales.
+
+    **Campos actualizables:**
+    - name: Nombre del ingrediente
+    - quantity: Cantidad
+    - unit: Unidad de medida (g, ml, taza, etc.)
+    - calories_per_serving, protein_per_serving, etc: Valores nutricionales
+    - alternatives: Lista de ingredientes alternativos
+    - is_optional: Si el ingrediente es opcional
+
+    **Permisos:**
+    - Creador del plan
+    - Administrador/owner del gimnasio
+
+    **Validaciones:**
+    - quantity debe ser > 0
+    - Valores nutricionales >= 0
+    - El ingrediente debe existir
+    """
+    # Buscar el ingrediente
+    ingredient = db.query(MealIngredientModel).filter(
+        MealIngredientModel.id == ingredient_id
+    ).first()
+
+    if not ingredient:
+        logger.warning(f"Ingredient {ingredient_id} not found")
+        raise HTTPException(
+            status_code=404,
+            detail="Ingrediente no encontrado"
+        )
+
+    # Verificar acceso a través del meal -> daily_plan -> plan
+    meal = db.query(MealModel).filter(
+        MealModel.id == ingredient.meal_id
+    ).first()
+
+    if not meal:
+        logger.error(f"Meal not found for ingredient {ingredient_id}")
+        raise HTTPException(
+            status_code=404,
+            detail="Comida no encontrada para este ingrediente"
+        )
+
+    daily_plan = db.query(DailyNutritionPlanModel).filter(
+        DailyNutritionPlanModel.id == meal.daily_plan_id
+    ).first()
+
+    if not daily_plan:
+        raise HTTPException(
+            status_code=404,
+            detail="Plan diario no encontrado"
+        )
+
+    nutrition_plan = db.query(NutritionPlanModel).filter(
+        NutritionPlanModel.id == daily_plan.plan_id,
+        NutritionPlanModel.gym_id == current_gym.id
+    ).first()
+
+    if not nutrition_plan:
+        logger.warning(f"Access denied to ingredient {ingredient_id} - wrong gym")
+        raise HTTPException(
+            status_code=403,
+            detail="Sin acceso a este ingrediente"
+        )
+
+    # Verificar permisos
+    db_user = user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
+    if not db_user:
+        raise HTTPException(
+            status_code=403,
+            detail="Usuario no encontrado"
+        )
+
+    is_creator = nutrition_plan.created_by == db_user.id
+
+    user_gym = db.query(UserGym).filter(
+        UserGym.user_id == db_user.id,
+        UserGym.gym_id == current_gym.id
+    ).first()
+
+    is_admin = user_gym and user_gym.role in [GymRoleType.ADMIN, GymRoleType.OWNER]
+
+    if not (is_creator or is_admin):
+        logger.warning(f"Permission denied to update ingredient {ingredient_id}")
+        raise HTTPException(
+            status_code=403,
+            detail="Solo el creador del plan o administradores pueden actualizar ingredientes"
+        )
+
+    # Actualizar campos
+    update_data = ingredient_update.dict(exclude_unset=True)
+
+    for field, value in update_data.items():
+        setattr(ingredient, field, value)
+
+    ingredient.updated_at = datetime.utcnow()
+
+    # Si se actualizaron valores nutricionales, actualizar totales de la comida
+    if any(field in update_data for field in [
+        'calories_per_serving', 'protein_per_serving',
+        'carbs_per_serving', 'fat_per_serving'
+    ]):
+        # Recalcular totales de la comida
+        meal_ingredients = db.query(MealIngredientModel).filter(
+            MealIngredientModel.meal_id == meal.id
+        ).all()
+
+        total_calories = sum(i.calories_per_serving or 0 for i in meal_ingredients)
+        total_protein = sum(i.protein_per_serving or 0 for i in meal_ingredients)
+        total_carbs = sum(i.carbs_per_serving or 0 for i in meal_ingredients)
+        total_fat = sum(i.fat_per_serving or 0 for i in meal_ingredients)
+
+        meal.calories = total_calories
+        meal.protein_g = total_protein
+        meal.carbs_g = total_carbs
+        meal.fat_g = total_fat
+        meal.updated_at = datetime.utcnow()
+
+    try:
+        db.commit()
+        db.refresh(ingredient)
+        logger.info(f"Ingredient {ingredient_id} updated by user {db_user.id}")
+    except Exception as e:
+        logger.error(f"Error updating ingredient {ingredient_id}: {str(e)}")
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail="Error al actualizar el ingrediente"
+        )
+
+    return ingredient
+
+
+@router.delete("/ingredients/{ingredient_id}", status_code=204)
+async def delete_ingredient(
+    ingredient_id: int = Path(..., description="ID del ingrediente a eliminar"),
+    db: Session = Depends(get_db),
+    current_gym: Gym = Depends(verify_gym_access),
+    current_user: Auth0User = Depends(get_current_user)
+):
+    """
+    🗑️ **Eliminar Ingrediente de una Comida**
+
+    **Descripción:**
+    Elimina un ingrediente específico de una comida.
+    Los totales nutricionales de la comida se recalculan automáticamente.
+
+    **Efectos:**
+    - Elimina el ingrediente de la base de datos
+    - Recalcula los totales nutricionales de la comida
+    - No afecta otros ingredientes de la misma comida
+
+    **Permisos:**
+    - Creador del plan
+    - Administrador/owner del gimnasio
+
+    **Respuesta:**
+    - 204 No Content: Eliminación exitosa
+    - 404: Ingrediente no encontrado
+    - 403: Sin permisos
+    """
+    # Buscar el ingrediente
+    ingredient = db.query(MealIngredientModel).filter(
+        MealIngredientModel.id == ingredient_id
+    ).first()
+
+    if not ingredient:
+        logger.warning(f"Ingredient {ingredient_id} not found for deletion")
+        raise HTTPException(
+            status_code=404,
+            detail="Ingrediente no encontrado"
+        )
+
+    # Verificar acceso y permisos (mismo flujo que update)
+    meal = db.query(MealModel).filter(
+        MealModel.id == ingredient.meal_id
+    ).first()
+
+    if not meal:
+        raise HTTPException(
+            status_code=404,
+            detail="Comida no encontrada"
+        )
+
+    daily_plan = db.query(DailyNutritionPlanModel).filter(
+        DailyNutritionPlanModel.id == meal.daily_plan_id
+    ).first()
+
+    if not daily_plan:
+        raise HTTPException(
+            status_code=404,
+            detail="Plan diario no encontrado"
+        )
+
+    nutrition_plan = db.query(NutritionPlanModel).filter(
+        NutritionPlanModel.id == daily_plan.plan_id,
+        NutritionPlanModel.gym_id == current_gym.id
+    ).first()
+
+    if not nutrition_plan:
+        raise HTTPException(
+            status_code=403,
+            detail="Sin acceso a este ingrediente"
+        )
+
+    # Verificar permisos
+    db_user = user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
+    if not db_user:
+        raise HTTPException(
+            status_code=403,
+            detail="Usuario no encontrado"
+        )
+
+    is_creator = nutrition_plan.created_by == db_user.id
+
+    user_gym = db.query(UserGym).filter(
+        UserGym.user_id == db_user.id,
+        UserGym.gym_id == current_gym.id
+    ).first()
+
+    is_admin = user_gym and user_gym.role in [GymRoleType.ADMIN, GymRoleType.OWNER]
+
+    if not (is_creator or is_admin):
+        logger.warning(f"Permission denied to delete ingredient {ingredient_id}")
+        raise HTTPException(
+            status_code=403,
+            detail="Solo el creador del plan o administradores pueden eliminar ingredientes"
+        )
+
+    try:
+        # Eliminar el ingrediente
+        db.delete(ingredient)
+
+        # Recalcular totales de la comida
+        remaining_ingredients = db.query(MealIngredientModel).filter(
+            MealIngredientModel.meal_id == meal.id,
+            MealIngredientModel.id != ingredient_id
+        ).all()
+
+        meal.calories = sum(i.calories_per_serving or 0 for i in remaining_ingredients)
+        meal.protein_g = sum(i.protein_per_serving or 0 for i in remaining_ingredients)
+        meal.carbs_g = sum(i.carbs_per_serving or 0 for i in remaining_ingredients)
+        meal.fat_g = sum(i.fat_per_serving or 0 for i in remaining_ingredients)
+        meal.updated_at = datetime.utcnow()
+
+        db.commit()
+
+        logger.info(f"Ingredient {ingredient_id} deleted by user {db_user.id}")
+
+    except Exception as e:
+        logger.error(f"Error deleting ingredient {ingredient_id}: {str(e)}")
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail="Error al eliminar el ingrediente"
+        )
+
+    return Response(status_code=204)
+
+
+# ============================================================================
+# FIN DE ENDPOINTS CRUD AGREGADOS
+# ============================================================================

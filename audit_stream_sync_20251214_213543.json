@@ -1,0 +1,20 @@
+{
+  "timestamp": "2025-12-14T21:35:42.564930",
+  "gym_id": 5,
+  "summary": {
+    "total_stream_channels": 1,
+    "total_db_chatrooms": 1,
+    "synced": 1,
+    "stream_only": 0,
+    "db_only": 0
+  },
+  "stream_only_channels": [],
+  "db_only_chatrooms": [],
+  "synced_channels": [],
+  "recommendations": {
+    "create_chatrooms": 0,
+    "delete_from_stream": 0,
+    "delete_from_db": 0,
+    "investigate": 0
+  }
+}

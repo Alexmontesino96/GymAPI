@@ -1,0 +1,180 @@
+{
+  "timestamp": "2025-12-15T00:44:47.281247",
+  "gym_id": 4,
+  "summary": {
+    "total_stream_channels": 7,
+    "total_db_chatrooms": 14,
+    "synced": 5,
+    "stream_only": 2,
+    "db_only": 9
+  },
+  "stream_only_channels": [
+    {
+      "stream_channel_id": "messaging:event_656_d3d94468",
+      "type": "messaging",
+      "created_at": "2025-10-31T04:57:29.966959Z",
+      "last_message_at": null,
+      "members_count": 1,
+      "members": [
+        "user_10"
+      ],
+      "analysis": {
+        "category": "event_chat",
+        "event_id": 656,
+        "hash": "d3d94468",
+        "event_exists": false,
+        "has_messages": false,
+        "recommendation": "DELETE_FROM_STREAM",
+        "reason": "Evento no existe en BD",
+        "command": "python scripts/delete_orphan_channel.py --channel-id messaging:event_656_d3d94468"
+      }
+    },
+    {
+      "stream_channel_id": "messaging:event_644_d3d94468",
+      "type": "messaging",
+      "created_at": "2025-10-30T15:09:45.912309Z",
+      "last_message_at": null,
+      "members_count": 2,
+      "members": [
+        "user_10",
+        "user_8"
+      ],
+      "analysis": {
+        "category": "event_chat",
+        "event_id": 644,
+        "hash": "d3d94468",
+        "event_exists": false,
+        "has_messages": false,
+        "recommendation": "DELETE_FROM_STREAM",
+        "reason": "Evento no existe en BD",
+        "command": "python scripts/delete_orphan_channel.py --channel-id messaging:event_644_d3d94468"
+      }
+    }
+  ],
+  "db_only_chatrooms": [
+    {
+      "chatroom_id": 641,
+      "stream_channel_id": "messaging:event_604_d3d94468",
+      "type": "messaging",
+      "name": "Evento Yoga Matutina",
+      "created_at": "2025-10-06T19:00:44.402332",
+      "is_direct": false,
+      "event_id": 604,
+      "status": "CLOSED",
+      "recommendation": "DELETE_FROM_DB",
+      "reason": "Canal no existe en Stream (eliminado manualmente)",
+      "command": "# Eliminar ChatRoom ID 641 de la BD"
+    },
+    {
+      "chatroom_id": 657,
+      "stream_channel_id": "messaging:event_657_d3d94468",
+      "type": "messaging",
+      "name": "Evento Sparring Controlado ",
+      "created_at": "2025-10-31T05:09:40.098888",
+      "is_direct": false,
+      "event_id": 657,
+      "status": "CLOSED",
+      "recommendation": "DELETE_FROM_DB",
+      "reason": "Canal no existe en Stream (eliminado manualmente)",
+      "command": "# Eliminar ChatRoom ID 657 de la BD"
+    },
+    {
+      "chatroom_id": 658,
+      "stream_channel_id": "messaging:event_658_d3d94468",
+      "type": "messaging",
+      "name": "Evento Técnicas de Defensa ",
+      "created_at": "2025-10-31T05:10:31.733026",
+      "is_direct": false,
+      "event_id": 658,
+      "status": "CLOSED",
+      "recommendation": "DELETE_FROM_DB",
+      "reason": "Canal no existe en Stream (eliminado manualmente)",
+      "command": "# Eliminar ChatRoom ID 658 de la BD"
+    },
+    {
+      "chatroom_id": 660,
+      "stream_channel_id": "messaging:event_660_d3d94468",
+      "type": "messaging",
+      "name": "Evento Striking Brickel",
+      "created_at": "2025-11-17T15:40:04.608787",
+      "is_direct": false,
+      "event_id": 660,
+      "status": "CLOSED",
+      "recommendation": "DELETE_FROM_DB",
+      "reason": "Canal no existe en Stream (eliminado manualmente)",
+      "command": "# Eliminar ChatRoom ID 660 de la BD"
+    },
+    {
+      "chatroom_id": 634,
+      "stream_channel_id": "messaging:event_616_d3d94468",
+      "type": "messaging",
+      "name": "Evento Técnicas de Defensa ",
+      "created_at": "2025-08-11T03:02:12.307326",
+      "is_direct": false,
+      "event_id": 616,
+      "status": "CLOSED",
+      "recommendation": "DELETE_FROM_DB",
+      "reason": "Canal no existe en Stream (eliminado manualmente)",
+      "command": "# Eliminar ChatRoom ID 634 de la BD"
+    },
+    {
+      "chatroom_id": 640,
+      "stream_channel_id": "messaging:event_617_d3d94468",
+      "type": "messaging",
+      "name": "Evento Yoga Matutina",
+      "created_at": "2025-08-17T15:32:38.050016",
+      "is_direct": false,
+      "event_id": 617,
+      "status": "CLOSED",
+      "recommendation": "DELETE_FROM_DB",
+      "reason": "Canal no existe en Stream (eliminado manualmente)",
+      "command": "# Eliminar ChatRoom ID 640 de la BD"
+    },
+    {
+      "chatroom_id": 642,
+      "stream_channel_id": "messaging:event_641_d3d94468",
+      "type": "messaging",
+      "name": "Evento Sesión de Yoga",
+      "created_at": "2025-10-21T20:51:00.880518",
+      "is_direct": false,
+      "event_id": 641,
+      "status": "CLOSED",
+      "recommendation": "DELETE_FROM_DB",
+      "reason": "Canal no existe en Stream (eliminado manualmente)",
+      "command": "# Eliminar ChatRoom ID 642 de la BD"
+    },
+    {
+      "chatroom_id": 659,
+      "stream_channel_id": "messaging:event_659_d3d94468",
+      "type": "messaging",
+      "name": "Evento Yoga Matutina",
+      "created_at": "2025-11-10T18:17:59.667389",
+      "is_direct": false,
+      "event_id": 659,
+      "status": "CLOSED",
+      "recommendation": "DELETE_FROM_DB",
+      "reason": "Canal no existe en Stream (eliminado manualmente)",
+      "command": "# Eliminar ChatRoom ID 659 de la BD"
+    },
+    {
+      "chatroom_id": 661,
+      "stream_channel_id": "messaging:event_661_d3d94468",
+      "type": "messaging",
+      "name": "Evento Entrenamiento de Kic",
+      "created_at": "2025-11-17T16:06:40.740353",
+      "is_direct": false,
+      "event_id": 661,
+      "status": "CLOSED",
+      "recommendation": "DELETE_FROM_DB",
+      "reason": "Canal no existe en Stream (eliminado manualmente)",
+      "command": "# Eliminar ChatRoom ID 661 de la BD"
+    }
+  ],
+  "synced_channels": [],
+  "recommendations": {
+    "delete_from_stream": 2,
+    "delete_from_db": 9,
+    "create_chatrooms": 0,
+    "investigate": 0
+  }
+}
