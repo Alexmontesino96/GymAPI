@@ -2960,7 +2960,7 @@ async def get_meal(
 
     # Verificar que el plan pertenece al gimnasio actual
     nutrition_plan = db.query(NutritionPlanModel).filter(
-        NutritionPlanModel.id == daily_plan.plan_id,
+        NutritionPlanModel.id == daily_plan.nutrition_plan_id,
         NutritionPlanModel.gym_id == current_gym.id
     ).first()
 
@@ -3059,7 +3059,7 @@ async def update_meal(
         )
 
     nutrition_plan = db.query(NutritionPlanModel).filter(
-        NutritionPlanModel.id == daily_plan.plan_id,
+        NutritionPlanModel.id == daily_plan.nutrition_plan_id,
         NutritionPlanModel.gym_id == current_gym.id
     ).first()
 
@@ -3170,7 +3170,7 @@ async def delete_meal(
         )
 
     nutrition_plan = db.query(NutritionPlanModel).filter(
-        NutritionPlanModel.id == daily_plan.plan_id,
+        NutritionPlanModel.id == daily_plan.nutrition_plan_id,
         NutritionPlanModel.gym_id == current_gym.id
     ).first()
 
@@ -3281,7 +3281,7 @@ async def get_daily_plan(
 
     # Verificar acceso a través del plan
     nutrition_plan = db.query(NutritionPlanModel).filter(
-        NutritionPlanModel.id == daily_plan.plan_id,
+        NutritionPlanModel.id == daily_plan.nutrition_plan_id,
         NutritionPlanModel.gym_id == current_gym.id
     ).first()
 
@@ -3389,7 +3389,7 @@ async def list_plan_days(
 
     # Obtener todos los días con sus comidas e ingredientes
     daily_plans = db.query(DailyNutritionPlanModel).filter(
-        DailyNutritionPlanModel.plan_id == plan_id
+        DailyNutritionPlanModel.nutrition_plan_id == plan_id
     ).options(
         joinedload(DailyNutritionPlanModel.meals).joinedload(MealModel.ingredients)
     ).order_by(DailyNutritionPlanModel.day_number).all()
@@ -3442,7 +3442,7 @@ async def update_daily_plan(
 
     # Verificar permisos
     nutrition_plan = db.query(NutritionPlanModel).filter(
-        NutritionPlanModel.id == daily_plan.plan_id,
+        NutritionPlanModel.id == daily_plan.nutrition_plan_id,
         NutritionPlanModel.gym_id == current_gym.id
     ).first()
 
@@ -3544,7 +3544,7 @@ async def delete_daily_plan(
 
     # Verificar permisos
     nutrition_plan = db.query(NutritionPlanModel).filter(
-        NutritionPlanModel.id == daily_plan.plan_id,
+        NutritionPlanModel.id == daily_plan.nutrition_plan_id,
         NutritionPlanModel.gym_id == current_gym.id
     ).first()
 
@@ -3603,7 +3603,7 @@ async def delete_daily_plan(
 
         # Renumerar días posteriores
         subsequent_days = db.query(DailyNutritionPlanModel).filter(
-            DailyNutritionPlanModel.plan_id == nutrition_plan.id,
+            DailyNutritionPlanModel.nutrition_plan_id == nutrition_plan.id,
             DailyNutritionPlanModel.day_number > deleted_day_number
         ).all()
 
@@ -3701,7 +3701,7 @@ async def update_ingredient(
         )
 
     nutrition_plan = db.query(NutritionPlanModel).filter(
-        NutritionPlanModel.id == daily_plan.plan_id,
+        NutritionPlanModel.id == daily_plan.nutrition_plan_id,
         NutritionPlanModel.gym_id == current_gym.id
     ).first()
 
@@ -3842,7 +3842,7 @@ async def delete_ingredient(
         )
 
     nutrition_plan = db.query(NutritionPlanModel).filter(
-        NutritionPlanModel.id == daily_plan.plan_id,
+        NutritionPlanModel.id == daily_plan.nutrition_plan_id,
         NutritionPlanModel.gym_id == current_gym.id
     ).first()
 
