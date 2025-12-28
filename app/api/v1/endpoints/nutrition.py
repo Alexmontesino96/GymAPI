@@ -2976,7 +2976,7 @@ async def get_meal(
         db_user = user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
         if db_user:
             # Verificar si es el creador
-            is_creator = nutrition_plan.created_by == db_user.id
+            is_creator = nutrition_plan.creator_id == db_user.id
 
             # Verificar si es seguidor activo
             is_follower = db.query(NutritionPlanFollowerModel).filter(
@@ -3079,7 +3079,7 @@ async def update_meal(
         )
 
     # Verificar si es el creador del plan
-    is_creator = nutrition_plan.created_by == db_user.id
+    is_creator = nutrition_plan.creator_id == db_user.id
 
     # Verificar si es admin/owner del gimnasio
     user_gym = db.query(UserGym).filter(
@@ -3188,7 +3188,7 @@ async def delete_meal(
             detail="Usuario no encontrado"
         )
 
-    is_creator = nutrition_plan.created_by == db_user.id
+    is_creator = nutrition_plan.creator_id == db_user.id
 
     user_gym = db.query(UserGym).filter(
         UserGym.user_id == db_user.id,
@@ -3296,7 +3296,7 @@ async def get_daily_plan(
     if not nutrition_plan.is_public:
         db_user = user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
         if db_user:
-            is_creator = nutrition_plan.created_by == db_user.id
+            is_creator = nutrition_plan.creator_id == db_user.id
 
             is_follower = db.query(NutritionPlanFollowerModel).filter(
                 NutritionPlanFollowerModel.plan_id == nutrition_plan.id,
@@ -3367,7 +3367,7 @@ async def list_plan_days(
     if not nutrition_plan.is_public:
         db_user = user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
         if db_user:
-            is_creator = nutrition_plan.created_by == db_user.id
+            is_creator = nutrition_plan.creator_id == db_user.id
 
             is_follower = db.query(NutritionPlanFollowerModel).filter(
                 NutritionPlanFollowerModel.plan_id == nutrition_plan.id,
@@ -3459,7 +3459,7 @@ async def update_daily_plan(
             detail="Usuario no encontrado"
         )
 
-    is_creator = nutrition_plan.created_by == db_user.id
+    is_creator = nutrition_plan.creator_id == db_user.id
 
     user_gym = db.query(UserGym).filter(
         UserGym.user_id == db_user.id,
@@ -3561,7 +3561,7 @@ async def delete_daily_plan(
             detail="Usuario no encontrado"
         )
 
-    is_creator = nutrition_plan.created_by == db_user.id
+    is_creator = nutrition_plan.creator_id == db_user.id
 
     user_gym = db.query(UserGym).filter(
         UserGym.user_id == db_user.id,
@@ -3720,7 +3720,7 @@ async def update_ingredient(
             detail="Usuario no encontrado"
         )
 
-    is_creator = nutrition_plan.created_by == db_user.id
+    is_creator = nutrition_plan.creator_id == db_user.id
 
     user_gym = db.query(UserGym).filter(
         UserGym.user_id == db_user.id,
@@ -3860,7 +3860,7 @@ async def delete_ingredient(
             detail="Usuario no encontrado"
         )
 
-    is_creator = nutrition_plan.created_by == db_user.id
+    is_creator = nutrition_plan.creator_id == db_user.id
 
     user_gym = db.query(UserGym).filter(
         UserGym.user_id == db_user.id,
