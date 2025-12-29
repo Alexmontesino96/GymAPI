@@ -37,29 +37,201 @@ Transformar la creación de planes nutricionales en una experiencia fluida donde
 
 ### FLUJO A: Creación Asistida por IA 🤖
 
-#### A.1 - Cuestionario Inteligente (30 segundos)
+#### A.1 - Cuestionario Inteligente Detallado (2-3 minutos)
+
+##### PASO 1: Objetivos y Perfil
 ```
 ┌─────────────────────────────────────────────┐
-│         🎯 Cuéntanos tu objetivo           │
+│       🎯 Paso 1/5: Objetivo Principal       │
 ├─────────────────────────────────────────────┤
 │                                             │
-│  1. ¿Cuál es tu meta principal?            │
-│     [ ] Perder peso                        │
-│     [ ] Ganar músculo                      │
-│     [ ] Mantener peso                      │
-│     [ ] Mejorar salud                      │
+│  ¿Cuál es tu meta principal?               │
+│  ◉ Perder peso (-0.5 a -1kg/semana)       │
+│  ○ Ganar músculo (+0.25 a +0.5kg/semana)  │
+│  ○ Recomposición corporal                  │
+│  ○ Mantener peso actual                    │
+│  ○ Mejorar salud general                   │
+│  ○ Aumentar energía y rendimiento          │
 │                                             │
-│  2. ¿Para quién es este plan?              │
-│     [ ] Para mí                            │
-│     [ ] Para un cliente                    │
-│     [ ] Plan general del gym               │
+│  ¿Para quién es este plan?                 │
+│  ◉ Para mí                                 │
+│  ○ Para un cliente específico              │
+│  ○ Plan general del gimnasio               │
+│  ○ Grupo de entrenamiento                  │
 │                                             │
-│  3. ¿Tienes restricciones dietéticas?      │
-│     [ ] Vegetariano [ ] Vegano             │
-│     [ ] Sin gluten  [ ] Sin lácteos        │
-│     [ ] Keto        [ ] Otro: _____        │
+│  Información básica:                       │
+│  Edad: [25] años                           │
+│  Sexo: [▼ Masculino]                       │
+│  Peso actual: [75] kg                      │
+│  Altura: [175] cm                          │
+│  Nivel actividad: [▼ Moderado (3-5 días)] │
 │                                             │
-│  [Generar Plan con IA →]                   │
+│  [← Cancelar]  [Siguiente →]                │
+└─────────────────────────────────────────────┘
+```
+
+##### PASO 2: Restricciones y Alergias
+```
+┌─────────────────────────────────────────────┐
+│    🚫 Paso 2/5: Restricciones y Alergias   │
+├─────────────────────────────────────────────┤
+│                                             │
+│  Restricciones dietéticas:                 │
+│  ☐ Vegetariano    ☐ Vegano                │
+│  ☐ Sin gluten     ☐ Sin lácteos           │
+│  ☐ Keto           ☐ Paleo                 │
+│  ☐ Low FODMAP     ☐ Sin azúcar            │
+│  ☐ Halal          ☐ Kosher                │
+│  ☐ Pescetariano   ☐ Mediterránea          │
+│                                             │
+│  Alergias alimentarias:                    │
+│  ☐ Frutos secos   ☐ Mariscos              │
+│  ☐ Huevos         ☐ Soja                  │
+│  ☐ Cacahuetes     ☐ Pescado               │
+│  ☐ Trigo          ☐ Sésamo                │
+│  Otras: [_____________________]            │
+│                                             │
+│  Intolerancias:                            │
+│  ☐ Lactosa        ☐ Fructosa              │
+│  ☐ Histamina      ☐ Gluten (no celíaco)   │
+│  Otras: [_____________________]            │
+│                                             │
+│  [← Anterior]  [Siguiente →]                │
+└─────────────────────────────────────────────┘
+```
+
+##### PASO 3: Ingredientes No Deseados
+```
+┌─────────────────────────────────────────────┐
+│    ❌ Paso 3/5: Ingredientes a Evitar      │
+├─────────────────────────────────────────────┤
+│                                             │
+│  ¿Qué ingredientes NO quieres en tu plan?  │
+│                                             │
+│  Por categorías:                           │
+│  ├─ 🥩 Proteínas:                          │
+│  │  ☐ Carne roja    ☐ Cerdo               │
+│  │  ☐ Pollo         ☐ Pavo                │
+│  │  ☐ Pescado azul  ☐ Pescado blanco      │
+│  │  ☐ Tofu          ☐ Tempeh              │
+│  │  ☐ Legumbres     ☐ Proteína en polvo   │
+│  │                                         │
+│  ├─ 🥬 Vegetales:                          │
+│  │  ☐ Brócoli       ☐ Coliflor            │
+│  │  ☐ Espinacas     ☐ Kale                │
+│  │  ☐ Pimientos     ☐ Cebolla             │
+│  │  ☐ Ajo           ☐ Champiñones         │
+│  │  ☐ Berenjena     ☐ Calabacín           │
+│  │                                         │
+│  ├─ 🍚 Carbohidratos:                      │
+│  │  ☐ Arroz blanco  ☐ Arroz integral      │
+│  │  ☐ Pasta         ☐ Pan                 │
+│  │  ☐ Avena         ☐ Quinoa              │
+│  │  ☐ Patata        ☐ Batata              │
+│  │                                         │
+│  └─ Ingredientes específicos a evitar:     │
+│     [cilantro, aceitunas, anchoas____]     │
+│                                             │
+│  Razón principal para evitar:              │
+│  ◉ No me gusta el sabor                   │
+│  ○ Difícil de conseguir                   │
+│  ○ Muy caro                               │
+│  ○ Alergia/intolerancia                   │
+│                                             │
+│  [← Anterior]  [Siguiente →]                │
+└─────────────────────────────────────────────┘
+```
+
+##### PASO 4: Preferencias de Preparación
+```
+┌─────────────────────────────────────────────┐
+│    ⏰ Paso 4/5: Estilo de Vida y Cocina    │
+├─────────────────────────────────────────────┤
+│                                             │
+│  Tiempo disponible para cocinar:           │
+│  Desayuno: [▼ 10-15 min]                   │
+│  Almuerzo: [▼ 20-30 min]                   │
+│  Cena: [▼ 30-45 min]                       │
+│                                             │
+│  ¿Cuántas veces cocinas a la semana?      │
+│  ◉ Todos los días                          │
+│  ○ 3-4 veces (meal prep)                  │
+│  ○ 1-2 veces (batch cooking)              │
+│  ○ Casi nunca (comida preparada)          │
+│                                             │
+│  Nivel de habilidad en cocina:             │
+│  ○ Principiante (recetas simples)         │
+│  ◉ Intermedio (puedo seguir recetas)      │
+│  ○ Avanzado (me gusta experimentar)       │
+│                                             │
+│  Equipamiento disponible:                  │
+│  ☑ Horno         ☑ Microondas             │
+│  ☑ Estufa        ☐ Freidora de aire       │
+│  ☐ Olla presión  ☐ Procesador alimentos   │
+│  ☐ Batidora      ☐ Parrilla/BBQ           │
+│                                             │
+│  Preferencias de cocción:                  │
+│  ☑ Al vapor      ☑ Asado/horno            │
+│  ☑ Salteado      ☐ Frito                  │
+│  ☑ Hervido       ☑ A la plancha           │
+│  ☐ Crudo/Raw     ☐ Sous vide              │
+│                                             │
+│  [← Anterior]  [Siguiente →]                │
+└─────────────────────────────────────────────┘
+```
+
+##### PASO 5: Presupuesto y Preferencias Finales
+```
+┌─────────────────────────────────────────────┐
+│    💰 Paso 5/5: Presupuesto y Detalles     │
+├─────────────────────────────────────────────┤
+│                                             │
+│  Presupuesto semanal para comida:          │
+│  ○ Económico ($30-50 / €25-45)            │
+│  ◉ Moderado ($50-100 / €45-90)            │
+│  ○ Premium ($100-150 / €90-135)           │
+│  ○ Sin límite (>$150 / >€135)             │
+│                                             │
+│  Preferencias de compra:                   │
+│  ☑ Ingredientes locales/temporada         │
+│  ☐ Solo productos orgánicos               │
+│  ☑ Marcas genéricas aceptables            │
+│  ☐ Compra a granel preferida              │
+│                                             │
+│  Tipo de cocina preferida:                 │
+│  ☑ Mediterránea   ☑ Asiática              │
+│  ☐ Mexicana       ☐ Italiana              │
+│  ☐ India          ☐ Americana             │
+│  ☑ Fusión         ☐ Tradicional local     │
+│                                             │
+│  Horarios de comida habituales:            │
+│  Desayuno: [08:00]                         │
+│  Snack AM: [10:30] ☐ Omitir               │
+│  Almuerzo: [13:00]                         │
+│  Snack PM: [16:30] ☐ Omitir               │
+│  Cena: [20:00]                             │
+│                                             │
+│  Consideraciones especiales:               │
+│  ☐ Trabajo por turnos                     │
+│  ☐ Viajo frecuentemente                   │
+│  ☐ Como fuera 3+ veces/semana             │
+│  ☐ Comparto comidas con familia           │
+│  ☐ Necesito opciones portables            │
+│                                             │
+│  Notas adicionales para la IA:             │
+│  [Me gusta la comida picante pero no     ]│
+│  [demasiado. Prefiero sabores frescos    ]│
+│  [y comidas que se puedan preparar       ]│
+│  [con anticipación para la semana.       ]│
+│                                             │
+│  🎯 Resumen de tu perfil:                  │
+│  • Objetivo: Perder peso                   │
+│  • Sin gluten y lácteos                   │
+│  • Evitar: cilantro, cerdo                │
+│  • Presupuesto moderado                   │
+│  • Tiempo limitado para cocinar           │
+│                                             │
+│  [← Anterior]  [🤖 Generar Plan con IA]    │
 └─────────────────────────────────────────────┘
 ```
 
