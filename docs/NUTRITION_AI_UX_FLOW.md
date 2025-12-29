@@ -7,14 +7,52 @@ Transformar la creación de planes nutricionales en una experiencia fluida donde
 ## 🌟 Principios de Diseño
 
 1. **IA como Copiloto, no como Piloto**: El usuario siempre tiene el control
-2. **Progresivo, no Abrumador**: Revelación gradual de funcionalidades
-3. **Sugerencias Inteligentes**: La IA sugiere, el usuario decide
-4. **Flexibilidad Total**: Poder cambiar entre manual y asistido en cualquier momento
-5. **Transparencia**: Siempre claro cuando la IA está generando contenido
+2. **Seguridad sin Fricción**: Proteger salud sin comprometer experiencia
+3. **Progresivo, no Abrumador**: Revelación gradual de funcionalidades
+4. **Sugerencias Inteligentes**: La IA sugiere, el usuario decide
+5. **Flexibilidad Total**: Poder cambiar entre manual y asistido en cualquier momento
+6. **Transparencia**: Siempre claro cuando la IA está generando contenido
+
+## ⚠️ IMPORTANTE: Seguridad y Cumplimiento Legal
+
+Este flujo incluye validaciones médicas obligatorias para proteger a usuarios vulnerables y cumplir con requisitos legales. El "Paso 0" de seguridad es **NO NEGOCIABLE** y debe completarse antes de cualquier generación de plan.
 
 ---
 
 ## 🚀 Flujo de Creación Propuesto
+
+### PASO 0: Gateway de Seguridad (Obligatorio - 30 segundos)
+
+```
+┌─────────────────────────────────────────────┐
+│     🏥 Verificación de Seguridad            │
+├─────────────────────────────────────────────┤
+│                                             │
+│  Por tu seguridad, confirma:               │
+│                                             │
+│  ¿Alguna de estas situaciones aplica?      │
+│  ☐ Tengo diabetes                          │
+│  ☐ Problemas cardíacos o de presión        │
+│  ☐ Embarazo o lactancia                    │
+│  ☐ Enfermedad renal o hepática            │
+│  ☐ Historial de trastorno alimentario      │
+│  ☐ Menor de 18 años                        │
+│  ☑ Ninguna de las anteriores               │
+│                                             │
+│  ⚠️ Importante: Este sistema genera        │
+│  sugerencias nutricionales con IA.         │
+│  No reemplaza consulta médica profesional. │
+│                                             │
+│  ☐ Acepto el disclaimer y continúo         │
+│                                             │
+│  [Salir] [Continuar →]                      │
+└─────────────────────────────────────────────┘
+```
+
+**Validaciones Automáticas**:
+- Si marca condiciones médicas → Pantalla de derivación profesional
+- Si es menor sin consentimiento → Solicitar email parental
+- Si embarazo + pérdida peso → Bloquear y derivar
 
 ### PASO 1: Inicio del Plan (Decisión Inicial)
 
@@ -29,7 +67,7 @@ Transformar la creación de planes nutricionales en una experiencia fluida donde
 │  │  🤖 Con IA   │    │ ✏️ Manual    │      │
 │  │  Asistida    │    │  Tradicional │      │
 │  └──────────────┘    └──────────────┘      │
-│        (70%)              (30%)             │
+│     2-3 minutos        5-10 minutos         │
 │                                             │
 │  💡 Tip: Puedes cambiar en cualquier momento│
 └─────────────────────────────────────────────┘
@@ -37,201 +75,111 @@ Transformar la creación de planes nutricionales en una experiencia fluida donde
 
 ### FLUJO A: Creación Asistida por IA 🤖
 
-#### A.1 - Cuestionario Inteligente Detallado (2-3 minutos)
+#### A.1 - Cuestionario Inteligente Optimizado (2-3 minutos)
 
-##### PASO 1: Objetivos y Perfil
+##### PASO 2: Objetivos y Perfil (1 minuto)
 ```
 ┌─────────────────────────────────────────────┐
-│       🎯 Paso 1/5: Objetivo Principal       │
+│       🎯 Paso 1/3: Objetivo y Perfil        │
 ├─────────────────────────────────────────────┤
 │                                             │
 │  ¿Cuál es tu meta principal?               │
-│  ◉ Perder peso (-0.5 a -1kg/semana)       │
-│  ○ Ganar músculo (+0.25 a +0.5kg/semana)  │
-│  ○ Recomposición corporal                  │
-│  ○ Mantener peso actual                    │
-│  ○ Mejorar salud general                   │
-│  ○ Aumentar energía y rendimiento          │
-│                                             │
-│  ¿Para quién es este plan?                 │
-│  ◉ Para mí                                 │
-│  ○ Para un cliente específico              │
-│  ○ Plan general del gimnasio               │
-│  ○ Grupo de entrenamiento                  │
+│  ◉ Perder peso                             │
+│  ○ Ganar músculo                           │
+│  ○ Mantener peso                           │
+│  ○ Más energía                             │
 │                                             │
 │  Información básica:                       │
-│  Edad: [25] años                           │
-│  Sexo: [▼ Masculino]                       │
-│  Peso actual: [75] kg                      │
-│  Altura: [175] cm                          │
-│  Nivel actividad: [▼ Moderado (3-5 días)] │
+│  Edad: [25] años    Sexo: [▼ Masculino]    │
+│  Peso: [75] kg      Altura: [175] cm       │
+│                                             │
+│  Nivel actividad:                          │
+│  ○ Bajo (0-2 días)                         │
+│  ◉ Moderado (3-5 días)                     │
+│  ○ Alto (6-7 días)                         │
+│                                             │
+│  ╔════════════════════════════════════╗    │
+│  ║ 📊 Cálculos Automáticos:            ║    │
+│  ║ • IMC: 24.5 (Normal) ✅             ║    │
+│  ║ • Metabolismo base: ~1,750 kcal     ║    │
+│  ║ • Gasto diario: ~2,400 kcal         ║    │
+│  ║ • Objetivo: 1,900 kcal/día          ║    │
+│  ║   (déficit 500 kcal para -0.5kg/sem)║    │
+│  ╚════════════════════════════════════╝    │
 │                                             │
 │  [← Cancelar]  [Siguiente →]                │
 └─────────────────────────────────────────────┘
 ```
 
-##### PASO 2: Restricciones y Alergias
+##### PASO 3: Restricciones y Preferencias (1 minuto)
 ```
 ┌─────────────────────────────────────────────┐
-│    🚫 Paso 2/5: Restricciones y Alergias   │
+│    🚫 Paso 2/3: Restricciones y Alergias   │
 ├─────────────────────────────────────────────┤
 │                                             │
-│  Restricciones dietéticas:                 │
-│  ☐ Vegetariano    ☐ Vegano                │
-│  ☐ Sin gluten     ☐ Sin lácteos           │
-│  ☐ Keto           ☐ Paleo                 │
-│  ☐ Low FODMAP     ☐ Sin azúcar            │
-│  ☐ Halal          ☐ Kosher                │
-│  ☐ Pescetariano   ☐ Mediterránea          │
+│  Dieta especial: [▼ Ninguna               ]│
+│  (Vegetariano, Vegano, Keto, Sin gluten)   │
 │                                             │
-│  Alergias alimentarias:                    │
-│  ☐ Frutos secos   ☐ Mariscos              │
-│  ☐ Huevos         ☐ Soja                  │
-│  ☐ Cacahuetes     ☐ Pescado               │
-│  ☐ Trigo          ☐ Sésamo                │
-│  Otras: [_____________________]            │
+│  Alergias principales (máx 10 opciones):   │
+│  ☐ Frutos secos   ☐ Lácteos               │
+│  ☐ Gluten         ☐ Mariscos              │
+│  ☐ Huevos         ☐ Otro: [______]        │
 │                                             │
-│  Intolerancias:                            │
-│  ☐ Lactosa        ☐ Fructosa              │
-│  ☐ Histamina      ☐ Gluten (no celíaco)   │
-│  Otras: [_____________________]            │
+│  5 ingredientes que NO quieres:            │
+│  [ej: cilantro, brócoli, hígado_____]      │
 │                                             │
-│  [← Anterior]  [Siguiente →]                │
+│  Presupuesto semanal:                      │
+│  ○ Bajo ($30-50)                           │
+│  ◉ Moderado ($50-100)                      │
+│  ○ Alto ($100+)                            │
+│                                             │
+│  Tiempo para cocinar:                      │
+│  ○ Poco (15 min)                           │
+│  ◉ Moderado (30 min)                       │
+│  ○ Me gusta cocinar (45+ min)              │
+│                                             │
+│  ╔════════════════════════════════════╗    │
+│  ║ 💡 Tip: La IA respetará todas tus   ║    │
+│  ║ restricciones y preferencias        ║    │
+│  ╚════════════════════════════════════╝    │
+│                                             │
+│  [← Anterior]  [🚀 Generar Plan con IA]    │
+│                [+ Más opciones]             │
 └─────────────────────────────────────────────┘
 ```
 
-##### PASO 3: Ingredientes No Deseados
+##### PASO 4: Preferencias Avanzadas (OPCIONAL - 30 segundos)
 ```
 ┌─────────────────────────────────────────────┐
-│    ❌ Paso 3/5: Ingredientes a Evitar      │
+│    ⚙️ Paso 3/3: Opciones Avanzadas         │
+│         (Completamente Opcional)           │
 ├─────────────────────────────────────────────┤
 │                                             │
-│  ¿Qué ingredientes NO quieres en tu plan?  │
+│  📍 NOTA: Estos campos son opcionales.      │
+│     La IA usará valores inteligentes.      │
 │                                             │
-│  Por categorías:                           │
-│  ├─ 🥩 Proteínas:                          │
-│  │  ☐ Carne roja    ☐ Cerdo               │
-│  │  ☐ Pollo         ☐ Pavo                │
-│  │  ☐ Pescado azul  ☐ Pescado blanco      │
-│  │  ☐ Tofu          ☐ Tempeh              │
-│  │  ☐ Legumbres     ☐ Proteína en polvo   │
-│  │                                         │
-│  ├─ 🥬 Vegetales:                          │
-│  │  ☐ Brócoli       ☐ Coliflor            │
-│  │  ☐ Espinacas     ☐ Kale                │
-│  │  ☐ Pimientos     ☐ Cebolla             │
-│  │  ☐ Ajo           ☐ Champiñones         │
-│  │  ☐ Berenjena     ☐ Calabacín           │
-│  │                                         │
-│  ├─ 🍚 Carbohidratos:                      │
-│  │  ☐ Arroz blanco  ☐ Arroz integral      │
-│  │  ☐ Pasta         ☐ Pan                 │
-│  │  ☐ Avena         ☐ Quinoa              │
-│  │  ☐ Patata        ☐ Batata              │
-│  │                                         │
-│  └─ Ingredientes específicos a evitar:     │
-│     [cilantro, aceitunas, anchoas____]     │
-│                                             │
-│  Razón principal para evitar:              │
-│  ◉ No me gusta el sabor                   │
-│  ○ Difícil de conseguir                   │
-│  ○ Muy caro                               │
-│  ○ Alergia/intolerancia                   │
-│                                             │
-│  [← Anterior]  [Siguiente →]                │
-└─────────────────────────────────────────────┘
-```
-
-##### PASO 4: Preferencias de Preparación
-```
-┌─────────────────────────────────────────────┐
-│    ⏰ Paso 4/5: Estilo de Vida y Cocina    │
-├─────────────────────────────────────────────┤
-│                                             │
-│  Tiempo disponible para cocinar:           │
-│  Desayuno: [▼ 10-15 min]                   │
-│  Almuerzo: [▼ 20-30 min]                   │
-│  Cena: [▼ 30-45 min]                       │
-│                                             │
-│  ¿Cuántas veces cocinas a la semana?      │
-│  ◉ Todos los días                          │
-│  ○ 3-4 veces (meal prep)                  │
-│  ○ 1-2 veces (batch cooking)              │
-│  ○ Casi nunca (comida preparada)          │
-│                                             │
-│  Nivel de habilidad en cocina:             │
-│  ○ Principiante (recetas simples)         │
-│  ◉ Intermedio (puedo seguir recetas)      │
-│  ○ Avanzado (me gusta experimentar)       │
-│                                             │
-│  Equipamiento disponible:                  │
-│  ☑ Horno         ☑ Microondas             │
-│  ☑ Estufa        ☐ Freidora de aire       │
-│  ☐ Olla presión  ☐ Procesador alimentos   │
-│  ☐ Batidora      ☐ Parrilla/BBQ           │
-│                                             │
-│  Preferencias de cocción:                  │
-│  ☑ Al vapor      ☑ Asado/horno            │
-│  ☑ Salteado      ☐ Frito                  │
-│  ☑ Hervido       ☑ A la plancha           │
-│  ☐ Crudo/Raw     ☐ Sous vide              │
-│                                             │
-│  [← Anterior]  [Siguiente →]                │
-└─────────────────────────────────────────────┘
-```
-
-##### PASO 5: Presupuesto y Preferencias Finales
-```
-┌─────────────────────────────────────────────┐
-│    💰 Paso 5/5: Presupuesto y Detalles     │
-├─────────────────────────────────────────────┤
-│                                             │
-│  Presupuesto semanal para comida:          │
-│  ○ Económico ($30-50 / €25-45)            │
-│  ◉ Moderado ($50-100 / €45-90)            │
-│  ○ Premium ($100-150 / €90-135)           │
-│  ○ Sin límite (>$150 / >€135)             │
-│                                             │
-│  Preferencias de compra:                   │
-│  ☑ Ingredientes locales/temporada         │
-│  ☐ Solo productos orgánicos               │
-│  ☑ Marcas genéricas aceptables            │
-│  ☐ Compra a granel preferida              │
+│  Equipamiento especial:                    │
+│  ☐ Freidora de aire                       │
+│  ☐ Olla de presión                        │
+│  ☐ Thermomix/Procesador                   │
 │                                             │
 │  Tipo de cocina preferida:                 │
-│  ☑ Mediterránea   ☑ Asiática              │
-│  ☐ Mexicana       ☐ Italiana              │
-│  ☐ India          ☐ Americana             │
-│  ☑ Fusión         ☐ Tradicional local     │
-│                                             │
-│  Horarios de comida habituales:            │
-│  Desayuno: [08:00]                         │
-│  Snack AM: [10:30] ☐ Omitir               │
-│  Almuerzo: [13:00]                         │
-│  Snack PM: [16:30] ☐ Omitir               │
-│  Cena: [20:00]                             │
+│  [▼ Variada (IA decide)                   ]│
 │                                             │
 │  Consideraciones especiales:               │
 │  ☐ Trabajo por turnos                     │
 │  ☐ Viajo frecuentemente                   │
-│  ☐ Como fuera 3+ veces/semana             │
-│  ☐ Comparto comidas con familia           │
-│  ☐ Necesito opciones portables            │
+│  ☐ Cocino para familia                    │
 │                                             │
-│  Notas adicionales para la IA:             │
-│  [Me gusta la comida picante pero no     ]│
-│  [demasiado. Prefiero sabores frescos    ]│
-│  [y comidas que se puedan preparar       ]│
-│  [con anticipación para la semana.       ]│
+│  Notas adicionales (opcional):             │
+│  [________________________________]         │
 │                                             │
-│  🎯 Resumen de tu perfil:                  │
-│  • Objetivo: Perder peso                   │
-│  • Sin gluten y lácteos                   │
-│  • Evitar: cilantro, cerdo                │
-│  • Presupuesto moderado                   │
-│  • Tiempo limitado para cocinar           │
+│  ╔════════════════════════════════════╗    │
+│  ║ ✨ Ya tienes suficiente info para   ║    │
+│  ║ generar un excelente plan           ║    │
+│  ╚════════════════════════════════════╝    │
 │                                             │
-│  [← Anterior]  [🤖 Generar Plan con IA]    │
+│  [← Anterior]  [🚀 Generar Plan con IA]    │
 └─────────────────────────────────────────────┘
 ```
 
@@ -438,6 +386,38 @@ Disponible en cada campo vacío:
 
 ## 📱 Experiencia Móvil First
 
+### Opción A: Flujo Tradicional Optimizado
+- Mismos pasos pero con diseño responsive
+- Campos adaptados para touch
+- Teclado numérico para números
+- Selectores nativos del OS
+
+### Opción B: Tinder-Style (Innovador)
+```
+┌─────────────────────────────────────────────┐
+│         📱 Creación Rápida Móvil            │
+├─────────────────────────────────────────────┤
+│                                             │
+│  1️⃣ Responde 5 preguntas básicas (1 min)    │
+│                                             │
+│  2️⃣ IA genera 20 opciones de comidas        │
+│                                             │
+│  3️⃣ Swipe para crear tu semana:             │
+│                                             │
+│         [Imagen de comida]                  │
+│                                             │
+│         🍽️ Pollo Teriyaki                   │
+│         580 cal | 35g proteína              │
+│                                             │
+│     ← No me gusta    Me gusta →             │
+│           ❌             ✅                  │
+│                                             │
+│  Progreso: ████████░░ 14/21 comidas         │
+│                                             │
+│  [Finalizar y Generar Plan]                 │
+└─────────────────────────────────────────────┘
+```
+
 ### Creación Rápida por Voz
 ```
 🎤 "Crear plan de 1500 calorías,
@@ -445,13 +425,6 @@ Disponible en cada campo vacío:
     con comidas fáciles de preparar"
 
 ✨ Plan generado en 3 segundos
-```
-
-### Swipe para Decidir
-```
-   ← Rechazar    [🍽️ Comida]    Aceptar →
-                 Pollo teriyaki
-                   580 cal
 ```
 
 ---
@@ -517,19 +490,85 @@ Tu feedback entrena la IA
 
 ---
 
-## 💡 Conclusión
+## 🔄 Progressive Profiling (Post-Generación)
 
-La IA debe sentirse como un **nutricionista experto** siempre disponible, que:
-- **Sugiere** sin imponer
-- **Aprende** de tus preferencias
-- **Ahorra tiempo** sin sacrificar calidad
-- **Empodera** al usuario con conocimiento
+### Captura Gradual de Información
+Después de generar el primer plan, el sistema captura más datos sin fricción:
 
-El usuario final debe pensar:
-> "No estoy usando IA, tengo un asistente nutricional que me entiende"
+#### Día 1 - Post Generación:
+```
+┌─────────────────────────────────────────────┐
+│   ✅ Plan generado exitosamente             │
+│                                             │
+│   2 preguntas rápidas para mejorar:        │
+│   • ¿Cocinas para tu familia? [Sí/No]     │
+│   • ¿Comes fuera frecuentemente? [Sí/No]   │
+│                                             │
+│   [Responder] [Ahora no]                   │
+└─────────────────────────────────────────────┘
+```
+
+#### Día 7 - Primera Semana:
+```
+┌─────────────────────────────────────────────┐
+│   📊 ¿Cómo va tu primera semana?           │
+│                                             │
+│   Nivel de hambre: [▓▓▓▓░░░░░░] 4/10      │
+│   Energía:         [▓▓▓▓▓▓▓░░░] 7/10      │
+│                                             │
+│   ¿Alguna comida que no te gustó?         │
+│   [________________________]               │
+│                                             │
+│   [Ajustar plan] [Continuar igual]         │
+└─────────────────────────────────────────────┘
+```
+
+#### Día 14 - Reajuste:
+```
+┌─────────────────────────────────────────────┐
+│   🎯 Tiempo de optimizar                   │
+│                                             │
+│   Peso actual: [74.5] kg                   │
+│   Cambio: -0.5 kg ✅ (objetivo cumplido)   │
+│                                             │
+│   ¿Ajustamos las calorías?                │
+│   [Mantener] [Reducir 100] [Aumentar 100]  │
+└─────────────────────────────────────────────┘
+```
 
 ---
 
-*Documento creado para el equipo de desarrollo y UX*
+## 📈 Métricas de Éxito Actualizadas
+
+### KPIs Realistas Post-Cambios
+- **65%** tasa de completion (vs 30% original)
+- **3-4 min** tiempo promedio (vs 7 min original)
+- **95%** detección casos de riesgo médico
+- **<5%** reportes de problemas de salud
+- **45%** retención a 30 días
+
+### Métricas de Seguridad
+- **100%** usuarios pasan por gateway de seguridad
+- **5-10%** derivados a profesional (esperado)
+- **0** incidentes médicos reportados (objetivo)
+
+---
+
+## 💡 Conclusión
+
+La IA debe sentirse como un **nutricionista experto** siempre disponible, que:
+- **Protege** la salud del usuario primero
+- **Sugiere** sin imponer
+- **Aprende** de tus preferencias gradualmente
+- **Ahorra tiempo** sin sacrificar calidad ni seguridad
+- **Empodera** al usuario con conocimiento
+
+El usuario final debe pensar:
+> "No estoy usando IA, tengo un asistente nutricional que me entiende y cuida mi salud"
+
+---
+
+*Documento actualizado con decisiones de Product Management*
 *Fecha: Diciembre 2024*
-*Enfoque: User Experience First*
+*Enfoque: Seguridad + User Experience*
+*Status: APROBADO para implementación*
