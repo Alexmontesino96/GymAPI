@@ -519,6 +519,56 @@ class ArchivePlanRequest(BaseModel):
     template_title: Optional[str] = None
 
 
+# ===== AI GENERATION SCHEMAS =====
+
+class AIGenerationRequest(BaseModel):
+    """Request para generar un plan nutricional con IA - Mapeado al formulario del frontend"""
+    # Campos principales del formulario
+    title: str = Field(..., min_length=3, max_length=200, description="Título del plan")
+    goal: NutritionGoal = Field(..., description="Objetivo nutricional (weight_loss, muscle_gain, definition, maintenance, performance)")
+    target_calories: int = Field(..., ge=1200, le=5000, description="Calorías diarias objetivo")
+    duration_days: int = Field(7, ge=7, le=30, description="Duración del plan en días")
+
+    # Configuración del plan
+    difficulty_level: Optional[DifficultyLevel] = Field(DifficultyLevel.BEGINNER, description="Nivel de dificultad de las recetas")
+    budget_level: Optional[BudgetLevel] = Field(BudgetLevel.MEDIUM, description="Nivel de presupuesto")
+    meals_per_day: int = Field(5, ge=3, le=6, description="Número de comidas por día")
+
+    # Restricciones y preferencias
+    dietary_restrictions: Optional[List[str]] = Field(default_factory=list, description="Restricciones dietéticas (vegetarian, vegan, gluten_free, etc)")
+    exclude_ingredients: Optional[List[str]] = Field(default_factory=list, description="Ingredientes a excluir del plan")
+    allergies: Optional[List[str]] = Field(default_factory=list, description="Alergias alimentarias conocidas")
+
+    # Perfil del usuario objetivo (opcional para personalización)
+    user_context: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Perfil del usuario: weight, height, age, activity_level")
+
+    # Instrucciones adicionales para la IA
+    prompt: Optional[str] = Field("", max_length=2000, description="Instrucciones adicionales para personalizar el plan")
+
+    # Control de generación IA
+    temperature: float = Field(0.7, ge=0, le=1, description="Creatividad de la IA (0=conservador, 1=creativo)")
+    max_tokens: int = Field(3500, ge=500, le=4000, description="Límite de tokens para la respuesta")
+
+
+class AIGenerationResponse(BaseModel):
+    """Respuesta de la generación con IA - Incluye plan completo"""
+    plan_id: int
+    name: str
+    description: str
+    total_days: int
+    nutritional_goal: NutritionGoal
+    target_calories: int
+
+    # Estadísticas del plan generado
+    daily_plans_count: int = Field(..., description="Número de días generados")
+    total_meals: int = Field(..., description="Total de comidas en el plan")
+
+    # Metadata de la generación
+    ai_metadata: Dict[str, Any] = Field(default_factory=dict, description="Metadata de la generación IA")
+    generation_time_ms: int = Field(..., description="Tiempo de generación en milisegundos")
+    cost_estimate_usd: float = Field(..., description="Costo estimado en USD")
+
+
 # Update forward references
 NutritionPlanWithDetails.model_rebuild()
 DailyNutritionPlanWithMeals.model_rebuild()

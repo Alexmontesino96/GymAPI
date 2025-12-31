@@ -20,11 +20,21 @@ from app.schemas.nutrition import (
     UserMealCompletion, UserMealCompletionCreate,
     TodayMealPlan, UserNutritionDashboard, NutritionAnalytics, NutritionDashboardHybrid,
     NutritionGoal, DifficultyLevel, BudgetLevel, DietaryRestriction, MealType, PlanType, PlanStatus,
-    ArchivePlanRequest, LivePlanStatusUpdate
+    ArchivePlanRequest, LivePlanStatusUpdate,
+    AIGenerationRequest, AIGenerationResponse
 )
 from app.schemas.nutrition_ai import (
     AIIngredientRequest, AIRecipeResponse, ApplyGeneratedIngredientsRequest, ApplyIngredientsResponse
 )
+# Import specialized nutrition services
+from app.services.nutrition_plan_service import NutritionPlanService
+from app.services.meal_service import MealService
+from app.services.plan_follower_service import PlanFollowerService
+from app.services.nutrition_progress_service import NutritionProgressService
+from app.services.live_plan_service import LivePlanService
+from app.services.nutrition_analytics_service import NutritionAnalyticsService
+from app.services.nutrition_ai_service import NutritionAIService
+# Keep the old service for AI functionality temporarily
 from app.services.nutrition import NutritionService, NotFoundError, ValidationError, PermissionError
 from app.services.user import user_service
 from app.core.dependencies import module_enabled
@@ -116,8 +126,9 @@ def list_nutrition_plans(
     }
     ```
     """
-    service = NutritionService(db)
-    
+    # Use specialized NutritionPlanService for plan operations
+    service = NutritionPlanService(db)
+
     # Crear filtros
     filters = NutritionPlanFilters(
         goal=goal,
@@ -130,12 +141,12 @@ def list_nutrition_plans(
         status=status,
         is_live_active=is_live_active
     )
-    
+
     # Obtener usuario local
     db_user = user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
     if not db_user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
-    
+
     plans, total = service.list_nutrition_plans(
         gym_id=current_gym.id,
         filters=filters,
@@ -220,23 +231,25 @@ def create_nutrition_plan(
     - `403`: Sin permisos para crear planes
     - `404`: Usuario no encontrado
     """
-    service = NutritionService(db)
-    
     # Obtener usuario local
     db_user = user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
     if not db_user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
-    
+
     try:
-        # Usar el método específico para planes live o el método base
+        # Usar el servicio específico para planes live o el servicio base
         if plan_data.plan_type == PlanType.LIVE:
-            plan = service.create_live_nutrition_plan(
+            # Use specialized LivePlanService for live plans
+            live_service = LivePlanService(db)
+            plan = live_service.create_live_nutrition_plan(
                 plan_data=plan_data,
                 creator_id=db_user.id,
                 gym_id=current_gym.id
             )
         else:
-            plan = service.create_nutrition_plan(
+            # Use specialized NutritionPlanService for regular plans
+            plan_service = NutritionPlanService(db)
+            plan = plan_service.create_nutrition_plan(
                 plan_data=plan_data,
                 creator_id=db_user.id,
                 gym_id=current_gym.id
@@ -246,6 +259,136 @@ def create_nutrition_plan(
         raise HTTPException(status_code=400, detail=str(e))
     except NotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.post("/plans/generate", response_model=AIGenerationResponse)
+async def generate_plan_with_ai(
+    request: AIGenerationRequest,
+    db: Session = Depends(get_db),
+    current_gym: Gym = Depends(verify_gym_access),
+    current_user: Auth0User = Depends(get_current_user)
+):
+    """
+    🤖 **Generar Plan Nutricional con IA**
+
+    **Descripción:**
+    Genera un plan nutricional completo usando GPT-4o-mini basado en un prompt descriptivo.
+    Solo disponible para trainers y administradores del gimnasio.
+
+    **Casos de Uso:**
+    - Crear planes personalizados rápidamente
+    - Generar variaciones de planes existentes
+    - Crear planes para objetivos específicos
+    - Adaptar planes a restricciones dietéticas
+
+    **Campos Requeridos:**
+    - `prompt`: Descripción del plan deseado (10-2000 caracteres)
+    - `duration_days`: Duración en días (7-30)
+    - `goal`: Objetivo nutricional (weight_loss, muscle_gain, etc.)
+    - `target_calories`: Calorías objetivo (1200-5000)
+
+    **Campos Opcionales:**
+    - `user_context`: Contexto del usuario (edad, peso, altura, etc.)
+    - `dietary_restrictions`: Lista de restricciones (vegetarian, vegan, etc.)
+    - `allergies`: Lista de alergias alimentarias
+    - `preferences`: Preferencias adicionales
+
+    **Permisos:**
+    - 👨‍⚕️ Solo trainers y administradores pueden generar con IA
+    - 💰 Costo estimado: $0.002 USD por plan
+
+    **Ejemplo de Request:**
+    ```json
+    {
+        "prompt": "Plan para pérdida de peso de 1800 calorías, vegetariano, con énfasis en proteínas vegetales",
+        "duration_days": 7,
+        "goal": "weight_loss",
+        "target_calories": 1800,
+        "dietary_restrictions": ["vegetarian"],
+        "user_context": {
+            "age": 30,
+            "weight": 80,
+            "height": 175,
+            "activity_level": "moderate"
+        }
+    }
+    ```
+
+    **Códigos de Error:**
+    - `400`: Datos inválidos o prompt muy corto/largo
+    - `403`: Sin permisos para generar con IA
+    - `404`: Usuario no encontrado
+    - `429`: Límite de generaciones excedido
+    - `500`: Error en servicio de OpenAI
+    """
+    import time
+
+    # Obtener usuario local
+    db_user = user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
+    if not db_user:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+
+    # Verificar permisos (solo trainers y admins)
+    user_gym = db.query(UserGym).filter(
+        UserGym.user_id == db_user.id,
+        UserGym.gym_id == current_gym.id
+    ).first()
+
+    if not user_gym or user_gym.role not in [GymRoleType.TRAINER, GymRoleType.ADMIN]:
+        raise HTTPException(
+            status_code=403,
+            detail="Solo trainers y administradores pueden generar planes con IA"
+        )
+
+    try:
+        # Usar el servicio de IA para generar el plan completo
+        ai_service = NutritionAIService()
+
+        # Agregar meals_per_day al contexto del usuario si no existe
+        if not request.user_context:
+            request.user_context = {}
+        request.user_context['meals_per_day'] = request.meals_per_day
+        request.user_context['difficulty_level'] = request.difficulty_level.value if request.difficulty_level else 'beginner'
+        request.user_context['budget_level'] = request.budget_level.value if request.budget_level else 'medium'
+
+        # Si hay ingredientes a excluir, agregarlos a preferences
+        if request.exclude_ingredients:
+            if not hasattr(request, 'preferences') or request.preferences is None:
+                request.preferences = {}
+            request.preferences['exclude_ingredients'] = request.exclude_ingredients
+
+        # Generar plan con IA (incluye creación en BD)
+        result = await ai_service.generate_nutrition_plan(
+            request=request,
+            creator_id=db_user.id,
+            gym_id=current_gym.id,
+            db=db
+        )
+
+        # Preparar respuesta
+        response = AIGenerationResponse(
+            plan_id=result['plan_id'],
+            name=result['name'],
+            description=result['description'],
+            total_days=result['total_days'],
+            nutritional_goal=result['nutritional_goal'],
+            target_calories=result['target_calories'],
+            daily_plans_count=result['daily_plans_count'],
+            total_meals=result['total_meals'],
+            ai_metadata=result['ai_metadata'],
+            generation_time_ms=result['generation_time_ms'],
+            cost_estimate_usd=result['cost_estimate_usd']
+        )
+
+        logger.info(f"Plan nutricional generado exitosamente: ID {result['plan_id']}, {result['total_meals']} comidas, costo ${result['cost_estimate_usd']}")
+
+        return response
+
+    except ValidationError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error generating plan with AI: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error al generar plan con IA")
 
 
 @router.get("/plans/{plan_id}", response_model=NutritionPlanWithDetails)
@@ -323,13 +466,14 @@ def get_nutrition_plan(
     - `403`: Sin permisos para ver este plan privado
     - `404`: Plan no encontrado o no pertenece al gimnasio
     """
-    service = NutritionService(db)
-    
+    # Use specialized NutritionPlanService for plan operations
+    service = NutritionPlanService(db)
+
     # Obtener usuario local
     db_user = user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
     if not db_user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
-    
+
     try:
         plan = service.get_nutrition_plan_with_details(plan_id, current_gym.id, db_user.id)
         return plan
@@ -340,7 +484,7 @@ def get_nutrition_plan(
 
 
 @router.post("/plans/{plan_id}/follow", response_model=NutritionPlanFollower)
-def follow_nutrition_plan(
+async def follow_nutrition_plan(
     plan_id: int = Path(..., description="ID del plan nutricional a seguir"),
     db: Session = Depends(get_db),
     current_gym: Gym = Depends(verify_gym_access),
@@ -413,15 +557,153 @@ def follow_nutrition_plan(
     - `404`: Plan no encontrado
     - `403`: Sin acceso a plan privado
     """
-    service = NutritionService(db)
-    
+    # Use specialized PlanFollowerService for follow operations
+    service = PlanFollowerService(db)
+
     # Obtener usuario local
     db_user = user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
     if not db_user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
-    
+
+    # ========== VALIDACIÓN DE SEGURIDAD PARA USUARIOS (MEMBERS) ==========
+    from app.models.nutrition_safety import SafetyScreening as SafetyScreeningModel, SafetyAuditLog
+    from app.models.nutrition import NutritionPlan
+    from datetime import datetime
+
+    # Obtener el plan para verificar si es restrictivo
+    plan = db.query(NutritionPlan).filter(
+        NutritionPlan.id == plan_id,
+        NutritionPlan.gym_id == current_gym.id
+    ).first()
+
+    if not plan:
+        raise HTTPException(status_code=404, detail="Plan nutricional no encontrado")
+
+    # Determinar si el plan es restrictivo (menos de 1500 calorías diarias o plan de pérdida de peso)
+    is_restrictive_plan = (
+        plan.daily_calories < 1500 or
+        "pérdida" in plan.title.lower() or
+        "weight loss" in plan.title.lower() or
+        "detox" in plan.title.lower() or
+        plan.nutrition_goal == "weight_loss"
+    )
+
+    # Si el plan es restrictivo, requerir safety screening
+    if is_restrictive_plan:
+        # Buscar screening válido (no expirado) del usuario
+        valid_screening = db.query(SafetyScreeningModel).filter(
+            SafetyScreeningModel.user_id == db_user.id,
+            SafetyScreeningModel.gym_id == current_gym.id,
+            SafetyScreeningModel.expires_at > datetime.utcnow()
+        ).order_by(SafetyScreeningModel.created_at.desc()).first()
+
+        if not valid_screening:
+            # Log intento sin screening
+            audit_log = SafetyAuditLog(
+                user_id=db_user.id,
+                gym_id=current_gym.id,
+                action_type="follow_plan_blocked",
+                action_details={
+                    "reason": "no_valid_screening",
+                    "plan_id": plan_id,
+                    "plan_title": plan.title,
+                    "plan_calories": plan.daily_calories
+                },
+                was_allowed=False,
+                denial_reason="Plan restrictivo requiere evaluación de seguridad"
+            )
+            db.add(audit_log)
+            db.commit()
+
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "message": "Este plan requiere una evaluación de seguridad médica",
+                    "reason": "restrictive_plan",
+                    "action_required": "safety_screening",
+                    "endpoint": "/api/v1/nutrition/safety-check",
+                    "plan_calories": plan.daily_calories
+                }
+            )
+
+        # Verificar si el usuario puede seguir el plan según su screening
+        if not valid_screening.can_proceed:
+            audit_log = SafetyAuditLog(
+                user_id=db_user.id,
+                gym_id=current_gym.id,
+                screening_id=valid_screening.id,
+                action_type="follow_plan_blocked",
+                action_details={
+                    "reason": "high_risk",
+                    "risk_level": valid_screening.risk_level,
+                    "plan_id": plan_id,
+                    "plan_title": plan.title
+                },
+                was_allowed=False,
+                denial_reason=f"Nivel de riesgo {valid_screening.risk_level} requiere supervisión profesional"
+            )
+            db.add(audit_log)
+            db.commit()
+
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "message": "Tu evaluación de seguridad requiere supervisión profesional para este plan",
+                    "risk_level": valid_screening.risk_level,
+                    "requires_professional": True,
+                    "recommended_specialists": ["Nutricionista clínico"]
+                }
+            )
+
+        # Si es un plan de pérdida de peso, verificar condiciones específicas
+        if plan.nutrition_goal == "weight_loss" and not valid_screening.can_generate_weight_loss():
+            audit_log = SafetyAuditLog(
+                user_id=db_user.id,
+                gym_id=current_gym.id,
+                screening_id=valid_screening.id,
+                action_type="follow_plan_blocked",
+                action_details={
+                    "reason": "weight_loss_restriction",
+                    "plan_id": plan_id,
+                    "plan_title": plan.title,
+                    "user_conditions": valid_screening.medical_conditions
+                },
+                was_allowed=False,
+                denial_reason="Condiciones médicas no permiten planes de pérdida de peso"
+            )
+            db.add(audit_log)
+            db.commit()
+
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "message": "Tus condiciones médicas no permiten seguir planes de pérdida de peso",
+                    "reason": "medical_restriction",
+                    "alternative": "Consulta planes de mantenimiento o ganancia muscular"
+                }
+            )
+
+        # Log seguimiento exitoso con screening
+        audit_log = SafetyAuditLog(
+            user_id=db_user.id,
+            gym_id=current_gym.id,
+            screening_id=valid_screening.id,
+            action_type="follow_plan_with_screening",
+            action_details={
+                "plan_id": plan_id,
+                "plan_title": plan.title,
+                "plan_calories": plan.daily_calories,
+                "risk_level": valid_screening.risk_level
+            },
+            was_allowed=True
+        )
+        db.add(audit_log)
+        db.commit()
+    # ========== FIN VALIDACIÓN DE SEGURIDAD ==========
+
     try:
-        follower = service.follow_nutrition_plan(
+        # Note: follow_nutrition_plan is now async
+        follower = await service.follow_nutrition_plan(
             plan_id=plan_id,
             user_id=db_user.id,
             gym_id=current_gym.id
@@ -434,7 +716,7 @@ def follow_nutrition_plan(
 
 
 @router.delete("/plans/{plan_id}/follow")
-def unfollow_nutrition_plan(
+async def unfollow_nutrition_plan(
     plan_id: int = Path(..., description="ID del plan nutricional a dejar de seguir"),
     db: Session = Depends(get_db),
     current_gym: Gym = Depends(verify_gym_access),
@@ -500,15 +782,17 @@ def unfollow_nutrition_plan(
     - `404`: No estás siguiendo este plan actualmente
     - `404`: Plan no encontrado en este gimnasio
     """
-    service = NutritionService(db)
-    
+    # Use specialized PlanFollowerService for follow operations
+    service = PlanFollowerService(db)
+
     # Obtener usuario local
     db_user = user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
     if not db_user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
-    
+
     try:
-        success = service.unfollow_nutrition_plan(
+        # Note: unfollow_nutrition_plan is now async
+        success = await service.unfollow_nutrition_plan(
             plan_id=plan_id,
             user_id=db_user.id,
             gym_id=current_gym.id
@@ -519,7 +803,7 @@ def unfollow_nutrition_plan(
 
 
 @router.post("/meals/{meal_id}/complete", response_model=UserMealCompletion)
-def complete_meal(
+async def complete_meal(
     completion_data: UserMealCompletionCreate,
     meal_id: int = Path(..., description="ID único de la comida a completar"),
     db: Session = Depends(get_db),
@@ -605,22 +889,28 @@ def complete_meal(
     - `400`: No estás siguiendo el plan que contiene esta comida
     - `404`: Comida no encontrada o no pertenece al gimnasio
     """
-    service = NutritionService(db)
-    
+    # Use specialized NutritionProgressService for progress tracking
+    service = NutritionProgressService(db)
+
     # Obtener usuario local
     db_user = user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
     if not db_user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
-    
+
     try:
-        completion = service.complete_meal(
+        # Note: complete_meal is now async
+        completion = await service.complete_meal(
             meal_id=meal_id,
             user_id=db_user.id,
-            gym_id=current_gym.id,
-            satisfaction_rating=completion_data.satisfaction_rating,
-            photo_url=completion_data.photo_url,
-            notes=completion_data.notes
+            gym_id=current_gym.id
         )
+        # Add additional data if provided
+        if completion_data.satisfaction_rating:
+            completion.satisfaction_rating = completion_data.satisfaction_rating
+        if completion_data.photo_url:
+            completion.photo_url = completion_data.photo_url
+        if completion_data.notes:
+            completion.notes = completion_data.notes
         return completion
     except ValidationError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -629,7 +919,7 @@ def complete_meal(
 
 
 @router.get("/today", response_model=TodayMealPlan)
-def get_today_meal_plan(
+async def get_today_meal_plan(
     db: Session = Depends(get_db),
     current_gym: Gym = Depends(verify_gym_access),
     current_user: Auth0User = Depends(get_current_user)
@@ -737,24 +1027,36 @@ def get_today_meal_plan(
     - 🎯 Búsqueda inteligente de plan activo
     - ⚡ Cache-friendly para llamadas frecuentes
     """
-    service = NutritionService(db)
-    
+    # Use specialized NutritionProgressService for progress tracking
+    service = NutritionProgressService(db)
+
     # Obtener usuario local
     db_user = user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
     if not db_user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
-    
-    # Usar la nueva lógica híbrida
-    meal_plan = service.get_hybrid_today_meal_plan(
+
+    # Use cached method for better performance
+    meal_plan = await service.get_today_meal_plan_cached(
         user_id=db_user.id,
         gym_id=current_gym.id
     )
-    
+
+    if not meal_plan:
+        # Return empty plan if no active plans
+        from datetime import date
+        return TodayMealPlan(
+            date=date.today(),
+            plans=[],
+            total_calories_target=0,
+            total_calories_consumed=0,
+            overall_completion=0
+        )
+
     return meal_plan
 
 
 @router.get("/dashboard", response_model=NutritionDashboardHybrid)
-def get_nutrition_dashboard(
+async def get_nutrition_dashboard(
     db: Session = Depends(get_db),
     current_gym: Gym = Depends(verify_gym_access),
     current_user: Auth0User = Depends(get_current_user)
@@ -868,18 +1170,20 @@ def get_nutrition_dashboard(
     - Métricas adaptadas a objetivos del usuario
     - Filtros automáticos de contenido apropiado
     """
-    service = NutritionService(db)
-    
+    # Use specialized NutritionAnalyticsService for dashboard
+    service = NutritionAnalyticsService(db)
+
     # Obtener usuario local
     db_user = user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
     if not db_user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
-    
-    dashboard = service.get_hybrid_dashboard(
+
+    # Get user nutrition dashboard with analytics
+    dashboard = await service.get_user_nutrition_dashboard(
         user_id=db_user.id,
         gym_id=current_gym.id
     )
-    
+
     return dashboard
 
 
@@ -979,21 +1283,23 @@ def create_daily_plan(
     - `403`: Solo el creador puede agregar días al plan
     - `404`: Plan no encontrado o no pertenece al gimnasio
     """
-    service = NutritionService(db)
-    
+    # Use specialized NutritionPlanService for plan operations
+    service = NutritionPlanService(db)
+
     # Obtener usuario local
     db_user = user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
     if not db_user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
-    
+
     # Verificar que el plan_id coincide
     if daily_plan_data.nutrition_plan_id != plan_id:
         raise HTTPException(status_code=400, detail="El plan_id no coincide")
-    
+
     try:
         daily_plan = service.create_daily_plan(
             daily_plan_data=daily_plan_data,
-            user_id=db_user.id
+            user_id=db_user.id,
+            gym_id=current_gym.id
         )
         return daily_plan
     except ValidationError as e:
@@ -1123,21 +1429,33 @@ def create_meal(
     - `403`: Solo el creador puede agregar comidas al plan
     - `404`: Día no encontrado o no pertenece al gimnasio
     """
-    service = NutritionService(db)
-    
+    # Use specialized MealService for meal operations
+    service = MealService(db)
+
     # Obtener usuario local
     db_user = user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
     if not db_user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
-    
+
     # Verificar que el daily_plan_id coincide
     if meal_data.daily_plan_id != daily_plan_id:
         raise HTTPException(status_code=400, detail="El daily_plan_id no coincide")
-    
+
+    # Get gym_id from user's current gym
+    user_gym = db.query(UserGym).filter(
+        UserGym.user_id == db_user.id,
+        UserGym.is_active == True
+    ).first()
+
+    if not user_gym:
+        raise HTTPException(status_code=404, detail="Usuario no asociado a un gimnasio")
+
     try:
         meal = service.create_meal(
+            daily_plan_id=daily_plan_id,
             meal_data=meal_data,
-            user_id=db_user.id
+            creator_id=db_user.id,
+            gym_id=user_gym.gym_id
         )
         return meal
     except ValidationError as e:
@@ -1270,21 +1588,33 @@ def add_ingredient_to_meal(
     - `403`: Solo el creador puede agregar ingredientes
     - `404`: Comida no encontrada o no pertenece al gimnasio
     """
-    service = NutritionService(db)
-    
+    # Use specialized MealService for meal operations
+    service = MealService(db)
+
     # Obtener usuario local
     db_user = user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
     if not db_user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
-    
+
     # Verificar que el meal_id coincide
     if ingredient_data.meal_id != meal_id:
         raise HTTPException(status_code=400, detail="El meal_id no coincide")
-    
+
+    # Get gym_id from user's current gym
+    user_gym = db.query(UserGym).filter(
+        UserGym.user_id == db_user.id,
+        UserGym.is_active == True
+    ).first()
+
+    if not user_gym:
+        raise HTTPException(status_code=404, detail="Usuario no asociado a un gimnasio")
+
     try:
         ingredient = service.add_ingredient_to_meal(
+            meal_id=meal_id,
             ingredient_data=ingredient_data,
-            user_id=db_user.id
+            creator_id=db_user.id,
+            gym_id=user_gym.gym_id
         )
         return ingredient
     except ValidationError as e:
@@ -1293,6 +1623,244 @@ def add_ingredient_to_meal(
         raise HTTPException(status_code=404, detail=str(e))
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
+
+
+# ===== ENDPOINTS DE SEGURIDAD MÉDICA =====
+
+@router.post("/safety-check", response_model=SafetyScreeningResponse)
+async def create_safety_screening(
+    request: SafetyScreeningRequest,
+    db: Session = Depends(get_db),
+    current_gym: Gym = Depends(verify_gym_access),
+    current_user: Auth0User = Depends(get_current_user)
+):
+    """
+    🏥 **Evaluación de Seguridad Médica para Nutrición con IA**
+
+    **Descripción:**
+    Realiza una evaluación de seguridad médica OBLIGATORIA antes de permitir
+    la generación de planes nutricionales con IA. Protege la salud del usuario
+    identificando condiciones de riesgo.
+
+    **¿Por qué es necesario?**
+    - Detecta condiciones médicas que requieren supervisión profesional
+    - Previene recomendaciones peligrosas para grupos vulnerables
+    - Cumple con regulaciones de salud y responsabilidad legal
+    - Protege a embarazadas, menores, y personas con TCA
+
+    **Proceso de Evaluación:**
+    1. **Recopilación de Datos:** Edad, condiciones médicas, medicamentos
+    2. **Cálculo de Riesgo:** Score 0-10 basado en factores médicos
+    3. **Clasificación:** LOW, MEDIUM, HIGH, o CRITICAL
+    4. **Recomendaciones:** Guía personalizada según riesgo
+    5. **Validez:** 24 horas antes de requerir nueva evaluación
+
+    **Niveles de Riesgo:**
+    - **LOW (0-2):** Puede proceder normalmente
+    - **MEDIUM (3-4):** Proceder con precauciones, revisar warnings
+    - **HIGH (5-7):** Se recomienda fuertemente supervisión profesional
+    - **CRITICAL (8+):** REQUIERE supervisión médica obligatoria
+
+    **Grupos de Alto Riesgo:**
+    - Embarazadas o en lactancia
+    - Menores de 18 años
+    - Historial de trastornos alimentarios
+    - Diabetes tipo 1
+    - Enfermedad renal o hepática
+    - IMC < 18.5 o > 35
+
+    **Importante:**
+    - Este screening es válido por 24 horas
+    - Se requiere consentimiento parental para menores
+    - Los datos son confidenciales y para auditoría médica
+    """
+    # Obtener usuario local
+    from app.services.user import user_service
+    db_user = user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
+    if not db_user:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+
+    # Importar servicio de seguridad y modelos
+    from app.services.nutrition_ai_safety import NutritionAISafetyService
+    from app.models.nutrition_safety import SafetyScreening as SafetyScreeningModel, RiskLevel
+    from app.schemas.nutrition_safety import calculate_risk_score, generate_safety_warnings
+    import hashlib
+    import uuid
+    from datetime import datetime, timedelta
+
+    # Calcular score y nivel de riesgo
+    risk_score, risk_level = calculate_risk_score(request)
+
+    # Generar warnings
+    warnings = generate_safety_warnings(request, risk_score, risk_level)
+
+    # Determinar si puede proceder
+    can_proceed = risk_level in [RiskLevel.LOW, RiskLevel.MEDIUM]
+    requires_professional = risk_level in [RiskLevel.HIGH, RiskLevel.CRITICAL]
+
+    # Determinar siguiente paso
+    if request.age < 18 and not request.parental_consent_email:
+        next_step = "parental_consent"
+        can_proceed = False
+    elif requires_professional:
+        next_step = "professional_referral"
+    else:
+        next_step = "profile"
+
+    # Crear modelo de screening para guardar en DB
+    screening = SafetyScreeningModel(
+        user_id=db_user.id,
+        gym_id=current_gym.id,
+        age=request.age,
+        weight=0,  # TODO: Agregar campos de peso/altura al request
+        height=0,
+        sex="not_specified",
+        medical_conditions=[],
+        is_pregnant=request.is_pregnant,
+        is_breastfeeding=request.is_breastfeeding,
+        takes_medications=False,
+        has_eating_disorder_history=request.has_eating_disorder,
+        risk_score=risk_score,
+        risk_level=risk_level,
+        can_proceed=can_proceed,
+        requires_professional=requires_professional,
+        warnings=[w.dict() for w in warnings],
+        accepts_disclaimer=request.accepts_disclaimer,
+        parental_consent_email=request.parental_consent_email,
+        parental_consent_token=str(uuid.uuid4()) if request.parental_consent_email else None,
+        expires_at=datetime.utcnow() + timedelta(hours=24)
+    )
+
+    # Mapear condiciones médicas booleanas a lista
+    conditions = []
+    if request.has_diabetes:
+        conditions.append("diabetes")
+    if request.has_heart_condition:
+        conditions.append("heart_condition")
+    if request.has_kidney_disease:
+        conditions.append("kidney_disease")
+    if request.has_liver_disease:
+        conditions.append("liver_disease")
+    if request.has_eating_disorder:
+        conditions.append("eating_disorder")
+    if request.has_other_condition:
+        conditions.append("other_condition")
+    screening.medical_conditions = conditions
+
+    # Guardar en base de datos
+    db.add(screening)
+    db.commit()
+    db.refresh(screening)
+
+    # Preparar response
+    response = SafetyScreeningResponse(
+        screening_id=screening.id,
+        risk_score=risk_score,
+        risk_level=risk_level,
+        can_proceed=can_proceed,
+        requires_professional=requires_professional,
+        warnings=warnings,
+        next_step=next_step,
+        expires_at=screening.expires_at,
+        expires_in_hours=24,
+        parental_consent_required=(request.age < 18),
+        parental_consent_sent_to=request.parental_consent_email,
+        professional_referral_reasons=[w.message for w in warnings if w.requires_action],
+        recommended_specialists=[]
+    )
+
+    # Si requiere referencia profesional, agregar especialistas recomendados
+    if requires_professional:
+        specialists = []
+        if request.has_eating_disorder:
+            specialists.append("Psicólogo especializado en TCA")
+            specialists.append("Nutricionista clínico")
+        if request.has_diabetes:
+            specialists.append("Endocrinólogo")
+            specialists.append("Nutricionista especializado en diabetes")
+        if request.is_pregnant:
+            specialists.append("Obstetra")
+            specialists.append("Nutricionista perinatal")
+        if not specialists:
+            specialists.append("Nutricionista clínico")
+        response.recommended_specialists = specialists
+
+    # Log para auditoría
+    from app.models.nutrition_safety import SafetyAuditLog
+    audit_log = SafetyAuditLog(
+        user_id=db_user.id,
+        gym_id=current_gym.id,
+        screening_id=screening.id,
+        action_type="safety_screening",
+        action_details={
+            "risk_score": risk_score,
+            "risk_level": risk_level.value,
+            "can_proceed": can_proceed
+        },
+        was_allowed=can_proceed,
+        denial_reason=None if can_proceed else f"Risk level {risk_level.value} requires professional supervision"
+    )
+    db.add(audit_log)
+    db.commit()
+
+    logger.info(
+        f"Safety screening for user {db_user.id} in gym {current_gym.id}: "
+        f"{risk_level.value} (score: {risk_score})"
+    )
+
+    return response
+
+
+@router.get("/safety-check/validate/{screening_id}", response_model=ScreeningValidationResponse)
+async def validate_safety_screening(
+    screening_id: int = Path(..., description="ID del screening a validar"),
+    db: Session = Depends(get_db),
+    current_gym: Gym = Depends(verify_gym_access),
+    current_user: Auth0User = Depends(get_current_user)
+):
+    """
+    🔍 **Validar Screening de Seguridad Existente**
+
+    Verifica si un screening de seguridad sigue siendo válido (no ha expirado)
+    y si el usuario puede proceder con la generación de planes con IA.
+    """
+    from app.services.user import user_service
+    from app.models.nutrition_safety import SafetyScreening as SafetyScreeningModel
+    from datetime import datetime
+
+    # Obtener usuario local
+    db_user = user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
+    if not db_user:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+
+    # Buscar screening
+    screening = db.query(SafetyScreeningModel).filter(
+        SafetyScreeningModel.id == screening_id,
+        SafetyScreeningModel.user_id == db_user.id,
+        SafetyScreeningModel.gym_id == current_gym.id
+    ).first()
+
+    if not screening:
+        raise HTTPException(status_code=404, detail="Screening no encontrado")
+
+    # Validar expiración
+    is_valid = not screening.is_expired()
+    hours_remaining = None
+
+    if is_valid:
+        time_remaining = screening.expires_at - datetime.utcnow()
+        hours_remaining = time_remaining.total_seconds() / 3600
+
+    from app.schemas.nutrition_safety import ScreeningValidationResponse
+
+    return ScreeningValidationResponse(
+        valid=is_valid,
+        screening_id=screening.id,
+        can_proceed=screening.can_proceed,
+        risk_score=screening.risk_score,
+        reason="Screening válido y activo" if is_valid else "Screening expirado, requiere nueva evaluación",
+        hours_remaining=hours_remaining
+    )
 
 
 # ===== ENDPOINTS DE IA NUTRICIONAL =====
@@ -1403,36 +1971,73 @@ async def generate_ingredients_with_ai(
     db_user = user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
     if not db_user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
-    
+
+    # ========== VALIDACIÓN DE PERMISOS ==========
+    # Solo trainers y admin pueden generar con IA
+    from app.models.user_gym import UserGym
+    user_gym = db.query(UserGym).filter(
+        UserGym.user_id == db_user.id,
+        UserGym.gym_id == current_gym.id
+    ).first()
+
+    if not user_gym or user_gym.role not in ["trainer", "admin"]:
+        raise HTTPException(
+            status_code=403,
+            detail="Solo trainers y administradores pueden generar planes con IA"
+        )
+    # ========== FIN VALIDACIÓN DE PERMISOS ==========
+
     # Validar que la comida existe y pertenece al gimnasio
     meal = db.query(MealModel).options(
         joinedload(MealModel.daily_plan).joinedload(DailyNutritionPlanModel.nutrition_plan)
     ).filter(MealModel.id == meal_id).first()
-    
+
     if not meal:
         raise HTTPException(status_code=404, detail="Comida no encontrada")
-    
+
     # Validar que el plan pertenece al gimnasio actual
     if meal.daily_plan.nutrition_plan.gym_id != current_gym.id:
         raise HTTPException(status_code=404, detail="Comida no pertenece a este gimnasio")
-    
+
     # Validar permisos: solo el creador del plan puede generar ingredientes
     if meal.daily_plan.nutrition_plan.creator_id != db_user.id:
         raise HTTPException(
-            status_code=403, 
+            status_code=403,
             detail="Solo el creador del plan puede generar ingredientes con IA"
         )
-    
+
     try:
         # Obtener servicio de IA
         from app.services.nutrition_ai import get_nutrition_ai_service, NutritionAIError
+        from app.services.nutrition_ai_safety import NutritionAISafetyService
         ai_service = get_nutrition_ai_service()
-        
+
         # Generar ingredientes con IA
         logger.info(f"🤖 Generando ingredientes IA para meal {meal_id}: '{request.recipe_name}'")
         result = await ai_service.generate_recipe_ingredients(request)
-        
-        logger.info(f"✅ IA generó {len(result.ingredients)} ingredientes para meal {meal_id}")
+
+        # Log generación exitosa para auditoría (trainer/admin no necesita safety screening)
+        from app.models.nutrition_safety import SafetyAuditLog
+        audit_log = SafetyAuditLog(
+            user_id=db_user.id,
+            gym_id=current_gym.id,
+            screening_id=None,  # Trainers/admin no requieren screening
+            action_type="ai_generation_by_trainer",
+            action_details={
+                "meal_id": meal_id,
+                "recipe_name": request.recipe_name,
+                "ingredients_count": len(result.ingredients),
+                "target_calories": request.target_calories,
+                "role": user_gym.role
+            },
+            was_allowed=True,
+            ai_model_used="gpt-4o-mini",
+            ai_cost_estimate=0.0008  # Estimado por generación
+        )
+        db.add(audit_log)
+        db.commit()
+
+        logger.info(f"✅ {user_gym.role.capitalize()} {db_user.id} generó {len(result.ingredients)} ingredientes para meal {meal_id}")
         return result
         
     except NutritionAIError as e:
@@ -1505,9 +2110,26 @@ async def apply_generated_ingredients(
     db_user = user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
     if not db_user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
-    
-            # Validar comida y permisos (mismo código que endpoint anterior)
-        meal = db.query(MealModel).options(
+
+    # ========== VALIDACIÓN DE PERMISOS ==========
+    # Solo trainers y admin pueden aplicar ingredientes generados con IA
+    from app.models.user_gym import UserGym
+    from app.models.nutrition_safety import SafetyAuditLog
+
+    user_gym = db.query(UserGym).filter(
+        UserGym.user_id == db_user.id,
+        UserGym.gym_id == current_gym.id
+    ).first()
+
+    if not user_gym or user_gym.role not in ["trainer", "admin"]:
+        raise HTTPException(
+            status_code=403,
+            detail="Solo trainers y administradores pueden aplicar ingredientes generados con IA"
+        )
+    # ========== FIN VALIDACIÓN DE PERMISOS ==========
+
+    # Validar comida y permisos (mismo código que endpoint anterior)
+    meal = db.query(MealModel).options(
             joinedload(MealModel.daily_plan).joinedload(DailyNutritionPlanModel.nutrition_plan),
             joinedload(MealModel.ingredients)
         ).filter(MealModel.id == meal_id).first()
@@ -1579,10 +2201,29 @@ async def apply_generated_ingredients(
         
         # Commit cambios
         db.commit()
-        
-        logger.info(f"✅ Aplicados {ingredients_added} ingredientes IA a meal {meal_id}")
-        
-        return ApplyIngredientsResponse(
+
+        # Log aplicación exitosa para auditoría (trainer/admin no necesita safety screening)
+        audit_log = SafetyAuditLog(
+            user_id=db_user.id,
+            gym_id=current_gym.id,
+            screening_id=None,  # Trainers/admin no requieren screening
+            action_type="ai_ingredients_applied_by_trainer",
+            action_details={
+                "meal_id": meal_id,
+                "ingredients_added": ingredients_added,
+                "ingredients_replaced": ingredients_replaced,
+                "total_calories": total_calories,
+                "meal_updated": meal_updated,
+                "role": user_gym.role
+            },
+            was_allowed=True
+        )
+        db.add(audit_log)
+        db.commit()
+
+        logger.info(f"✅ {user_gym.role.capitalize()} {db_user.id} aplicó {ingredients_added} ingredientes IA a meal {meal_id}")
+
+        response = ApplyIngredientsResponse(
             success=True,
             ingredients_added=ingredients_added,
             ingredients_replaced=ingredients_replaced,
@@ -1592,6 +2233,8 @@ async def apply_generated_ingredients(
             total_carbs=total_carbs if meal_updated else None,
             total_fat=total_fat if meal_updated else None
         )
+
+        return response
         
     except Exception as e:
         db.rollback()
@@ -1667,7 +2310,7 @@ async def test_ai_connection(
 # ===== ENDPOINTS DE ANALYTICS =====
 
 @router.get("/plans/{plan_id}/analytics", response_model=NutritionAnalytics)
-def get_plan_analytics(
+async def get_plan_analytics(
     plan_id: int = Path(..., description="ID del plan nutricional para analytics"),
     db: Session = Depends(get_db),
     current_gym: Gym = Depends(verify_gym_access),
@@ -1790,18 +2433,20 @@ def get_plan_analytics(
     - `403`: Solo el creador puede ver analytics del plan
     - `404`: Plan no encontrado o no pertenece al gimnasio
     """
-    service = NutritionService(db)
-    
+    # Use specialized NutritionAnalyticsService for analytics
+    service = NutritionAnalyticsService(db)
+
     # Obtener usuario local
     db_user = user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
     if not db_user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
-    
+
     try:
-        analytics = service.get_nutrition_analytics(
+        # Get plan analytics with performance metrics
+        analytics = await service.get_plan_analytics(
             plan_id=plan_id,
-            user_id=db_user.id,
-            gym_id=current_gym.id
+            gym_id=current_gym.id,
+            requester_id=db_user.id
         )
         return analytics
     except NotFoundError as e:
@@ -2133,26 +2778,27 @@ def list_plans_by_type(
     - **GET /plans/hybrid:** Vista categorizada pre-organizada
     - **Uso recomendado:** Hybrid para dashboards, /plans para búsquedas
     """
-    service = NutritionService(db)
-    
+    # Use specialized NutritionPlanService for plan operations
+    service = NutritionPlanService(db)
+
     # Obtener usuario local
     db_user = user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
     if not db_user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
-    
+
     # Obtener planes por tipo
     live_filters = NutritionPlanFilters(plan_type=PlanType.LIVE)
     template_filters = NutritionPlanFilters(plan_type=PlanType.TEMPLATE)
     archived_filters = NutritionPlanFilters(plan_type=PlanType.ARCHIVED)
-    
+
     live_plans, live_total = service.list_nutrition_plans(
         gym_id=current_gym.id, filters=live_filters, page=1, per_page=50, user_id=db_user.id
     )
-    
+
     template_plans, template_total = service.list_nutrition_plans(
         gym_id=current_gym.id, filters=template_filters, page=1, per_page=50, user_id=db_user.id
     )
-    
+
     archived_plans, archived_total = service.list_nutrition_plans(
         gym_id=current_gym.id, filters=archived_filters, page=1, per_page=50, user_id=db_user.id
     )
@@ -2182,31 +2828,34 @@ def update_live_plan_status(
     """
     Actualizar el estado de un plan live (solo creadores).
     """
-    service = NutritionService(db)
-    
+    # Use specialized LivePlanService for live plan operations
+    live_service = LivePlanService(db)
+    plan_service = NutritionPlanService(db)
+
     # Obtener usuario local
     db_user = user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
     if not db_user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
-    
+
     try:
         # Verificar permisos
-        plan = service.get_nutrition_plan(plan_id, current_gym.id)
+        plan = plan_service.get_nutrition_plan(plan_id, current_gym.id)
         if plan.creator_id != db_user.id:
             raise HTTPException(status_code=403, detail="Solo el creador puede actualizar el estado del plan")
-        
+
         if plan.plan_type != PlanType.LIVE:
             raise HTTPException(status_code=400, detail="Solo se puede actualizar el estado de planes live")
-        
-        # Actualizar estado
-        plan.is_live_active = status_update.is_live_active
-        if status_update.live_participants_count is not None:
-            plan.live_participants_count = status_update.live_participants_count
-        
-        service.db.commit()
-        service.db.refresh(plan)
-        
-        return plan
+
+        # Update live plan status using the service method
+        updated_plan = live_service.update_live_plan_status(
+            plan_id=plan_id,
+            is_active=status_update.is_live_active,
+            participant_count=status_update.live_participants_count,
+            updater_id=db_user.id,
+            gym_id=current_gym.id
+        )
+
+        return updated_plan
         
     except NotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -2223,19 +2872,21 @@ def archive_live_plan(
     """
     Archivar un plan live terminado (solo creadores).
     """
-    service = NutritionService(db)
-    
+    # Use specialized LivePlanService for live plan operations
+    service = LivePlanService(db)
+
     # Obtener usuario local
     db_user = user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
     if not db_user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
-    
+
     try:
+        # Archive the live plan
         archived_plan = service.archive_live_plan(
             plan_id=plan_id,
-            user_id=db_user.id,
+            archiver_id=db_user.id,
             gym_id=current_gym.id,
-            archive_request=archive_request
+            reason=archive_request.reason if hasattr(archive_request, 'reason') else None
         )
         return archived_plan
         
@@ -2379,32 +3030,60 @@ def get_plan_status(
     - `403`: Sin acceso a plan privado
     - `404`: Plan no encontrado o no pertenece al gimnasio
     """
-    service = NutritionService(db)
-    
+    # Use specialized services
+    plan_service = NutritionPlanService(db)
+    live_service = LivePlanService(db)
+    follower_service = PlanFollowerService(db)
+
     # Obtener usuario local
     db_user = user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
     if not db_user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
-    
+
     try:
-        plan = service.get_nutrition_plan(plan_id, current_gym.id)
-        
-        # Obtener información de seguimiento del usuario
+        # Get the plan
+        plan = plan_service.get_nutrition_plan(plan_id, current_gym.id)
+
+        # Get follower information if user is not the creator
         follower = None
+        current_day = 0
+        status = PlanStatus.NOT_STARTED
+
         if db_user.id != plan.creator_id:
-            follower = service.db.query(NutritionPlanFollowerModel).filter(
-                NutritionPlanFollowerModel.plan_id == plan_id,
-                NutritionPlanFollowerModel.user_id == db_user.id,
-                NutritionPlanFollowerModel.is_active == True
-            ).first()
-        
-        # Calcular estado
-        current_day, status = service.get_current_plan_day(plan, follower)
-        days_until_start = service.get_days_until_start(plan)
-        
-        # Actualizar estado de planes live
+            # Get follower data
+            user_followed_plans = follower_service.get_user_followed_plans(
+                user_id=db_user.id,
+                gym_id=current_gym.id,
+                include_archived=False
+            )
+            # Find this plan in the user's followed plans
+            for fp in user_followed_plans:
+                if fp.plan_id == plan_id:
+                    follower = fp
+                    break
+
+        # Calculate status based on plan type
         if plan.plan_type == PlanType.LIVE:
-            plan = service.update_live_plan_status(plan.id, current_gym.id)
+            # Update and get live plan status
+            updated_plan = live_service.get_live_plan_status(plan_id, current_gym.id)
+            if updated_plan:
+                status = PlanStatus.RUNNING if updated_plan.is_live_active else PlanStatus.FINISHED
+        else:
+            # For template plans, calculate based on follower data
+            if follower:
+                from datetime import date
+                days_since_start = (date.today() - follower.start_date.date()).days
+                if days_since_start >= 0:
+                    if days_since_start < plan.duration_days:
+                        current_day = days_since_start + 1
+                        status = PlanStatus.RUNNING
+                    else:
+                        status = PlanStatus.FINISHED
+
+        days_until_start = 0
+        if plan.live_start_date and status == PlanStatus.NOT_STARTED:
+            from datetime import date
+            days_until_start = (plan.live_start_date - date.today()).days
         
         return {
             "plan_id": plan.id,
