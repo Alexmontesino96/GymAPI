@@ -19,7 +19,7 @@ from app.models.nutrition import (
     NutritionGoal, DifficultyLevel, BudgetLevel, MealType, PlanType
 )
 from app.schemas.nutrition import AIGenerationRequest
-from app.core.config import settings
+from app.core.config import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +32,7 @@ class NutritionAIService:
 
     def __init__(self):
         """Inicializar cliente OpenAI con API key."""
+        settings = get_settings()
         self.api_key = os.getenv("CHAT_GPT_MODEL", settings.CHAT_GPT_MODEL if hasattr(settings, 'CHAT_GPT_MODEL') else None)
         if self.api_key:
             self.client = OpenAI(api_key=self.api_key)
