@@ -12,13 +12,14 @@ import json
 
 from app.models.nutrition import (
     NutritionPlan, DailyNutritionPlan, Meal,
-    NutritionPlanFollower, PlanType, PlanStatus
+    NutritionPlanFollower, PlanType
 )
 from app.models.user import User
 from app.schemas.nutrition import (
     NutritionPlanCreate,
     ArchivePlanRequest,
-    DailyNutritionPlanCreate
+    DailyNutritionPlanCreate,
+    PlanStatus
 )
 from app.db.redis_client import get_redis_client
 
