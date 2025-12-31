@@ -20,7 +20,7 @@ from app.schemas.nutrition import (
     ArchivePlanRequest,
     DailyNutritionPlanCreate
 )
-from app.db.redis_client import RedisClient
+from app.db.redis_client import get_redis_client
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +43,7 @@ class PermissionError(Exception):
 class LivePlanService:
     """Service for managing LIVE nutrition plans and scheduling."""
 
-    def __init__(self, db: Session, redis_client: Optional[RedisClient] = None):
+    def __init__(self, db: Session, redis_client: Optional[Any] = None):
         """
         Initialize the live plan service.
 

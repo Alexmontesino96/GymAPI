@@ -44,7 +44,7 @@ class PermissionError(Exception):
 class NutritionPlanService:
     """Service for managing nutrition plans (CRUD operations)."""
 
-    def __init__(self, db: Session, redis_client: Optional[RedisClient] = None):
+    def __init__(self, db: Session, redis_client: Optional[Any] = None):
         """
         Initialize the nutrition plan service.
 

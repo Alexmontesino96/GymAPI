@@ -17,7 +17,7 @@ from app.schemas.nutrition import (
     MealCreate, MealUpdate, MealIngredientCreate
 )
 from app.repositories.nutrition import meal_repository
-from app.db.redis_client import RedisClient
+from app.db.redis_client import get_redis_client
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +40,7 @@ class PermissionError(Exception):
 class MealService:
     """Service for managing meals and ingredients."""
 
-    def __init__(self, db: Session, redis_client: Optional[RedisClient] = None):
+    def __init__(self, db: Session, redis_client: Optional[Any] = None):
         """
         Initialize the meal service.
 

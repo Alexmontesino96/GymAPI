@@ -19,7 +19,7 @@ from app.schemas.nutrition import (
     NutritionAnalytics,
     UserNutritionDashboard
 )
-from app.db.redis_client import RedisClient
+from app.db.redis_client import get_redis_client
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +32,7 @@ class NotFoundError(Exception):
 class NutritionAnalyticsService:
     """Service for nutrition analytics and reporting."""
 
-    def __init__(self, db: Session, redis_client: Optional[RedisClient] = None):
+    def __init__(self, db: Session, redis_client: Optional[Any] = None):
         """
         Initialize the nutrition analytics service.
 
