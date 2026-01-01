@@ -161,15 +161,21 @@ class Settings(BaseSettings):
     ONESIGNAL_REST_API_KEY: Optional[str] = None
 
     # Configuración de OpenAI para IA nutricional
-    OPENAI_API_KEY: str = os.getenv("CHAT_GPT_MODEL", "")  # Usando CHAT_GPT_MODEL como variable de entorno
+    # OpenAI Configuration
+    CHAT_GPT_MODEL: str = os.getenv("CHAT_GPT_MODEL", "")  # API key para nutrición IA
+    OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", os.getenv("CHAT_GPT_MODEL", ""))  # Compatibilidad con ambas variables
     OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
     OPENAI_MAX_TOKENS: int = int(os.getenv("OPENAI_MAX_TOKENS", "1500"))
     OPENAI_TEMPERATURE: float = float(os.getenv("OPENAI_TEMPERATURE", "0.1"))
 
     @field_validator("OPENAI_API_KEY")
     def validate_openai_key(cls, v: str) -> str:
-        if v and not v.startswith('sk-'):
-            raise ValueError('OPENAI_API_KEY debe empezar con sk-')
+        # Solo validar formato si no está vacío
+        # CHAT_GPT_MODEL puede tener formato diferente
+        if v and v.startswith('sk-'):
+            return v
+        elif v:  # Si tiene valor pero no empieza con sk-, es CHAT_GPT_MODEL
+            return v
         return v
 
     # Lista de URLs de redirección permitidas

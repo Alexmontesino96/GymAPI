@@ -33,11 +33,12 @@ class NutritionAIService:
     def __init__(self):
         """Inicializar cliente OpenAI con API key."""
         settings = get_settings()
-        self.api_key = os.getenv("CHAT_GPT_MODEL", settings.CHAT_GPT_MODEL if hasattr(settings, 'CHAT_GPT_MODEL') else None)
+        # Usar CHAT_GPT_MODEL primero, luego OPENAI_API_KEY como fallback
+        self.api_key = settings.CHAT_GPT_MODEL or settings.OPENAI_API_KEY
         if self.api_key:
             self.client = OpenAI(api_key=self.api_key)
         else:
-            logger.warning("OpenAI API key not configured (CHAT_GPT_MODEL)")
+            logger.warning("OpenAI API key not configured (CHAT_GPT_MODEL or OPENAI_API_KEY)")
             self.client = None
 
         self.model = "gpt-4o-mini"
