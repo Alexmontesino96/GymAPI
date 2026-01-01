@@ -27,7 +27,8 @@ from app.schemas.nutrition_ai import (
     AIIngredientRequest, AIRecipeResponse, ApplyGeneratedIngredientsRequest, ApplyIngredientsResponse
 )
 from app.schemas.nutrition_safety import (
-    SafetyScreeningRequest, SafetyScreeningResponse
+    SafetyScreeningRequest, SafetyScreeningResponse, ScreeningValidationResponse, RiskLevel,
+    calculate_risk_score, generate_safety_warnings
 )
 # Import specialized nutrition services
 from app.services.nutrition_plan_service import NutritionPlanService
@@ -1685,8 +1686,7 @@ async def create_safety_screening(
 
     # Importar servicio de seguridad y modelos
     from app.services.nutrition_ai_safety import NutritionAISafetyService
-    from app.models.nutrition_safety import SafetyScreening as SafetyScreeningModel, RiskLevel
-    from app.schemas.nutrition_safety import calculate_risk_score, generate_safety_warnings
+    from app.models.nutrition_safety import SafetyScreening as SafetyScreeningModel
     import hashlib
     import uuid
     from datetime import datetime, timedelta
