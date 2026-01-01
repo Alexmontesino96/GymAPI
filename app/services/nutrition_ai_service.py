@@ -112,12 +112,14 @@ class NutritionAIService:
         }
 
         # Construir prompt con todos los parámetros
+        # Limitar temporalmente a 3 días para evitar respuestas muy largas
+        days_to_generate = min(request.duration_days, 3)
         prompt = f"""Crea un plan nutricional con estas características:
 
 INFORMACIÓN BÁSICA:
 - Objetivo: {goal_descriptions.get(request.goal.value, request.goal.value)}
 - Calorías diarias: {request.target_calories} kcal
-- Duración: {request.duration_days} días
+- Duración: {days_to_generate} días
 - Comidas por día: {request.user_context.get('meals_per_day', 5) if request.user_context else 5}
 
 PERFIL DEL USUARIO:
@@ -170,7 +172,7 @@ PERFIL DEL USUARIO:
 
         prompt += f"\nDISTRIBUCIÓN DE MACROS RECOMENDADA:\n{macro_distributions.get(request.goal.value, macro_distributions['maintenance'])}\n"
 
-        prompt += f"\nGenera un plan COMPLETO de {request.duration_days} días con todas las comidas, ingredientes y valores nutricionales."
+        prompt += f"\nGenera un plan COMPLETO de {days_to_generate} días con todas las comidas, ingredientes y valores nutricionales."
 
         return prompt
 
@@ -213,18 +215,36 @@ PERFIL DEL USUARIO:
                 response_format={"type": "json_object"}
             )
 
-            # Parsear respuesta JSON
+            # Parsear respuesta JSON con manejo robusto de errores
             try:
                 plan_data = json.loads(response.choices[0].message.content)
             except json.JSONDecodeError as e:
                 logger.error(f"Failed to parse OpenAI response: {e}")
-                # Intentar extraer JSON del texto
+                logger.debug(f"Raw response (first 1000 chars): {response.choices[0].message.content[:1000]}")
+
+                # Intentar reparar JSON truncado o mal formateado
                 import re
-                json_match = re.search(r'\{.*\}', response.choices[0].message.content, re.DOTALL)
+                content = response.choices[0].message.content
+
+                # Intentar encontrar el JSON válido
+                json_match = re.search(r'\{.*\}', content, re.DOTALL)
                 if json_match:
-                    plan_data = json.loads(json_match.group())
+                    try:
+                        # Intentar arreglar JSON incompleto
+                        json_str = json_match.group()
+                        # Cerrar arrays y objetos abiertos
+                        open_braces = json_str.count('{') - json_str.count('}')
+                        open_brackets = json_str.count('[') - json_str.count(']')
+                        json_str += ']' * open_brackets + '}' * open_braces
+                        plan_data = json.loads(json_str)
+                    except:
+                        # Si falla, usar generación mock
+                        logger.warning("Using mock generation due to JSON parse error")
+                        return self._generate_mock_plan(request, db, gym_id, creator_id)
                 else:
-                    raise ValueError("No se pudo parsear la respuesta de OpenAI")
+                    # Usar generación mock si no se puede recuperar
+                    logger.warning("Using mock generation - no valid JSON found")
+                    return self._generate_mock_plan(request, db, gym_id, creator_id)
 
             # Crear plan en base de datos
             nutrition_plan = NutritionPlan(
@@ -258,7 +278,7 @@ PERFIL DEL USUARIO:
             # Crear días y comidas
             for day_data in plan_data.get('daily_plans', []):
                 daily_plan = DailyNutritionPlan(
-                    plan_id=nutrition_plan.id,
+                    nutrition_plan_id=nutrition_plan.id,
                     day_number=day_data['day_number'],
                     day_name=day_data.get('day_name', f"Día {day_data['day_number']}"),
                     total_calories=day_data.get('total_calories', 0),

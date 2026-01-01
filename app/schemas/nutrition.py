@@ -547,7 +547,7 @@ class AIGenerationRequest(BaseModel):
 
     # Control de generación IA
     temperature: float = Field(0.7, ge=0, le=1, description="Creatividad de la IA (0=conservador, 1=creativo)")
-    max_tokens: int = Field(3500, ge=500, le=4000, description="Límite de tokens para la respuesta")
+    max_tokens: int = Field(2500, ge=500, le=4000, description="Límite de tokens para la respuesta")
 
 
 class AIGenerationResponse(BaseModel):
