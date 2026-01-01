@@ -26,6 +26,9 @@ from app.schemas.nutrition import (
 from app.schemas.nutrition_ai import (
     AIIngredientRequest, AIRecipeResponse, ApplyGeneratedIngredientsRequest, ApplyIngredientsResponse
 )
+from app.schemas.nutrition_safety import (
+    SafetyScreeningRequest, SafetyScreeningResponse
+)
 # Import specialized nutrition services
 from app.services.nutrition_plan_service import NutritionPlanService
 from app.services.meal_service import MealService
