@@ -199,8 +199,8 @@ PERFIL DEL USUARIO:
             logger.info(f"Generating nutrition plan with OpenAI for gym {gym_id}")
 
             # ESTRATEGIA OPTIMIZADA: Generar días en chunks pequeños
-            # Para 7 días, generar de 2 en 2 para evitar timeouts
-            days_per_chunk = 2 if request.duration_days > 3 else request.duration_days
+            # Generar día por día para evitar timeouts de OpenAI
+            days_per_chunk = 1  # Un día a la vez para máxima velocidad
 
             # Primero generar estructura base del plan (sin días completos)
             plan_data = await self._generate_plan_structure(request, gym_id)
@@ -389,10 +389,10 @@ Responde con JSON compacto:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
-                temperature=0.3,
-                max_tokens=200,
+                temperature=0.1,  # Máxima velocidad
+                max_tokens=150,  # Solo necesitamos título y descripción
                 response_format={"type": "json_object"},
-                timeout=10.0  # Timeout corto para estructura simple
+                timeout=5.0  # 5 segundos para estructura simple
             )
 
             return json.loads(response.choices[0].message.content)
@@ -426,45 +426,32 @@ Responde con JSON compacto:
             day_names = [days[(start_day - 1 + i) % 7] for i in range(num_days)]
 
             # Prompt ultra-optimizado para generar solo los días solicitados
-            system_prompt = """Eres un nutricionista.
-GENERA SOLO JSON VÁLIDO, SIN TEXTO ADICIONAL.
-Formato EXACTO y COMPACTO:
+            system_prompt = """JSON puro, sin texto.
 {
-  "days": [
-    {
-      "day_number": 1,
-      "day_name": "Lunes",
-      "meals": [
-        {
-          "name": "nombre corto",
-          "meal_type": "breakfast|snack|lunch|dinner",
-          "calories": 400,
-          "protein": 30,
-          "carbs": 45,
-          "fat": 10,
-          "ingredients": [
-            {"name": "ingrediente", "quantity": 100, "unit": "g"}
-          ],
-          "instructions": "preparación en 1 línea"
-        }
-      ]
-    }
-  ]
+  "days": [{
+    "day_number": 1,
+    "day_name": "día",
+    "meals": [{
+      "name": "corto",
+      "meal_type": "tipo",
+      "calories": 400,
+      "protein": 30,
+      "carbs": 45,
+      "fat": 10,
+      "ingredients": [{"name": "ing", "quantity": 100, "unit": "g"}],
+      "instructions": "1 línea"
+    }]
+  }]
 }"""
 
             # Determinar tipos de comidas según meals_per_day
             meal_types = self._get_meal_types(request.meals_per_day)
             calories_per_meal = request.target_calories / len(meal_types)
 
-            user_prompt = f"""Plan "{plan_title}"
-Genera SOLO días {start_day} a {end_day} ({', '.join(day_names)})
-- {request.target_calories} cal/día
-- {len(meal_types)} comidas: {', '.join(meal_types)}
-- Objetivo: {request.goal.value}
-- Restricciones: {', '.join(request.dietary_restrictions) if request.dietary_restrictions else 'ninguna'}
-- NO repetir comidas principales
-- Máx 3 ingredientes por comida
-- Instrucciones de 1 línea"""
+            user_prompt = f"""Día {start_day} ({day_names[0]})
+{request.target_calories}cal
+{len(meal_types)} comidas
+Meta: {request.goal.value[:3]}"""
 
             response = self.client.chat.completions.create(
                 model=self.model,
@@ -472,10 +459,10 @@ Genera SOLO días {start_day} a {end_day} ({', '.join(day_names)})
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
-                temperature=0.4,
-                max_tokens=600 * num_days,  # ~600 tokens por día
+                temperature=0.2,  # Más determinístico
+                max_tokens=400,  # Solo 400 tokens por día
                 response_format={"type": "json_object"},
-                timeout=15.0  # 15 segundos máximo por chunk
+                timeout=10.0  # 10 segundos máximo por día
             )
 
             result = json.loads(response.choices[0].message.content)
