@@ -338,10 +338,10 @@ async def generate_plan_with_ai(
         UserGym.gym_id == current_gym.id
     ).first()
 
-    if not user_gym or user_gym.role not in [GymRoleType.TRAINER, GymRoleType.ADMIN]:
+    if not user_gym or user_gym.role not in [GymRoleType.TRAINER, GymRoleType.ADMIN, GymRoleType.OWNER]:
         raise HTTPException(
             status_code=403,
-            detail="Solo trainers y administradores pueden generar planes con IA"
+            detail="Solo trainers, administradores y owners pueden generar planes con IA"
         )
 
     try:
@@ -1983,10 +1983,10 @@ async def generate_ingredients_with_ai(
         UserGym.gym_id == current_gym.id
     ).first()
 
-    if not user_gym or user_gym.role not in ["trainer", "admin"]:
+    if not user_gym or user_gym.role not in [GymRoleType.TRAINER, GymRoleType.ADMIN, GymRoleType.OWNER]:
         raise HTTPException(
             status_code=403,
-            detail="Solo trainers y administradores pueden generar planes con IA"
+            detail="Solo trainers, administradores y owners pueden generar planes con IA"
         )
     # ========== FIN VALIDACIÓN DE PERMISOS ==========
 
@@ -2124,10 +2124,10 @@ async def apply_generated_ingredients(
         UserGym.gym_id == current_gym.id
     ).first()
 
-    if not user_gym or user_gym.role not in ["trainer", "admin"]:
+    if not user_gym or user_gym.role not in [GymRoleType.TRAINER, GymRoleType.ADMIN, GymRoleType.OWNER]:
         raise HTTPException(
             status_code=403,
-            detail="Solo trainers y administradores pueden aplicar ingredientes generados con IA"
+            detail="Solo trainers, administradores y owners pueden aplicar ingredientes generados con IA"
         )
     # ========== FIN VALIDACIÓN DE PERMISOS ==========
 
@@ -3520,10 +3520,10 @@ async def get_audit_log(
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
 
     user_gym = user_service.get_user_gym(db, db_user.id, current_gym.id)
-    if not user_gym or user_gym.role not in ["admin", "trainer"]:
+    if not user_gym or user_gym.role not in [GymRoleType.ADMIN, GymRoleType.TRAINER, GymRoleType.OWNER]:
         raise HTTPException(
             status_code=403,
-            detail="Solo administradores y entrenadores pueden ver la auditoría"
+            detail="Solo administradores, entrenadores y owners pueden ver la auditoría"
         )
 
     # Obtener auditoría
@@ -3565,10 +3565,10 @@ async def get_audit_summary(
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
 
     user_gym = user_service.get_user_gym(db, db_user.id, current_gym.id)
-    if not user_gym or user_gym.role not in ["admin", "trainer"]:
+    if not user_gym or user_gym.role not in [GymRoleType.ADMIN, GymRoleType.TRAINER, GymRoleType.OWNER]:
         raise HTTPException(
             status_code=403,
-            detail="Solo administradores y entrenadores pueden ver la auditoría"
+            detail="Solo administradores, entrenadores y owners pueden ver la auditoría"
         )
 
     # Obtener resumen

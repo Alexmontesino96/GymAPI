@@ -196,7 +196,7 @@ def test_ai_generation_flow():
     # 8. Casos de error
     print("\n❌ CASOS DE ERROR:")
     error_cases = [
-        {"code": 403, "message": "Solo trainers y administradores pueden generar planes con IA"},
+        {"code": 403, "message": "Solo trainers, administradores y owners pueden generar planes con IA"},
         {"code": 400, "message": "Datos inválidos en el request"},
         {"code": 404, "message": "Usuario no encontrado"},
         {"code": 429, "message": "Límite de generaciones excedido"},
