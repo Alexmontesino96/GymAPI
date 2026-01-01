@@ -355,12 +355,6 @@ async def generate_plan_with_ai(
         request.user_context['difficulty_level'] = request.difficulty_level.value if request.difficulty_level else 'beginner'
         request.user_context['budget_level'] = request.budget_level.value if request.budget_level else 'medium'
 
-        # Si hay ingredientes a excluir, agregarlos a preferences
-        if request.exclude_ingredients:
-            if not hasattr(request, 'preferences') or request.preferences is None:
-                request.preferences = {}
-            request.preferences['exclude_ingredients'] = request.exclude_ingredients
-
         # Generar plan con IA (incluye creación en BD)
         result = await ai_service.generate_nutrition_plan(
             request=request,
