@@ -150,9 +150,9 @@ PERFIL DEL USUARIO:
                 prompt += f"- {allergy}\n"
 
         # Ingredientes a excluir
-        if request.preferences and 'exclude_ingredients' in request.preferences:
+        if request.exclude_ingredients:
             prompt += f"\nINGREDIENTES A EXCLUIR:\n"
-            for ingredient in request.preferences['exclude_ingredients']:
+            for ingredient in request.exclude_ingredients:
                 prompt += f"- {ingredient}\n"
 
         # Instrucciones adicionales del prompt original
@@ -236,10 +236,9 @@ PERFIL DEL USUARIO:
                 duration_days=request.duration_days,
                 target_calories=request.target_calories,
                 is_public=True,
-                created_by=creator_id,
+                creator_id=creator_id,
                 gym_id=gym_id,
-                plan_type=PlanType.TEMPLATE,
-                created_at=datetime.utcnow()
+                plan_type=PlanType.TEMPLATE
             )
 
             # Calcular macros promedio del plan
@@ -368,10 +367,9 @@ PERFIL DEL USUARIO:
             target_carbs_g=request.target_calories * 0.4 / 4,    # 40% carbos
             target_fat_g=request.target_calories * 0.3 / 9,      # 30% grasas
             is_public=True,
-            created_by=creator_id,
+            creator_id=creator_id,
             gym_id=gym_id,
-            plan_type=PlanType.TEMPLATE,
-            created_at=datetime.utcnow()
+            plan_type=PlanType.TEMPLATE
         )
         db.add(nutrition_plan)
         db.flush()
