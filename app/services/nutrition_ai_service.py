@@ -183,6 +183,7 @@ PERFIL DEL USUARIO:
     ) -> Dict[str, Any]:
         """
         Generar un plan nutricional completo con IA y guardarlo en la base de datos.
+        Usa generación incremental para evitar timeouts.
 
         Returns:
             Dict con información del plan creado y metadata de la generación.
@@ -195,58 +196,50 @@ PERFIL DEL USUARIO:
                 logger.warning("Using mock generation - OpenAI not configured")
                 return await self._generate_mock_plan(request, creator_id, gym_id, db)
 
-            # Construir prompts
-            system_prompt = self._build_system_prompt()
-            user_prompt = self._build_user_prompt(request)
-
             logger.info(f"Generating nutrition plan with OpenAI for gym {gym_id}")
 
-            # Llamar a OpenAI con parámetros optimizados
-            # Limitar tokens basado en días solicitados (aprox 300 tokens por día)
-            optimal_tokens = min(300 * request.duration_days, 2100)
+            # ESTRATEGIA OPTIMIZADA: Generar días en chunks pequeños
+            # Para 7 días, generar de 2 en 2 para evitar timeouts
+            days_per_chunk = 2 if request.duration_days > 3 else request.duration_days
 
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ],
-                temperature=0.5,  # Más determinístico para rapidez
-                max_tokens=optimal_tokens,
-                response_format={"type": "json_object"},
-                seed=12345  # Para respuestas más consistentes
-            )
+            # Primero generar estructura base del plan (sin días completos)
+            plan_data = await self._generate_plan_structure(request, gym_id)
 
-            # Parsear respuesta JSON con manejo robusto de errores
-            try:
-                plan_data = json.loads(response.choices[0].message.content)
-            except json.JSONDecodeError as e:
-                logger.error(f"Failed to parse OpenAI response: {e}")
-                logger.debug(f"Raw response (first 1000 chars): {response.choices[0].message.content[:1000]}")
+            # Luego generar días incrementalmente
+            all_daily_plans = []
+            days_generated = 0
 
-                # Intentar reparar JSON truncado o mal formateado
-                import re
-                content = response.choices[0].message.content
+            while days_generated < request.duration_days:
+                chunk_size = min(days_per_chunk, request.duration_days - days_generated)
+                start_day = days_generated + 1
+                end_day = days_generated + chunk_size
 
-                # Intentar encontrar el JSON válido
-                json_match = re.search(r'\{.*\}', content, re.DOTALL)
-                if json_match:
-                    try:
-                        # Intentar arreglar JSON incompleto
-                        json_str = json_match.group()
-                        # Cerrar arrays y objetos abiertos
-                        open_braces = json_str.count('{') - json_str.count('}')
-                        open_brackets = json_str.count('[') - json_str.count(']')
-                        json_str += ']' * open_brackets + '}' * open_braces
-                        plan_data = json.loads(json_str)
-                    except:
-                        # Si falla, usar generación mock
-                        logger.warning("Using mock generation due to JSON parse error")
-                        return await self._generate_mock_plan(request, db, gym_id, creator_id)
+                logger.info(f"Generating days {start_day} to {end_day} of {request.duration_days}")
+
+                # Generar chunk de días
+                daily_chunk = await self._generate_days_chunk(
+                    request,
+                    start_day,
+                    end_day,
+                    plan_data.get("title", request.title)
+                )
+
+                if daily_chunk:
+                    all_daily_plans.extend(daily_chunk)
+                    days_generated += chunk_size
                 else:
-                    # Usar generación mock si no se puede recuperar
-                    logger.warning("Using mock generation - no valid JSON found")
-                    return await self._generate_mock_plan(request, db, gym_id, creator_id)
+                    # Si falla un chunk, generar días mock para completar
+                    logger.warning(f"Failed to generate days {start_day}-{end_day}, using mock")
+                    mock_days = self._generate_mock_days(
+                        request,
+                        start_day,
+                        end_day
+                    )
+                    all_daily_plans.extend(mock_days)
+                    days_generated += chunk_size
+
+            # Combinar estructura del plan con días generados
+            plan_data["daily_plans"] = all_daily_plans
 
             # Crear plan en base de datos
             nutrition_plan = NutritionPlan(
@@ -362,6 +355,211 @@ PERFIL DEL USUARIO:
             logger.error(f"Error generating nutrition plan: {str(e)}")
             # En caso de error, generar plan mock
             return await self._generate_mock_plan(request, creator_id, gym_id, db)
+
+    async def _generate_plan_structure(self, request: AIGenerationRequest, gym_id: int) -> Dict[str, Any]:
+        """
+        Genera solo la estructura base del plan (título, descripción, configuración)
+        sin los días completos para reducir tokens.
+        """
+        try:
+            if not self.client:
+                return {
+                    "title": request.title,
+                    "description": f"Plan de {request.goal.value} con {request.target_calories} calorías diarias"
+                }
+
+            # Prompt simplificado solo para estructura
+            system_prompt = """Eres un nutricionista experto.
+Genera SOLO la estructura base del plan nutricional.
+Responde con JSON compacto:
+{
+  "title": "título descriptivo",
+  "description": "descripción breve del plan (máx 100 palabras)"
+}"""
+
+            user_prompt = f"""Crea estructura para:
+- Objetivo: {request.goal.value}
+- Calorías: {request.target_calories}/día
+- Duración: {request.duration_days} días
+- Restricciones: {', '.join(request.dietary_restrictions) if request.dietary_restrictions else 'ninguna'}"""
+
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                temperature=0.3,
+                max_tokens=200,
+                response_format={"type": "json_object"},
+                timeout=10.0  # Timeout corto para estructura simple
+            )
+
+            return json.loads(response.choices[0].message.content)
+
+        except Exception as e:
+            logger.warning(f"Failed to generate plan structure: {e}")
+            return {
+                "title": request.title,
+                "description": f"Plan de {request.goal.value} con {request.target_calories} calorías diarias"
+            }
+
+    async def _generate_days_chunk(
+        self,
+        request: AIGenerationRequest,
+        start_day: int,
+        end_day: int,
+        plan_title: str
+    ) -> List[Dict[str, Any]]:
+        """
+        Genera un chunk de días (1-2 días a la vez) para evitar timeouts.
+        """
+        try:
+            if not self.client:
+                return self._generate_mock_days(request, start_day, end_day)
+
+            # Días de la semana
+            days = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
+
+            # Calcular qué días generar
+            num_days = end_day - start_day + 1
+            day_names = [days[(start_day - 1 + i) % 7] for i in range(num_days)]
+
+            # Prompt ultra-optimizado para generar solo los días solicitados
+            system_prompt = """Eres un nutricionista.
+GENERA SOLO JSON VÁLIDO, SIN TEXTO ADICIONAL.
+Formato EXACTO y COMPACTO:
+{
+  "days": [
+    {
+      "day_number": 1,
+      "day_name": "Lunes",
+      "meals": [
+        {
+          "name": "nombre corto",
+          "meal_type": "breakfast|snack|lunch|dinner",
+          "calories": 400,
+          "protein": 30,
+          "carbs": 45,
+          "fat": 10,
+          "ingredients": [
+            {"name": "ingrediente", "quantity": 100, "unit": "g"}
+          ],
+          "instructions": "preparación en 1 línea"
+        }
+      ]
+    }
+  ]
+}"""
+
+            # Determinar tipos de comidas según meals_per_day
+            meal_types = self._get_meal_types(request.meals_per_day)
+            calories_per_meal = request.target_calories / len(meal_types)
+
+            user_prompt = f"""Plan "{plan_title}"
+Genera SOLO días {start_day} a {end_day} ({', '.join(day_names)})
+- {request.target_calories} cal/día
+- {len(meal_types)} comidas: {', '.join(meal_types)}
+- Objetivo: {request.goal.value}
+- Restricciones: {', '.join(request.dietary_restrictions) if request.dietary_restrictions else 'ninguna'}
+- NO repetir comidas principales
+- Máx 3 ingredientes por comida
+- Instrucciones de 1 línea"""
+
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                temperature=0.4,
+                max_tokens=600 * num_days,  # ~600 tokens por día
+                response_format={"type": "json_object"},
+                timeout=15.0  # 15 segundos máximo por chunk
+            )
+
+            result = json.loads(response.choices[0].message.content)
+
+            # Validar y normalizar respuesta
+            if "days" in result:
+                return result["days"]
+            elif "daily_plans" in result:
+                return result["daily_plans"]
+            else:
+                # Si el formato no es el esperado, intentar extraer días
+                logger.warning("Unexpected response format, attempting to extract days")
+                return self._extract_days_from_response(result, start_day, end_day)
+
+        except Exception as e:
+            logger.error(f"Failed to generate days {start_day}-{end_day}: {e}")
+            return self._generate_mock_days(request, start_day, end_day)
+
+    def _get_meal_types(self, meals_per_day: int) -> List[str]:
+        """Determina los tipos de comida según el número de comidas por día."""
+        if meals_per_day <= 3:
+            return ["breakfast", "lunch", "dinner"]
+        elif meals_per_day == 4:
+            return ["breakfast", "snack", "lunch", "dinner"]
+        elif meals_per_day == 5:
+            return ["breakfast", "snack", "lunch", "snack", "dinner"]
+        else:
+            return ["breakfast", "snack", "lunch", "snack", "dinner", "snack"]
+
+    def _generate_mock_days(self, request: AIGenerationRequest, start_day: int, end_day: int) -> List[Dict[str, Any]]:
+        """Genera días mock cuando falla la generación con IA."""
+        days = []
+        day_names = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
+        meal_types = self._get_meal_types(request.meals_per_day)
+        calories_per_meal = request.target_calories / len(meal_types)
+
+        for day_num in range(start_day, end_day + 1):
+            day_meals = []
+            for meal_type in meal_types:
+                meal = {
+                    "name": f"{meal_type.title()} Día {day_num}",
+                    "meal_type": meal_type,
+                    "calories": int(calories_per_meal),
+                    "protein": int(calories_per_meal * 0.3 / 4),
+                    "carbs": int(calories_per_meal * 0.4 / 4),
+                    "fat": int(calories_per_meal * 0.3 / 9),
+                    "ingredients": [
+                        {
+                            "name": f"Ingrediente principal {meal_type}",
+                            "quantity": 150,
+                            "unit": "g"
+                        }
+                    ],
+                    "instructions": f"Preparación estándar para {meal_type}"
+                }
+                day_meals.append(meal)
+
+            days.append({
+                "day_number": day_num,
+                "day_name": day_names[(day_num - 1) % 7],
+                "meals": day_meals
+            })
+
+        return days
+
+    def _extract_days_from_response(self, response: Dict, start_day: int, end_day: int) -> List[Dict[str, Any]]:
+        """Intenta extraer días de una respuesta con formato inesperado."""
+        # Buscar cualquier clave que parezca contener días
+        for key in ["days", "daily_plans", "plan", "daily"]:
+            if key in response and isinstance(response[key], list):
+                return response[key]
+
+        # Si no encuentra nada, generar mock
+        return self._generate_mock_days(
+            AIGenerationRequest(
+                title="Plan",
+                goal=NutritionGoal.MAINTENANCE,
+                target_calories=2000,
+                duration_days=end_day - start_day + 1,
+                meals_per_day=5
+            ),
+            start_day,
+            end_day
+        )
 
     async def _generate_mock_plan(
         self,
