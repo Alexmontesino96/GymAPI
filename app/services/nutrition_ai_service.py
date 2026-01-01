@@ -36,68 +36,68 @@ class NutritionAIService:
         # Usar CHAT_GPT_MODEL primero, luego OPENAI_API_KEY como fallback
         self.api_key = settings.CHAT_GPT_MODEL or settings.OPENAI_API_KEY
         if self.api_key:
-            self.client = OpenAI(api_key=self.api_key)
+            self.client = OpenAI(
+                api_key=self.api_key,
+                timeout=30.0,  # Timeout de 30 segundos
+                max_retries=2
+            )
         else:
             logger.warning("OpenAI API key not configured (CHAT_GPT_MODEL or OPENAI_API_KEY)")
             self.client = None
 
-        self.model = "gpt-4o-mini"
+        self.model = "gpt-4o-mini"  # Modelo más rápido
         self.max_retries = 3
 
     def _build_system_prompt(self) -> str:
         """Construir el prompt del sistema para nutrición."""
-        return """Eres un nutricionista experto que crea planes de alimentación detallados y personalizados.
+        return """Eres un nutricionista experto que crea planes de alimentación personalizados.
 
-        IMPORTANTE: Debes responder SOLO con un JSON válido, sin texto adicional ni explicaciones.
+        IMPORTANTE: Genera un JSON válido y COMPACTO, sin texto adicional.
 
-        El JSON debe tener exactamente esta estructura:
+        Estructura SIMPLIFICADA del JSON:
         {
-            "title": "Nombre descriptivo del plan",
-            "description": "Descripción breve del plan y sus beneficios",
+            "title": "Nombre del plan",
+            "description": "Descripción breve",
             "daily_plans": [
                 {
                     "day_number": 1,
                     "day_name": "Lunes",
-                    "total_calories": 0,
-                    "total_protein": 0,
-                    "total_carbs": 0,
-                    "total_fat": 0,
+                    "total_calories": 2000,
+                    "total_protein": 125,
+                    "total_carbs": 250,
+                    "total_fat": 65,
                     "meals": [
                         {
                             "name": "Nombre de la comida",
-                            "meal_type": "breakfast|snack|lunch|dinner",
-                            "description": "Descripción breve",
-                            "calories": 0,
-                            "protein": 0,
-                            "carbs": 0,
-                            "fat": 0,
-                            "prep_time_minutes": 0,
+                            "meal_type": "breakfast",
+                            "calories": 400,
+                            "protein": 25,
+                            "carbs": 50,
+                            "fat": 13,
+                            "prep_time_minutes": 15,
                             "ingredients": [
                                 {
-                                    "name": "Ingrediente",
-                                    "quantity": 0,
-                                    "unit": "g|ml|unidad|taza|cucharada",
-                                    "calories": 0,
-                                    "protein": 0,
-                                    "carbs": 0,
-                                    "fat": 0
+                                    "name": "Ingrediente principal",
+                                    "quantity": 100,
+                                    "unit": "g"
                                 }
                             ],
-                            "instructions": "Instrucciones paso a paso de preparación"
+                            "instructions": "Preparar y servir"
                         }
                     ]
                 }
             ]
         }
 
-        Reglas importantes:
-        1. El total de calorías diarias debe estar dentro del 5% del objetivo
-        2. Incluir variedad de alimentos sin repetir comidas principales en días consecutivos
-        3. Los macros deben ser realistas y sumar correctamente
-        4. Usar ingredientes locales y accesibles
-        5. Las instrucciones deben ser claras y concisas
-        6. Adaptar las porciones según el objetivo calórico
-        7. Respetar todas las restricciones dietéticas indicadas
+        Reglas:
+        1. Calorías diarias ±5% del objetivo
+        2. NO repetir comidas principales
+        3. Macros correctos
+        4. Ingredientes simples (máx 3-5 por comida)
+        5. Instrucciones breves (1 línea)
+        6. Respetar restricciones
+
+        IMPORTANTE: Mantén el JSON COMPACTO. NO incluyas valores nutricionales de cada ingrediente.
         """
 
     def _build_user_prompt(self, request: AIGenerationRequest) -> str:
@@ -112,14 +112,12 @@ class NutritionAIService:
         }
 
         # Construir prompt con todos los parámetros
-        # Limitar temporalmente a 3 días para evitar respuestas muy largas
-        days_to_generate = min(request.duration_days, 3)
         prompt = f"""Crea un plan nutricional con estas características:
 
 INFORMACIÓN BÁSICA:
 - Objetivo: {goal_descriptions.get(request.goal.value, request.goal.value)}
 - Calorías diarias: {request.target_calories} kcal
-- Duración: {days_to_generate} días
+- Duración: {request.duration_days} días
 - Comidas por día: {request.user_context.get('meals_per_day', 5) if request.user_context else 5}
 
 PERFIL DEL USUARIO:
@@ -172,7 +170,7 @@ PERFIL DEL USUARIO:
 
         prompt += f"\nDISTRIBUCIÓN DE MACROS RECOMENDADA:\n{macro_distributions.get(request.goal.value, macro_distributions['maintenance'])}\n"
 
-        prompt += f"\nGenera un plan COMPLETO de {days_to_generate} días con todas las comidas, ingredientes y valores nutricionales."
+        prompt += f"\nGenera un plan COMPLETO de {request.duration_days} días. SÉ CONCISO con los ingredientes (3-5 por comida máximo)."
 
         return prompt
 
@@ -203,16 +201,20 @@ PERFIL DEL USUARIO:
 
             logger.info(f"Generating nutrition plan with OpenAI for gym {gym_id}")
 
-            # Llamar a OpenAI
+            # Llamar a OpenAI con parámetros optimizados
+            # Limitar tokens basado en días solicitados (aprox 300 tokens por día)
+            optimal_tokens = min(300 * request.duration_days, 2100)
+
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
-                temperature=request.temperature,
-                max_tokens=request.max_tokens,
-                response_format={"type": "json_object"}
+                temperature=0.5,  # Más determinístico para rapidez
+                max_tokens=optimal_tokens,
+                response_format={"type": "json_object"},
+                seed=12345  # Para respuestas más consistentes
             )
 
             # Parsear respuesta JSON con manejo robusto de errores
@@ -240,11 +242,11 @@ PERFIL DEL USUARIO:
                     except:
                         # Si falla, usar generación mock
                         logger.warning("Using mock generation due to JSON parse error")
-                        return self._generate_mock_plan(request, db, gym_id, creator_id)
+                        return await self._generate_mock_plan(request, db, gym_id, creator_id)
                 else:
                     # Usar generación mock si no se puede recuperar
                     logger.warning("Using mock generation - no valid JSON found")
-                    return self._generate_mock_plan(request, db, gym_id, creator_id)
+                    return await self._generate_mock_plan(request, db, gym_id, creator_id)
 
             # Crear plan en base de datos
             nutrition_plan = NutritionPlan(
