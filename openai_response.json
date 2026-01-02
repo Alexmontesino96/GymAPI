@@ -1,0 +1,115 @@
+{
+  "days": [
+    {
+      "day_number": 1,
+      "day_name": "Lunes",
+      "meals": [
+        {
+          "name": "Tortilla de claras",
+          "meal_type": "breakfast",
+          "calories": 300,
+          "protein": 30,
+          "carbs": 20,
+          "fat": 5,
+          "ingredients": [
+            {
+              "name": "claras de huevo",
+              "quantity": 200,
+              "unit": "g"
+            },
+            {
+              "name": "espinacas",
+              "quantity": 50,
+              "unit": "g"
+            }
+          ],
+          "instructions": "Batir las claras y mezclar con espinacas. Cocinar en sartén."
+        },
+        {
+          "name": "Yogur con frutos rojos",
+          "meal_type": "snack",
+          "calories": 200,
+          "protein": 15,
+          "carbs": 25,
+          "fat": 5,
+          "ingredients": [
+            {
+              "name": "yogur natural",
+              "quantity": 150,
+              "unit": "g"
+            },
+            {
+              "name": "frutos rojos",
+              "quantity": 100,
+              "unit": "g"
+            }
+          ],
+          "instructions": "Mezclar el yogur con los frutos rojos."
+        },
+        {
+          "name": "Ensalada de pollo",
+          "meal_type": "lunch",
+          "calories": 500,
+          "protein": 40,
+          "carbs": 30,
+          "fat": 15,
+          "ingredients": [
+            {
+              "name": "pechuga de pollo",
+              "quantity": 150,
+              "unit": "g"
+            },
+            {
+              "name": "lechuga",
+              "quantity": 100,
+              "unit": "g"
+            }
+          ],
+          "instructions": "Cocinar el pollo y mezclar con la lechuga."
+        },
+        {
+          "name": "Batido de proteínas",
+          "meal_type": "snack",
+          "calories": 250,
+          "protein": 25,
+          "carbs": 20,
+          "fat": 5,
+          "ingredients": [
+            {
+              "name": "proteína en polvo",
+              "quantity": 30,
+              "unit": "g"
+            },
+            {
+              "name": "agua",
+              "quantity": 300,
+              "unit": "ml"
+            }
+          ],
+          "instructions": "Mezclar la proteína en polvo con agua."
+        },
+        {
+          "name": "Pescado al horno",
+          "meal_type": "dinner",
+          "calories": 750,
+          "protein": 50,
+          "carbs": 30,
+          "fat": 20,
+          "ingredients": [
+            {
+              "name": "filete de pescado",
+              "quantity": 200,
+              "unit": "g"
+            },
+            {
+              "name": "brócoli",
+              "quantity": 150,
+              "unit": "g"
+            }
+          ],
+          "instructions": "Hornear el pescado y cocinar el brócoli al vapor."
+        }
+      ]
+    }
+  ]
+}

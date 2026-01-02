@@ -38,8 +38,8 @@ class NutritionAIService:
         if self.api_key:
             self.client = OpenAI(
                 api_key=self.api_key,
-                timeout=30.0,  # Timeout de 30 segundos
-                max_retries=2
+                timeout=40.0,  # Timeout de 40 segundos para manejar variabilidad
+                max_retries=1  # Solo 1 reintento para no demorar demasiado
             )
         else:
             logger.warning("OpenAI API key not configured (CHAT_GPT_MODEL or OPENAI_API_KEY)")
@@ -446,7 +446,7 @@ Meta: {request.goal.value[:3]}"""
                 temperature=0.2,  # Más determinístico
                 max_tokens=800,  # Aumentado para evitar truncado
                 response_format={"type": "json_object"},
-                timeout=12.0  # 12 segundos máximo por día
+                timeout=25.0  # 25 segundos para manejar variabilidad de OpenAI
             )
 
             try:
