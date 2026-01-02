@@ -549,6 +549,59 @@ class AIGenerationRequest(BaseModel):
     temperature: float = Field(0.7, ge=0, le=1, description="Creatividad de la IA (0=conservador, 1=creativo)")
     max_tokens: int = Field(2500, ge=500, le=4000, description="Límite de tokens para la respuesta")
 
+    @validator('goal', pre=True)
+    def normalize_goal(cls, v):
+        """Normaliza aliases comunes del objetivo nutricional."""
+        if isinstance(v, str):
+            # Mapeo de aliases comunes a valores válidos del enum
+            goal_aliases = {
+                'maintain': 'maintenance',
+                'lose_weight': 'weight_loss',
+                'gain_muscle': 'muscle_gain',
+                'gain': 'muscle_gain',
+                'lose': 'weight_loss',
+                'build': 'muscle_gain',
+                'bulking': 'bulk',
+                'cutting': 'cut',
+                'definition': 'cut',
+                'recomp': 'performance'
+            }
+            # Normalizar a minúsculas y aplicar alias si existe
+            v_lower = v.lower().strip()
+            return goal_aliases.get(v_lower, v_lower)
+        return v
+
+    @validator('dietary_restrictions', pre=True)
+    def normalize_dietary_restrictions(cls, v):
+        """Normaliza restricciones dietéticas a formato consistente."""
+        if v is None:
+            return []
+        if isinstance(v, str):
+            # Si es un string, convertir a lista
+            v = [v]
+
+        normalized = []
+        for restriction in v:
+            if isinstance(restriction, str):
+                # Mapeo de aliases comunes
+                diet_aliases = {
+                    'veggie': 'vegetarian',
+                    'veg': 'vegetarian',
+                    'gluten-free': 'gluten_free',
+                    'lactose-free': 'lactose_free',
+                    'dairy-free': 'lactose_free',
+                    'no-gluten': 'gluten_free',
+                    'no-lactose': 'lactose_free',
+                    'pescatarian': 'vegetarian',  # Simplificación
+                    'mediterranean-diet': 'mediterranean'
+                }
+                r_lower = restriction.lower().strip()
+                normalized.append(diet_aliases.get(r_lower, r_lower))
+            else:
+                normalized.append(str(restriction))
+
+        return normalized
+
 
 class AIGenerationResponse(BaseModel):
     """Respuesta de la generación con IA - Incluye plan completo"""
