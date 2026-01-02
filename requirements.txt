@@ -38,6 +38,11 @@ boto3==1.37.28
 openai==1.61.0
 langchain==0.1.5
 langchain-openai==0.0.5
+langchain-core==0.1.23
+langchain-community==0.0.20
+langsmith==0.0.87
+tiktoken==0.5.2
+jsonpatch==1.33
 
 # Dependencias para exportación de datos
 pandas==2.2.3
