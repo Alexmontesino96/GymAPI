@@ -424,18 +424,19 @@ Responde con JSON compacto:
             num_days = end_day - start_day + 1
             day_names = [days[(start_day - 1 + i) % 7] for i in range(num_days)]
 
-            # Prompt ultra-optimizado para generar solo los días solicitados
-            system_prompt = """SOLO JSON. 5 comidas/día. Max 2 ingredientes.
-{"days":[{"day_number":1,"day_name":"Día","meals":[{"name":"nombre","meal_type":"breakfast|snack|lunch|dinner","calories":400,"protein":30,"carbs":45,"fat":10,"ingredients":[{"name":"ing","quantity":100,"unit":"g"}],"instructions":"prep"}]}]}"""
+            # Prompt optimizado para máxima velocidad
+            system_prompt = """Genera un plan nutricional en formato JSON.
+Incluye 1 día con 5 comidas (breakfast, snack, lunch, snack, dinner).
+Cada comida debe tener: nombre, meal_type, calories, protein, carbs, fat, ingredients (máx 2), instructions.
+Responde SOLO con JSON válido, sin texto adicional."""
 
             # Determinar tipos de comidas según meals_per_day
             meal_types = self._get_meal_types(request.meals_per_day)
             calories_per_meal = request.target_calories / len(meal_types)
 
-            user_prompt = f"""Día {start_day} ({day_names[0]})
-{request.target_calories}cal
-{len(meal_types)} comidas
-Meta: {request.goal.value[:3]}"""
+            user_prompt = f"""Crea el plan para el día {start_day} ({day_names[0]}).
+Objetivo: {request.goal.value} con {request.target_calories} calorías diarias.
+Distribuir en {len(meal_types)} comidas: {', '.join(meal_types)}."""
 
             response = self.client.chat.completions.create(
                 model=self.model,
@@ -443,10 +444,10 @@ Meta: {request.goal.value[:3]}"""
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
-                temperature=0.2,  # Más determinístico
-                max_tokens=800,  # Aumentado para evitar truncado
-                response_format={"type": "json_object"},
-                timeout=25.0  # 25 segundos para manejar variabilidad de OpenAI
+                temperature=0.3,  # Un poco más de variedad
+                max_tokens=600,  # Suficiente para 1 día
+                # Sin response_format para mayor velocidad
+                timeout=15.0  # 15 segundos debería ser suficiente
             )
 
             try:
