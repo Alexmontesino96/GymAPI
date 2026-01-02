@@ -275,7 +275,6 @@ PERFIL DEL USUARIO:
                 daily_plan = DailyNutritionPlan(
                     nutrition_plan_id=nutrition_plan.id,
                     day_number=day_data['day_number'],
-                    day_name=day_data.get('day_name', f"Día {day_data['day_number']}"),
                     total_calories=day_data.get('total_calories', 0),
                     total_protein=day_data.get('total_protein', 0),
                     total_carbs=day_data.get('total_carbs', 0),
@@ -426,23 +425,8 @@ Responde con JSON compacto:
             day_names = [days[(start_day - 1 + i) % 7] for i in range(num_days)]
 
             # Prompt ultra-optimizado para generar solo los días solicitados
-            system_prompt = """JSON puro, sin texto.
-{
-  "days": [{
-    "day_number": 1,
-    "day_name": "día",
-    "meals": [{
-      "name": "corto",
-      "meal_type": "tipo",
-      "calories": 400,
-      "protein": 30,
-      "carbs": 45,
-      "fat": 10,
-      "ingredients": [{"name": "ing", "quantity": 100, "unit": "g"}],
-      "instructions": "1 línea"
-    }]
-  }]
-}"""
+            system_prompt = """SOLO JSON. 5 comidas/día. Max 2 ingredientes.
+{"days":[{"day_number":1,"day_name":"Día","meals":[{"name":"nombre","meal_type":"breakfast|snack|lunch|dinner","calories":400,"protein":30,"carbs":45,"fat":10,"ingredients":[{"name":"ing","quantity":100,"unit":"g"}],"instructions":"prep"}]}]}"""
 
             # Determinar tipos de comidas según meals_per_day
             meal_types = self._get_meal_types(request.meals_per_day)
@@ -460,12 +444,30 @@ Meta: {request.goal.value[:3]}"""
                     {"role": "user", "content": user_prompt}
                 ],
                 temperature=0.2,  # Más determinístico
-                max_tokens=400,  # Solo 400 tokens por día
+                max_tokens=800,  # Aumentado para evitar truncado
                 response_format={"type": "json_object"},
-                timeout=10.0  # 10 segundos máximo por día
+                timeout=12.0  # 12 segundos máximo por día
             )
 
-            result = json.loads(response.choices[0].message.content)
+            try:
+                result = json.loads(response.choices[0].message.content)
+            except json.JSONDecodeError as e:
+                logger.warning(f"JSON decode error for days {start_day}-{end_day}: {e}")
+                # Intentar reparar JSON truncado
+                content = response.choices[0].message.content
+                try:
+                    # Intentar cerrar JSON incompleto
+                    import re
+                    # Buscar el último objeto/array abierto y cerrarlo
+                    if content.count('{') > content.count('}'):
+                        content += '}' * (content.count('{') - content.count('}'))
+                    if content.count('[') > content.count(']'):
+                        content += ']' * (content.count('[') - content.count(']'))
+                    result = json.loads(content)
+                except:
+                    # Si no se puede reparar, usar mock
+                    logger.warning(f"Could not repair JSON, using mock for days {start_day}-{end_day}")
+                    return self._generate_mock_days(request, start_day, end_day)
 
             # Validar y normalizar respuesta
             if "days" in result:
@@ -608,9 +610,8 @@ Meta: {request.goal.value[:3]}"""
         total_meals = 0
         for day_num in range(1, min(request.duration_days + 1, 8)):  # Max 7 días para mock
             daily_plan = DailyNutritionPlan(
-                plan_id=nutrition_plan.id,
+                nutrition_plan_id=nutrition_plan.id,
                 day_number=day_num,
-                day_name=["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"][day_num - 1],
                 total_calories=request.target_calories,
                 total_protein=nutrition_plan.target_protein_g,
                 total_carbs=nutrition_plan.target_carbs_g,
