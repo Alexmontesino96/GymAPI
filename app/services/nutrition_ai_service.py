@@ -276,9 +276,9 @@ PERFIL DEL USUARIO:
                     nutrition_plan_id=nutrition_plan.id,
                     day_number=day_data['day_number'],
                     total_calories=day_data.get('total_calories', 0),
-                    total_protein=day_data.get('total_protein', 0),
-                    total_carbs=day_data.get('total_carbs', 0),
-                    total_fat=day_data.get('total_fat', 0)
+                    total_protein_g=day_data.get('total_protein', 0),
+                    total_carbs_g=day_data.get('total_carbs', 0),
+                    total_fat_g=day_data.get('total_fat', 0)
                 )
                 db.add(daily_plan)
                 db.flush()
@@ -425,10 +425,18 @@ Responde con JSON compacto:
             day_names = [days[(start_day - 1 + i) % 7] for i in range(num_days)]
 
             # Prompt optimizado para máxima velocidad
-            system_prompt = """Genera un plan nutricional en formato JSON.
-Incluye 1 día con 5 comidas (breakfast, snack, lunch, snack, dinner).
-Cada comida debe tener: nombre, meal_type, calories, protein, carbs, fat, ingredients (máx 2), instructions.
-Responde SOLO con JSON válido, sin texto adicional."""
+            system_prompt = """Genera un plan nutricional en formato JSON con esta estructura exacta:
+{
+  "days": [
+    {
+      "day_number": 1,
+      "day_name": "nombre del día",
+      "meals": [array de 5 comidas]
+    }
+  ]
+}
+Cada comida debe tener: name, meal_type (breakfast/snack/lunch/dinner), calories, protein, carbs, fat, ingredients (máx 2), instructions.
+Responde SOLO con JSON válido."""
 
             # Determinar tipos de comidas según meals_per_day
             meal_types = self._get_meal_types(request.meals_per_day)
@@ -539,17 +547,8 @@ Distribuir en {len(meal_types)} comidas: {', '.join(meal_types)}."""
                 return response[key]
 
         # Si no encuentra nada, generar mock
-        return self._generate_mock_days(
-            AIGenerationRequest(
-                title="Plan",
-                goal=NutritionGoal.MAINTENANCE,
-                target_calories=2000,
-                duration_days=end_day - start_day + 1,
-                meals_per_day=5
-            ),
-            start_day,
-            end_day
-        )
+        # Usar el request original, no crear uno nuevo
+        return self._generate_mock_days(request, start_day, end_day)
 
     async def _generate_mock_plan(
         self,
@@ -614,9 +613,9 @@ Distribuir en {len(meal_types)} comidas: {', '.join(meal_types)}."""
                 nutrition_plan_id=nutrition_plan.id,
                 day_number=day_num,
                 total_calories=request.target_calories,
-                total_protein=nutrition_plan.target_protein_g,
-                total_carbs=nutrition_plan.target_carbs_g,
-                total_fat=nutrition_plan.target_fat_g
+                total_protein_g=nutrition_plan.target_protein_g,
+                total_carbs_g=nutrition_plan.target_carbs_g,
+                total_fat_g=nutrition_plan.target_fat_g
             )
             db.add(daily_plan)
             db.flush()
