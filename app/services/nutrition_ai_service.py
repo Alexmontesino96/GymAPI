@@ -234,6 +234,8 @@ PERFIL DEL USUARIO:
             # Luego generar días incrementalmente
             all_daily_plans = []
             days_generated = 0
+            total_prompt_tokens = 0  # FIX 1: Acumular tokens de cada chunk
+            total_completion_tokens = 0
 
             while days_generated < request.duration_days:
                 chunk_size = min(days_per_chunk, request.duration_days - days_generated)
@@ -243,15 +245,24 @@ PERFIL DEL USUARIO:
                 logger.info(f"Generating days {start_day} to {end_day} of {request.duration_days}")
 
                 # Generar chunk de días
-                daily_chunk = await self._generate_days_chunk(
+                daily_chunk_result = await self._generate_days_chunk(
                     request,
                     start_day,
                     end_day,
                     plan_data.get("title", request.title)
                 )
 
-                if daily_chunk:
-                    all_daily_plans.extend(daily_chunk)
+                # FIX 1: Manejar nuevo formato con metadata
+                if daily_chunk_result:
+                    if isinstance(daily_chunk_result, dict) and 'days' in daily_chunk_result:
+                        all_daily_plans.extend(daily_chunk_result['days'])
+                        # Acumular tokens si hay metadata
+                        if 'metadata' in daily_chunk_result:
+                            total_prompt_tokens += daily_chunk_result['metadata'].get('prompt_tokens', 0)
+                            total_completion_tokens += daily_chunk_result['metadata'].get('completion_tokens', 0)
+                    else:
+                        # Backward compatibility - si es lista directa
+                        all_daily_plans.extend(daily_chunk_result)
                     days_generated += chunk_size
                 else:
                     # Si falla un chunk, generar días mock para completar
@@ -384,11 +395,11 @@ PERFIL DEL USUARIO:
             # Calcular métricas
             generation_time = int((time.time() - start_time) * 1000)
 
-            # Calcular costo estimado basado en tokens
+            # FIX 1: Usar tokens acumulados o estimar basado en texto
             # GPT-4o-mini: $0.15 / 1M input tokens, $0.60 / 1M output tokens
-            # Estimación: ~2K input + 3K output = ~$0.002
-            prompt_tokens = response.usage.prompt_tokens if response.usage else len(user_prompt) // 4
-            completion_tokens = response.usage.completion_tokens if response.usage else len(str(plan_data)) // 4
+            # Usar tokens acumulados de los chunks o estimar
+            prompt_tokens = total_prompt_tokens if total_prompt_tokens > 0 else len(str(request)) // 4
+            completion_tokens = total_completion_tokens if total_completion_tokens > 0 else len(str(plan_data)) // 4
             cost_estimate = (prompt_tokens * 0.00000015) + (completion_tokens * 0.0000006)
 
             return {
@@ -470,6 +481,70 @@ Responde con JSON compacto:
         start_day: int,
         end_day: int,
         plan_title: str
+    ) -> Dict[str, Any]:
+        """
+        FIX 3: Usar el método con retry para mayor confiabilidad
+        """
+        return await self._generate_days_chunk_with_retry(
+            request, start_day, end_day, plan_title, max_retries=3
+        )
+
+    async def _generate_days_chunk_with_retry(
+        self,
+        request: AIGenerationRequest,
+        start_day: int,
+        end_day: int,
+        plan_title: str,
+        max_retries: int = 3
+    ) -> Dict[str, Any]:
+        """
+        FIX 3: Genera días con reintentos en caso de fallo.
+        Implementa exponential backoff para errores transitorios.
+        """
+        import asyncio
+
+        for attempt in range(max_retries):
+            try:
+                result = self._generate_days_with_ai(
+                    request, start_day, end_day, plan_title
+                )
+
+                # Validar que tenemos días válidos
+                if isinstance(result, dict) and 'days' in result:
+                    days = result['days']
+                    if days and len(days) > 0:
+                        return result
+
+                logger.warning(f"Attempt {attempt + 1}: No valid days returned")
+
+            except Exception as e:
+                logger.warning(f"Attempt {attempt + 1} failed for days {start_day}-{end_day}: {e}")
+
+                if attempt == max_retries - 1:
+                    # Último intento, usar mock
+                    logger.info(f"Using mock after {max_retries} attempts for days {start_day}-{end_day}")
+                    return {
+                        'days': self._generate_mock_days(request, start_day, end_day),
+                        'metadata': {'prompt_tokens': 0, 'completion_tokens': 0}
+                    }
+
+                # Esperar antes de reintentar con exponential backoff
+                wait_time = 2 ** attempt  # 1, 2, 4 segundos
+                logger.info(f"Retrying in {wait_time} seconds...")
+                await asyncio.sleep(wait_time)
+
+        # No debería llegar aquí, pero por seguridad
+        return {
+            'days': self._generate_mock_days(request, start_day, end_day),
+            'metadata': {'prompt_tokens': 0, 'completion_tokens': 0}
+        }
+
+    async def _generate_days_chunk_original(
+        self,
+        request: AIGenerationRequest,
+        start_day: int,
+        end_day: int,
+        plan_title: str
     ) -> List[Dict[str, Any]]:
         """
         Genera un chunk de días usando LangChain (si disponible) o OpenAI directo.
@@ -537,46 +612,135 @@ Distribuir en {len(meal_types)} comidas: {', '.join(meal_types)}."""
                 timeout=15.0  # 15 segundos debería ser suficiente
             )
 
+            # FIX 2: Guardar content ANTES del try/except
+            raw_content = response.choices[0].message.content
+
+            # FIX 1: Extraer metadata para retornar
+            metadata = {
+                'prompt_tokens': response.usage.prompt_tokens if response.usage else 0,
+                'completion_tokens': response.usage.completion_tokens if response.usage else 0,
+                'model': response.model if hasattr(response, 'model') else self.model
+            }
+
             try:
-                content = response.choices[0].message.content
-                result = json.loads(content)
+                result = json.loads(raw_content)
 
                 # Validar estructura básica
                 if 'days' not in result or not isinstance(result['days'], list):
-                    logger.warning(f"Respuesta sin estructura 'days' válida: {content[:200]}")
-                    return self._generate_mock_days(request, start_day, end_day)
+                    logger.warning(f"Respuesta sin estructura 'days' válida: {raw_content[:200]}")
+                    return {
+                        'days': self._generate_mock_days(request, start_day, end_day),
+                        'metadata': metadata
+                    }
 
             except json.JSONDecodeError as e:
                 logger.warning(f"JSON decode error for days {start_day}-{end_day}: {e}")
-                # Intentar reparar JSON truncado
-                content = response.choices[0].message.content
+                logger.debug(f"Raw content: {raw_content[:500]}")
+                # FIX 2: Usar raw_content guardado previamente, no response
                 try:
-                    # Intentar cerrar JSON incompleto
-                    import re
-                    # Buscar el último objeto/array abierto y cerrarlo
-                    if content.count('{') > content.count('}'):
-                        content += '}' * (content.count('{') - content.count('}'))
-                    if content.count('[') > content.count(']'):
-                        content += ']' * (content.count('[') - content.count(']'))
-                    result = json.loads(content)
+                    # Intentar reparar JSON
+                    repaired_content = self._attempt_json_repair(raw_content)
+                    if repaired_content:
+                        result = repaired_content
+                    else:
+                        # Si no se puede reparar, usar mock
+                        logger.warning(f"Could not repair JSON, using mock for days {start_day}-{end_day}")
+                        return {
+                            'days': self._generate_mock_days(request, start_day, end_day),
+                            'metadata': metadata
+                        }
                 except:
                     # Si no se puede reparar, usar mock
                     logger.warning(f"Could not repair JSON, using mock for days {start_day}-{end_day}")
-                    return self._generate_mock_days(request, start_day, end_day)
+                    return {
+                        'days': self._generate_mock_days(request, start_day, end_day),
+                        'metadata': metadata
+                    }
 
+            # FIX 1: Retornar días con metadata
             # Validar y normalizar respuesta
             if "days" in result:
-                return result["days"]
+                return {
+                    'days': result["days"],
+                    'metadata': metadata
+                }
             elif "daily_plans" in result:
-                return result["daily_plans"]
+                return {
+                    'days': result["daily_plans"],
+                    'metadata': metadata
+                }
             else:
                 # Si el formato no es el esperado, intentar extraer días
                 logger.warning("Unexpected response format, attempting to extract days")
-                return self._extract_days_from_response(result, start_day, end_day)
+                extracted = self._extract_days_from_response(result, start_day, end_day)
+                return {
+                    'days': extracted,
+                    'metadata': metadata
+                }
 
         except Exception as e:
             logger.error(f"Failed to generate days {start_day}-{end_day}: {e}")
-            return self._generate_mock_days(request, start_day, end_day)
+            return {
+                'days': self._generate_mock_days(request, start_day, end_day),
+                'metadata': {'prompt_tokens': 0, 'completion_tokens': 0}
+            }
+
+    def _attempt_json_repair(self, content: str) -> Optional[Dict]:
+        """
+        FIX 2: Intenta reparar JSON malformado con varias estrategias.
+        """
+        import json
+        import re
+
+        # Estrategia 1: Limpiar caracteres problemáticos
+        content = content.strip()
+
+        # Estrategia 2: Remover trailing commas
+        content = re.sub(r',\s*}', '}', content)
+        content = re.sub(r',\s*]', ']', content)
+
+        # Estrategia 3: Cerrar brackets/braces faltantes
+        open_braces = content.count('{')
+        close_braces = content.count('}')
+        if open_braces > close_braces:
+            content += '}' * (open_braces - close_braces)
+
+        open_brackets = content.count('[')
+        close_brackets = content.count(']')
+        if open_brackets > close_brackets:
+            content += ']' * (open_brackets - close_brackets)
+
+        # Estrategia 4: Intentar parsear después de reparaciones
+        try:
+            return json.loads(content)
+        except json.JSONDecodeError:
+            # Buscar el último objeto completo
+            matches = re.findall(r'\{[^{}]*\}', content)
+            if matches:
+                try:
+                    # Intentar con el último match completo
+                    last_valid = matches[-1]
+                    return json.loads(last_valid)
+                except:
+                    pass
+
+        # Estrategia 5: Truncar en el último objeto válido
+        for i in range(len(content) - 1, 0, -1):
+            try:
+                truncated = content[:i]
+                # Cerrar si es necesario
+                if truncated.count('{') > truncated.count('}'):
+                    truncated += '}'
+                if truncated.count('[') > truncated.count(']'):
+                    truncated += ']'
+
+                result = json.loads(truncated)
+                if 'days' in result or 'meals' in result:
+                    return result
+            except:
+                continue
+
+        return None
 
     def _get_meal_types(self, meals_per_day: int) -> List[str]:
         """Determina los tipos de comida según el número de comidas por día."""
