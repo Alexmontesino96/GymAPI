@@ -349,19 +349,34 @@ PERFIL DEL USUARIO:
                     db.add(meal)
                     db.flush()
 
-                    # Crear ingredientes
-                    for ing_data in meal_data.get('ingredients', []):
-                        ingredient = MealIngredient(
-                            meal_id=meal.id,
-                            name=ing_data['name'],
-                            quantity=ing_data.get('quantity', 0),
-                            unit=ing_data.get('unit', 'g'),
-                            calories=ing_data.get('calories', 0),
-                            protein=ing_data.get('protein', 0),
-                            carbohydrates=ing_data.get('carbs', 0),
-                            fat=ing_data.get('fat', 0)
-                        )
-                        db.add(ingredient)
+                    # Crear ingredientes (manejar tanto strings como objetos)
+                    ingredients = meal_data.get('ingredients', [])
+                    for idx, ing_data in enumerate(ingredients):
+                        # Si el ingrediente es un string simple, convertirlo a objeto
+                        if isinstance(ing_data, str):
+                            ingredient_obj = {
+                                'name': ing_data,
+                                'quantity': 100,  # Cantidad por defecto
+                                'unit': 'g'       # Unidad por defecto
+                            }
+                        elif isinstance(ing_data, dict):
+                            ingredient_obj = ing_data
+                        else:
+                            logger.warning(f"Formato de ingrediente no reconocido: {type(ing_data)}")
+                            continue
+
+                        # Crear el ingrediente con manejo robusto
+                        try:
+                            ingredient = MealIngredient(
+                                meal_id=meal.id,
+                                name=ingredient_obj.get('name', f'Ingrediente {idx+1}'),
+                                quantity=float(ingredient_obj.get('quantity', 100)),
+                                unit=ingredient_obj.get('unit', 'g')
+                            )
+                            db.add(ingredient)
+                        except Exception as e:
+                            logger.warning(f"Error creando ingrediente: {e}, data: {ingredient_obj}")
+                            continue
 
             # Commit todos los cambios
             db.commit()
@@ -482,6 +497,8 @@ Responde con JSON compacto:
             num_days = end_day - start_day + 1
             day_names = [days[(start_day - 1 + i) % 7] for i in range(num_days)]
 
+            logger.info(f"Generando días {start_day}-{end_day} con OpenAI directo")
+
             # Prompt optimizado para máxima velocidad
             system_prompt = """Genera un plan nutricional en formato JSON con esta estructura exacta:
 {
@@ -494,7 +511,10 @@ Responde con JSON compacto:
   ]
 }
 Cada comida debe tener: name, meal_type (breakfast/mid_morning/lunch/afternoon/dinner), calories, protein, carbs, fat, ingredients (máx 2), instructions.
-IMPORTANTE: Usa estos meal_type exactos: breakfast, mid_morning, lunch, afternoon, dinner
+IMPORTANTE:
+- Usa estos meal_type exactos: breakfast, mid_morning, lunch, afternoon, dinner
+- Los ingredientes deben ser objetos con: {"name": "ingrediente", "quantity": 100, "unit": "g"}
+- NO uses ingredientes como strings simples ["ingrediente1", "ingrediente2"]
 Responde SOLO con JSON válido."""
 
             # Determinar tipos de comidas según meals_per_day
@@ -518,7 +538,14 @@ Distribuir en {len(meal_types)} comidas: {', '.join(meal_types)}."""
             )
 
             try:
-                result = json.loads(response.choices[0].message.content)
+                content = response.choices[0].message.content
+                result = json.loads(content)
+
+                # Validar estructura básica
+                if 'days' not in result or not isinstance(result['days'], list):
+                    logger.warning(f"Respuesta sin estructura 'days' válida: {content[:200]}")
+                    return self._generate_mock_days(request, start_day, end_day)
+
             except json.JSONDecodeError as e:
                 logger.warning(f"JSON decode error for days {start_day}-{end_day}: {e}")
                 # Intentar reparar JSON truncado
