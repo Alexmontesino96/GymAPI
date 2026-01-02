@@ -505,7 +505,7 @@ Responde con JSON compacto:
 
         for attempt in range(max_retries):
             try:
-                result = self._generate_days_with_ai(
+                result = await self._generate_days_chunk_original(
                     request, start_day, end_day, plan_title
                 )
 
@@ -545,7 +545,7 @@ Responde con JSON compacto:
         start_day: int,
         end_day: int,
         plan_title: str
-    ) -> List[Dict[str, Any]]:
+    ) -> Dict[str, Any]:
         """
         Genera un chunk de días usando LangChain (si disponible) o OpenAI directo.
         """
