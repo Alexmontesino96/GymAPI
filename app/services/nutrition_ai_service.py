@@ -1,6 +1,7 @@
 """
 Servicio de IA para generación de planes nutricionales usando OpenAI GPT-4o-mini.
 Genera planes completos con días, comidas e ingredientes.
+Soporta tanto OpenAI directo como LangChain para mayor robustez.
 """
 
 import os
@@ -23,6 +24,15 @@ from app.core.config import get_settings
 
 logger = logging.getLogger(__name__)
 
+# Intentar importar LangChain si está disponible
+try:
+    from app.services.langchain_nutrition import LangChainNutritionGenerator
+    LANGCHAIN_AVAILABLE = True
+    logger.info("LangChain disponible para generación nutricional")
+except ImportError:
+    LANGCHAIN_AVAILABLE = False
+    logger.warning("LangChain no está disponible. Usando generación directa con OpenAI.")
+
 
 class NutritionAIService:
     """
@@ -31,7 +41,7 @@ class NutritionAIService:
     """
 
     def __init__(self):
-        """Inicializar cliente OpenAI con API key."""
+        """Inicializar cliente OpenAI con API key y opcionalmente LangChain."""
         settings = get_settings()
         # Usar CHAT_GPT_MODEL primero, luego OPENAI_API_KEY como fallback
         self.api_key = settings.CHAT_GPT_MODEL or settings.OPENAI_API_KEY
@@ -41,9 +51,25 @@ class NutritionAIService:
                 timeout=40.0,  # Timeout de 40 segundos para manejar variabilidad
                 max_retries=1  # Solo 1 reintento para no demorar demasiado
             )
+
+            # Inicializar LangChain si está disponible
+            if LANGCHAIN_AVAILABLE:
+                try:
+                    self.langchain_generator = LangChainNutritionGenerator(self.api_key)
+                    self.use_langchain = True
+                    logger.info("LangChain generator inicializado exitosamente")
+                except Exception as e:
+                    logger.error(f"Error inicializando LangChain: {e}")
+                    self.langchain_generator = None
+                    self.use_langchain = False
+            else:
+                self.langchain_generator = None
+                self.use_langchain = False
         else:
             logger.warning("OpenAI API key not configured (CHAT_GPT_MODEL or OPENAI_API_KEY)")
             self.client = None
+            self.langchain_generator = None
+            self.use_langchain = False
 
         self.model = "gpt-4o-mini"  # Modelo más rápido
         self.max_retries = 3
@@ -284,11 +310,33 @@ PERFIL DEL USUARIO:
                 db.flush()
 
                 # Crear comidas del día
-                for meal_data in day_data.get('meals', []):
+                for idx, meal_data in enumerate(day_data.get('meals', [])):
+                    # Mapear tipo de comida si OpenAI devuelve valores incorrectos
+                    raw_meal_type = meal_data.get('meal_type', 'lunch').lower()
+
+                    # Mapeo de tipos incorrectos a tipos válidos
+                    meal_type_mapping = {
+                        'snack': 'mid_morning' if idx == 1 else 'afternoon',  # Segundo snack es afternoon
+                        'morning_snack': 'mid_morning',
+                        'afternoon_snack': 'afternoon',
+                        'evening_snack': 'late_snack',
+                        'brunch': 'mid_morning',
+                        'merienda': 'afternoon'
+                    }
+
+                    # Aplicar mapeo o usar valor directo si es válido
+                    mapped_type = meal_type_mapping.get(raw_meal_type, raw_meal_type)
+
+                    # Validar que el tipo sea válido
+                    valid_types = ['breakfast', 'mid_morning', 'lunch', 'afternoon', 'dinner', 'late_snack', 'post_workout']
+                    if mapped_type not in valid_types:
+                        logger.warning(f"Tipo de comida inválido '{mapped_type}', usando 'lunch' por defecto")
+                        mapped_type = 'lunch'
+
                     meal = Meal(
                         daily_plan_id=daily_plan.id,
                         name=meal_data['name'],
-                        meal_type=MealType(meal_data.get('meal_type', 'lunch')),
+                        meal_type=MealType(mapped_type),
                         description=meal_data.get('description', ''),
                         calories=meal_data.get('calories', 0),
                         protein_g=meal_data.get('protein', 0),
@@ -409,9 +457,21 @@ Responde con JSON compacto:
         plan_title: str
     ) -> List[Dict[str, Any]]:
         """
-        Genera un chunk de días (1-2 días a la vez) para evitar timeouts.
+        Genera un chunk de días usando LangChain (si disponible) o OpenAI directo.
         """
         try:
+            # Intentar primero con LangChain si está disponible
+            if self.use_langchain and self.langchain_generator:
+                try:
+                    logger.info(f"Usando LangChain para generar días {start_day}-{end_day}")
+                    result = self.langchain_generator.generate_nutrition_plan(
+                        request, start_day, end_day
+                    )
+                    return result.get('days', [])
+                except Exception as e:
+                    logger.warning(f"Error con LangChain, cayendo a OpenAI directo: {e}")
+                    # Continuar con generación directa
+
             if not self.client:
                 return self._generate_mock_days(request, start_day, end_day)
 
@@ -433,7 +493,8 @@ Responde con JSON compacto:
     }
   ]
 }
-Cada comida debe tener: name, meal_type (breakfast/snack/lunch/dinner), calories, protein, carbs, fat, ingredients (máx 2), instructions.
+Cada comida debe tener: name, meal_type (breakfast/mid_morning/lunch/afternoon/dinner), calories, protein, carbs, fat, ingredients (máx 2), instructions.
+IMPORTANTE: Usa estos meal_type exactos: breakfast, mid_morning, lunch, afternoon, dinner
 Responde SOLO con JSON válido."""
 
             # Determinar tipos de comidas según meals_per_day
@@ -495,11 +556,11 @@ Distribuir en {len(meal_types)} comidas: {', '.join(meal_types)}."""
         if meals_per_day <= 3:
             return ["breakfast", "lunch", "dinner"]
         elif meals_per_day == 4:
-            return ["breakfast", "snack", "lunch", "dinner"]
+            return ["breakfast", "mid_morning", "lunch", "dinner"]
         elif meals_per_day == 5:
-            return ["breakfast", "snack", "lunch", "snack", "dinner"]
+            return ["breakfast", "mid_morning", "lunch", "afternoon", "dinner"]
         else:
-            return ["breakfast", "snack", "lunch", "snack", "dinner", "snack"]
+            return ["breakfast", "mid_morning", "lunch", "afternoon", "dinner", "late_snack"]
 
     def _generate_mock_days(self, request: AIGenerationRequest, start_day: int, end_day: int) -> List[Dict[str, Any]]:
         """Genera días mock cuando falla la generación con IA."""
@@ -588,10 +649,15 @@ Distribuir en {len(meal_types)} comidas: {', '.join(meal_types)}."""
                 "calories": int(request.target_calories * 0.25),
                 "description": "Desayuno balanceado para empezar el día"
             },
-            "snack": {
-                "name": "Snack Saludable",
+            "mid_morning": {
+                "name": "Colación Media Mañana",
                 "calories": int(request.target_calories * 0.1),
-                "description": "Snack nutritivo"
+                "description": "Snack nutritivo de media mañana"
+            },
+            "afternoon": {
+                "name": "Merienda",
+                "calories": int(request.target_calories * 0.1),
+                "description": "Snack de la tarde"
             },
             "lunch": {
                 "name": "Almuerzo Completo",
@@ -620,8 +686,8 @@ Distribuir en {len(meal_types)} comidas: {', '.join(meal_types)}."""
 
             # Crear comidas del día
             for meal_type, template in meal_templates.items():
-                if meal_type == "snack" and request.target_calories < 1800:
-                    continue  # Skip snack for low calorie plans
+                if (meal_type in ["mid_morning", "afternoon"]) and request.target_calories < 1800:
+                    continue  # Skip snacks for low calorie plans
 
                 meal = Meal(
                     daily_plan_id=daily_plan.id,
