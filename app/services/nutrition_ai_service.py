@@ -446,7 +446,7 @@ Distribuir en {len(meal_types)} comidas: {', '.join(meal_types)}."""
                 ],
                 temperature=0.3,  # Un poco más de variedad
                 max_tokens=600,  # Suficiente para 1 día
-                # Sin response_format para mayor velocidad
+                response_format={"type": "json_object"},  # Necesario para JSON válido
                 timeout=15.0  # 15 segundos debería ser suficiente
             )
 
