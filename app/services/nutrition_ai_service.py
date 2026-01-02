@@ -286,17 +286,15 @@ PERFIL DEL USUARIO:
                 # Crear comidas del día
                 for meal_data in day_data.get('meals', []):
                     meal = Meal(
-                        day_plan_id=daily_plan.id,
+                        daily_plan_id=daily_plan.id,
                         name=meal_data['name'],
                         meal_type=MealType(meal_data.get('meal_type', 'lunch')),
                         description=meal_data.get('description', ''),
                         calories=meal_data.get('calories', 0),
-                        protein=meal_data.get('protein', 0),
-                        carbohydrates=meal_data.get('carbs', 0),
-                        fat=meal_data.get('fat', 0),
-                        fiber=meal_data.get('fiber', 0),
-                        sugar=meal_data.get('sugar', 0),
-                        sodium=meal_data.get('sodium', 0),
+                        protein_g=meal_data.get('protein', 0),
+                        carbs_g=meal_data.get('carbs', 0),
+                        fat_g=meal_data.get('fat', 0),
+                        fiber_g=meal_data.get('fiber', 0),
                         preparation_time_minutes=meal_data.get('prep_time_minutes', 15),
                         cooking_instructions=meal_data.get('instructions', '')
                     )
@@ -626,14 +624,14 @@ Distribuir en {len(meal_types)} comidas: {', '.join(meal_types)}."""
                     continue  # Skip snack for low calorie plans
 
                 meal = Meal(
-                    day_plan_id=daily_plan.id,
+                    daily_plan_id=daily_plan.id,
                     name=f"{template['name']} - Día {day_num}",
                     meal_type=MealType(meal_type),
                     description=template['description'],
                     calories=template['calories'],
-                    protein=template['calories'] * 0.3 / 4,
-                    carbohydrates=template['calories'] * 0.4 / 4,
-                    fat=template['calories'] * 0.3 / 9,
+                    protein_g=template['calories'] * 0.3 / 4,
+                    carbs_g=template['calories'] * 0.4 / 4,
+                    fat_g=template['calories'] * 0.3 / 9,
                     preparation_time_minutes=20,
                     cooking_instructions="Preparación estándar según ingredientes"
                 )
