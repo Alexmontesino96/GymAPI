@@ -549,6 +549,11 @@ class AIGenerationRequest(BaseModel):
     temperature: float = Field(0.7, ge=0, le=1, description="Creatividad de la IA (0=conservador, 1=creativo)")
     max_tokens: int = Field(2500, ge=500, le=4000, description="Límite de tokens para la respuesta")
 
+    # Objetivos de macronutrientes (opcional; se calculan si no se envían)
+    target_protein_g: Optional[float] = Field(None, ge=0, description="Proteína diaria objetivo (g)")
+    target_carbs_g: Optional[float] = Field(None, ge=0, description="Carbohidratos diarios objetivo (g)")
+    target_fat_g: Optional[float] = Field(None, ge=0, description="Grasas diarias objetivo (g)")
+
     @validator('goal', pre=True)
     def normalize_goal(cls, v):
         """Normaliza aliases comunes del objetivo nutricional."""
@@ -601,6 +606,39 @@ class AIGenerationRequest(BaseModel):
                 normalized.append(str(restriction))
 
         return normalized
+
+    @model_validator(mode="after")
+    def compute_macro_targets(self):
+        """Calcula objetivos de macros en gramos si no fueron provistos.
+        Usa distribuciones por objetivo sobre las calorías objetivo.
+        """
+        # Si ya están definidos, no recalcular
+        if self.target_protein_g is not None and self.target_carbs_g is not None and self.target_fat_g is not None:
+            return self
+
+        # Distribuciones por objetivo (aprox.)
+        goal = self.goal.value if hasattr(self.goal, 'value') else str(self.goal)
+        distributions = {
+            'weight_loss': (0.30, 0.40, 0.30),     # protein, carbs, fat
+            'muscle_gain': (0.25, 0.50, 0.25),
+            'definition': (0.35, 0.35, 0.30),
+            'maintenance': (0.20, 0.50, 0.30),
+            'performance': (0.20, 0.55, 0.25),
+            'bulk': (0.25, 0.50, 0.25),
+            'cut': (0.35, 0.35, 0.30),
+        }
+        protein_pct, carbs_pct, fat_pct = distributions.get(goal, (0.30, 0.40, 0.30))
+
+        # Evitar división por cero
+        calories = max(self.target_calories or 0, 0)
+        if self.target_protein_g is None:
+            self.target_protein_g = round((calories * protein_pct) / 4, 1)
+        if self.target_carbs_g is None:
+            self.target_carbs_g = round((calories * carbs_pct) / 4, 1)
+        if self.target_fat_g is None:
+            self.target_fat_g = round((calories * fat_pct) / 9, 1)
+
+        return self
 
 
 class AIGenerationResponse(BaseModel):

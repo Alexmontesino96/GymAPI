@@ -257,19 +257,19 @@ REGLAS CRÍTICAS:
         return f"""Genera un plan nutricional para {', '.join(days_to_generate)}.
 
 OBJETIVOS NUTRICIONALES:
-- Objetivo: {request.goal.value}
-- Calorías diarias: {request.target_calories} kcal
-- Proteína: {request.target_protein_g}g
-- Carbohidratos: {request.target_carbs_g}g
-- Grasas: {request.target_fat_g}g
+        - Objetivo: {request.goal.value}
+        - Calorías diarias: {request.target_calories} kcal
+        - Proteína: {getattr(request, 'target_protein_g', None) or 0}g
+        - Carbohidratos: {getattr(request, 'target_carbs_g', None) or 0}g
+        - Grasas: {getattr(request, 'target_fat_g', None) or 0}g
 
 DISTRIBUCIÓN:
 {meal_distribution}
 
 CONSIDERACIONES:
-- Dificultad: {request.difficulty_level.value if hasattr(request, 'difficulty_level') else 'beginner'}
-- Presupuesto: {request.budget_level.value if hasattr(request, 'budget_level') else 'medium'}
-- Restricciones: {request.dietary_restrictions.value if hasattr(request, 'dietary_restrictions') else 'none'}
+        - Dificultad: {request.difficulty_level.value if hasattr(request, 'difficulty_level') else 'beginner'}
+        - Presupuesto: {request.budget_level.value if hasattr(request, 'budget_level') else 'medium'}
+        - Restricciones: {', '.join(request.dietary_restrictions) if getattr(request, 'dietary_restrictions', None) else 'none'}
 
 Genera el plan completo en JSON válido."""
 
@@ -307,6 +307,28 @@ Genera el plan completo en JSON válido."""
         days = []
         days_names = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
 
+        # Calcular macros objetivo si faltan en la request
+        protein_g = getattr(request, 'target_protein_g', None)
+        carbs_g = getattr(request, 'target_carbs_g', None)
+        fat_g = getattr(request, 'target_fat_g', None)
+
+        if protein_g is None or carbs_g is None or fat_g is None:
+            goal = request.goal.value if hasattr(request.goal, 'value') else str(request.goal)
+            distributions = {
+                'weight_loss': (0.30, 0.40, 0.30),
+                'muscle_gain': (0.25, 0.50, 0.25),
+                'definition': (0.35, 0.35, 0.30),
+                'maintenance': (0.20, 0.50, 0.30),
+                'performance': (0.20, 0.55, 0.25),
+                'bulk': (0.25, 0.50, 0.25),
+                'cut': (0.35, 0.35, 0.30),
+            }
+            p_pct, c_pct, f_pct = distributions.get(goal, (0.30, 0.40, 0.30))
+            calories = max(getattr(request, 'target_calories', 0) or 0, 0)
+            protein_g = round((calories * p_pct) / 4, 1)
+            carbs_g = round((calories * c_pct) / 4, 1)
+            fat_g = round((calories * f_pct) / 9, 1)
+
         for day_num in range(start_day, end_day + 1):
             day_name = days_names[(day_num - 1) % 7]
 
@@ -315,9 +337,9 @@ Genera el plan completo en JSON válido."""
                     name=f"Desayuno Día {day_num}",
                     meal_type="breakfast",
                     calories=int(request.target_calories * 0.25),
-                    protein=request.target_protein_g * 0.25,
-                    carbs=request.target_carbs_g * 0.25,
-                    fat=request.target_fat_g * 0.25,
+                    protein=protein_g * 0.25,
+                    carbs=carbs_g * 0.25,
+                    fat=fat_g * 0.25,
                     ingredients=[
                         IngredientSchema(name="Avena", quantity=60, unit="g"),
                         IngredientSchema(name="Plátano", quantity=1, unit="unidad")
@@ -328,9 +350,9 @@ Genera el plan completo en JSON válido."""
                     name=f"Colación Día {day_num}",
                     meal_type="mid_morning",
                     calories=int(request.target_calories * 0.1),
-                    protein=request.target_protein_g * 0.1,
-                    carbs=request.target_carbs_g * 0.1,
-                    fat=request.target_fat_g * 0.1,
+                    protein=protein_g * 0.1,
+                    carbs=carbs_g * 0.1,
+                    fat=fat_g * 0.1,
                     ingredients=[
                         IngredientSchema(name="Yogur griego", quantity=150, unit="g"),
                         IngredientSchema(name="Frutos secos", quantity=30, unit="g")
@@ -341,9 +363,9 @@ Genera el plan completo en JSON válido."""
                     name=f"Almuerzo Día {day_num}",
                     meal_type="lunch",
                     calories=int(request.target_calories * 0.35),
-                    protein=request.target_protein_g * 0.35,
-                    carbs=request.target_carbs_g * 0.35,
-                    fat=request.target_fat_g * 0.35,
+                    protein=protein_g * 0.35,
+                    carbs=carbs_g * 0.35,
+                    fat=fat_g * 0.35,
                     ingredients=[
                         IngredientSchema(name="Pechuga de pollo", quantity=150, unit="g"),
                         IngredientSchema(name="Arroz integral", quantity=80, unit="g"),
@@ -355,9 +377,9 @@ Genera el plan completo en JSON válido."""
                     name=f"Merienda Día {day_num}",
                     meal_type="afternoon",
                     calories=int(request.target_calories * 0.1),
-                    protein=request.target_protein_g * 0.1,
-                    carbs=request.target_carbs_g * 0.1,
-                    fat=request.target_fat_g * 0.1,
+                    protein=protein_g * 0.1,
+                    carbs=carbs_g * 0.1,
+                    fat=fat_g * 0.1,
                     ingredients=[
                         IngredientSchema(name="Manzana", quantity=1, unit="unidad"),
                         IngredientSchema(name="Mantequilla de maní", quantity=20, unit="g")
@@ -368,9 +390,9 @@ Genera el plan completo en JSON válido."""
                     name=f"Cena Día {day_num}",
                     meal_type="dinner",
                     calories=int(request.target_calories * 0.2),
-                    protein=request.target_protein_g * 0.2,
-                    carbs=request.target_carbs_g * 0.2,
-                    fat=request.target_fat_g * 0.2,
+                    protein=protein_g * 0.2,
+                    carbs=carbs_g * 0.2,
+                    fat=fat_g * 0.2,
                     ingredients=[
                         IngredientSchema(name="Salmón", quantity=120, unit="g"),
                         IngredientSchema(name="Quinoa", quantity=60, unit="g"),

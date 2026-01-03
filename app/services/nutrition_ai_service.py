@@ -557,7 +557,19 @@ Responde con JSON compacto:
                     result = self.langchain_generator.generate_nutrition_plan(
                         request, start_day, end_day
                     )
-                    return result.get('days', [])
+                    # Normalizar a formato {'days': [...], 'metadata': {...}}
+                    if isinstance(result, dict) and 'days' in result:
+                        return {
+                            'days': result['days'],
+                            'metadata': {'prompt_tokens': 0, 'completion_tokens': 0, 'model': 'gpt-4o-mini'}
+                        }
+                    elif isinstance(result, list):
+                        return {
+                            'days': result,
+                            'metadata': {'prompt_tokens': 0, 'completion_tokens': 0, 'model': 'gpt-4o-mini'}
+                        }
+                    else:
+                        logger.warning("Formato inesperado desde LangChain; continuando con generación directa")
                 except Exception as e:
                     logger.warning(f"Error con LangChain, cayendo a OpenAI directo: {e}")
                     # Continuar con generación directa
@@ -657,7 +669,7 @@ Solo JSON válido."""
             else:
                 # Si el formato no es el esperado, intentar extraer días
                 logger.warning("Unexpected response format, attempting to extract days")
-                extracted = self._extract_days_from_response(result, start_day, end_day)
+                extracted = self._extract_days_from_response(request, result, start_day, end_day)
                 return {
                     'days': extracted,
                     'metadata': metadata
@@ -811,7 +823,7 @@ Solo JSON válido."""
 
         return days
 
-    def _extract_days_from_response(self, response: Dict, start_day: int, end_day: int) -> List[Dict[str, Any]]:
+    def _extract_days_from_response(self, request: AIGenerationRequest, response: Dict, start_day: int, end_day: int) -> List[Dict[str, Any]]:
         """Intenta extraer días de una respuesta con formato inesperado."""
         # Buscar cualquier clave que parezca contener días
         for key in ["days", "daily_plans", "plan", "daily"]:
@@ -819,7 +831,7 @@ Solo JSON válido."""
                 return response[key]
 
         # Si no encuentra nada, generar mock
-        # Usar el request original, no crear uno nuevo
+        # Usar el request original para generar mock
         return self._generate_mock_days(request, start_day, end_day)
 
     async def _generate_mock_plan(
