@@ -13,7 +13,7 @@ import json
 import logging
 from datetime import datetime
 
-from app.schemas.nutrition_ai import AIGenerationRequest
+from app.schemas.nutrition import AIGenerationRequest
 from app.models.nutrition import MealType
 
 logger = logging.getLogger(__name__)
