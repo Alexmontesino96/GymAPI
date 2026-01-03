@@ -151,12 +151,15 @@ def list_nutrition_plans(
     if not db_user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
 
+    # Convertir page/per_page a skip/limit para NutritionPlanService
+    skip = (page - 1) * per_page
+    limit = per_page
+
     plans, total = service.list_nutrition_plans(
         gym_id=current_gym.id,
         filters=filters,
-        page=page,
-        per_page=per_page,
-        user_id=db_user.id
+        skip=skip,
+        limit=limit
     )
     
     return NutritionPlanListResponse(
@@ -2789,15 +2792,15 @@ def list_plans_by_type(
     archived_filters = NutritionPlanFilters(plan_type=PlanType.ARCHIVED)
 
     live_plans, live_total = service.list_nutrition_plans(
-        gym_id=current_gym.id, filters=live_filters, page=1, per_page=50, user_id=db_user.id
+        gym_id=current_gym.id, filters=live_filters, skip=0, limit=50
     )
 
     template_plans, template_total = service.list_nutrition_plans(
-        gym_id=current_gym.id, filters=template_filters, page=1, per_page=50, user_id=db_user.id
+        gym_id=current_gym.id, filters=template_filters, skip=0, limit=50
     )
 
     archived_plans, archived_total = service.list_nutrition_plans(
-        gym_id=current_gym.id, filters=archived_filters, page=1, per_page=50, user_id=db_user.id
+        gym_id=current_gym.id, filters=archived_filters, skip=0, limit=50
     )
     
     total = live_total + template_total + archived_total
