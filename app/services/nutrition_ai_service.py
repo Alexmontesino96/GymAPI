@@ -607,7 +607,7 @@ Distribuir en {len(meal_types)} comidas: {', '.join(meal_types)}."""
                     {"role": "user", "content": user_prompt}
                 ],
                 temperature=0.3,  # Un poco más de variedad
-                max_tokens=600,  # Suficiente para 1 día
+                max_tokens=1500,  # Aumentado para evitar truncamiento (5 comidas × ~250 tokens)
                 response_format={"type": "json_object"},  # Necesario para JSON válido
                 timeout=15.0  # 15 segundos debería ser suficiente
             )
@@ -688,12 +688,24 @@ Distribuir en {len(meal_types)} comidas: {', '.join(meal_types)}."""
     def _attempt_json_repair(self, content: str) -> Optional[Dict]:
         """
         FIX 2: Intenta reparar JSON malformado con varias estrategias.
+        Mejorado para manejar truncamiento común en respuestas de OpenAI.
         """
         import json
         import re
 
         # Estrategia 1: Limpiar caracteres problemáticos
         content = content.strip()
+
+        # Estrategia 1.5: Si termina con string incompleto, cerrarlo
+        # Detectar si termina en medio de un string (comillas sin cerrar)
+        if content.count('"') % 2 != 0:
+            # Buscar la última comilla y cerrar el string
+            content += '"'
+            # Si había una coma esperada después del string, agregarla si es necesario
+            # pero solo si no es el último elemento
+            if not content.rstrip().endswith('}') and not content.rstrip().endswith(']'):
+                # Verificar contexto para determinar si necesita coma
+                pass
 
         # Estrategia 2: Remover trailing commas
         content = re.sub(r',\s*}', '}', content)
@@ -713,7 +725,32 @@ Distribuir en {len(meal_types)} comidas: {', '.join(meal_types)}."""
         # Estrategia 4: Intentar parsear después de reparaciones
         try:
             return json.loads(content)
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as e:
+            logger.debug(f"JSON repair estrategia 4 falló: {e}")
+
+            # Estrategia 4.5: Si falla por string truncado en instrucciones, completarlo
+            if 'Unterminated string' in str(e):
+                # Encontrar donde está el string incompleto y cerrarlo
+                try:
+                    # Buscar la última ocurrencia de "instructions": "
+                    if '"instructions"' in content:
+                        # Cerrar el string de instrucciones y la estructura
+                        parts = content.rsplit('"instructions":', 1)
+                        if len(parts) == 2 and '"' in parts[1]:
+                            # Encontrar donde empieza el valor del string
+                            value_start = parts[1].index('"')
+                            # Completar con un string genérico y cerrar estructura
+                            fixed = parts[0] + '"instructions": "Preparar según indicaciones"}'
+                            # Agregar corchetes y llaves necesarios
+                            fixed = fixed.rstrip(',')
+                            if fixed.count('[') > fixed.count(']'):
+                                fixed += ']' * (fixed.count('[') - fixed.count(']'))
+                            if fixed.count('{') > fixed.count('}'):
+                                fixed += '}' * (fixed.count('{') - fixed.count('}'))
+                            return json.loads(fixed)
+                except Exception as repair_error:
+                    logger.debug(f"Estrategia 4.5 falló: {repair_error}")
+
             # Buscar el último objeto completo
             matches = re.findall(r'\{[^{}]*\}', content)
             if matches:
