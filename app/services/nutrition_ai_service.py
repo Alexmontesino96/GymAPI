@@ -574,31 +574,16 @@ Responde con JSON compacto:
 
             logger.info(f"Generando días {start_day}-{end_day} con OpenAI directo")
 
-            # Prompt optimizado para máxima velocidad
-            system_prompt = """Genera un plan nutricional en formato JSON con esta estructura exacta:
-{
-  "days": [
-    {
-      "day_number": 1,
-      "day_name": "nombre del día",
-      "meals": [array de 5 comidas]
-    }
-  ]
-}
-Cada comida debe tener: name, meal_type (breakfast/mid_morning/lunch/afternoon/dinner), calories, protein, carbs, fat, ingredients (máx 2), instructions.
-IMPORTANTE:
-- Usa estos meal_type exactos: breakfast, mid_morning, lunch, afternoon, dinner
-- Los ingredientes deben ser objetos con: {"name": "ingrediente", "quantity": 100, "unit": "g"}
-- NO uses ingredientes como strings simples ["ingrediente1", "ingrediente2"]
-Responde SOLO con JSON válido."""
+            # Prompt simplificado para reducir latencia de OpenAI
+            system_prompt = """JSON con estructura: {"days":[{"day_number":N,"day_name":"día","meals":[5 comidas]}]}
+Campos por comida: name, meal_type (breakfast/mid_morning/lunch/afternoon/dinner), calories, protein, carbs, fat, ingredients[{name,quantity,unit}], instructions.
+Solo JSON válido."""
 
             # Determinar tipos de comidas según meals_per_day
             meal_types = self._get_meal_types(request.meals_per_day)
             calories_per_meal = request.target_calories / len(meal_types)
 
-            user_prompt = f"""Crea el plan para el día {start_day} ({day_names[0]}).
-Objetivo: {request.goal.value} con {request.target_calories} calorías diarias.
-Distribuir en {len(meal_types)} comidas: {', '.join(meal_types)}."""
+            user_prompt = f"Día {start_day} ({day_names[0]}): {request.target_calories} cal, {len(meal_types)} comidas ({', '.join(meal_types)})"
 
             response = self.client.chat.completions.create(
                 model=self.model,
@@ -607,9 +592,9 @@ Distribuir en {len(meal_types)} comidas: {', '.join(meal_types)}."""
                     {"role": "user", "content": user_prompt}
                 ],
                 temperature=0.3,  # Un poco más de variedad
-                max_tokens=1500,  # Aumentado para evitar truncamiento (5 comidas × ~250 tokens)
+                max_tokens=1200,  # Optimizado para 5 comidas con prompt simplificado
                 response_format={"type": "json_object"},  # Necesario para JSON válido
-                timeout=15.0  # 15 segundos debería ser suficiente
+                timeout=30.0  # Aumentado a 30 segundos - OpenAI está procesando lentamente (~14-15s)
             )
 
             # FIX 2: Guardar content ANTES del try/except
