@@ -124,8 +124,8 @@ class LangChainNutritionGenerator:
         """Inicializa el generador con la clave API de OpenAI."""
         self.llm = ChatOpenAI(
             model="gpt-4o-mini",
-            temperature=0.3,
-            max_tokens=800,
+            temperature=0.2,
+            max_tokens=1200,
             api_key=api_key,
             model_kwargs={
                 "response_format": {"type": "json_object"}
@@ -152,9 +152,8 @@ class LangChainNutritionGenerator:
             # Construir el prompt del usuario
             user_prompt = self._build_user_prompt(request, start_day, end_day)
 
-            # Agregar instrucciones del parser
-            format_instructions = self.parser.get_format_instructions()
-            full_user_prompt = f"{user_prompt}\n\n{format_instructions}"
+            # Instrucción breve para limitar a JSON válido
+            full_user_prompt = f"{user_prompt}\n\nDevuelve SOLO JSON válido con la estructura indicada."
 
             # Crear mensajes para el LLM
             messages = [
@@ -177,11 +176,16 @@ class LangChainNutritionGenerator:
 
             except Exception as parse_error:
                 logger.warning(f"Error al parsear con Pydantic, intentando reparación: {parse_error}")
-
-                # Intentar reparar el JSON
+                # Intentar reparar el JSON y parsear nuevamente
                 repaired_json = self._repair_json(response.content)
-                parsed_response = NutritionPlanResponse.parse_obj(repaired_json)
-                return parsed_response.dict()
+                if repaired_json:
+                    try:
+                        parsed_response = NutritionPlanResponse.parse_obj(repaired_json)
+                        return parsed_response.dict()
+                    except Exception:
+                        pass
+                # Fallback mínimo: devolver estructura simple si no se puede reparar
+                return {"days": []}
 
         except Exception as e:
             logger.error(f"Error generando plan con LangChain: {e}")
@@ -273,34 +277,78 @@ CONSIDERACIONES:
 
 Genera el plan completo en JSON válido."""
 
-    def _repair_json(self, json_str: str) -> Dict:
-        """Intenta reparar JSON malformado."""
+    def _repair_json(self, content: str) -> Optional[Dict]:
+        """Intenta reparar JSON malformado con varias estrategias no destructivas."""
+        import re
+
+        if not content:
+            return None
+
+        # 1) Limpieza básica
+        s = content.strip()
+        # Remover fences ```json ... ``` o ``` ... ```
+        if s.startswith('```'):
+            parts = s.split('```')
+            # elegir el bloque más largo probable de JSON
+            s = max(parts, key=len)
+            if s.startswith('json'):
+                s = s[4:]
+        # Remover caracteres de control
+        s = ''.join(ch for ch in s if ord(ch) >= 32 or ch in '\n\r\t')
+
+        # 2) Intento directo
         try:
-            # Intentar parsear directamente
-            return json.loads(json_str)
+            return json.loads(s)
         except json.JSONDecodeError:
-            # Intentar limpiar y reparar
-            json_str = json_str.strip()
+            pass
 
-            # Remover posibles caracteres de control
-            json_str = ''.join(char for char in json_str if ord(char) >= 32 or char == '\n')
+        # 3) Extraer desde la primera '{' hasta la última '}' y balancear
+        start = s.find('{')
+        end = s.rfind('}')
+        if start != -1 and end != -1 and end > start:
+            candidate = s[start:end+1]
+            # Balanceo simple de llaves y corchetes
+            def balance_text(txt: str) -> str:
+                open_brace = close_brace = 0
+                open_bracket = close_bracket = 0
+                last_balanced = 0
+                for i, ch in enumerate(txt):
+                    if ch == '{':
+                        open_brace += 1
+                    elif ch == '}':
+                        close_brace += 1
+                    elif ch == '[':
+                        open_bracket += 1
+                    elif ch == ']':
+                        close_bracket += 1
+                    if open_brace == close_brace and open_bracket == close_bracket:
+                        last_balanced = i
+                # Cortar en el último punto balanceado
+                cut = txt[:last_balanced+1]
+                # Reparar comas colgantes
+                cut = re.sub(r',\s*([}\]])', r'\1', cut)
+                # Cerrar si faltan
+                if cut.count('{') > cut.count('}'):
+                    cut += '}' * (cut.count('{') - cut.count('}'))
+                if cut.count('[') > cut.count(']'):
+                    cut += ']' * (cut.count('[') - cut.count(']'))
+                return cut
 
-            # Si empieza con ``` quitarlo
-            if json_str.startswith('```'):
-                json_str = json_str.split('```')[1]
-                if json_str.startswith('json'):
-                    json_str = json_str[4:]
-
-            # Intentar de nuevo
+            balanced = balance_text(candidate)
             try:
-                return json.loads(json_str)
-            except:
-                # Último intento: extraer JSON del texto
-                import re
-                json_match = re.search(r'\{[\s\S]*\}', json_str)
-                if json_match:
-                    return json.loads(json_match.group())
-                raise
+                return json.loads(balanced)
+            except json.JSONDecodeError:
+                pass
+
+        # 4) Regex: tomar el mayor bloque que empiece en '{' y termine en '}'
+        matches = re.findall(r'\{[\s\S]*?\}', s)
+        for m in reversed(matches):  # probar del más largo al más corto
+            try:
+                return json.loads(m)
+            except Exception:
+                continue
+
+        return None
 
     def _generate_fallback_days(self, request: AIGenerationRequest, start_day: int, end_day: int) -> Dict:
         """Genera días de respaldo cuando falla la generación con IA."""

@@ -167,6 +167,8 @@ class Settings(BaseSettings):
     OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
     OPENAI_MAX_TOKENS: int = int(os.getenv("OPENAI_MAX_TOKENS", "1500"))
     OPENAI_TEMPERATURE: float = float(os.getenv("OPENAI_TEMPERATURE", "0.1"))
+    # Control de uso de LangChain en nutrición (permite desactivar por entorno)
+    NUTRITION_USE_LANGCHAIN: bool = os.getenv("NUTRITION_USE_LANGCHAIN", "True").lower() in ("true", "1", "t")
 
     @field_validator("OPENAI_API_KEY")
     def validate_openai_key(cls, v: str) -> str:

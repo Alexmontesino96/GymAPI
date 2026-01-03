@@ -53,7 +53,7 @@ class NutritionAIService:
             )
 
             # Inicializar LangChain si está disponible
-            if LANGCHAIN_AVAILABLE:
+            if LANGCHAIN_AVAILABLE and get_settings().NUTRITION_USE_LANGCHAIN:
                 try:
                     self.langchain_generator = LangChainNutritionGenerator(self.api_key)
                     self.use_langchain = True
