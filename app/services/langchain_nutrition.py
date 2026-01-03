@@ -165,11 +165,19 @@ class LangChainNutritionGenerator:
             logger.info(f"Generando días {start_day} a {end_day} con LangChain...")
             response = self.llm.invoke(messages)
 
+            # LOG: Respuesta de LangChain/OpenAI
+            logger.info(f"LangChain response for days {start_day}-{end_day}:")
+            logger.info(f"  - Response length: {len(response.content)} chars")
+            logger.debug(f"  - Raw response (first 500 chars): {response.content[:500]}...")
+            if len(response.content) > 500:
+                logger.debug(f"  - Raw response (last 200 chars): ...{response.content[-200:]}")
+
             # Parsear y validar respuesta
             try:
                 # Intentar parsear con Pydantic
                 parsed_response = self.parser.parse(response.content)
-                logger.info(f"Respuesta parseada y validada exitosamente")
+                logger.info(f"  ✅ Respuesta parseada y validada exitosamente con Pydantic")
+                logger.info(f"  ✅ Days generated: {len(parsed_response.days)}")
 
                 # Convertir a diccionario
                 return parsed_response.dict()

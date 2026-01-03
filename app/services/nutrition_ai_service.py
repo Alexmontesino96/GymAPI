@@ -216,13 +216,22 @@ PERFIL DEL USUARIO:
         """
         start_time = time.time()
 
+        logger.info("="*60)
+        logger.info(f"🚀 Starting AI Nutrition Plan Generation")
+        logger.info(f"  - Gym ID: {gym_id}")
+        logger.info(f"  - Days: {request.duration_days}")
+        logger.info(f"  - Calories: {request.target_calories}")
+        logger.info(f"  - Goal: {request.goal}")
+        logger.info(f"  - LangChain enabled: {self.use_langchain}")
+        logger.info("="*60)
+
         try:
             # Si no hay cliente OpenAI, usar generación mock
             if not self.client:
                 logger.warning("Using mock generation - OpenAI not configured")
                 return await self._generate_mock_plan(request, creator_id, gym_id, db)
 
-            logger.info(f"Generating nutrition plan with OpenAI for gym {gym_id}")
+            logger.info(f"Starting generation process...")
 
             # ESTRATEGIA OPTIMIZADA: Generar días en chunks pequeños
             # Generar día por día para evitar timeouts de OpenAI
@@ -402,6 +411,18 @@ PERFIL DEL USUARIO:
             completion_tokens = total_completion_tokens if total_completion_tokens > 0 else len(str(plan_data)) // 4
             cost_estimate = (prompt_tokens * 0.00000015) + (completion_tokens * 0.0000006)
 
+            # LOG: Resumen final de generación
+            logger.info("="*60)
+            logger.info(f"✅ AI Nutrition Plan Generation Completed Successfully")
+            logger.info(f"  - Plan ID: {nutrition_plan.id}")
+            logger.info(f"  - Title: {nutrition_plan.title}")
+            logger.info(f"  - Days generated: {len(plan_data.get('daily_plans', []))}/{request.duration_days}")
+            logger.info(f"  - Total meals: {sum(len(day.get('meals', [])) for day in plan_data.get('daily_plans', []))}")
+            logger.info(f"  - Total tokens: {prompt_tokens + completion_tokens}")
+            logger.info(f"  - Cost: ${cost_estimate:.4f}")
+            logger.info(f"  - Time: {generation_time}ms ({generation_time/1000:.1f}s)")
+            logger.info("="*60)
+
             return {
                 "plan_id": nutrition_plan.id,
                 "name": nutrition_plan.title,
@@ -553,10 +574,11 @@ Responde con JSON compacto:
             # Intentar primero con LangChain si está disponible
             if self.use_langchain and self.langchain_generator:
                 try:
-                    logger.info(f"Usando LangChain para generar días {start_day}-{end_day}")
+                    logger.info(f"🤖 Using LangChain for days {start_day}-{end_day} generation")
                     result = self.langchain_generator.generate_nutrition_plan(
                         request, start_day, end_day
                     )
+                    logger.info(f"  ✅ LangChain generation successful")
                     # Normalizar a formato {'days': [...], 'metadata': {...}}
                     if isinstance(result, dict) and 'days' in result:
                         return {
@@ -584,7 +606,7 @@ Responde con JSON compacto:
             num_days = end_day - start_day + 1
             day_names = [days[(start_day - 1 + i) % 7] for i in range(num_days)]
 
-            logger.info(f"Generando días {start_day}-{end_day} con OpenAI directo")
+            logger.info(f"🔄 Using OpenAI Direct API for days {start_day}-{end_day} generation")
 
             # Prompt simplificado para reducir latencia de OpenAI
             system_prompt = """JSON con estructura: {"days":[{"day_number":N,"day_name":"día","meals":[5 comidas]}]}
@@ -619,8 +641,18 @@ Solo JSON válido."""
                 'model': response.model if hasattr(response, 'model') else self.model
             }
 
+            # LOG: Respuesta de OpenAI
+            logger.info(f"OpenAI response for days {start_day}-{end_day}:")
+            logger.info(f"  - Model: {metadata['model']}")
+            logger.info(f"  - Tokens: {metadata['prompt_tokens']} prompt, {metadata['completion_tokens']} completion")
+            logger.info(f"  - Response length: {len(raw_content)} chars")
+            logger.debug(f"  - Raw response (first 500 chars): {raw_content[:500]}...")
+            if len(raw_content) > 500:
+                logger.debug(f"  - Raw response (last 200 chars): ...{raw_content[-200:]}")
+
             try:
                 result = json.loads(raw_content)
+                logger.info(f"  ✅ JSON parsed successfully")
 
                 # Validar estructura básica
                 if 'days' not in result or not isinstance(result['days'], list):
@@ -629,6 +661,8 @@ Solo JSON válido."""
                         'days': self._generate_mock_days(request, start_day, end_day),
                         'metadata': metadata
                     }
+
+                logger.info(f"  ✅ Structure validated: {len(result['days'])} days found")
 
             except json.JSONDecodeError as e:
                 logger.warning(f"JSON decode error for days {start_day}-{end_day}: {e}")
@@ -657,11 +691,15 @@ Solo JSON válido."""
             # FIX 1: Retornar días con metadata
             # Validar y normalizar respuesta
             if "days" in result:
+                days_count = len(result["days"]) if isinstance(result["days"], list) else 0
+                logger.info(f"  ✅ Returning {days_count} days from 'days' field")
                 return {
                     'days': result["days"],
                     'metadata': metadata
                 }
             elif "daily_plans" in result:
+                days_count = len(result["daily_plans"]) if isinstance(result["daily_plans"], list) else 0
+                logger.info(f"  ✅ Returning {days_count} days from 'daily_plans' field")
                 return {
                     'days': result["daily_plans"],
                     'metadata': metadata
@@ -670,6 +708,7 @@ Solo JSON válido."""
                 # Si el formato no es el esperado, intentar extraer días
                 logger.warning("Unexpected response format, attempting to extract days")
                 extracted = self._extract_days_from_response(request, result, start_day, end_day)
+                logger.info(f"  ⚠️ Extracted {len(extracted)} days from unexpected format")
                 return {
                     'days': extracted,
                     'metadata': metadata
