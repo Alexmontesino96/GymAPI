@@ -158,6 +158,47 @@ class NutritionPlanRepository(BaseRepository):
 
         return query.offset(skip).limit(limit).all()
 
+    def get_public_plans_with_total(
+        self,
+        db: Session,
+        gym_id: int,
+        filters: Optional[Dict[str, Any]] = None,
+        skip: int = 0,
+        limit: int = 20
+    ) -> (List[NutritionPlan], int):
+        """
+        Get public nutrition plans and the total count for pagination.
+
+        Returns a tuple: (plans, total)
+        """
+        # Cap limit to prevent excessive queries
+        limit = min(limit, 100)
+
+        base_query = db.query(NutritionPlan).filter(
+            NutritionPlan.gym_id == gym_id,
+            NutritionPlan.is_public == True
+        )
+
+        # Apply filters to base query
+        if filters:
+            if 'goal' in filters and filters['goal']:
+                base_query = base_query.filter(NutritionPlan.goal == filters['goal'])
+
+            if 'plan_type' in filters and filters['plan_type']:
+                base_query = base_query.filter(NutritionPlan.plan_type == filters['plan_type'])
+
+            if 'min_calories' in filters:
+                base_query = base_query.filter(NutritionPlan.target_calories >= filters['min_calories'])
+
+            if 'max_calories' in filters:
+                base_query = base_query.filter(NutritionPlan.target_calories <= filters['max_calories'])
+
+        # Total BEFORE pagination
+        total = base_query.count()
+
+        plans = base_query.order_by(NutritionPlan.updated_at.desc()).offset(skip).limit(limit).all()
+        return plans, total
+
     def get_plans_by_creator(
         self,
         db: Session,

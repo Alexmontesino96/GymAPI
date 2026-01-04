@@ -174,7 +174,7 @@ class NutritionPlanService:
         filters: Optional[NutritionPlanFilters] = None,
         skip: int = 0,
         limit: int = 20
-    ) -> List[NutritionPlan]:
+    ) -> (List[NutritionPlan], int):
         """
         List nutrition plans with optional filters.
 
@@ -187,9 +187,9 @@ class NutritionPlanService:
         Returns:
             List of nutrition plans
         """
-        # Use repository method for public plans
+        # Use repository method for public plans with total count
         filter_dict = filters.model_dump(exclude_none=True) if filters else {}
-        return self.repository.get_public_plans(
+        return self.repository.get_public_plans_with_total(
             self.db, gym_id, filter_dict, skip, limit
         )
 
