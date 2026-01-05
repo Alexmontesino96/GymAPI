@@ -287,7 +287,37 @@ PERFIL DEL USUARIO:
             # Combinar estructura del plan con días generados
             plan_data["daily_plans"] = all_daily_plans
 
-            # Crear plan en base de datos
+            # Calcular macros target basados en el objetivo o usar los del request
+            # Si el request ya tiene los valores calculados (del validador), usarlos
+            if hasattr(request, 'target_protein_g') and request.target_protein_g is not None:
+                target_protein = request.target_protein_g
+                target_carbs = request.target_carbs_g
+                target_fat = request.target_fat_g
+            else:
+                # Calcular basándose en el objetivo nutricional
+                goal = request.goal.value if hasattr(request.goal, 'value') else str(request.goal)
+                if goal in ['weight_loss', 'cut', 'definition']:
+                    # Alto en proteína, moderado en carbos y grasas
+                    target_protein = round(request.target_calories * 0.35 / 4, 1)  # 35% proteína
+                    target_carbs = round(request.target_calories * 0.35 / 4, 1)    # 35% carbos
+                    target_fat = round(request.target_calories * 0.30 / 9, 1)      # 30% grasas
+                elif goal in ['muscle_gain', 'bulk']:
+                    # Moderado-alto en proteína, alto en carbos
+                    target_protein = round(request.target_calories * 0.25 / 4, 1)  # 25% proteína
+                    target_carbs = round(request.target_calories * 0.50 / 4, 1)    # 50% carbos
+                    target_fat = round(request.target_calories * 0.25 / 9, 1)      # 25% grasas
+                elif goal == 'performance':
+                    # Moderado en proteína, muy alto en carbos
+                    target_protein = round(request.target_calories * 0.20 / 4, 1)  # 20% proteína
+                    target_carbs = round(request.target_calories * 0.55 / 4, 1)    # 55% carbos
+                    target_fat = round(request.target_calories * 0.25 / 9, 1)      # 25% grasas
+                else:  # maintenance o cualquier otro
+                    # Balance estándar
+                    target_protein = round(request.target_calories * 0.20 / 4, 1)  # 20% proteína
+                    target_carbs = round(request.target_calories * 0.50 / 4, 1)    # 50% carbos
+                    target_fat = round(request.target_calories * 0.30 / 9, 1)      # 30% grasas
+
+            # Crear plan en base de datos con macros target
             nutrition_plan = NutritionPlan(
                 title=plan_data.get('title', f'Plan {request.goal.value}'),
                 description=plan_data.get('description', request.prompt[:500]),
@@ -296,22 +326,29 @@ PERFIL DEL USUARIO:
                 budget_level=BudgetLevel(request.user_context.get('budget_level', 'medium')) if request.user_context else BudgetLevel.MEDIUM,
                 duration_days=request.duration_days,
                 target_calories=request.target_calories,
+                target_protein_g=target_protein,
+                target_carbs_g=target_carbs,
+                target_fat_g=target_fat,
                 is_public=True,
                 creator_id=creator_id,
                 gym_id=gym_id,
                 plan_type=PlanType.TEMPLATE
             )
 
-            # Calcular macros promedio del plan
+            # Si hay datos de días generados, podemos ajustar los macros basándonos en el promedio real
             if 'daily_plans' in plan_data and plan_data['daily_plans']:
                 total_protein = sum(day.get('total_protein', 0) for day in plan_data['daily_plans'])
                 total_carbs = sum(day.get('total_carbs', 0) for day in plan_data['daily_plans'])
                 total_fat = sum(day.get('total_fat', 0) for day in plan_data['daily_plans'])
                 num_days = len(plan_data['daily_plans'])
 
-                nutrition_plan.target_protein_g = round(total_protein / num_days, 1)
-                nutrition_plan.target_carbs_g = round(total_carbs / num_days, 1)
-                nutrition_plan.target_fat_g = round(total_fat / num_days, 1)
+                # Solo sobrescribir si tenemos valores válidos
+                if total_protein > 0 and num_days > 0:
+                    nutrition_plan.target_protein_g = round(total_protein / num_days, 1)
+                if total_carbs > 0 and num_days > 0:
+                    nutrition_plan.target_carbs_g = round(total_carbs / num_days, 1)
+                if total_fat > 0 and num_days > 0:
+                    nutrition_plan.target_fat_g = round(total_fat / num_days, 1)
 
             db.add(nutrition_plan)
             db.flush()  # Para obtener el ID
