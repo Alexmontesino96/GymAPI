@@ -355,16 +355,23 @@ PERFIL DEL USUARIO:
 
             # Crear días y comidas
             for day_data in plan_data.get('daily_plans', []):
+                # Crear el plan diario con totales iniciales en 0
                 daily_plan = DailyNutritionPlan(
                     nutrition_plan_id=nutrition_plan.id,
                     day_number=day_data['day_number'],
-                    total_calories=day_data.get('total_calories', 0),
-                    total_protein_g=day_data.get('total_protein', 0),
-                    total_carbs_g=day_data.get('total_carbs', 0),
-                    total_fat_g=day_data.get('total_fat', 0)
+                    total_calories=0,  # Se calculará después
+                    total_protein_g=0,  # Se calculará después
+                    total_carbs_g=0,    # Se calculará después
+                    total_fat_g=0       # Se calculará después
                 )
                 db.add(daily_plan)
                 db.flush()
+
+                # Variables para acumular totales del día
+                day_total_calories = 0
+                day_total_protein = 0
+                day_total_carbs = 0
+                day_total_fat = 0
 
                 # Crear comidas del día
                 for idx, meal_data in enumerate(day_data.get('meals', [])):
@@ -390,21 +397,33 @@ PERFIL DEL USUARIO:
                         logger.warning(f"Tipo de comida inválido '{mapped_type}', usando 'lunch' por defecto")
                         mapped_type = 'lunch'
 
+                    # Obtener valores nutricionales de la comida
+                    meal_calories = meal_data.get('calories', 0)
+                    meal_protein = meal_data.get('protein', 0)
+                    meal_carbs = meal_data.get('carbs', 0)
+                    meal_fat = meal_data.get('fat', 0)
+
                     meal = Meal(
                         daily_plan_id=daily_plan.id,
                         name=meal_data['name'],
                         meal_type=MealType(mapped_type),
                         description=meal_data.get('description', ''),
-                        calories=meal_data.get('calories', 0),
-                        protein_g=meal_data.get('protein', 0),
-                        carbs_g=meal_data.get('carbs', 0),
-                        fat_g=meal_data.get('fat', 0),
+                        calories=meal_calories,
+                        protein_g=meal_protein,
+                        carbs_g=meal_carbs,
+                        fat_g=meal_fat,
                         fiber_g=meal_data.get('fiber', 0),
                         preparation_time_minutes=meal_data.get('prep_time_minutes', 15),
                         cooking_instructions=meal_data.get('instructions', '')
                     )
                     db.add(meal)
                     db.flush()
+
+                    # Acumular totales del día
+                    day_total_calories += meal_calories
+                    day_total_protein += meal_protein
+                    day_total_carbs += meal_carbs
+                    day_total_fat += meal_fat
 
                     # Crear ingredientes (manejar tanto strings como objetos)
                     ingredients = meal_data.get('ingredients', [])
@@ -434,6 +453,19 @@ PERFIL DEL USUARIO:
                         except Exception as e:
                             logger.warning(f"Error creando ingrediente: {e}, data: {ingredient_obj}")
                             continue
+
+                # Actualizar los totales del día después de crear todas las comidas
+                daily_plan.total_calories = day_total_calories
+                daily_plan.total_protein_g = day_total_protein
+                daily_plan.total_carbs_g = day_total_carbs
+                daily_plan.total_fat_g = day_total_fat
+
+                # Log para verificar que los totales se calcularon correctamente
+                logger.info(f"Día {daily_plan.day_number} - Totales calculados: "
+                           f"Calorías: {day_total_calories}, "
+                           f"Proteína: {day_total_protein}g, "
+                           f"Carbos: {day_total_carbs}g, "
+                           f"Grasa: {day_total_fat}g")
 
             # Commit todos los cambios
             db.commit()
