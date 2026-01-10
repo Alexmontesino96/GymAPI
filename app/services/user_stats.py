@@ -195,6 +195,10 @@ class UserStatsService:
                 # Última fecha de asistencia
                 last_attendance_date = await self.get_last_attendance_date(db, user_id, gym_id, None)
 
+                # Calcular si ha asistido a su primera clase
+                # Si last_attendance_date no es None, significa que ya ha asistido al menos a una clase
+                has_attended_first_class = last_attendance_date is not None
+
             return DashboardSummary(
                 user_id=user_id,
                 current_streak=current_streak,
@@ -204,6 +208,7 @@ class UserStatsService:
                 recent_achievement=recent_achievement,
                 membership_status=membership_status,
                 last_attendance_date=last_attendance_date,
+                has_attended_first_class=has_attended_first_class,
                 quick_stats=await self._calculate_quick_stats(db, user_id, gym_id, weekly_workouts)
             )
             
@@ -219,6 +224,7 @@ class UserStatsService:
                 recent_achievement=None,
                 membership_status="unknown",
                 last_attendance_date=None,
+                has_attended_first_class=False,
                 quick_stats={}
             )
     

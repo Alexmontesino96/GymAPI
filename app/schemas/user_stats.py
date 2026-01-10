@@ -193,6 +193,7 @@ class DashboardSummary(BaseModel):
     recent_achievement: Optional[Achievement] = Field(None, description="Logro más reciente")
     membership_status: str = Field(..., description="Estado de membresía")
     last_attendance_date: Optional[datetime] = Field(None, description="Fecha y hora de la última asistencia")
+    has_attended_first_class: bool = Field(False, description="Indica si el usuario ha asistido a su primera clase")
     quick_stats: Dict[str, Union[int, float, str]] = Field(
         default_factory=dict,
         description="Estadísticas rápidas clave"
