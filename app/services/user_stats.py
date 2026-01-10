@@ -195,9 +195,24 @@ class UserStatsService:
                 # Última fecha de asistencia
                 last_attendance_date = await self.get_last_attendance_date(db, user_id, gym_id, None)
 
+                # Log para debug de last_attendance_date
+                logger.info(f"[DEBUG] User {user_id} - last_attendance_date: {last_attendance_date}")
+                logger.info(f"[DEBUG] User {user_id} - last_attendance_date type: {type(last_attendance_date)}")
+                logger.info(f"[DEBUG] User {user_id} - last_attendance_date is None: {last_attendance_date is None}")
+
                 # Calcular si ha asistido a su primera clase
                 # Si last_attendance_date no es None, significa que ya ha asistido al menos a una clase
                 has_attended_first_class = last_attendance_date is not None
+
+                # Log para debug del cálculo
+                logger.info(f"[DEBUG] User {user_id} - has_attended_first_class calculated as: {has_attended_first_class}")
+
+            # Log del resultado final antes de retornar
+            logger.info(f"[DEBUG] DashboardSummary FINAL values for user {user_id}:")
+            logger.info(f"  - last_attendance_date: {last_attendance_date}")
+            logger.info(f"  - has_attended_first_class: {has_attended_first_class}")
+            logger.info(f"  - weekly_workouts: {weekly_workouts}")
+            logger.info(f"  - membership_status: {membership_status}")
 
             return DashboardSummary(
                 user_id=user_id,
@@ -1191,6 +1206,7 @@ class UserStatsService:
         Returns:
             datetime: Fecha y hora de la última asistencia, o None si no hay asistencias
         """
+        logger.info(f"[DEBUG] get_last_attendance_date - START for user_id={user_id}, gym_id={gym_id}")
         cache_key = f"last_attendance:{user_id}:{gym_id}"
 
         if redis_client:
@@ -1200,7 +1216,11 @@ class UserStatsService:
                 if cached_date_str:
                     register_cache_hit(cache_key)
                     # Convertir string a datetime
-                    return datetime.fromisoformat(cached_date_str.decode('utf-8'))
+                    result_date = datetime.fromisoformat(cached_date_str.decode('utf-8'))
+                    logger.info(f"[DEBUG] get_last_attendance_date - CACHE HIT: {result_date}")
+                    return result_date
+                else:
+                    logger.info(f"[DEBUG] get_last_attendance_date - CACHE MISS, querying DB")
             except Exception as e:
                 logger.error(f"Error accessing cache for last attendance: {e}")
                 register_cache_miss(cache_key)
@@ -1208,6 +1228,23 @@ class UserStatsService:
         # Query a base de datos
         try:
             from app.models.schedule import ClassParticipation, ClassParticipationStatus
+
+            logger.info(f"[DEBUG] Querying ClassParticipation for user_id={user_id}, gym_id={gym_id}")
+
+            # Primero, contar todas las participaciones para debug
+            total_participations = db.query(ClassParticipation).filter(
+                ClassParticipation.member_id == user_id,
+                ClassParticipation.gym_id == gym_id
+            ).count()
+            logger.info(f"[DEBUG] Total participations for user: {total_participations}")
+
+            # Contar participaciones con status ATTENDED
+            attended_count = db.query(ClassParticipation).filter(
+                ClassParticipation.member_id == user_id,
+                ClassParticipation.gym_id == gym_id,
+                ClassParticipation.status == ClassParticipationStatus.ATTENDED
+            ).count()
+            logger.info(f"[DEBUG] Participations with ATTENDED status: {attended_count}")
 
             # Obtener la participación más reciente con asistencia confirmada
             last_participation = db.query(ClassParticipation).filter(
@@ -1219,7 +1256,15 @@ class UserStatsService:
                 ClassParticipation.attendance_time.desc()
             ).first()
 
+            if last_participation:
+                logger.info(f"[DEBUG] Found last_participation: id={last_participation.id}, "
+                          f"attendance_time={last_participation.attendance_time}, "
+                          f"status={last_participation.status}")
+            else:
+                logger.info(f"[DEBUG] No attendance found for user {user_id} in gym {gym_id}")
+
             last_attendance = last_participation.attendance_time if last_participation else None
+            logger.info(f"[DEBUG] get_last_attendance_date - RESULT: {last_attendance}")
 
             # Guardar en cache si hay resultado (TTL: 10 minutos)
             if redis_client and last_attendance:
@@ -1229,6 +1274,7 @@ class UserStatsService:
                         last_attendance.isoformat(),
                         ex=600  # 10 minutos
                     )
+                    logger.info(f"[DEBUG] Cached last_attendance: {last_attendance.isoformat()}")
                 except Exception as e:
                     logger.error(f"Error setting cache for last attendance: {e}")
 
