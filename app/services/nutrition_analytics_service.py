@@ -125,11 +125,15 @@ class NutritionAnalyticsService:
             User nutrition dashboard data
         """
         # Get user's active followed plans
+        # Note: gym_id is in NutritionPlan, not in NutritionPlanFollower
+        # We need to join with NutritionPlan to filter by gym_id
         followed_plans = self.db.query(NutritionPlanFollower).options(
             joinedload(NutritionPlanFollower.plan)
+        ).join(
+            NutritionPlan, NutritionPlanFollower.plan_id == NutritionPlan.id
         ).filter(
             NutritionPlanFollower.user_id == user_id,
-            NutritionPlanFollower.gym_id == gym_id,
+            NutritionPlan.gym_id == gym_id,
             NutritionPlanFollower.is_active == True
         ).all()
 
@@ -199,8 +203,11 @@ class NutritionAnalyticsService:
         ).all()
 
         # Get active followers count
-        active_followers = self.db.query(NutritionPlanFollower).filter(
-            NutritionPlanFollower.gym_id == gym_id,
+        # Note: gym_id is in NutritionPlan, need to join
+        active_followers = self.db.query(NutritionPlanFollower).join(
+            NutritionPlan, NutritionPlanFollower.plan_id == NutritionPlan.id
+        ).filter(
+            NutritionPlan.gym_id == gym_id,
             NutritionPlanFollower.is_active == True
         ).count()
 
@@ -262,9 +269,12 @@ class NutritionAnalyticsService:
         adherence_data = []
 
         # Get all active followers
-        followers = self.db.query(NutritionPlanFollower).filter(
+        # Note: gym_id verification through join with NutritionPlan
+        followers = self.db.query(NutritionPlanFollower).join(
+            NutritionPlan, NutritionPlanFollower.plan_id == NutritionPlan.id
+        ).filter(
             NutritionPlanFollower.plan_id == plan_id,
-            NutritionPlanFollower.gym_id == gym_id,
+            NutritionPlan.gym_id == gym_id,
             NutritionPlanFollower.is_active == True
         ).all()
 
@@ -403,9 +413,12 @@ class NutritionAnalyticsService:
         followers = self.db.query(User).join(
             NutritionPlanFollower,
             User.id == NutritionPlanFollower.user_id
+        ).join(
+            NutritionPlan,
+            NutritionPlanFollower.plan_id == NutritionPlan.id
         ).filter(
             NutritionPlanFollower.plan_id == plan_id,
-            NutritionPlanFollower.gym_id == gym_id,
+            NutritionPlan.gym_id == gym_id,
             NutritionPlanFollower.is_active == True
         ).all()
 
@@ -435,14 +448,18 @@ class NutritionAnalyticsService:
         gym_id: int
     ) -> float:
         """Calculate follower retention rate for a plan."""
-        all_followers = self.db.query(NutritionPlanFollower).filter(
+        all_followers = self.db.query(NutritionPlanFollower).join(
+            NutritionPlan, NutritionPlanFollower.plan_id == NutritionPlan.id
+        ).filter(
             NutritionPlanFollower.plan_id == plan_id,
-            NutritionPlanFollower.gym_id == gym_id
+            NutritionPlan.gym_id == gym_id
         ).count()
 
-        active_followers = self.db.query(NutritionPlanFollower).filter(
+        active_followers = self.db.query(NutritionPlanFollower).join(
+            NutritionPlan, NutritionPlanFollower.plan_id == NutritionPlan.id
+        ).filter(
             NutritionPlanFollower.plan_id == plan_id,
-            NutritionPlanFollower.gym_id == gym_id,
+            NutritionPlan.gym_id == gym_id,
             NutritionPlanFollower.is_active == True
         ).count()
 
