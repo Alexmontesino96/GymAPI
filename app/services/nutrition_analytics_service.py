@@ -12,7 +12,8 @@ import logging
 from app.models.nutrition import (
     NutritionPlan, NutritionPlanFollower,
     UserDailyProgress, UserMealCompletion,
-    PlanType, NutritionGoal
+    PlanType, NutritionGoal,
+    Meal, DailyNutritionPlan
 )
 from app.models.user import User
 from app.schemas.nutrition import (
@@ -212,11 +213,18 @@ class NutritionAnalyticsService:
         ).count()
 
         # Get meal completions in date range
+        # Note: UserMealCompletion doesn't have gym_id, need to join through Meal → DailyNutritionPlan → NutritionPlan
         completions = self.db.query(
             func.count(UserMealCompletion.id).label('total'),
             func.date(UserMealCompletion.completed_at).label('date')
+        ).join(
+            Meal, UserMealCompletion.meal_id == Meal.id
+        ).join(
+            DailyNutritionPlan, Meal.daily_plan_id == DailyNutritionPlan.id
+        ).join(
+            NutritionPlan, DailyNutritionPlan.nutrition_plan_id == NutritionPlan.id
         ).filter(
-            UserMealCompletion.gym_id == gym_id,
+            NutritionPlan.gym_id == gym_id,
             func.date(UserMealCompletion.completed_at) >= date_range[0],
             func.date(UserMealCompletion.completed_at) <= date_range[1]
         ).group_by(
@@ -280,9 +288,9 @@ class NutritionAnalyticsService:
 
         for follower in followers:
             days_following = (today - follower.start_date.date()).days + 1
+            # Note: UserDailyProgress doesn't have gym_id
             days_with_progress = self.db.query(UserDailyProgress).filter(
                 UserDailyProgress.user_id == follower.user_id,
-                UserDailyProgress.gym_id == gym_id,
                 UserDailyProgress.date >= follower.start_date.date(),
                 UserDailyProgress.meals_completed > 0
             ).count()
@@ -303,9 +311,9 @@ class NutritionAnalyticsService:
                     continue
 
                 days_in_week = 7
+                # Note: UserDailyProgress doesn't have gym_id
                 progress_days = self.db.query(UserDailyProgress).filter(
                     UserDailyProgress.user_id == follower.user_id,
-                    UserDailyProgress.gym_id == gym_id,
                     UserDailyProgress.date >= week_start,
                     UserDailyProgress.date <= week_end,
                     UserDailyProgress.meals_completed > 0
@@ -331,6 +339,7 @@ class NutritionAnalyticsService:
     ) -> Dict[str, Any]:
         """Get meal completion statistics for a plan."""
         # Get completions by meal type
+        # Note: UserMealCompletion doesn't have gym_id, join through NutritionPlan
         by_meal_type = self.db.query(
             Meal.meal_type,
             func.count(UserMealCompletion.id).label('count')
@@ -340,9 +349,12 @@ class NutritionAnalyticsService:
         ).join(
             DailyNutritionPlan,
             Meal.daily_plan_id == DailyNutritionPlan.id
+        ).join(
+            NutritionPlan,
+            DailyNutritionPlan.nutrition_plan_id == NutritionPlan.id
         ).filter(
             DailyNutritionPlan.plan_id == plan_id,
-            UserMealCompletion.gym_id == gym_id
+            NutritionPlan.gym_id == gym_id
         ).group_by(
             Meal.meal_type
         ).all()
@@ -357,9 +369,12 @@ class NutritionAnalyticsService:
         ).join(
             DailyNutritionPlan,
             Meal.daily_plan_id == DailyNutritionPlan.id
+        ).join(
+            NutritionPlan,
+            DailyNutritionPlan.nutrition_plan_id == NutritionPlan.id
         ).filter(
             DailyNutritionPlan.plan_id == plan_id,
-            UserMealCompletion.gym_id == gym_id
+            NutritionPlan.gym_id == gym_id
         ).group_by(
             func.extract('dow', UserMealCompletion.completed_at)
         ).all()
@@ -381,6 +396,7 @@ class NutritionAnalyticsService:
         gym_id: int
     ) -> List[Dict[str, Any]]:
         """Get peak times for meal completions."""
+        # Note: UserMealCompletion doesn't have gym_id, join through NutritionPlan
         peak_times = self.db.query(
             func.extract('hour', UserMealCompletion.completed_at).label('hour'),
             func.count(UserMealCompletion.id).label('count')
@@ -390,9 +406,12 @@ class NutritionAnalyticsService:
         ).join(
             DailyNutritionPlan,
             Meal.daily_plan_id == DailyNutritionPlan.id
+        ).join(
+            NutritionPlan,
+            DailyNutritionPlan.nutrition_plan_id == NutritionPlan.id
         ).filter(
             DailyNutritionPlan.plan_id == plan_id,
-            UserMealCompletion.gym_id == gym_id
+            NutritionPlan.gym_id == gym_id
         ).group_by(
             func.extract('hour', UserMealCompletion.completed_at)
         ).order_by(
@@ -487,30 +506,51 @@ class NutritionAnalyticsService:
         end_date: date
     ) -> Dict[str, Any]:
         """Get user's progress summary for a date range."""
-        progress_records = self.db.query(
-            func.sum(UserDailyProgress.calories_consumed).label('total_calories'),
-            func.sum(UserDailyProgress.protein_consumed).label('total_protein'),
-            func.sum(UserDailyProgress.carbs_consumed).label('total_carbs'),
-            func.sum(UserDailyProgress.fat_consumed).label('total_fat'),
-            func.sum(UserDailyProgress.meals_completed).label('total_meals'),
-            func.count(UserDailyProgress.id).label('days_tracked')
+        # Get nutritional data from UserMealCompletion and Meal tables
+        # Since UserDailyProgress doesn't have nutritional fields
+        nutrition_data = self.db.query(
+            func.sum(Meal.calories).label('total_calories'),
+            func.sum(Meal.protein_g).label('total_protein'),
+            func.sum(Meal.carbs_g).label('total_carbs'),
+            func.sum(Meal.fat_g).label('total_fat'),
+            func.count(UserMealCompletion.id).label('total_meals')
+        ).join(
+            Meal, UserMealCompletion.meal_id == Meal.id
+        ).join(
+            DailyNutritionPlan, Meal.daily_plan_id == DailyNutritionPlan.id
+        ).join(
+            NutritionPlan, DailyNutritionPlan.nutrition_plan_id == NutritionPlan.id
         ).filter(
-            UserDailyProgress.user_id == user_id,
-            UserDailyProgress.gym_id == gym_id,
-            UserDailyProgress.date >= start_date,
-            UserDailyProgress.date <= end_date
+            UserMealCompletion.user_id == user_id,
+            NutritionPlan.gym_id == gym_id,
+            UserMealCompletion.completed_at >= start_date,
+            UserMealCompletion.completed_at <= end_date
         ).first()
 
+        # Get days tracked from UserDailyProgress
+        days_tracked = self.db.query(
+            func.count(UserDailyProgress.id)
+        ).filter(
+            UserDailyProgress.user_id == user_id,
+            UserDailyProgress.date >= start_date,
+            UserDailyProgress.date <= end_date
+        ).scalar() or 0
+
+        total_calories = nutrition_data.total_calories if nutrition_data else 0
+        total_protein = nutrition_data.total_protein if nutrition_data else 0
+        total_carbs = nutrition_data.total_carbs if nutrition_data else 0
+        total_fat = nutrition_data.total_fat if nutrition_data else 0
+        total_meals = nutrition_data.total_meals if nutrition_data else 0
+
         return {
-            'total_calories': progress_records.total_calories or 0,
-            'total_protein': progress_records.total_protein or 0,
-            'total_carbs': progress_records.total_carbs or 0,
-            'total_fat': progress_records.total_fat or 0,
-            'total_meals': progress_records.total_meals or 0,
-            'days_tracked': progress_records.days_tracked or 0,
+            'total_calories': total_calories or 0,
+            'total_protein': total_protein or 0,
+            'total_carbs': total_carbs or 0,
+            'total_fat': total_fat or 0,
+            'total_meals': total_meals or 0,
+            'days_tracked': days_tracked,
             'daily_average_calories': (
-                (progress_records.total_calories / progress_records.days_tracked)
-                if progress_records.days_tracked else 0
+                (total_calories / days_tracked) if days_tracked and total_calories else 0
             )
         }
 
@@ -522,9 +562,9 @@ class NutritionAnalyticsService:
         """Calculate user's completion streaks."""
         # Implementation similar to ProgressService
         today = date.today()
+        # Note: UserDailyProgress doesn't have gym_id, filter by user_id only
         progress_records = self.db.query(UserDailyProgress).filter(
             UserDailyProgress.user_id == user_id,
-            UserDailyProgress.gym_id == gym_id,
             UserDailyProgress.meals_completed > 0
         ).order_by(UserDailyProgress.date.desc()).all()
 
@@ -558,6 +598,7 @@ class NutritionAnalyticsService:
         limit: int = 5
     ) -> List[Dict[str, Any]]:
         """Get user's most frequently completed meals."""
+        # Note: UserMealCompletion doesn't have gym_id, join through NutritionPlan
         favorites = self.db.query(
             Meal.id,
             Meal.name,
@@ -565,9 +606,15 @@ class NutritionAnalyticsService:
         ).join(
             UserMealCompletion,
             UserMealCompletion.meal_id == Meal.id
+        ).join(
+            DailyNutritionPlan,
+            Meal.daily_plan_id == DailyNutritionPlan.id
+        ).join(
+            NutritionPlan,
+            DailyNutritionPlan.nutrition_plan_id == NutritionPlan.id
         ).filter(
             UserMealCompletion.user_id == user_id,
-            UserMealCompletion.gym_id == gym_id
+            NutritionPlan.gym_id == gym_id
         ).group_by(
             Meal.id,
             Meal.name
@@ -590,9 +637,16 @@ class NutritionAnalyticsService:
         gym_id: int
     ) -> int:
         """Get total meals completed by user."""
-        return self.db.query(UserMealCompletion).filter(
+        # Note: UserMealCompletion doesn't have gym_id, join through NutritionPlan
+        return self.db.query(UserMealCompletion).join(
+            Meal, UserMealCompletion.meal_id == Meal.id
+        ).join(
+            DailyNutritionPlan, Meal.daily_plan_id == DailyNutritionPlan.id
+        ).join(
+            NutritionPlan, DailyNutritionPlan.nutrition_plan_id == NutritionPlan.id
+        ).filter(
             UserMealCompletion.user_id == user_id,
-            UserMealCompletion.gym_id == gym_id
+            NutritionPlan.gym_id == gym_id
         ).count()
 
     def _calculate_current_day(self, follower: NutritionPlanFollower) -> int:
@@ -608,9 +662,9 @@ class NutritionAnalyticsService:
         """Calculate adherence for a specific user-plan combination."""
         today = date.today()
         days_following = (today - follower.start_date.date()).days + 1
+        # Note: UserDailyProgress doesn't have gym_id field
         days_with_progress = self.db.query(UserDailyProgress).filter(
             UserDailyProgress.user_id == follower.user_id,
-            UserDailyProgress.gym_id == follower.gym_id,
             UserDailyProgress.date >= follower.start_date.date(),
             UserDailyProgress.meals_completed > 0
         ).count()
