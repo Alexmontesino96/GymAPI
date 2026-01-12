@@ -1056,7 +1056,7 @@ async def get_today_meal_plan(
     return meal_plan
 
 
-@router.get("/dashboard", response_model=NutritionDashboardHybrid)
+@router.get("/dashboard", response_model=UserNutritionDashboard)
 async def get_nutrition_dashboard(
     db: Session = Depends(get_db),
     current_gym: Gym = Depends(verify_gym_access),
@@ -1180,7 +1180,7 @@ async def get_nutrition_dashboard(
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
 
     # Get user nutrition dashboard with analytics
-    dashboard = await service.get_user_nutrition_dashboard(
+    dashboard = service.get_user_nutrition_dashboard(
         user_id=db_user.id,
         gym_id=current_gym.id
     )
