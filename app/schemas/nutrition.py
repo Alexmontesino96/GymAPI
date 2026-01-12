@@ -401,22 +401,33 @@ class NutritionPlanListResponse(BaseModel):
 
 class UserNutritionDashboard(BaseModel):
     """Dashboard nutricional del usuario"""
-    active_plans: List[NutritionPlan]
-    today_meals: List[MealWithIngredients]
-    completion_streak: int
-    weekly_progress: List[UserDailyProgress]
-    upcoming_meals: List[MealWithIngredients]
+    user_id: int
+    active_plans: List[Dict[str, Any]]  # Lista de planes activos con información
+    weekly_summary: Dict[str, Any]  # Resumen semanal
+    monthly_summary: Dict[str, Any]  # Resumen mensual
+    current_streak: int  # Racha actual
+    longest_streak: int  # Racha más larga
+    total_meals_completed: int  # Total de comidas completadas
+    favorite_meals: List[Dict[str, Any]]  # Comidas favoritas
+    nutritional_goals_progress: Dict[str, Any]  # Progreso hacia metas nutricionales
 
 
 class NutritionAnalytics(BaseModel):
     """Analytics para entrenadores"""
     plan_id: int
+    plan_name: str
+    plan_type: str
     total_followers: int
     active_followers: int
-    avg_completion_rate: float
-    avg_satisfaction: float
-    popular_meals: List[Dict[str, Any]]
-    completion_trends: List[Dict[str, Any]]
+    inactive_followers: int
+    average_adherence_percentage: float
+    weekly_adherence_trend: List[Dict[str, Any]]
+    completion_by_meal_type: List[Dict[str, Any]]
+    completion_by_day_of_week: List[Dict[str, Any]]
+    peak_completion_times: List[Dict[str, Any]]
+    follower_demographics: Dict[str, Any]
+    retention_rate: float
+    satisfaction_score: Optional[float] = None
 
 
 class MealCompletionBatch(BaseModel):
