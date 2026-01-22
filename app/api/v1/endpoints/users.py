@@ -24,7 +24,6 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Security, UploadFile, File, Path, BackgroundTasks, status, Request
 from sqlalchemy.orm import Session
-from sqlalchemy.ext.asyncio import AsyncSession
 from jose import JWTError, jwt
 from app.models.user import User, UserRole
 from app.models.gym import Gym
@@ -35,7 +34,7 @@ from app.services.auth0_mgmt import auth0_mgmt_service
 from app.core.tenant import verify_gym_access, verify_gym_admin_access, verify_gym_trainer_access, get_current_gym, GymSchema
 from app.core.auth0_fastapi import auth, get_current_user, Auth0User
 from app.core.dependencies import verify_public_api_key
-from app.db.session import get_db, get_async_db
+from app.db.session import get_db
 from app.core.config import get_settings
 from app.db.redis_client import get_redis_client, redis
 from app.services.cache_service import cache_service
@@ -55,7 +54,7 @@ logger = logging.getLogger(__name__)
 @router.get("/profile", response_model=UserSchema, tags=["Profile"])
 async def get_user_profile(
     request: Request,
-    db: AsyncSession = Depends(get_async_db),  # ✅ MIGRADO A ASYNC
+    db: Session = Depends(get_db),  # TODO: Migrar a async cuando esté listo
     user: Auth0User = Depends(get_current_user),
 ) -> Any:
     """
@@ -221,7 +220,7 @@ async def create_or_update_user_profile_data(
 
 @router.get("/profile/me", response_model=UserProfile, tags=["Profile"])
 async def get_my_profile(
-    db: AsyncSession = Depends(get_async_db),  # ✅ MIGRADO A ASYNC
+    db: Session = Depends(get_db),  # TODO: Migrar a async cuando esté listo
     current_user: Auth0User = Depends(get_current_user),
     redis_client: redis.Redis = Depends(get_redis_client)
 ) -> Any:
