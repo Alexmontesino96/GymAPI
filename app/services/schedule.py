@@ -1942,7 +1942,15 @@ class ClassSessionService:
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Gimnasio no encontrado"
             )
-        
+
+        # VALIDACIÓN: No permitir crear sesiones en el pasado
+        if session_data.start_time:
+            if not is_session_in_future(session_data.start_time, gym.timezone):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="No se pueden crear sesiones en el pasado. La fecha y hora de inicio debe ser futura."
+                )
+
         # Calcular hora de fin si no se proporciona
         obj_in_data = session_data.model_dump()
         if not obj_in_data.get("end_time") and class_obj.duration:
@@ -2107,7 +2115,16 @@ class ClassSessionService:
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Gimnasio no encontrado"
             )
-        
+
+        # VALIDACIÓN: No permitir crear sesiones recurrentes que empiecen en el pasado
+        current_time_gym = get_current_time_in_gym_timezone(gym.timezone)
+        current_date_gym = current_time_gym.date()
+        if start_date < current_date_gym:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No se pueden crear sesiones recurrentes con fecha de inicio en el pasado."
+            )
+
         # Preparar datos base para las sesiones
         session_base_data = base_session_data.model_dump()
         session_base_data["gym_id"] = gym_id # Asegurar gym_id
@@ -2149,10 +2166,17 @@ class ClassSessionService:
                 
                 # Crear datetime para este día específico con la hora base
                 new_start_datetime = datetime.combine(
-                    current_date, 
+                    current_date,
                     time(hour=base_start_hour, minute=base_start_minute)
                 )
-                
+
+                # VALIDACIÓN: Verificar que esta sesión específica esté en el futuro
+                if not is_session_in_future(new_start_datetime, gym.timezone):
+                    # Omitir sesiones que ya pasaron (por ejemplo, si es hoy pero la hora ya pasó)
+                    logger.info(f"Omitiendo sesión en el pasado: {new_start_datetime} (timezone: {gym.timezone})")
+                    current_date += timedelta(days=1)
+                    continue
+
                 session_data["start_time"] = new_start_datetime
                 
                 # Calcular end_time basado en la duración
@@ -2215,7 +2239,15 @@ class ClassSessionService:
         
         # Preparar datos de actualización
         update_data = session_data.model_dump(exclude_unset=True)
-        
+
+        # VALIDACIÓN: No permitir actualizar sesión para ponerla en el pasado
+        if "start_time" in update_data and update_data["start_time"] is not None:
+            if not is_session_in_future(update_data["start_time"], gym.timezone):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="No se puede actualizar la sesión con una fecha y hora de inicio en el pasado."
+                )
+
         # Si se están actualizando los tiempos, normalizar a UTC
         if "start_time" in update_data or "end_time" in update_data:
             from app.core.timezone_utils import normalize_to_utc
