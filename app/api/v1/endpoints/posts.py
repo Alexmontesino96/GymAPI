@@ -49,6 +49,8 @@ async def create_post(
     workout_data_json: Optional[str] = Form(None),
     tagged_event_id: Optional[int] = Form(None),
     tagged_session_id: Optional[int] = Form(None),
+    session_id: Optional[int] = Form(None),  # Compatibilidad con frontend
+    event_id: Optional[int] = Form(None),  # Compatibilidad con frontend
     mentioned_user_ids_json: Optional[str] = Form(None),
     files: List[UploadFile] = File(None),
     db: Session = Depends(get_db),
@@ -85,6 +87,17 @@ async def create_post(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="mentioned_user_ids_json debe ser un JSON array válido"
                 )
+
+        # Compatibilidad con nombres de campos alternativos del frontend
+        # Si no hay tagged_session_id pero sí session_id, usar session_id
+        if not tagged_session_id and session_id:
+            tagged_session_id = session_id
+            logger.info(f"Usando session_id={session_id} como tagged_session_id")
+
+        # Si no hay tagged_event_id pero sí event_id, usar event_id
+        if not tagged_event_id and event_id:
+            tagged_event_id = event_id
+            logger.info(f"Usando event_id={event_id} como tagged_event_id")
 
         # Crear schema de PostCreate con validación de enums
         try:
