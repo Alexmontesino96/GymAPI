@@ -43,6 +43,9 @@ class PostService:
         """
         Crea un nuevo post.
 
+        IMPORTANTE: Las imágenes se suben ANTES de crear el post en BD.
+        Esto evita posts huérfanos si el proceso falla durante el upload.
+
         Args:
             gym_id: ID del gimnasio
             user_id: ID del usuario creador
@@ -52,9 +55,11 @@ class PostService:
         Returns:
             Post creado
         """
+        uploaded_media: List[Dict[str, Any]] = []
         uploaded_media_urls: List[str] = []
+
         try:
-            # Verificar que el usuario pertenece al gimnasio
+            # 1. Verificar que el usuario pertenece al gimnasio
             user_gym = self.db.execute(
                 select(UserGym).where(
                     and_(
@@ -71,20 +76,45 @@ class PostService:
                     detail="Usuario no pertenece a este gimnasio"
                 )
 
-            # Determinar tipo de post basado en archivos
+            # 2. Determinar tipo de post basado en archivos
             post_type = post_data.post_type
             if media_files:
                 if len(media_files) > 1:
                     post_type = PostType.GALLERY
                 elif len(media_files) == 1:
-                    # Detectar si es imagen o video
                     file = media_files[0]
                     if file.content_type and file.content_type.startswith('video/'):
                         post_type = PostType.VIDEO
                     else:
                         post_type = PostType.SINGLE_IMAGE
 
-            # Crear post en BD
+            # 3. SUBIR ARCHIVOS PRIMERO (antes de crear el post en BD)
+            # Si esto falla, no hay nada que limpiar en la BD
+            if media_files:
+                try:
+                    uploaded_media = await self.media_service.upload_gallery(
+                        gym_id=gym_id,
+                        user_id=user_id,
+                        files=media_files
+                    )
+                    # Guardar URLs para limpieza en caso de error posterior
+                    for media_data in uploaded_media:
+                        if media_data.get("media_url"):
+                            uploaded_media_urls.append(media_data["media_url"])
+
+                    logger.info(f"Media subida exitosamente: {len(uploaded_media)} archivos")
+
+                except HTTPException:
+                    # Error controlado (validación, tamaño, etc.)
+                    raise
+                except Exception as e:
+                    logger.error(f"Error uploading media: {e}")
+                    raise HTTPException(
+                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        detail=f"Error al subir archivos: {str(e)}"
+                    )
+
+            # 4. CREAR POST EN BD (solo si el upload fue exitoso)
             post = Post(
                 gym_id=gym_id,
                 user_id=user_id,
@@ -101,45 +131,27 @@ class PostService:
             self.db.add(post)
             self.db.flush()  # Para obtener el ID
 
-            # Subir archivos de media si existen
-            if media_files:
-                try:
-                    uploaded_media = await self.media_service.upload_gallery(
-                        gym_id=gym_id,
-                        user_id=user_id,
-                        files=media_files
-                    )
+            # 5. Crear registros de PostMedia vinculados al post
+            for media_data in uploaded_media:
+                post_media = PostMedia(
+                    post_id=post.id,
+                    media_url=media_data["media_url"],
+                    thumbnail_url=media_data.get("thumbnail_url"),
+                    media_type=media_data["media_type"],
+                    display_order=media_data["display_order"],
+                    width=media_data.get("width"),
+                    height=media_data.get("height")
+                )
+                self.db.add(post_media)
 
-                    # Crear registros de PostMedia
-                    for media_data in uploaded_media:
-                        if media_data.get("media_url"):
-                            uploaded_media_urls.append(media_data["media_url"])
-                        post_media = PostMedia(
-                            post_id=post.id,
-                            media_url=media_data["media_url"],
-                            thumbnail_url=media_data.get("thumbnail_url"),
-                            media_type=media_data["media_type"],
-                            display_order=media_data["display_order"],
-                            width=media_data.get("width"),
-                            height=media_data.get("height")
-                        )
-                        self.db.add(post_media)
-
-                except Exception as e:
-                    logger.error(f"Error uploading media: {e}")
-                    self.db.rollback()
-                    raise HTTPException(
-                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                        detail=f"Error al subir archivos: {str(e)}"
-                    )
-
-            # Procesar tags y menciones
+            # 6. Procesar tags y menciones
             await self._create_tags(post, post_data)
 
+            # 7. COMMIT - Solo aquí se persiste todo
             self.db.commit()
             self.db.refresh(post)
 
-            # Publicar en Stream Feeds
+            # 8. Publicar en Stream Feeds (best-effort)
             try:
                 await self.feed_repo.create_post_activity(
                     post=post,
@@ -150,32 +162,35 @@ class PostService:
                 logger.error(f"Error creating Stream activity: {e}")
                 # Continuar sin Stream si falla
 
-            # TODO: Enviar notificaciones a usuarios mencionados
-
             logger.info(f"Post {post.id} created for user {user_id} in gym {gym_id}")
 
             # Enriquecer post con user_info antes de retornar
             return await self._enrich_post_with_user_info(post, user_id)
 
         except HTTPException:
-            # Ya hubo manejo específico; intentar limpiar media si existe
+            # Rollback de BD por si acaso
+            self.db.rollback()
+            # Limpiar media subida si existe
             if uploaded_media_urls:
+                logger.info(f"Limpiando {len(uploaded_media_urls)} archivos por error")
                 for url in uploaded_media_urls:
                     try:
                         await self.media_service.delete_post_media(url)
-                    except Exception:
-                        pass
+                    except Exception as cleanup_err:
+                        logger.warning(f"Error limpiando media {url}: {cleanup_err}")
             raise
+
         except Exception as e:
             logger.error(f"Error creating post: {str(e)}")
             self.db.rollback()
-            # Limpieza best-effort de media subida si falla creación
+            # Limpiar media subida si existe
             if uploaded_media_urls:
+                logger.info(f"Limpiando {len(uploaded_media_urls)} archivos por error")
                 for url in uploaded_media_urls:
                     try:
                         await self.media_service.delete_post_media(url)
-                    except Exception:
-                        pass
+                    except Exception as cleanup_err:
+                        logger.warning(f"Error limpiando media {url}: {cleanup_err}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Error al crear el post"
