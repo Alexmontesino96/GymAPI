@@ -15,6 +15,7 @@ import asyncio
 from app.services.storage import StorageService
 from app.core.config import get_settings
 from app.models.post import PostMedia
+from app.utils.image_processor import ImageProcessor
 from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
@@ -88,26 +89,55 @@ class PostMediaService(StorageService):
             # Leer contenido del archivo
             contents = await file.read()
 
-            # Validar tamaño
+            # Validar tamaño ANTES de optimización (rechazar archivos muy grandes)
             if len(contents) > max_size:
                 raise HTTPException(
                     status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
                     detail=f"El archivo excede el tamaño máximo permitido ({max_size // (1024*1024)}MB)"
                 )
 
+            # Variables para el upload
+            upload_content_type = file.content_type
+            width, height = None, None
+
+            # Optimizar imagen antes de subir
+            if media_type == "image":
+                try:
+                    optimized = ImageProcessor.optimize(contents)
+                    contents = optimized["content"]
+                    upload_content_type = optimized["content_type"]
+                    width, height = optimized["dimensions"]
+
+                    # Usar extensión del formato optimizado
+                    file_ext = f".{optimized['format']}"
+
+                    logger.info(
+                        f"Imagen optimizada: {optimized['original_size']/1024:.0f}KB -> "
+                        f"{optimized['final_size']/1024:.0f}KB "
+                        f"({optimized['compression_ratio']:.0%}), "
+                        f"formato: {optimized['format']}, dims: {optimized['dimensions']}"
+                    )
+                except ValueError as e:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=str(e)
+                    )
+            else:
+                # Para videos, mantener extensión original
+                file_ext = os.path.splitext(file.filename)[1] if file.filename else ".mp4"
+
             # Generar nombre único para el archivo
-            file_ext = os.path.splitext(file.filename)[1] if file.filename else (".jpg" if media_type == "image" else ".mp4")
             folder_path = f"gym_{gym_id}/user_{user_id}/posts"
             filename = f"{folder_path}/{uuid.uuid4().hex}{file_ext}"
 
             logger.info(f"Subiendo media de post: {filename}")
 
-            # Subir archivo principal
+            # Subir archivo principal (ya optimizado si es imagen)
             async def upload_operation():
                 result = self.supabase.storage.from_(self.posts_bucket).upload(
                     path=filename,
                     file=contents,
-                    file_options={"content-type": file.content_type}
+                    file_options={"content-type": upload_content_type}
                 )
                 logger.info(f"Media subida exitosamente: {result}")
                 return result
@@ -123,9 +153,8 @@ class PostMediaService(StorageService):
                 lambda: self.supabase.storage.from_(self.posts_bucket).get_public_url(filename)
             )
 
-            # Obtener dimensiones de la imagen
-            width, height = None, None
-            if media_type == "image":
+            # Obtener dimensiones de la imagen (si no se obtuvieron durante optimización)
+            if media_type == "image" and width is None:
                 try:
                     img = Image.open(io.BytesIO(contents))
                     width, height = img.size
@@ -137,24 +166,10 @@ class PostMediaService(StorageService):
                 "media_type": media_type,
                 "display_order": display_order,
                 "width": width,
-                "height": height
+                "height": height,
+                # La imagen optimizada ya está comprimida, usar como thumbnail
+                "thumbnail_url": media_url if media_type == "image" else None
             }
-
-            # Generar thumbnail
-            if media_type == "image":
-                try:
-                    thumbnail_url = await self._generate_image_thumbnail(
-                        contents=contents,
-                        gym_id=gym_id,
-                        user_id=user_id,
-                        original_filename=file.filename
-                    )
-                    result["thumbnail_url"] = thumbnail_url
-                except Exception as e:
-                    logger.error(f"Error generando thumbnail: {e}")
-                    result["thumbnail_url"] = media_url  # Usar imagen original como fallback
-            else:
-                result["thumbnail_url"] = None
 
             return result
 
