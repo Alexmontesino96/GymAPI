@@ -628,8 +628,7 @@ class PlanFollowerRepository(BaseRepository):
         # Check if already following
         existing = db.query(NutritionPlanFollower).filter(
             NutritionPlanFollower.user_id == user_id,
-            NutritionPlanFollower.plan_id == plan_id,
-            NutritionPlanFollower.gym_id == gym_id
+            NutritionPlanFollower.plan_id == plan_id
         ).first()
 
         if existing:
@@ -645,7 +644,6 @@ class PlanFollowerRepository(BaseRepository):
         follower = NutritionPlanFollower(
             user_id=user_id,
             plan_id=plan_id,
-            gym_id=gym_id,
             start_date=start_date or datetime.utcnow(),
             is_active=True
         )
@@ -678,7 +676,6 @@ class PlanFollowerRepository(BaseRepository):
         follower = db.query(NutritionPlanFollower).filter(
             NutritionPlanFollower.user_id == user_id,
             NutritionPlanFollower.plan_id == plan_id,
-            NutritionPlanFollower.gym_id == gym_id,
             NutritionPlanFollower.is_active == True
         ).first()
 
