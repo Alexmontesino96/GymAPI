@@ -582,11 +582,11 @@ async def follow_nutrition_plan(
 
     # Determinar si el plan es restrictivo (menos de 1500 calorías diarias o plan de pérdida de peso)
     is_restrictive_plan = (
-        plan.daily_calories < 1500 or
+        (plan.target_calories is not None and plan.target_calories < 1500) or
         "pérdida" in plan.title.lower() or
         "weight loss" in plan.title.lower() or
         "detox" in plan.title.lower() or
-        plan.nutrition_goal == "weight_loss"
+        plan.goal == NutritionGoal.WEIGHT_LOSS
     )
 
     # Si el plan es restrictivo, requerir safety screening
@@ -608,7 +608,7 @@ async def follow_nutrition_plan(
                     "reason": "no_valid_screening",
                     "plan_id": plan_id,
                     "plan_title": plan.title,
-                    "plan_calories": plan.daily_calories
+                    "plan_calories": plan.target_calories
                 },
                 was_allowed=False,
                 denial_reason="Plan restrictivo requiere evaluación de seguridad"
@@ -623,7 +623,7 @@ async def follow_nutrition_plan(
                     "reason": "restrictive_plan",
                     "action_required": "safety_screening",
                     "endpoint": "/api/v1/nutrition/safety-check",
-                    "plan_calories": plan.daily_calories
+                    "plan_calories": plan.target_calories
                 }
             )
 
@@ -657,7 +657,7 @@ async def follow_nutrition_plan(
             )
 
         # Si es un plan de pérdida de peso, verificar condiciones específicas
-        if plan.nutrition_goal == "weight_loss" and not valid_screening.can_generate_weight_loss():
+        if plan.goal == NutritionGoal.WEIGHT_LOSS and not valid_screening.can_generate_weight_loss():
             audit_log = SafetyAuditLog(
                 user_id=db_user.id,
                 gym_id=current_gym.id,
@@ -693,7 +693,7 @@ async def follow_nutrition_plan(
             action_details={
                 "plan_id": plan_id,
                 "plan_title": plan.title,
-                "plan_calories": plan.daily_calories,
+                "plan_calories": plan.target_calories,
                 "risk_level": valid_screening.risk_level
             },
             was_allowed=True
