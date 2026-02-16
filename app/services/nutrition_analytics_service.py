@@ -162,7 +162,7 @@ class NutritionAnalyticsService:
             user_id=user_id,
             active_plans=[{
                 'plan_id': f.plan_id,
-                'plan_name': f.plan.name,
+                'plan_name': f.plan.title,
                 'start_date': f.start_date,
                 'current_day': self._calculate_current_day(f),
                 'adherence_percentage': self._calculate_user_plan_adherence(f)
