@@ -686,7 +686,7 @@ class NutritionAnalyticsService:
 
         # Get average targets from followed plans
         avg_calories = sum(f.plan.target_calories or 0 for f in followed_plans) / len(followed_plans)
-        avg_protein = sum(f.plan.target_protein or 0 for f in followed_plans) / len(followed_plans)
+        avg_protein = sum(f.plan.target_protein_g or 0 for f in followed_plans) / len(followed_plans)
 
         # Get last 7 days average
         week_ago = date.today() - timedelta(days=7)
