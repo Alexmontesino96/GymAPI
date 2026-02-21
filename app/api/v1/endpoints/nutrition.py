@@ -1053,6 +1053,16 @@ async def get_today_meal_plan(
             overall_completion=0
         )
 
+    # NUEVO: Agregar group_stats para planes LIVE
+    if meal_plan.plan and meal_plan.plan.plan_type == PlanType.LIVE and meal_plan.status == PlanStatus.RUNNING:
+        group_stats = await service.get_group_completion_stats(
+            plan_id=meal_plan.plan.id,
+            gym_id=current_gym.id,
+            current_day=meal_plan.current_day,
+            db=db
+        )
+        meal_plan.group_stats = group_stats
+
     return meal_plan
 
 

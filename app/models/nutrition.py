@@ -307,7 +307,8 @@ class UserDailyProgress(Base):
     # Relaciones
     user_id = Column(Integer, ForeignKey("user.id"), nullable=False, index=True)
     daily_plan_id = Column(Integer, ForeignKey("daily_nutrition_plans.id"), nullable=False, index=True)
-    
+    gym_id = Column(Integer, ForeignKey("gyms.id"), nullable=False, index=True)  # Multi-tenant support
+
     # Progreso del día
     date = Column(DateTime, nullable=False, index=True)
     meals_completed = Column(Integer, default=0)
@@ -330,6 +331,7 @@ class UserDailyProgress(Base):
     # Relaciones ORM
     user = relationship("User", back_populates="nutrition_progress")
     daily_plan = relationship("DailyNutritionPlan", back_populates="user_progress")
+    gym = relationship("Gym")
     
     def __repr__(self):
         return f"<UserDailyProgress(user_id={self.user_id}, date={self.date}, completion={self.completion_percentage}%)>"

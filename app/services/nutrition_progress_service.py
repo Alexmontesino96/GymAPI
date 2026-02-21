@@ -20,7 +20,9 @@ from app.schemas.nutrition import (
     UserDailyProgressCreate,
     TodayMealPlan,
     WeeklyNutritionSummary,
-    PlanStatus
+    PlanStatus,
+    GroupCompletionStats,
+    MealTypeCompletion
 )
 from app.repositories.nutrition import nutrition_progress_repository
 from app.db.redis_client import get_redis_client
@@ -447,3 +449,143 @@ class NutritionProgressService:
             progress.fiber_consumed = max(0, (progress.fiber_consumed or 0) - (meal.fiber or 0))
             progress.meals_completed = max(0, (progress.meals_completed or 0) - 1)
             progress.updated_at = datetime.utcnow()
+
+    async def get_group_completion_stats(
+        self,
+        plan_id: int,
+        gym_id: int,
+        current_day: int,
+        db: Session
+    ) -> Optional[GroupCompletionStats]:
+        """
+        Calcula estadísticas de progreso grupal para planes LIVE.
+
+        Args:
+            plan_id: ID del plan nutricional
+            gym_id: ID del gimnasio (validación multi-tenant)
+            current_day: Día actual del plan (1-N)
+            db: Sesión de base de datos
+
+        Returns:
+            GroupCompletionStats con datos agregados o None si no aplica
+        """
+        from datetime import date
+        from sqlalchemy import func, case
+
+        today = date.today()
+
+        # Cache key multi-tenant
+        cache_key = f"gym:{gym_id}:nutrition:live_stats:{plan_id}:{today}"
+        redis = await get_redis_client()
+        
+        if redis:
+            cached = await redis.get(cache_key)
+            if cached:
+                import json
+                return GroupCompletionStats(**json.loads(cached))
+
+        # 1. Validar plan pertenece al gym y es LIVE
+        plan = db.query(NutritionPlan).filter(
+            NutritionPlan.id == plan_id,
+            NutritionPlan.gym_id == gym_id,
+            NutritionPlan.plan_type == PlanType.LIVE
+        ).first()
+
+        if not plan:
+            logger.warning(f"Plan {plan_id} no encontrado o no es LIVE en gym {gym_id}")
+            return None
+
+        # 2. Total de participantes activos
+        total_participants = db.query(func.count(NutritionPlanFollower.id)).filter(
+            NutritionPlanFollower.plan_id == plan_id,
+            NutritionPlanFollower.is_active == True
+        ).scalar() or 0
+
+        if total_participants == 0:
+            return None
+
+        # 3. Obtener daily_plan_id del día actual
+        daily_plan = db.query(DailyNutritionPlan).filter(
+            DailyNutritionPlan.nutrition_plan_id == plan_id,
+            DailyNutritionPlan.day_number == current_day
+        ).first()
+
+        if not daily_plan:
+            logger.warning(f"No existe día {current_day} para plan {plan_id}")
+            return None
+
+        # 4. Progreso de usuarios HOY (usando gym_id del modelo)
+        progress_stats = db.query(
+            func.count(UserDailyProgress.id).label('active_today'),
+            func.count(
+                case((UserDailyProgress.completion_percentage == 100, 1))
+            ).label('completed_fully'),
+            func.avg(UserDailyProgress.completion_percentage).label('avg_completion')
+        ).filter(
+            UserDailyProgress.daily_plan_id == daily_plan.id,
+            UserDailyProgress.gym_id == gym_id,
+            UserDailyProgress.date == today
+        ).first()
+
+        active_today = progress_stats.active_today or 0
+        completed_fully = progress_stats.completed_fully or 0
+        avg_completion = float(progress_stats.avg_completion or 0.0)
+
+        # 5. Breakdown por tipo de comida
+        meal_completions = []
+
+        # Obtener todas las comidas del día con sus tipos
+        meals_of_day = db.query(
+            Meal.meal_type,
+            Meal.id
+        ).filter(
+            Meal.daily_plan_id == daily_plan.id
+        ).all()
+
+        # Para cada tipo de comida presente en el día
+        meal_types_in_day = {}
+        for meal_type, meal_id in meals_of_day:
+            if meal_type not in meal_types_in_day:
+                meal_types_in_day[meal_type] = []
+            meal_types_in_day[meal_type].append(meal_id)
+
+        # Calcular completion rate por tipo
+        for meal_type, meal_ids in meal_types_in_day.items():
+            # Contar cuántos usuarios completaron AL MENOS UNA comida de este tipo hoy
+            users_completed = db.query(
+                func.count(func.distinct(UserMealCompletion.user_id))
+            ).join(
+                User, UserMealCompletion.user_id == User.id
+            ).filter(
+                UserMealCompletion.meal_id.in_(meal_ids),
+                User.gym_id == gym_id,
+                func.date(UserMealCompletion.completed_at) == today
+            ).scalar() or 0
+
+            completion_rate = (users_completed / total_participants * 100) if total_participants > 0 else 0
+
+            meal_completions.append(MealTypeCompletion(
+                meal_type=meal_type.value,
+                total_users_with_meal=total_participants,
+                users_completed=users_completed,
+                completion_rate=round(completion_rate, 1)
+            ))
+
+        # 6. Construir respuesta
+        stats = GroupCompletionStats(
+            total_participants=total_participants,
+            active_today=active_today,
+            completed_day_fully=completed_fully,
+            avg_completion_percentage=round(avg_completion, 1),
+            meal_completions=meal_completions,
+            current_day=current_day,
+            plan_id=plan_id,
+            date=datetime.combine(today, datetime.min.time())
+        )
+
+        # Cache por 5 minutos
+        if redis:
+            import json
+            await redis.setex(cache_key, 300, json.dumps(stats.dict()))
+
+        return stats

@@ -27,7 +27,8 @@ from app.schemas.nutrition import (
     NutritionPlanCreate,
     NutritionPlanUpdate,
     MealCreate,
-    MealUpdate
+    MealUpdate,
+    PlanStatus
 )
 from app.db.redis_client import get_redis_client
 from app.utils.nutrition_serializers import NutritionSerializer
@@ -835,9 +836,37 @@ class NutritionProgressRepository:
                     if days_since_start >= plan.duration_days:
                         continue  # Plan has ended
                     current_day = days_since_start + 1
+            elif plan.plan_type == PlanType.LIVE:
+                # Live plan logic - basado en fecha global del plan
+                if not plan.live_start_date:
+                    logger.warning(f"Plan LIVE {plan.id} sin live_start_date")
+                    continue
+
+                days_since_live_start = (today - plan.live_start_date.date()).days
+
+                if days_since_live_start < 0:
+                    # Plan no ha empezado
+                    status = PlanStatus.NOT_STARTED
+                    current_day = 0
+                    # No incluir en resultados de hoy pero podría incluirse en dashboard
+                    continue
+                elif days_since_live_start >= plan.duration_days:
+                    # Plan terminado
+                    status = PlanStatus.FINISHED
+                    current_day = plan.duration_days
+                    continue  # No mostrar planes terminados en /today
+                else:
+                    # Plan en progreso
+                    status = PlanStatus.RUNNING
+                    current_day = days_since_live_start + 1
             else:
-                # Live plan logic
-                continue  # Skip for now, implement live plan logic separately
+                # ARCHIVED plans se tratan como TEMPLATE
+                if plan.is_recurring:
+                    current_day = (days_since_start % plan.duration_days) + 1
+                else:
+                    if days_since_start >= plan.duration_days:
+                        continue
+                    current_day = days_since_start + 1
 
             # Get daily plan for current day
             daily_plan = next(

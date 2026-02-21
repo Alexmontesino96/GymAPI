@@ -465,12 +465,45 @@ class TodayMealPlan(BaseModel):
     meals: List[MealWithIngredients] = []
     progress: Optional[UserDailyProgress] = None
     completion_percentage: float = 0.0
-    
+
     # === NUEVO: Información del plan híbrido ===
     plan: Optional[NutritionPlan] = None
     current_day: int = 0
     status: PlanStatus = PlanStatus.NOT_STARTED
     days_until_start: Optional[int] = None
+
+    # === NUEVO: Estadísticas grupales para planes LIVE ===
+    group_stats: Optional["GroupCompletionStats"] = Field(
+        None,
+        description="Estadísticas del grupo (solo para planes LIVE)"
+    )
+
+
+class MealTypeCompletion(BaseModel):
+    """Completion rate por tipo de comida específica"""
+    meal_type: str = Field(..., description="Tipo de comida (breakfast, lunch, dinner, etc.)")
+    total_users_with_meal: int = Field(..., description="Total de usuarios que tienen esta comida en su plan")
+    users_completed: int = Field(..., description="Usuarios que completaron al menos una comida de este tipo")
+    completion_rate: float = Field(..., ge=0, le=100, description="Porcentaje de completación (0-100)")
+
+
+class GroupCompletionStats(BaseModel):
+    """Estadísticas de progreso grupal para planes LIVE"""
+    total_participants: int = Field(..., description="Total de usuarios siguiendo el plan activamente")
+    active_today: int = Field(..., description="Usuarios que reportaron progreso hoy")
+    completed_day_fully: int = Field(..., description="Usuarios con 100% del día completo")
+    avg_completion_percentage: float = Field(..., ge=0, le=100, description="Promedio de completación del grupo")
+
+    # Breakdown detallado por tipo de comida
+    meal_completions: List[MealTypeCompletion] = Field(
+        default_factory=list,
+        description="Completion rates por cada tipo de comida del día"
+    )
+
+    # Metadata
+    current_day: int = Field(..., description="Día actual del plan (1-N)")
+    plan_id: int = Field(..., description="ID del plan nutricional")
+    date: datetime = Field(..., description="Fecha de las estadísticas")
 
 
 class WeeklyNutritionSummary(BaseModel):
@@ -675,4 +708,5 @@ class AIGenerationResponse(BaseModel):
 NutritionPlanWithDetails.model_rebuild()
 DailyNutritionPlanWithMeals.model_rebuild()
 DailyNutritionPlanForDetails.model_rebuild()
-MealWithIngredients.model_rebuild() 
+MealWithIngredients.model_rebuild()
+TodayMealPlan.model_rebuild() 
