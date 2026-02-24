@@ -289,35 +289,62 @@ async def generate_plan_with_ai(
     - Adaptar planes a restricciones dietéticas
 
     **Campos Requeridos:**
-    - `prompt`: Descripción del plan deseado (10-2000 caracteres)
+    - `title`: Título del plan (3-200 caracteres)
     - `duration_days`: Duración en días (7-30)
     - `goal`: Objetivo nutricional (weight_loss, muscle_gain, etc.)
     - `target_calories`: Calorías objetivo (1200-5000)
 
     **Campos Opcionales:**
+    - `plan_type`: Tipo de plan - "template" (individual) o "live" (grupal) [default: "template"]
+    - `live_start_date`: Fecha de inicio (REQUERIDO si plan_type="live", ej: "2026-03-01T00:00:00Z")
+    - `prompt`: Instrucciones adicionales para personalizar el plan
     - `user_context`: Contexto del usuario (edad, peso, altura, etc.)
     - `dietary_restrictions`: Lista de restricciones (vegetarian, vegan, etc.)
     - `allergies`: Lista de alergias alimentarias
-    - `preferences`: Preferencias adicionales
+    - `meals_per_day`: Número de comidas (3-6, default: 5)
+    - `difficulty_level`: Dificultad de recetas (beginner, intermediate, advanced)
+    - `budget_level`: Nivel de presupuesto (economic, medium, premium)
 
     **Permisos:**
     - 👨‍⚕️ Solo trainers y administradores pueden generar con IA
     - 💰 Costo estimado: $0.002 USD por plan
 
-    **Ejemplo de Request:**
+    **Ejemplo de Request (Plan TEMPLATE):**
     ```json
     {
-        "prompt": "Plan para pérdida de peso de 1800 calorías, vegetariano, con énfasis en proteínas vegetales",
-        "duration_days": 7,
+        "title": "Plan Pérdida de Peso Vegetariano",
+        "plan_type": "template",
+        "duration_days": 14,
         "goal": "weight_loss",
         "target_calories": 1800,
+        "meals_per_day": 5,
+        "difficulty_level": "beginner",
+        "budget_level": "medium",
         "dietary_restrictions": ["vegetarian"],
+        "prompt": "Énfasis en proteínas vegetales, evitar soja",
         "user_context": {
             "age": 30,
             "weight": 80,
             "height": 175,
             "activity_level": "moderate"
         }
+    }
+    ```
+
+    **Ejemplo de Request (Plan LIVE - Challenge Grupal):**
+    ```json
+    {
+        "title": "Challenge 21 Días Detox",
+        "plan_type": "live",
+        "live_start_date": "2026-03-01T00:00:00Z",
+        "duration_days": 21,
+        "goal": "weight_loss",
+        "target_calories": 1500,
+        "meals_per_day": 5,
+        "difficulty_level": "intermediate",
+        "dietary_restrictions": ["gluten_free"],
+        "prompt": "Plan detox con jugos verdes y eliminación de procesados"
+    }
     }
     ```
 

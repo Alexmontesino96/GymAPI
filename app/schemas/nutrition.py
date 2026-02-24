@@ -573,6 +573,16 @@ class AIGenerationRequest(BaseModel):
     target_calories: int = Field(..., ge=1200, le=5000, description="Calorías diarias objetivo")
     duration_days: int = Field(7, ge=7, le=30, description="Duración del plan en días")
 
+    # ===== NUEVO: Soporte para planes LIVE =====
+    plan_type: Optional[PlanType] = Field(
+        PlanType.TEMPLATE,
+        description="Tipo de plan: 'template' (individual), 'live' (grupal con fecha fija)"
+    )
+    live_start_date: Optional[datetime] = Field(
+        None,
+        description="Fecha de inicio para planes LIVE (requerido si plan_type='live')"
+    )
+
     # Configuración del plan
     difficulty_level: Optional[DifficultyLevel] = Field(DifficultyLevel.BEGINNER, description="Nivel de dificultad de las recetas")
     budget_level: Optional[BudgetLevel] = Field(BudgetLevel.MEDIUM, description="Nivel de presupuesto")
@@ -650,6 +660,18 @@ class AIGenerationRequest(BaseModel):
                 normalized.append(str(restriction))
 
         return normalized
+
+    @model_validator(mode="after")
+    def validate_live_plan_requirements(self):
+        """Valida que planes LIVE tengan fecha de inicio."""
+        if self.plan_type == PlanType.LIVE and not self.live_start_date:
+            raise ValueError("Los planes LIVE requieren 'live_start_date'. Especifica la fecha de inicio del plan grupal.")
+
+        # Validar que planes TEMPLATE no tengan live_start_date
+        if self.plan_type == PlanType.TEMPLATE and self.live_start_date:
+            raise ValueError("Los planes TEMPLATE no deben tener 'live_start_date'. Solo los planes LIVE la requieren.")
+
+        return self
 
     @model_validator(mode="after")
     def compute_macro_targets(self):

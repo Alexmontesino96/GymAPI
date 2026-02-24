@@ -332,7 +332,10 @@ PERFIL DEL USUARIO:
                 is_public=True,
                 creator_id=creator_id,
                 gym_id=gym_id,
-                plan_type=PlanType.TEMPLATE
+                # Soporte para planes LIVE
+                plan_type=request.plan_type if hasattr(request, 'plan_type') else PlanType.TEMPLATE,
+                live_start_date=request.live_start_date if hasattr(request, 'live_start_date') and request.plan_type == PlanType.LIVE else None,
+                is_live_active=False if request.plan_type == PlanType.LIVE else None
             )
 
             # Si hay datos de días generados, podemos ajustar los macros basándonos en el promedio real
@@ -970,7 +973,10 @@ Solo JSON válido."""
             is_public=True,
             creator_id=creator_id,
             gym_id=gym_id,
-            plan_type=PlanType.TEMPLATE
+            # Soporte para planes LIVE
+            plan_type=request.plan_type if hasattr(request, 'plan_type') else PlanType.TEMPLATE,
+            live_start_date=request.live_start_date if hasattr(request, 'live_start_date') and request.plan_type == PlanType.LIVE else None,
+            is_live_active=False if request.plan_type == PlanType.LIVE else None
         )
         db.add(nutrition_plan)
         db.flush()
