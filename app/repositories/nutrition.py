@@ -806,9 +806,12 @@ class NutritionProgressRepository:
         """
         today = date.today()
 
-        # Get active followed plans with eager loading
+        # Get active followed plans with eager loading (including ingredients)
         followed_plans = db.query(NutritionPlanFollower).options(
-            joinedload(NutritionPlanFollower.plan).selectinload(NutritionPlan.daily_plans).selectinload(DailyNutritionPlan.meals)
+            joinedload(NutritionPlanFollower.plan)
+                .selectinload(NutritionPlan.daily_plans)
+                .selectinload(DailyNutritionPlan.meals)
+                .selectinload(Meal.ingredients)
         ).filter(
             NutritionPlanFollower.user_id == user_id,
             NutritionPlanFollower.gym_id == gym_id,
@@ -822,6 +825,11 @@ class NutritionProgressRepository:
             'date': today,
             'plans': []
         }
+
+        # OPTIMIZATION: Pre-calculate daily plans and collect all meal IDs
+        # to batch load completions in a single query
+        plans_data = []  # Store (follower, plan, current_day, daily_plan)
+        all_meal_ids = []
 
         for follower in followed_plans:
             plan = follower.plan
@@ -869,7 +877,7 @@ class NutritionProgressRepository:
                         continue
                     current_day = days_since_start + 1
 
-            # Get daily plan for current day
+            # Get daily plan for current day (from already loaded data)
             daily_plan = next(
                 (dp for dp in plan.daily_plans if dp.day_number == current_day),
                 None
@@ -878,16 +886,22 @@ class NutritionProgressRepository:
             if not daily_plan:
                 continue
 
-            # Get meal completions for today
-            completions = db.query(UserMealCompletion).filter(
-                UserMealCompletion.user_id == user_id,
-                UserMealCompletion.meal_id.in_([m.id for m in daily_plan.meals]),
-                func.date(UserMealCompletion.completed_at) == today
-            ).all()
+            # Store plan data and collect meal IDs
+            plans_data.append((follower, plan, current_day, daily_plan))
+            all_meal_ids.extend([m.id for m in daily_plan.meals])
 
-            completion_map = {c.meal_id: c for c in completions}
+        # OPTIMIZATION: Batch load ALL completions in a SINGLE query
+        all_completions = db.query(UserMealCompletion).filter(
+            UserMealCompletion.user_id == user_id,
+            UserMealCompletion.meal_id.in_(all_meal_ids),
+            func.date(UserMealCompletion.completed_at) == today
+        ).all() if all_meal_ids else []
 
-            # Build response
+        # Create completion map for fast lookup
+        completion_map = {c.meal_id: c for c in all_completions}
+
+        # Build response using pre-calculated data (no additional queries)
+        for follower, plan, current_day, daily_plan in plans_data:
             plan_data = {
                 'plan_id': plan.id,
                 'plan_name': plan.name,

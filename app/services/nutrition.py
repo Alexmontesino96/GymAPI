@@ -700,7 +700,79 @@ class NutritionService:
             self.db.commit()
         
         return plan
-    
+
+    def batch_update_live_plan_statuses(
+        self,
+        plan_ids: List[int],
+        gym_id: int
+    ) -> Dict[int, NutritionPlan]:
+        """
+        Actualizar múltiples planes live en UNA SOLA transacción (batch update).
+
+        OPTIMIZATION: Reduce N queries + N commits to 1 query + 1 commit
+
+        Args:
+            plan_ids: Lista de IDs de planes live a actualizar
+            gym_id: ID del gimnasio
+
+        Returns:
+            Dict mapeando plan_id → NutritionPlan actualizado
+        """
+        if not plan_ids:
+            return {}
+
+        # UNA QUERY para obtener todos los planes LIVE
+        plans = self.db.query(NutritionPlan).filter(
+            NutritionPlan.id.in_(plan_ids),
+            NutritionPlan.gym_id == gym_id,
+            NutritionPlan.plan_type == PlanType.LIVE
+        ).all()
+
+        today = datetime.now()
+        updated_plans = {}
+        needs_commit = False
+
+        for plan in plans:
+            if not plan.live_start_date:
+                updated_plans[plan.id] = plan
+                continue
+
+            should_be_active = False
+            should_be_finished = False
+
+            if today >= plan.live_start_date:
+                if plan.is_recurring:
+                    should_be_active = True
+                else:
+                    end_date = plan.live_start_date + timedelta(days=plan.duration_days)
+                    if today >= end_date:
+                        should_be_finished = True
+                    else:
+                        should_be_active = True
+
+            # Actualizar estado si es necesario
+            if should_be_finished and plan.is_live_active:
+                plan.is_live_active = False
+                plan.live_end_date = plan.live_start_date + timedelta(days=plan.duration_days)
+                plan.updated_at = datetime.utcnow()
+                needs_commit = True
+                # Trigger archivado automático
+                self._auto_archive_finished_live_plan(plan)
+
+            elif should_be_active and not plan.is_live_active:
+                plan.is_live_active = True
+                plan.updated_at = datetime.utcnow()
+                needs_commit = True
+
+            updated_plans[plan.id] = plan
+
+        # UN SOLO COMMIT para todos los cambios
+        if needs_commit:
+            self.db.commit()
+            logger.info(f"Batch updated {len(updated_plans)} live plans for gym {gym_id}")
+
+        return updated_plans
+
     def create_live_nutrition_plan(
         self, 
         plan_data: NutritionPlanCreate, 
@@ -746,19 +818,26 @@ class NutritionService:
         return plan
     
     def get_hybrid_today_meal_plan(self, user_id: int, gym_id: int) -> TodayMealPlan:
-        """Obtener el plan de comidas para hoy usando lógica híbrida"""
+        """
+        Obtener el plan de comidas para hoy usando lógica híbrida.
+
+        OPTIMIZED: Batch loading to reduce queries from 11+ to 3
+        """
         today = datetime.now().date()
-        
-        # Buscar planes que el usuario está siguiendo
+
+        # OPTIMIZATION: Eager loading completo (daily_plans + meals + ingredients)
         followed_plans_query = self.db.query(NutritionPlanFollower).options(
             joinedload(NutritionPlanFollower.plan)
+                .selectinload(NutritionPlan.daily_plans)
+                .selectinload(DailyNutritionPlan.meals)
+                .selectinload(Meal.ingredients)
         ).filter(
             NutritionPlanFollower.user_id == user_id,
             NutritionPlanFollower.is_active == True
         )
-        
+
         followed_plans = followed_plans_query.all()
-        
+
         if not followed_plans:
             return TodayMealPlan(
                 date=datetime.combine(today, datetime.min.time()),
@@ -767,41 +846,43 @@ class NutritionService:
                 current_day=0,
                 status=PlanStatus.NOT_STARTED
             )
-        
-        # Encontrar el plan que tiene contenido para hoy
+
+        # OPTIMIZATION: Batch update de planes LIVE (1 query + 1 commit en lugar de N)
+        live_plan_ids = [f.plan_id for f in followed_plans if f.plan.plan_type == PlanType.LIVE]
+        if live_plan_ids:
+            updated_live_plans = self.batch_update_live_plan_statuses(live_plan_ids, gym_id)
+            # Reemplazar plans con versiones actualizadas
+            for follower in followed_plans:
+                if follower.plan_id in updated_live_plans:
+                    follower.plan = updated_live_plans[follower.plan_id]
+
+        # OPTIMIZATION: Batch loading de completions (1 query en lugar de N)
+        all_completions = self.db.query(UserMealCompletion).filter(
+            UserMealCompletion.user_id == user_id,
+            func.date(UserMealCompletion.completed_at) == today
+        ).all()
+        completion_ids = {c.meal_id for c in all_completions}
+
+        # Encontrar el plan que tiene contenido para hoy (usando datos ya cargados)
         for plan_follower in followed_plans:
-            plan = plan_follower.plan
-            
-            # Actualizar estado de planes live
-            if plan.plan_type == PlanType.LIVE:
-                plan = self.update_live_plan_status(plan.id, gym_id)
-            
+            plan = plan_follower.plan  # Ya actualizado y con eager loading
+
             # Calcular día actual y estado
             current_day, status = self.get_current_plan_day(plan, plan_follower)
-            
+
             if current_day > 0:  # Plan tiene contenido para hoy
-                # Buscar el plan diario correspondiente
-                daily_plan = self.db.query(DailyNutritionPlan).options(
-                    selectinload(DailyNutritionPlan.meals).selectinload(Meal.ingredients)
-                ).filter(
-                    DailyNutritionPlan.nutrition_plan_id == plan.id,
-                    DailyNutritionPlan.day_number == current_day
-                ).first()
-                
+                # Buscar daily_plan en MEMORIA (ya cargado con selectinload)
+                daily_plan = next(
+                    (dp for dp in plan.daily_plans if dp.day_number == current_day),
+                    None
+                )
+
                 if daily_plan:
-                    # Obtener completaciones del usuario para hoy
-                    completions = self.db.query(UserMealCompletion).filter(
-                        UserMealCompletion.user_id == user_id,
-                        func.date(UserMealCompletion.completed_at) == today
-                    ).all()
-                    
-                    completion_ids = {c.meal_id for c in completions}
-                    
-                    # Calcular porcentaje de completación
+                    # Calcular porcentaje de completación (usando completion_ids ya cargado)
                     total_meals = len(daily_plan.meals)
                     completed_meals = len([m for m in daily_plan.meals if m.id in completion_ids])
                     completion_percentage = (completed_meals / total_meals * 100) if total_meals > 0 else 0
-                    
+
                     return TodayMealPlan(
                         date=datetime.combine(today, datetime.min.time()),
                         daily_plan=daily_plan,
@@ -811,16 +892,16 @@ class NutritionService:
                         current_day=current_day,
                         status=status
                     )
-        
+
         # Si llegamos aquí, ningún plan tiene contenido para hoy
         # Buscar el próximo plan que va a empezar
         for plan_follower in followed_plans:
             plan = plan_follower.plan
             current_day, status = self.get_current_plan_day(plan, plan_follower)
-            
+
             if status == PlanStatus.NOT_STARTED:
                 days_until_start = self.get_days_until_start(plan)
-                
+
                 return TodayMealPlan(
                     date=datetime.combine(today, datetime.min.time()),
                     meals=[],
@@ -830,7 +911,7 @@ class NutritionService:
                     status=status,
                     days_until_start=days_until_start
                 )
-        
+
         # Default: sin planes activos
         return TodayMealPlan(
             date=datetime.combine(today, datetime.min.time()),
@@ -841,58 +922,79 @@ class NutritionService:
         )
     
     def get_hybrid_dashboard(self, user_id: int, gym_id: int) -> NutritionDashboardHybrid:
-        """Obtener dashboard nutricional híbrido categorizado por tipos de plan"""
-        
-        # Obtener planes que sigue el usuario
+        """
+        Obtener dashboard nutricional híbrido categorizado por tipos de plan.
+
+        OPTIMIZED: Batch loading to reduce queries from 15+ to 4
+        """
+
+        # OPTIMIZATION: Eager loading de followed plans con daily_plans
         followed_plans_query = self.db.query(NutritionPlanFollower).options(
             joinedload(NutritionPlanFollower.plan)
+                .selectinload(NutritionPlan.daily_plans)
         ).filter(
             NutritionPlanFollower.user_id == user_id,
             NutritionPlanFollower.is_active == True
         )
-        
+
         followed_plans = followed_plans_query.all()
-        
+
+        # OPTIMIZATION: Batch update de planes LIVE seguidos (1 query + 1 commit)
+        live_followed_plan_ids = [f.plan_id for f in followed_plans if f.plan.plan_type == PlanType.LIVE]
+        if live_followed_plan_ids:
+            updated_live_plans = self.batch_update_live_plan_statuses(live_followed_plan_ids, gym_id)
+            # Reemplazar plans con versiones actualizadas
+            for follower in followed_plans:
+                if follower.plan_id in updated_live_plans:
+                    follower.plan = updated_live_plans[follower.plan_id]
+
         template_plans = []
         live_plans = []
-        
+
         for follower in followed_plans:
-            plan = follower.plan
-            
-            # Actualizar estado si es live
-            if plan.plan_type == PlanType.LIVE:
-                plan = self.update_live_plan_status(plan.id, gym_id)
-            
+            plan = follower.plan  # Ya actualizado si es LIVE
+
             # Calcular día actual y estado
             current_day, status = self.get_current_plan_day(plan, follower)
-            
+
             # Agregar campos calculados
             plan.current_day = current_day
             plan.status = status
             plan.days_until_start = self.get_days_until_start(plan)
-            
+
             # Categorizar por tipo
             if plan.plan_type == PlanType.LIVE:
                 live_plans.append(plan)
             else:  # TEMPLATE o ARCHIVED
                 template_plans.append(plan)
-        
+
         # Obtener planes disponibles (públicos del gimnasio que no sigue)
         followed_plan_ids = [f.plan_id for f in followed_plans]
-        
-        available_plans_query = self.db.query(NutritionPlan).filter(
+
+        # OPTIMIZATION: Eager loading de available plans también
+        available_plans_query = self.db.query(NutritionPlan).options(
+            selectinload(NutritionPlan.daily_plans)
+        ).filter(
             NutritionPlan.gym_id == gym_id,
             NutritionPlan.is_active == True,
             NutritionPlan.is_public == True,
             ~NutritionPlan.id.in_(followed_plan_ids) if followed_plan_ids else True
         ).limit(10)  # Limitar para performance
-        
+
         available_plans = available_plans_query.all()
-        
-        # Calcular estado para planes disponibles
+
+        # OPTIMIZATION: Batch update de planes LIVE disponibles (1 query + 1 commit)
+        live_available_plan_ids = [p.id for p in available_plans if p.plan_type == PlanType.LIVE]
+        if live_available_plan_ids:
+            updated_available_live_plans = self.batch_update_live_plan_statuses(live_available_plan_ids, gym_id)
+            # Reemplazar con versiones actualizadas
+            for i, plan in enumerate(available_plans):
+                if plan.id in updated_available_live_plans:
+                    available_plans[i] = updated_available_live_plans[plan.id]
+
+        # Calcular estado para planes disponibles (usando datos ya cargados)
         for plan in available_plans:
             if plan.plan_type == PlanType.LIVE:
-                plan = self.update_live_plan_status(plan.id, gym_id)
                 current_day, status = self.get_current_plan_day(plan)
                 plan.current_day = current_day
                 plan.status = status
