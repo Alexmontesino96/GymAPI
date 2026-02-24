@@ -266,13 +266,14 @@ class NutritionPlanFollower(Base):
     Relación entre usuario y plan nutricional que sigue.
     """
     __tablename__ = "nutrition_plan_followers"
-    
+
     id = Column(Integer, primary_key=True, index=True)
-    
+
     # Relaciones
     user_id = Column(Integer, ForeignKey("user.id"), nullable=False, index=True)
     plan_id = Column(Integer, ForeignKey("nutrition_plans.id"), nullable=False, index=True)
-    
+    gym_id = Column(Integer, ForeignKey("gyms.id"), nullable=False, index=True)  # Multi-tenant support
+
     # Estado del seguimiento
     is_active = Column(Boolean, default=True, index=True)
     start_date = Column(DateTime, default=datetime.utcnow, nullable=False)
@@ -291,9 +292,10 @@ class NutritionPlanFollower(Base):
     # Relaciones ORM
     user = relationship("User", back_populates="followed_nutrition_plans")
     plan = relationship("NutritionPlan", back_populates="followers")
-    
+    gym = relationship("Gym")
+
     def __repr__(self):
-        return f"<NutritionPlanFollower(user_id={self.user_id}, plan_id={self.plan_id})>"
+        return f"<NutritionPlanFollower(user_id={self.user_id}, plan_id={self.plan_id}, gym_id={self.gym_id})>"
 
 
 class UserDailyProgress(Base):
