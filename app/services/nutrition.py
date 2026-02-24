@@ -446,7 +446,8 @@ class NutritionService:
         
         db_follower = NutritionPlanFollower(
             plan_id=plan_id,
-            user_id=user_id
+            user_id=user_id,
+            gym_id=gym_id  # Multi-tenant support
         )
         
         self.db.add(db_follower)

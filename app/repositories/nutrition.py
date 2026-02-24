@@ -645,6 +645,7 @@ class PlanFollowerRepository(BaseRepository):
         follower = NutritionPlanFollower(
             user_id=user_id,
             plan_id=plan_id,
+            gym_id=gym_id,  # Multi-tenant support
             start_date=start_date or datetime.utcnow(),
             is_active=True
         )
