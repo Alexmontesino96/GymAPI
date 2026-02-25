@@ -109,9 +109,14 @@ class NutritionSerializer:
         """Serialize a daily nutrition plan to dict."""
         data = {
             'id': daily_plan.id,
-            'plan_id': daily_plan.plan_id,
+            'nutrition_plan_id': daily_plan.nutrition_plan_id,  # Fixed: was 'plan_id'
             'day_number': daily_plan.day_number,
-            'day_name': daily_plan.day_name,
+            'planned_date': daily_plan.planned_date.isoformat() if daily_plan.planned_date else None,
+            'total_calories': daily_plan.total_calories,
+            'total_protein_g': daily_plan.total_protein_g,
+            'total_carbs_g': daily_plan.total_carbs_g,
+            'total_fat_g': daily_plan.total_fat_g,
+            'is_published': daily_plan.is_published,
             'notes': daily_plan.notes,
             'created_at': daily_plan.created_at.isoformat() if daily_plan.created_at else None,
             'updated_at': daily_plan.updated_at.isoformat() if daily_plan.updated_at else None
@@ -135,14 +140,15 @@ class NutritionSerializer:
             'meal_type': meal.meal_type.value if meal.meal_type else None,
             'description': meal.description,
             'calories': float(meal.calories) if meal.calories else None,
-            'protein': float(meal.protein) if meal.protein else None,
-            'carbs': float(meal.carbs) if meal.carbs else None,
-            'fat': float(meal.fat) if meal.fat else None,
-            'fiber': float(meal.fiber) if meal.fiber else None,
-            'order': meal.order,
-            'instructions': meal.instructions,
-            'prep_time_minutes': meal.prep_time_minutes,
-            'notes': meal.notes,
+            'protein_g': float(meal.protein_g) if meal.protein_g else None,  # Fixed: was 'protein'
+            'carbs_g': float(meal.carbs_g) if meal.carbs_g else None,  # Fixed: was 'carbs'
+            'fat_g': float(meal.fat_g) if meal.fat_g else None,  # Fixed: was 'fat'
+            'fiber_g': float(meal.fiber_g) if meal.fiber_g else None,  # Fixed: was 'fiber'
+            'order_in_day': meal.order_in_day,  # Fixed: was 'order'
+            'cooking_instructions': meal.cooking_instructions,  # Fixed: was 'instructions'
+            'preparation_time_minutes': meal.preparation_time_minutes,  # Fixed: was 'prep_time_minutes'
+            'image_url': meal.image_url,
+            'video_url': meal.video_url,
             'created_at': meal.created_at.isoformat() if meal.created_at else None,
             'updated_at': meal.updated_at.isoformat() if meal.updated_at else None
         }
@@ -162,12 +168,14 @@ class NutritionSerializer:
             'id': ingredient.id,
             'meal_id': ingredient.meal_id,
             'name': ingredient.name,
-            'amount': float(ingredient.amount) if ingredient.amount else None,
+            'quantity': float(ingredient.quantity) if ingredient.quantity else None,  # Fixed: was 'amount'
             'unit': ingredient.unit,
-            'calories': float(ingredient.calories) if ingredient.calories else None,
-            'protein': float(ingredient.protein) if ingredient.protein else None,
-            'carbs': float(ingredient.carbs) if ingredient.carbs else None,
-            'fat': float(ingredient.fat) if ingredient.fat else None
+            'alternatives': ingredient.alternatives,
+            'is_optional': ingredient.is_optional,
+            'calories_per_serving': float(ingredient.calories_per_serving) if ingredient.calories_per_serving else None,  # Fixed: was 'calories'
+            'protein_per_serving': float(ingredient.protein_per_serving) if ingredient.protein_per_serving else None,  # Fixed: was 'protein'
+            'carbs_per_serving': float(ingredient.carbs_per_serving) if ingredient.carbs_per_serving else None,  # Fixed: was 'carbs'
+            'fat_per_serving': float(ingredient.fat_per_serving) if ingredient.fat_per_serving else None  # Fixed: was 'fat'
         }
 
     @staticmethod
