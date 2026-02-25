@@ -200,6 +200,71 @@ class NutritionPlanRepository(BaseRepository):
         plans = base_query.order_by(NutritionPlan.updated_at.desc()).offset(skip).limit(limit).all()
         return plans, total
 
+    async def get_public_plans_with_total_cached(
+        self,
+        db: Session,
+        gym_id: int,
+        filters: Optional[Dict[str, Any]] = None,
+        skip: int = 0,
+        limit: int = 20,
+        redis_client = None
+    ) -> (List[NutritionPlan], int):
+        """
+        Get public plans with caching support.
+
+        Cache key includes filters hash for proper cache isolation per filter combination.
+        TTL: 600s (10 minutos)
+
+        OPTIMIZATION: Reduce repeated list loads with pagination from N queries to cache hit
+        """
+        import hashlib
+
+        # Create cache key with filters hash
+        filters_str = json.dumps(filters, sort_keys=True) if filters else "{}"
+        filters_hash = hashlib.md5(filters_str.encode()).hexdigest()[:8]
+        page_num = (skip // limit) + 1 if limit > 0 else 1
+        cache_key = f"gym:{gym_id}:plans:page:{page_num}:limit:{limit}:filters:{filters_hash}"
+
+        # Try to get Redis client
+        if redis_client is None:
+            try:
+                redis_client = await get_redis_client()
+            except Exception as e:
+                logger.warning(f"Could not get Redis client: {e}")
+                redis_client = None
+
+        # Try cache first
+        if redis_client:
+            try:
+                cached = await redis_client.get(cache_key)
+                if cached:
+                    logger.debug(f"Cache hit for plans list page {page_num}")
+                    cached_data = json.loads(cached)
+                    # Deserializar plans
+                    plans = [NutritionSerializer.deserialize_plan(p) for p in cached_data['plans']]
+                    total = cached_data['total']
+                    return plans, total
+            except Exception as e:
+                logger.warning(f"Redis cache read error: {e}")
+
+        # Fetch from database
+        plans, total = self.get_public_plans_with_total(db, gym_id, filters, skip, limit)
+
+        # Cache the result
+        if redis_client and plans:
+            try:
+                serialized_plans = [NutritionSerializer.serialize_plan(p, include_relations=False) for p in plans]
+                cached_data = {
+                    'plans': serialized_plans,
+                    'total': total
+                }
+                await redis_client.setex(cache_key, 600, json.dumps(cached_data))
+                logger.debug(f"Cached plans list page {page_num}")
+            except Exception as e:
+                logger.warning(f"Redis cache write error: {e}")
+
+        return plans, total
+
     def get_plans_by_creator(
         self,
         db: Session,

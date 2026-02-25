@@ -24,6 +24,8 @@ from app.schemas.nutrition import (
     TodayMealPlan, WeeklyNutritionSummary, UserNutritionDashboard, NutritionAnalytics,
     PlanStatus, ArchivePlanRequest, NutritionDashboardHybrid
 )
+from app.db.redis_client import get_redis_client
+from app.utils.nutrition_serializers import NutritionSerializer
 
 logger = logging.getLogger(__name__)
 
@@ -1014,7 +1016,55 @@ class NutritionService:
             completion_streak=0,  # TODO: implementar
             weekly_progress=weekly_progress
         )
-    
+
+    async def get_hybrid_dashboard_cached(
+        self,
+        user_id: int,
+        gym_id: int,
+        redis_client = None
+    ) -> NutritionDashboardHybrid:
+        """
+        Obtener dashboard con cache Redis.
+
+        TTL: 600s (10 minutos) - Balance entre freshness y performance
+        Cache key: gym:{gym_id}:user:{user_id}:nutrition_dashboard
+
+        OPTIMIZATION: Reduce repeated dashboard loads from 4 queries to cache hit
+        """
+        cache_key = f"gym:{gym_id}:user:{user_id}:nutrition_dashboard"
+
+        # Try to get Redis client if not provided
+        if redis_client is None:
+            try:
+                redis_client = await get_redis_client()
+            except Exception as e:
+                logger.warning(f"Could not get Redis client: {e}")
+                redis_client = None
+
+        # Try cache first
+        if redis_client:
+            try:
+                cached = await redis_client.get(cache_key)
+                if cached:
+                    logger.debug(f"Cache hit for dashboard user {user_id}")
+                    return NutritionSerializer.deserialize_dashboard(cached)
+            except Exception as e:
+                logger.warning(f"Redis cache read error: {e}")
+
+        # Fetch from database (usar método optimizado)
+        dashboard = self.get_hybrid_dashboard(user_id, gym_id)
+
+        # Cache the result
+        if redis_client and dashboard:
+            try:
+                serialized = NutritionSerializer.serialize_dashboard(dashboard)
+                await redis_client.setex(cache_key, 600, serialized)  # TTL 10 min
+                logger.debug(f"Cached dashboard for user {user_id}")
+            except Exception as e:
+                logger.warning(f"Redis cache write error: {e}")
+
+        return dashboard
+
     def _auto_archive_finished_live_plan(self, plan: NutritionPlan):
         """Crear automáticamente una versión archivada de un plan live terminado"""
         try:

@@ -243,3 +243,122 @@ class NutritionSerializer:
         if isinstance(data, str):
             return json.loads(data)
         return data
+
+    @staticmethod
+    def serialize_dashboard(dashboard) -> str:
+        """
+        Serialize NutritionDashboardHybrid to JSON string.
+
+        Args:
+            dashboard: NutritionDashboardHybrid object
+
+        Returns:
+            JSON string representation
+        """
+        try:
+            data = {
+                'template_plans': [
+                    NutritionSerializer._serialize_plan_summary(plan)
+                    for plan in dashboard.template_plans
+                ],
+                'live_plans': [
+                    NutritionSerializer._serialize_plan_summary(plan)
+                    for plan in dashboard.live_plans
+                ],
+                'available_plans': [
+                    NutritionSerializer._serialize_plan_summary(plan)
+                    for plan in dashboard.available_plans
+                ],
+                'today_plan': dashboard.today_plan.dict() if dashboard.today_plan else None,
+                'completion_streak': dashboard.completion_streak,
+                'weekly_progress': dashboard.weekly_progress
+            }
+            return json.dumps(data, cls=NutritionEncoder)
+        except Exception as e:
+            logger.error(f"Error serializing dashboard: {e}")
+            raise
+
+    @staticmethod
+    def _serialize_plan_summary(plan) -> Dict:
+        """Serialize a plan summary (no deep relations)."""
+        return {
+            'id': plan.id,
+            'gym_id': plan.gym_id,
+            'creator_id': plan.creator_id,
+            'name': getattr(plan, 'name', None),
+            'title': getattr(plan, 'title', None),
+            'description': plan.description,
+            'goal': plan.goal.value if hasattr(plan, 'goal') and plan.goal else None,
+            'plan_type': plan.plan_type.value if hasattr(plan, 'plan_type') and plan.plan_type else None,
+            'duration_days': plan.duration_days,
+            'is_public': plan.is_public,
+            'is_live_active': getattr(plan, 'is_live_active', None),
+            'live_start_date': plan.live_start_date.isoformat() if getattr(plan, 'live_start_date', None) else None,
+            'current_day': getattr(plan, 'current_day', None),
+            'status': getattr(plan, 'status', None),
+            'days_until_start': getattr(plan, 'days_until_start', None),
+            'created_at': plan.created_at.isoformat() if plan.created_at else None
+        }
+
+    @staticmethod
+    def deserialize_dashboard(data: Union[str, Dict]):
+        """
+        Deserialize JSON string or dict to dashboard data.
+
+        Returns a dictionary that can be used to construct NutritionDashboardHybrid
+        """
+        if isinstance(data, str):
+            data = json.loads(data)
+
+        # Import here to avoid circular dependency
+        from app.schemas.nutrition import NutritionDashboardHybrid, TodayMealPlan
+
+        # Reconstruct TodayMealPlan if exists
+        today_plan = None
+        if data.get('today_plan'):
+            today_plan = TodayMealPlan(**data['today_plan'])
+
+        # Return dashboard object
+        return NutritionDashboardHybrid(
+            template_plans=data.get('template_plans', []),
+            live_plans=data.get('live_plans', []),
+            available_plans=data.get('available_plans', []),
+            today_plan=today_plan,
+            completion_streak=data.get('completion_streak', 0),
+            weekly_progress=data.get('weekly_progress', [])
+        )
+
+    @staticmethod
+    def serialize_analytics(analytics) -> str:
+        """
+        Serialize NutritionAnalytics to JSON string.
+
+        Args:
+            analytics: NutritionAnalytics object
+
+        Returns:
+            JSON string representation
+        """
+        try:
+            # Convert to dict using pydantic's dict method
+            data = analytics.dict() if hasattr(analytics, 'dict') else analytics
+            return json.dumps(data, cls=NutritionEncoder)
+        except Exception as e:
+            logger.error(f"Error serializing analytics: {e}")
+            raise
+
+    @staticmethod
+    def deserialize_analytics(data: Union[str, Dict]):
+        """
+        Deserialize JSON string or dict to analytics data.
+
+        Returns a NutritionAnalytics object
+        """
+        if isinstance(data, str):
+            data = json.loads(data)
+
+        # Import here to avoid circular dependency
+        from app.schemas.nutrition import NutritionAnalytics
+
+        # Return analytics object
+        return NutritionAnalytics(**data)

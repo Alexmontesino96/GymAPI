@@ -61,7 +61,7 @@ router = APIRouter()
 
 
 @router.get("/plans", response_model=NutritionPlanListResponse)
-def list_nutrition_plans(
+async def list_nutrition_plans(
     db: Session = Depends(get_db),
     current_gym: Gym = Depends(verify_gym_access),
     current_user: Auth0User = Depends(get_current_user),
@@ -155,7 +155,8 @@ def list_nutrition_plans(
     skip = (page - 1) * per_page
     limit = per_page
 
-    plans, total = service.list_nutrition_plans(
+    # OPTIMIZATION: Use cached version to reduce repeated loads
+    plans, total = await service.list_nutrition_plans_cached(
         gym_id=current_gym.id,
         filters=filters,
         skip=skip,
@@ -2479,11 +2480,10 @@ async def get_plan_analytics(
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
 
     try:
-        # Get plan analytics with performance metrics
-        analytics = await service.get_plan_analytics(
+        # OPTIMIZATION: Use cached version to reduce expensive aggregation queries
+        analytics = await service.get_plan_analytics_cached(
             plan_id=plan_id,
-            gym_id=current_gym.id,
-            requester_id=db_user.id
+            gym_id=current_gym.id
         )
         return analytics
     except NotFoundError as e:

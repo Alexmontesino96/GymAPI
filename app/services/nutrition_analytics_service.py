@@ -21,6 +21,7 @@ from app.schemas.nutrition import (
     UserNutritionDashboard
 )
 from app.db.redis_client import get_redis_client
+from app.utils.nutrition_serializers import NutritionSerializer
 
 logger = logging.getLogger(__name__)
 
@@ -107,6 +108,54 @@ class NutritionAnalyticsService:
             retention_rate=self._calculate_retention_rate(plan_id, gym_id),
             satisfaction_score=self._calculate_satisfaction_score(plan_id, gym_id)
         )
+
+        return analytics
+
+    async def get_plan_analytics_cached(
+        self,
+        plan_id: int,
+        gym_id: int,
+        redis_client = None
+    ) -> NutritionAnalytics:
+        """
+        Get plan analytics with caching.
+
+        TTL: 3600s (1 hora) - Analytics cambian poco, queries son pesadas
+        Cache key: gym:{gym_id}:plan:{plan_id}:analytics
+
+        OPTIMIZATION: Reduce expensive aggregation queries with long-lived cache
+        """
+        cache_key = f"gym:{gym_id}:plan:{plan_id}:analytics"
+
+        # Try to get Redis client
+        if redis_client is None:
+            try:
+                redis_client = await get_redis_client()
+            except Exception as e:
+                logger.warning(f"Could not get Redis client: {e}")
+                redis_client = None
+
+        # Try cache first
+        if redis_client:
+            try:
+                cached = await redis_client.get(cache_key)
+                if cached:
+                    logger.debug(f"Cache hit for analytics plan {plan_id}")
+                    return NutritionSerializer.deserialize_analytics(cached)
+            except Exception as e:
+                logger.warning(f"Redis cache read error: {e}")
+
+        # Fetch from database (método original)
+        analytics = self.get_plan_analytics(plan_id, gym_id)
+
+        # Cache the result
+        if redis_client and analytics:
+            try:
+                serialized = NutritionSerializer.serialize_analytics(analytics)
+                await redis_client.setex(cache_key, 3600, serialized)  # TTL 1 hora
+                logger.debug(f"Cached analytics for plan {plan_id}")
+            except Exception as e:
+                logger.warning(f"Redis cache write error: {e}")
 
         return analytics
 
