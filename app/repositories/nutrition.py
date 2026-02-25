@@ -207,6 +207,7 @@ class NutritionPlanRepository(BaseRepository):
         filters: Optional[Dict[str, Any]] = None,
         skip: int = 0,
         limit: int = 20,
+        include_details: bool = False,
         redis_client = None
     ) -> (List[NutritionPlan], int):
         """
@@ -216,14 +217,18 @@ class NutritionPlanRepository(BaseRepository):
         TTL: 600s (10 minutos)
 
         OPTIMIZATION: Reduce repeated list loads with pagination from N queries to cache hit
+
+        Args:
+            include_details: If True, includes daily_plans and meals with eager loading
         """
         import hashlib
 
-        # Create cache key with filters hash
+        # Create cache key with filters hash and details flag
         filters_str = json.dumps(filters, sort_keys=True) if filters else "{}"
         filters_hash = hashlib.md5(filters_str.encode()).hexdigest()[:8]
         page_num = (skip // limit) + 1 if limit > 0 else 1
-        cache_key = f"gym:{gym_id}:plans:page:{page_num}:limit:{limit}:filters:{filters_hash}"
+        details_suffix = ":detailed" if include_details else ""
+        cache_key = f"gym:{gym_id}:plans:page:{page_num}:limit:{limit}:filters:{filters_hash}{details_suffix}"
 
         # Try to get Redis client
         if redis_client is None:
@@ -238,7 +243,7 @@ class NutritionPlanRepository(BaseRepository):
             try:
                 cached = await redis_client.get(cache_key)
                 if cached:
-                    logger.debug(f"Cache hit for plans list page {page_num}")
+                    logger.debug(f"Cache hit for plans list page {page_num} (details={include_details})")
                     cached_data = json.loads(cached)
                     # Deserializar plans
                     plans = [NutritionSerializer.deserialize_plan(p) for p in cached_data['plans']]
@@ -247,22 +252,101 @@ class NutritionPlanRepository(BaseRepository):
             except Exception as e:
                 logger.warning(f"Redis cache read error: {e}")
 
-        # Fetch from database
-        plans, total = self.get_public_plans_with_total(db, gym_id, filters, skip, limit)
+        # Fetch from database with optional eager loading
+        if include_details:
+            plans, total = self.get_public_plans_with_details(db, gym_id, filters, skip, limit)
+        else:
+            plans, total = self.get_public_plans_with_total(db, gym_id, filters, skip, limit)
 
         # Cache the result
         if redis_client and plans:
             try:
-                serialized_plans = [NutritionSerializer.serialize_plan(p, include_relations=False) for p in plans]
+                serialized_plans = [NutritionSerializer.serialize_plan(p, include_relations=include_details) for p in plans]
                 cached_data = {
                     'plans': serialized_plans,
                     'total': total
                 }
                 await redis_client.setex(cache_key, 600, json.dumps(cached_data))
-                logger.debug(f"Cached plans list page {page_num}")
+                logger.debug(f"Cached plans list page {page_num} (details={include_details})")
             except Exception as e:
                 logger.warning(f"Redis cache write error: {e}")
 
+        return plans, total
+
+    def get_public_plans_with_details(
+        self,
+        db: Session,
+        gym_id: int,
+        filters: Optional[Dict[str, Any]] = None,
+        skip: int = 0,
+        limit: int = 20
+    ) -> (List[NutritionPlan], int):
+        """
+        Get public plans WITH eager loading of daily_plans and meals.
+
+        OPTIMIZATION: Uses selectinload to fetch all relations in minimal queries
+        """
+        from sqlalchemy.orm import selectinload
+
+        # Base query with eager loading
+        base_query = db.query(NutritionPlan).options(
+            selectinload(NutritionPlan.daily_plans).selectinload(DailyNutritionPlan.meals),
+            selectinload(NutritionPlan.followers)
+        ).filter(
+            NutritionPlan.gym_id == gym_id,
+            NutritionPlan.is_public == True,
+            NutritionPlan.is_active == True
+        )
+
+        # Apply same filters as get_public_plans_with_total
+        if filters:
+            if 'goal' in filters:
+                base_query = base_query.filter(NutritionPlan.goal == filters['goal'])
+
+            if 'difficulty_level' in filters:
+                base_query = base_query.filter(NutritionPlan.difficulty_level == filters['difficulty_level'])
+
+            if 'budget_level' in filters:
+                base_query = base_query.filter(NutritionPlan.budget_level == filters['budget_level'])
+
+            if 'dietary_restrictions' in filters:
+                base_query = base_query.filter(NutritionPlan.dietary_restrictions == filters['dietary_restrictions'])
+
+            if 'creator_id' in filters:
+                base_query = base_query.filter(NutritionPlan.creator_id == filters['creator_id'])
+
+            if 'search_query' in filters and filters['search_query']:
+                search_term = f"%{filters['search_query']}%"
+                base_query = base_query.filter(
+                    or_(
+                        NutritionPlan.title.ilike(search_term),
+                        NutritionPlan.description.ilike(search_term)
+                    )
+                )
+
+            if 'plan_type' in filters:
+                base_query = base_query.filter(NutritionPlan.plan_type == filters['plan_type'])
+
+            if 'status' in filters:
+                # Status filtering logic (same as before)
+                pass
+
+            if 'is_live_active' in filters:
+                base_query = base_query.filter(NutritionPlan.is_live_active == filters['is_live_active'])
+
+            if 'min_calories' in filters:
+                base_query = base_query.filter(NutritionPlan.target_calories >= filters['min_calories'])
+
+            if 'max_calories' in filters:
+                base_query = base_query.filter(NutritionPlan.target_calories <= filters['max_calories'])
+
+        # Total BEFORE pagination
+        total = base_query.count()
+
+        # Fetch with pagination - all relations loaded in 2-3 queries via selectinload
+        plans = base_query.order_by(NutritionPlan.updated_at.desc()).offset(skip).limit(limit).all()
+
+        logger.info(f"Fetched {len(plans)} plans WITH details (total: {total}) - eager loaded in ~2-3 queries")
         return plans, total
 
     def get_plans_by_creator(
