@@ -74,13 +74,13 @@ class NutritionSerializer:
                 'id': plan.id,
                 'gym_id': plan.gym_id,
                 'creator_id': plan.creator_id,
-                'name': plan.name,
+                'title': plan.title,  # Fixed: was 'name'
                 'description': plan.description,
                 'goal': plan.goal.value if plan.goal else None,
                 'target_calories': float(plan.target_calories) if plan.target_calories else None,
-                'target_protein': float(plan.target_protein) if plan.target_protein else None,
-                'target_carbs': float(plan.target_carbs) if plan.target_carbs else None,
-                'target_fat': float(plan.target_fat) if plan.target_fat else None,
+                'target_protein_g': float(plan.target_protein_g) if plan.target_protein_g else None,  # Fixed: was 'target_protein'
+                'target_carbs_g': float(plan.target_carbs_g) if plan.target_carbs_g else None,  # Fixed: was 'target_carbs'
+                'target_fat_g': float(plan.target_fat_g) if plan.target_fat_g else None,  # Fixed: was 'target_fat'
                 'duration_days': plan.duration_days,
                 'is_public': plan.is_public,
                 'is_active': plan.is_active,
