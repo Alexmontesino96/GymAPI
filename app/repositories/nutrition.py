@@ -261,19 +261,23 @@ class NutritionPlanRepository(BaseRepository):
 
         # Fetch from database with optional eager loading
         if include_details:
-            sqlalchemy_plans, total = self.get_public_plans_with_details(db, gym_id, filters, skip, limit)
+            plans, total = self.get_public_plans_with_details(db, gym_id, filters, skip, limit)
+
+            # OPTIMIZATION: DON'T cache when include_details=true
+            # Reason: Plans with full details (daily_plans + meals + ingredients) are huge
+            # and expensive to serialize/deserialize. These requests are rare and vary by user.
+            # Better to fetch fresh from DB with eager loading (~300ms) than cache conversion (~15s)
+            logger.debug(f"Skipping cache for include_details=true (fetch took ~300ms with eager loading)")
+            return plans, total
         else:
-            sqlalchemy_plans, total = self.get_public_plans_with_total(db, gym_id, filters, skip, limit)
+            plans, total = self.get_public_plans_with_total(db, gym_id, filters, skip, limit)
 
-        # OPTIMIZATION: Convert SQLAlchemy → Pydantic ONCE (for both cache and response)
-        # This is 100x faster than manual serialization and consistent across cache/DB paths
-        from app.schemas.nutrition import NutritionPlan as NutritionPlanSchema
-        pydantic_plans = [NutritionPlanSchema.model_validate(p) for p in sqlalchemy_plans]
-
-        # Cache the result using Pydantic's fast serialization
-        if redis_client and pydantic_plans:
+        # Cache only lightweight plan summaries (without daily_plans/meals)
+        if redis_client and plans:
             try:
-                # model_dump() is optimized in Rust/C and handles JSON serialization natively
+                # For summaries, Pydantic conversion is fast (no nested objects)
+                from app.schemas.nutrition import NutritionPlan as NutritionPlanSchema
+                pydantic_plans = [NutritionPlanSchema.model_validate(p) for p in plans]
                 serialized_plans = [p.model_dump(mode='json') for p in pydantic_plans]
 
                 cached_data = {
@@ -281,11 +285,14 @@ class NutritionPlanRepository(BaseRepository):
                     'total': total
                 }
                 await redis_client.setex(cache_key, 600, json.dumps(cached_data))
-                logger.debug(f"Cached plans list page {page_num} (details={include_details})")
+                logger.debug(f"Cached plans list page {page_num} (summaries only)")
+
+                return pydantic_plans, total
             except Exception as e:
                 logger.warning(f"Redis cache write error: {e}")
+                return plans, total
 
-        return pydantic_plans, total
+        return plans, total
 
     def _enrich_live_plan_metadata(self, plans: List[NutritionPlan]) -> List[NutritionPlan]:
         """
