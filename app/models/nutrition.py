@@ -5,9 +5,9 @@ Permite a entrenadores crear planes de dieta y a usuarios seguirlos.
 
 from sqlalchemy import Column, Integer, String, Text, ForeignKey, DateTime, Boolean, Float, Enum
 from sqlalchemy.orm import relationship
-from datetime import datetime
+from datetime import datetime, timedelta
 import enum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 from app.db.base_class import Base
 
@@ -135,6 +135,113 @@ class NutritionPlan(Base):
     
     def __repr__(self):
         return f"<NutritionPlan(id={self.id}, title='{self.title}', type='{self.plan_type}', goal='{self.goal}')>"
+
+    # ===== CALCULATED PROPERTIES FOR LIVE PLANS =====
+
+    @property
+    def calculated_status(self) -> Optional[str]:
+        """
+        Calcular status del plan LIVE en runtime.
+
+        Returns:
+            - None: Si no es plan LIVE o sin fecha de inicio
+            - "not_started": Plan no ha comenzado aún
+            - "running": Plan actualmente corriendo
+            - "finished": Plan terminado (no recurrente)
+        """
+        if self.plan_type != PlanType.LIVE:
+            return None
+
+        if not self.live_start_date:
+            return "not_started"
+
+        today = datetime.now()
+
+        # Plan aún no ha comenzado
+        if today < self.live_start_date:
+            return "not_started"
+
+        # Planes recurrentes siempre están corriendo una vez iniciados
+        if self.is_recurring:
+            return "running"
+
+        # Planes no recurrentes: verificar si terminaron
+        end_date = self.live_start_date + timedelta(days=self.duration_days)
+        if today >= end_date:
+            return "finished"
+
+        return "running"
+
+    @property
+    def calculated_current_day(self) -> Optional[int]:
+        """
+        Calcular día actual del plan LIVE.
+
+        Para planes recurrentes, usa módulo para ciclos infinitos.
+
+        Returns:
+            - None: Si no es LIVE, sin fecha, o no ha comenzado
+            - 1-N: Día actual dentro del plan (o ciclo actual si es recurrente)
+        """
+        if self.plan_type != PlanType.LIVE or not self.live_start_date:
+            return None
+
+        today = datetime.now()
+
+        # Plan no ha comenzado
+        if today < self.live_start_date:
+            return None
+
+        days_since_start = (today - self.live_start_date).days
+
+        if self.is_recurring:
+            # Calcular día dentro del ciclo actual (1 a duration_days)
+            current_day = (days_since_start % self.duration_days) + 1
+            return current_day
+
+        # Plan no recurrente
+        end_date = self.live_start_date + timedelta(days=self.duration_days)
+        if today >= end_date:
+            # Plan terminado, retornar último día
+            return self.duration_days
+
+        # Día 1 = primer día, Día N = último día
+        return days_since_start + 1
+
+    @property
+    def calculated_days_until_start(self) -> Optional[int]:
+        """
+        Calcular días hasta el inicio del plan LIVE.
+
+        Returns:
+            - None: Si no es LIVE o sin fecha
+            - 0: Plan ya comenzó
+            - N: Días hasta el inicio
+        """
+        if self.plan_type != PlanType.LIVE or not self.live_start_date:
+            return None
+
+        today = datetime.now()
+
+        if today >= self.live_start_date:
+            return 0
+
+        return (self.live_start_date - today).days
+
+    @property
+    def calculated_live_participants_count(self) -> int:
+        """
+        Contar participantes activos en tiempo real.
+
+        Cuenta followers con is_active=True.
+
+        Returns:
+            Número de seguidores activos del plan
+        """
+        if not hasattr(self, 'followers') or self.followers is None:
+            return 0
+
+        return len([f for f in self.followers if f.is_active])
 
 
 class DailyNutritionPlan(Base):

@@ -198,6 +198,10 @@ class NutritionPlanRepository(BaseRepository):
         total = base_query.count()
 
         plans = base_query.order_by(NutritionPlan.updated_at.desc()).offset(skip).limit(limit).all()
+
+        # OPTIMIZATION: Enrich LIVE plans with calculated metadata (status, current_day, etc.)
+        plans = self._enrich_live_plan_metadata(plans)
+
         return plans, total
 
     async def get_public_plans_with_total_cached(
@@ -283,6 +287,39 @@ class NutritionPlanRepository(BaseRepository):
 
         return pydantic_plans, total
 
+    def _enrich_live_plan_metadata(self, plans: List[NutritionPlan]) -> List[NutritionPlan]:
+        """
+        Enriquecer planes LIVE con campos calculados en runtime.
+
+        Agrega los siguientes campos usando @property del modelo:
+        - status: Estado actual del plan (not_started/running/finished)
+        - current_day: Día actual del plan (1-N, con soporte para ciclos recurrentes)
+        - days_until_start: Días hasta el inicio (0 si ya comenzó)
+        - live_participants_count: Conteo real de seguidores activos
+
+        Para planes TEMPLATE, los campos se setean en None.
+
+        Args:
+            plans: Lista de NutritionPlan (SQLAlchemy models)
+
+        Returns:
+            Lista de planes enriquecidos con metadata calculada
+        """
+        for plan in plans:
+            if plan.plan_type == PlanType.LIVE:
+                # Usar @property calculados del modelo
+                plan.status = plan.calculated_status
+                plan.current_day = plan.calculated_current_day
+                plan.days_until_start = plan.calculated_days_until_start
+                plan.live_participants_count = plan.calculated_live_participants_count
+            else:
+                # Planes TEMPLATE no tienen estos campos
+                plan.status = None
+                plan.current_day = None
+                plan.days_until_start = None
+
+        return plans
+
     def get_public_plans_with_details(
         self,
         db: Session,
@@ -355,6 +392,9 @@ class NutritionPlanRepository(BaseRepository):
 
         # Fetch with pagination - all relations loaded in 2-3 queries via selectinload
         plans = base_query.order_by(NutritionPlan.updated_at.desc()).offset(skip).limit(limit).all()
+
+        # OPTIMIZATION: Enrich LIVE plans with calculated metadata (status, current_day, etc.)
+        plans = self._enrich_live_plan_metadata(plans)
 
         logger.info(f"Fetched {len(plans)} plans WITH details (total: {total}) - eager loaded in ~2-3 queries")
         return plans, total
