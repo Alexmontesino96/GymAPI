@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 # CRÍTICO: Detectar si es Supabase Transaction Pooler
-is_supabase = "supabase" in DATABASE_URL or "pooler" in DATABASE_URL or "6543" in DATABASE_URL
+is_supabase = DATABASE_URL and ("supabase" in DATABASE_URL or "pooler" in DATABASE_URL or "6543" in DATABASE_URL)
 
 if is_supabase:
     # CONFIGURACIÓN PARA SUPABASE (Transaction Pooler)
