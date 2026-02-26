@@ -318,9 +318,10 @@ PERFIL DEL USUARIO:
                     target_fat = round(request.target_calories * 0.30 / 9, 1)      # 30% grasas
 
             # Crear plan en base de datos con macros target
+            # FIX: Usar título del usuario (request.title) en lugar del generado por IA
             nutrition_plan = NutritionPlan(
-                title=plan_data.get('title', f'Plan {request.goal.value}'),
-                description=plan_data.get('description', request.prompt[:500]),
+                title=request.title,  # SIEMPRE usar el título proporcionado por el usuario
+                description=plan_data.get('description', request.prompt[:500] if request.prompt else f"Plan de {request.goal.value}"),
                 goal=request.goal,
                 difficulty_level=DifficultyLevel(request.user_context.get('difficulty_level', 'beginner')) if request.user_context else DifficultyLevel.BEGINNER,
                 budget_level=BudgetLevel(request.user_context.get('budget_level', 'medium')) if request.user_context else BudgetLevel.MEDIUM,
