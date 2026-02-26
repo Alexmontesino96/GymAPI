@@ -102,7 +102,7 @@ class NutritionPlan(NutritionPlanBase):
     is_active: bool
     created_at: datetime
     updated_at: Optional[datetime] = None
-    
+
     # === NUEVO: Campos del sistema híbrido ===
     plan_type: PlanType
     live_start_date: Optional[datetime] = None
@@ -112,15 +112,18 @@ class NutritionPlan(NutritionPlanBase):
     original_live_plan_id: Optional[int] = None
     archived_at: Optional[datetime] = None
     original_participants_count: Optional[int] = None
-    
+
     # Campos calculados dinámicamente
     current_day: Optional[int] = None
     status: Optional[PlanStatus] = None
     days_until_start: Optional[int] = None
-    
+
     # Estadísticas opcionales
     total_followers: Optional[int] = None
     avg_satisfaction: Optional[float] = None
+
+    # OPTIMIZATION: Optional detailed relations (populated when include_details=true)
+    daily_plans: Optional[List["DailyNutritionPlanForDetails"]] = None
 
     model_config = {"from_attributes": True}
 
