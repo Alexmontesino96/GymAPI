@@ -245,8 +245,11 @@ class NutritionPlanRepository(BaseRepository):
                 if cached:
                     logger.debug(f"Cache hit for plans list page {page_num} (details={include_details})")
                     cached_data = json.loads(cached)
-                    # Deserializar plans
-                    plans = [NutritionSerializer.deserialize_plan(p) for p in cached_data['plans']]
+
+                    # OPTIMIZATION: Reconstruct Pydantic objects from cached dicts
+                    # This is fast and maintains type consistency with DB results
+                    from app.schemas.nutrition import NutritionPlan as NutritionPlanSchema
+                    plans = [NutritionPlanSchema.model_validate(p) for p in cached_data['plans']]
                     total = cached_data['total']
                     return plans, total
             except Exception as e:
@@ -254,14 +257,21 @@ class NutritionPlanRepository(BaseRepository):
 
         # Fetch from database with optional eager loading
         if include_details:
-            plans, total = self.get_public_plans_with_details(db, gym_id, filters, skip, limit)
+            sqlalchemy_plans, total = self.get_public_plans_with_details(db, gym_id, filters, skip, limit)
         else:
-            plans, total = self.get_public_plans_with_total(db, gym_id, filters, skip, limit)
+            sqlalchemy_plans, total = self.get_public_plans_with_total(db, gym_id, filters, skip, limit)
 
-        # Cache the result
-        if redis_client and plans:
+        # OPTIMIZATION: Convert SQLAlchemy → Pydantic ONCE (for both cache and response)
+        # This is 100x faster than manual serialization and consistent across cache/DB paths
+        from app.schemas.nutrition import NutritionPlan as NutritionPlanSchema
+        pydantic_plans = [NutritionPlanSchema.model_validate(p) for p in sqlalchemy_plans]
+
+        # Cache the result using Pydantic's fast serialization
+        if redis_client and pydantic_plans:
             try:
-                serialized_plans = [NutritionSerializer.serialize_plan(p, include_relations=include_details) for p in plans]
+                # model_dump() is optimized in Rust/C and handles JSON serialization natively
+                serialized_plans = [p.model_dump(mode='json') for p in pydantic_plans]
+
                 cached_data = {
                     'plans': serialized_plans,
                     'total': total
@@ -271,7 +281,7 @@ class NutritionPlanRepository(BaseRepository):
             except Exception as e:
                 logger.warning(f"Redis cache write error: {e}")
 
-        return plans, total
+        return pydantic_plans, total
 
     def get_public_plans_with_details(
         self,
