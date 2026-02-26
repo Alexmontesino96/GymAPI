@@ -500,6 +500,41 @@ def init_scheduler():
         logger.warning(f"Could not import nutrition notification jobs: {e}")
 
     # ============================================================================
+    # JOBS DE LIMPIEZA DE NUTRICIÓN (FASE 3)
+    # ============================================================================
+    try:
+        from app.services.nutrition_cleanup_service import NutritionCleanupService
+
+        def archive_finished_plans_job():
+            """
+            Job wrapper para archivar planes LIVE terminados.
+            Ejecuta el servicio de cleanup con manejo de sesiones.
+            """
+            logger.info("Running scheduled task: archive_finished_live_plans")
+            db = SessionLocal()
+            try:
+                archived_count = NutritionCleanupService.archive_finished_live_plans(db)
+                logger.info(f"Archived {archived_count} finished LIVE plans")
+            except Exception as e:
+                logger.error(f"Error in archive_finished_plans_job: {e}", exc_info=True)
+                db.rollback()
+            finally:
+                db.close()
+
+        # Archivar planes LIVE terminados - ejecutar diariamente a las 2 AM UTC
+        _scheduler.add_job(
+            archive_finished_plans_job,
+            trigger=CronTrigger(hour=2, minute=0),  # 2 AM UTC diariamente
+            id='nutrition_archive_finished_plans',
+            replace_existing=True
+        )
+
+        logger.info("Nutrition cleanup jobs added to scheduler (archive finished LIVE plans)")
+
+    except ImportError as e:
+        logger.warning(f"Could not import nutrition cleanup jobs: {e}")
+
+    # ============================================================================
     # JOBS DE ACTIVITY FEED
     # ============================================================================
     try:

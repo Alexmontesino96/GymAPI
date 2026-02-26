@@ -2978,6 +2978,117 @@ def archive_live_plan(
         raise HTTPException(status_code=403, detail=str(e))
 
 
+@router.post("/plans/{plan_id}/restart-cycle")
+def restart_recurring_plan_cycle(
+    plan_id: int = Path(..., description="ID del plan recurrente a reiniciar"),
+    db: Session = Depends(get_db),
+    current_gym: Gym = Depends(verify_gym_access),
+    current_user: Auth0User = Depends(get_current_user)
+):
+    """
+    🔄 **Reiniciar Ciclo de Plan Recurrente (FASE 4)**
+
+    **Descripción:**
+    Reinicia el ciclo de un plan LIVE recurrente, ajustando live_start_date a hoy
+    y resincronizando automáticamente las fechas de todos los daily_plans.
+
+    **Casos de Uso:**
+    - Planes semanales que se repiten indefinidamente
+    - Planes mensuales con ciclos continuos
+    - Ajustar inicio después de pausa prolongada
+
+    **Requisitos:**
+    - ✅ Plan debe ser de tipo LIVE
+    - ✅ Plan debe tener is_recurring=True
+    - ✅ Solo el creador puede reiniciar el ciclo
+    - ✅ Requiere permiso manage_nutrition
+
+    **Qué hace este endpoint:**
+    1. Valida que el plan sea LIVE y recurrente
+    2. Actualiza live_start_date a hoy (00:00:00)
+    3. Marca is_live_active=True
+    4. Resincroniza planned_date de todos los daily_plans
+    5. Recalcula current_day automáticamente (día 1 del nuevo ciclo)
+
+    **Ejemplo de Flujo:**
+    ```
+    Plan recurrente de 7 días:
+    - Antes: live_start_date = 2025-01-01, current_day = 45 (ciclo 7)
+    - Después: live_start_date = HOY, current_day = 1 (ciclo reiniciado)
+    - daily_plans[0].planned_date = HOY
+    - daily_plans[1].planned_date = HOY + 1 día
+    - daily_plans[6].planned_date = HOY + 6 días
+    ```
+
+    **Respuesta:**
+    - Plan actualizado con nueva live_start_date y campos calculados
+    - current_day = 1 (primer día del nuevo ciclo)
+    - status = "running"
+    - days_until_start = 0
+
+    **Permisos:**
+    - 🔐 Admin/Trainer con permiso manage_nutrition
+    - 🔐 Solo el creador del plan puede reiniciarlo
+    """
+    # Use specialized NutritionPlanService
+    service = NutritionPlanService(db)
+
+    # Obtener usuario local
+    db_user = user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
+    if not db_user:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+
+    try:
+        # Obtener plan con daily_plans
+        plan = service.get_nutrition_plan_with_details(plan_id, current_gym.id, user_id=db_user.id)
+
+        # Verificar permisos (solo el creador)
+        if plan.creator_id != db_user.id:
+            raise HTTPException(status_code=403, detail="Solo el creador puede reiniciar el ciclo del plan")
+
+        # Validar que sea LIVE y recurrente
+        if plan.plan_type != PlanType.LIVE:
+            raise HTTPException(status_code=400, detail="Solo planes LIVE pueden reiniciarse")
+
+        if not plan.is_recurring:
+            raise HTTPException(status_code=400, detail="Solo planes LIVE recurrentes pueden reiniciarse")
+
+        # Actualizar start date a hoy (00:00:00)
+        plan.live_start_date = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        plan.is_live_active = True
+        plan.updated_at = datetime.utcnow()
+
+        # Resincronizar fechas de daily_plans
+        service.sync_daily_plans_dates(plan)
+
+        # Commit cambios
+        db.commit()
+        db.refresh(plan)
+
+        # Enriquecer con metadata calculada
+        from app.repositories.nutrition import NutritionRepository
+        repo = NutritionRepository()
+        enriched_plans = repo._enrich_live_plan_metadata([plan])
+
+        return {
+            "message": "Ciclo reiniciado exitosamente",
+            "plan": enriched_plans[0],
+            "new_start_date": plan.live_start_date.isoformat(),
+            "current_day": enriched_plans[0].current_day,
+            "status": enriched_plans[0].status
+        }
+
+    except HTTPException:
+        raise
+    except ValidationError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except NotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error restarting plan cycle: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Error al reiniciar ciclo del plan")
+
+
 @router.get("/plans/{plan_id}/status")
 def get_plan_status(
     plan_id: int = Path(..., description="ID del plan para obtener estado actual"),

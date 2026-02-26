@@ -254,33 +254,49 @@ class NutritionService:
         return plans, total
     
     def update_nutrition_plan(
-        self, 
-        plan_id: int, 
-        plan_data: NutritionPlanUpdate, 
+        self,
+        plan_id: int,
+        plan_data: NutritionPlanUpdate,
         user_id: int,
         gym_id: int
     ) -> NutritionPlan:
-        """Actualizar un plan nutricional."""
+        """
+        Actualizar un plan nutricional.
+
+        FASE 2: Si se actualiza live_start_date en un plan LIVE, sincroniza automáticamente
+        las fechas de todos los daily_plans.
+        """
         plan = self.get_nutrition_plan(plan_id, gym_id)
-        
+
         # Verificar permisos (solo el creador puede editar)
         if plan.creator_id != user_id:
             raise PermissionError("Solo el creador puede editar este plan")
-        
-        # Actualizar campos
+
+        # Detectar si se está actualizando live_start_date
         update_data = plan_data.model_dump(exclude_unset=True, exclude={'tags'})
+        live_start_date_changed = 'live_start_date' in update_data and update_data['live_start_date'] != plan.live_start_date
+
+        # Actualizar campos
         for field, value in update_data.items():
             setattr(plan, field, value)
-        
+
         # Manejar tags especialmente
         if plan_data.tags is not None:
             plan.tags = json.dumps(plan_data.tags) if plan_data.tags else None
-        
+
         plan.updated_at = datetime.utcnow()
-        
+
         self.db.commit()
         self.db.refresh(plan)
-        
+
+        # FASE 2: Si se actualizó live_start_date en un plan LIVE, sincronizar daily_plans
+        if live_start_date_changed and plan.plan_type == PlanType.LIVE and plan.live_start_date:
+            # Recargar con daily_plans para sincronizar
+            plan = self.get_nutrition_plan_with_details(plan.id, gym_id)
+            self.sync_daily_plans_dates(plan)
+            self.db.refresh(plan)
+            logger.info(f"Auto-synced daily_plans dates for plan {plan_id} after live_start_date update")
+
         return plan
     
     def delete_nutrition_plan(self, plan_id: int, user_id: int, gym_id: int) -> bool:
@@ -775,24 +791,85 @@ class NutritionService:
 
         return updated_plans
 
+    def sync_daily_plans_dates(self, plan: NutritionPlan) -> None:
+        """
+        Sincronizar planned_date de daily_plans con live_start_date.
+
+        Calcula las fechas de cada día basándose en:
+        - live_start_date + (day_number - 1)
+
+        Se ejecuta automáticamente al:
+        - Crear plan LIVE
+        - Actualizar live_start_date de un plan existente
+        - Convertir TEMPLATE → LIVE
+
+        Args:
+            plan: NutritionPlan con daily_plans cargados
+
+        Returns:
+            None (modifica plan in-place y hace commit)
+        """
+        if plan.plan_type != PlanType.LIVE or not plan.live_start_date:
+            logger.debug(f"Plan {plan.id} no requiere sincronización de fechas (type={plan.plan_type}, has_start_date={bool(plan.live_start_date)})")
+            return
+
+        if not hasattr(plan, 'daily_plans') or not plan.daily_plans:
+            logger.warning(f"Plan {plan.id} no tiene daily_plans para sincronizar")
+            return
+
+        # Ordenar daily_plans por day_number para procesar secuencialmente
+        sorted_plans = sorted(plan.daily_plans, key=lambda dp: dp.day_number)
+
+        updated_count = 0
+        for daily_plan in sorted_plans:
+            # Calcular fecha basada en live_start_date + (day_number - 1)
+            # Día 1 = live_start_date, Día 2 = live_start_date + 1 día, etc.
+            calculated_date = plan.live_start_date + timedelta(days=daily_plan.day_number - 1)
+
+            # Solo actualizar si la fecha cambió
+            if daily_plan.planned_date != calculated_date:
+                daily_plan.planned_date = calculated_date
+                daily_plan.updated_at = datetime.utcnow()
+                updated_count += 1
+
+        if updated_count > 0:
+            self.db.commit()
+            logger.info(f"Synced {updated_count} daily_plans dates for plan {plan.id} (live_start_date: {plan.live_start_date.date()})")
+        else:
+            logger.debug(f"Plan {plan.id} daily_plans dates already in sync")
+
     def create_live_nutrition_plan(
-        self, 
-        plan_data: NutritionPlanCreate, 
-        creator_id: int, 
+        self,
+        plan_data: NutritionPlanCreate,
+        creator_id: int,
         gym_id: int
     ) -> NutritionPlan:
-        """Crear un plan nutricional tipo LIVE con validaciones especiales"""
-        
+        """
+        Crear un plan nutricional tipo LIVE con validaciones especiales.
+
+        FASE 2: Sincroniza automáticamente planned_date de daily_plans con live_start_date.
+        """
+
         if plan_data.plan_type == PlanType.LIVE:
             if not plan_data.live_start_date:
                 raise ValidationError("live_start_date es requerido para planes tipo LIVE")
-            
+
             # Validar que la fecha de inicio es futura (opcional, según reglas de negocio)
             # if plan_data.live_start_date <= datetime.now():
             #     raise ValidationError("live_start_date debe ser en el futuro")
-        
+
         # Crear el plan usando el método base
-        return self.create_nutrition_plan(plan_data, creator_id, gym_id)
+        plan = self.create_nutrition_plan(plan_data, creator_id, gym_id)
+
+        # FASE 2: Si es LIVE y tiene daily_plans, sincronizar fechas automáticamente
+        if plan.plan_type == PlanType.LIVE and plan.live_start_date:
+            # Recargar plan con daily_plans para sincronizar
+            plan = self.get_nutrition_plan_with_details(plan.id, gym_id)
+            self.sync_daily_plans_dates(plan)
+            # Refrescar después de sincronizar
+            self.db.refresh(plan)
+
+        return plan
     
     def archive_live_plan(
         self, 
