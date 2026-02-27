@@ -212,6 +212,7 @@ class NutritionPlanRepository(BaseRepository):
         skip: int = 0,
         limit: int = 20,
         include_details: bool = False,
+        max_days: int = 3,
         redis_client = None
     ) -> (List[NutritionPlan], int):
         """
@@ -224,14 +225,15 @@ class NutritionPlanRepository(BaseRepository):
 
         Args:
             include_details: If True, includes daily_plans and meals with eager loading
+            max_days: Maximum number of days to include when include_details=True (default: 3 for performance)
         """
         import hashlib
 
-        # Create cache key with filters hash and details flag
+        # Create cache key with filters hash, details flag, and max_days
         filters_str = json.dumps(filters, sort_keys=True) if filters else "{}"
         filters_hash = hashlib.md5(filters_str.encode()).hexdigest()[:8]
         page_num = (skip // limit) + 1 if limit > 0 else 1
-        details_suffix = ":detailed" if include_details else ""
+        details_suffix = f":detailed:max{max_days}" if include_details else ""
         cache_key = f"gym:{gym_id}:plans:page:{page_num}:limit:{limit}:filters:{filters_hash}{details_suffix}"
 
         # Try to get Redis client
@@ -261,13 +263,14 @@ class NutritionPlanRepository(BaseRepository):
 
         # Fetch from database with optional eager loading
         if include_details:
-            plans, total = self.get_public_plans_with_details(db, gym_id, filters, skip, limit)
+            plans, total = self.get_public_plans_with_details(db, gym_id, filters, skip, limit, max_days)
 
             # OPTIMIZATION: DON'T cache when include_details=true
             # Reason: Plans with full details (daily_plans + meals + ingredients) are huge
             # and expensive to serialize/deserialize. These requests are rare and vary by user.
             # Better to fetch fresh from DB with eager loading (~300ms) than cache conversion (~15s)
-            logger.debug(f"Skipping cache for include_details=true (fetch took ~300ms with eager loading)")
+            # However, we limit days to max_days (default: 3) to reduce serialization time
+            logger.debug(f"Skipping cache for include_details=true (fetch took ~300ms with eager loading, limited to {max_days} days)")
             return plans, total
         else:
             plans, total = self.get_public_plans_with_total(db, gym_id, filters, skip, limit)
@@ -333,12 +336,17 @@ class NutritionPlanRepository(BaseRepository):
         gym_id: int,
         filters: Optional[Dict[str, Any]] = None,
         skip: int = 0,
-        limit: int = 20
+        limit: int = 20,
+        max_days: int = 3
     ) -> (List[NutritionPlan], int):
         """
         Get public plans WITH eager loading of daily_plans and meals.
 
         OPTIMIZATION: Uses selectinload to fetch all relations in minimal queries
+
+        Args:
+            max_days: Maximum number of days to include per plan (default: 3 for performance)
+                     Limiting days drastically reduces serialization time for large plans
         """
         from sqlalchemy.orm import selectinload
 
@@ -400,10 +408,18 @@ class NutritionPlanRepository(BaseRepository):
         # Fetch with pagination - all relations loaded in 2-3 queries via selectinload
         plans = base_query.order_by(NutritionPlan.updated_at.desc()).offset(skip).limit(limit).all()
 
+        # PERFORMANCE OPTIMIZATION: Limit daily_plans to max_days to reduce serialization time
+        # For 20 plans with 7 days each = 140 daily objects. Limiting to 3 days = 60 objects (-57%)
+        # This drastically reduces Pydantic serialization time from ~15s to ~2-3s
+        for plan in plans:
+            if plan.daily_plans and len(plan.daily_plans) > max_days:
+                # Sort by day_number and keep only first max_days
+                plan.daily_plans = sorted(plan.daily_plans, key=lambda d: d.day_number)[:max_days]
+
         # OPTIMIZATION: Enrich LIVE plans with calculated metadata (status, current_day, etc.)
         plans = self._enrich_live_plan_metadata(plans)
 
-        logger.info(f"Fetched {len(plans)} plans WITH details (total: {total}) - eager loaded in ~2-3 queries")
+        logger.info(f"Fetched {len(plans)} plans WITH details (total: {total}) - eager loaded in ~2-3 queries, limited to {max_days} days/plan")
         return plans, total
 
     def get_plans_by_creator(

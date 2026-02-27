@@ -199,7 +199,8 @@ class NutritionPlanService:
         filters: Optional[NutritionPlanFilters] = None,
         skip: int = 0,
         limit: int = 20,
-        include_details: bool = False
+        include_details: bool = False,
+        max_days: int = 3
     ) -> (List[NutritionPlan], int):
         """
         List nutrition plans with Redis caching.
@@ -208,10 +209,11 @@ class NutritionPlanService:
 
         Args:
             include_details: If True, includes daily_plans and meals (eager loaded)
+            max_days: Maximum number of days to include when include_details=True (default: 3 for performance)
         """
         filter_dict = filters.model_dump(exclude_none=True) if filters else {}
         return await self.repository.get_public_plans_with_total_cached(
-            self.db, gym_id, filter_dict, skip, limit, include_details
+            self.db, gym_id, filter_dict, skip, limit, include_details, max_days
         )
 
     def update_nutrition_plan(

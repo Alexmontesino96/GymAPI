@@ -60,7 +60,12 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-@router.get("/plans", response_model=NutritionPlanListResponse)
+@router.get(
+    "/plans",
+    response_model=NutritionPlanListResponse,
+    response_model_exclude_unset=True,
+    response_model_exclude_none=True
+)
 async def list_nutrition_plans(
     db: Session = Depends(get_db),
     current_gym: Gym = Depends(verify_gym_access),
@@ -68,6 +73,7 @@ async def list_nutrition_plans(
     page: int = Query(1, ge=1, description="Número de página para paginación"),
     per_page: int = Query(20, ge=1, le=100, description="Elementos por página (máximo 100)"),
     include_details: bool = Query(False, description="Incluir daily_plans y meals en la respuesta (eager loading optimizado)"),
+    max_days: int = Query(3, ge=1, le=30, description="Límite de días a incluir cuando include_details=true (default: 3 para performance)"),
     goal: Optional[NutritionGoal] = Query(None, description="Filtrar por objetivo nutricional (loss, gain, bulk, cut, maintain)"),
     difficulty_level: Optional[DifficultyLevel] = Query(None, description="Filtrar por nivel de dificultad (beginner, intermediate, advanced)"),
     budget_level: Optional[BudgetLevel] = Query(None, description="Filtrar por nivel de presupuesto (low, medium, high)"),
@@ -198,12 +204,14 @@ async def list_nutrition_plans(
 
     # OPTIMIZATION: Use cached version to reduce repeated loads
     # If include_details=true, uses eager loading to fetch all daily_plans and meals in ~2-3 queries
+    # max_days limits response size for better performance (default: 3 days)
     plans, total = await service.list_nutrition_plans_cached(
         gym_id=current_gym.id,
         filters=filters,
         skip=skip,
         limit=limit,
-        include_details=include_details
+        include_details=include_details,
+        max_days=max_days
     )
 
     return NutritionPlanListResponse(
