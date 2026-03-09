@@ -5,7 +5,7 @@ Handles all database operations related to nutrition plans, meals, and followers
 
 from typing import List, Optional, Dict, Any, Union
 from datetime import datetime, timedelta, date
-from sqlalchemy.orm import Session, joinedload, selectinload
+from sqlalchemy.orm import Session, joinedload, selectinload, noload
 from sqlalchemy import func, and_, or_, select, exists
 import json
 import logging
@@ -175,7 +175,12 @@ class NutritionPlanRepository(BaseRepository):
         # Cap limit to prevent excessive queries
         limit = min(limit, 100)
 
-        base_query = db.query(NutritionPlan).filter(
+        base_query = db.query(NutritionPlan).options(
+            noload(NutritionPlan.daily_plans),    # Prevent N+1: no days/meals/ingredients in listing
+            noload(NutritionPlan.creator),         # Not needed for listing
+            noload(NutritionPlan.gym),             # Not needed for listing
+            selectinload(NutritionPlan.followers), # Batch load for live_participants_count
+        ).filter(
             NutritionPlan.gym_id == gym_id,
             NutritionPlan.is_public == True
         )
@@ -250,29 +255,31 @@ class NutritionPlanRepository(BaseRepository):
             except Exception as e:
                 logger.warning(f"Redis cache read error: {e}")
 
-        # Fetch lightweight summaries from database (no eager loading)
+        # Fetch lightweight summaries from database (noload prevents N+1)
         plans, total = self.get_public_plans_with_total(db, gym_id, filters, skip, limit)
 
-        # Cache lightweight plan summaries
-        if redis_client and plans:
-            try:
-                from app.schemas.nutrition import NutritionPlan as NutritionPlanSchema
-                pydantic_plans = [NutritionPlanSchema.model_validate(p) for p in plans]
-                serialized_plans = [p.model_dump(mode='json') for p in pydantic_plans]
+        # Convert to Pydantic (noload ensures daily_plans=[] not lazy loaded)
+        from app.schemas.nutrition import NutritionPlan as NutritionPlanSchema
+        pydantic_plans = []
+        for p in plans:
+            schema = NutritionPlanSchema.model_validate(p)
+            schema.daily_plans = None  # Exclude days from listing response
+            pydantic_plans.append(schema)
 
+        # Cache lightweight plan summaries
+        if redis_client and pydantic_plans:
+            try:
+                serialized_plans = [p.model_dump(mode='json', exclude_none=True) for p in pydantic_plans]
                 cached_data = {
                     'plans': serialized_plans,
                     'total': total
                 }
                 await redis_client.setex(cache_key, 600, json.dumps(cached_data))
                 logger.debug(f"Cached plans list page {page_num} (summaries only)")
-
-                return pydantic_plans, total
             except Exception as e:
                 logger.warning(f"Redis cache write error: {e}")
-                return plans, total
 
-        return plans, total
+        return pydantic_plans, total
 
     def _enrich_live_plan_metadata(self, plans: List[NutritionPlan]) -> List[NutritionPlan]:
         """
