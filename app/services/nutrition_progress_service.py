@@ -591,14 +591,18 @@ class NutritionProgressService:
 
         # Calcular completion rate por tipo
         for meal_type, meal_ids in meal_types_in_day.items():
-            # Contar cuántos usuarios completaron AL MENOS UNA comida de este tipo hoy
+            # Contar cuántos seguidores activos completaron AL MENOS UNA comida de este tipo hoy
             users_completed = db.query(
                 func.count(func.distinct(UserMealCompletion.user_id))
             ).join(
-                User, UserMealCompletion.user_id == User.id
+                NutritionPlanFollower,
+                and_(
+                    NutritionPlanFollower.user_id == UserMealCompletion.user_id,
+                    NutritionPlanFollower.plan_id == plan_id,
+                    NutritionPlanFollower.is_active == True
+                )
             ).filter(
                 UserMealCompletion.meal_id.in_(meal_ids),
-                User.gym_id == gym_id,
                 func.date(UserMealCompletion.completed_at) == today
             ).scalar() or 0
 
