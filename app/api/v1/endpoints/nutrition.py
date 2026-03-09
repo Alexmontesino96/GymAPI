@@ -70,117 +70,28 @@ async def list_nutrition_plans(
     db: Session = Depends(get_db),
     current_gym: Gym = Depends(verify_gym_access),
     current_user: Auth0User = Depends(get_current_user),
-    page: int = Query(1, ge=1, description="Número de página para paginación"),
-    per_page: int = Query(20, ge=1, le=100, description="Elementos por página (máximo 100)"),
-    include_details: bool = Query(False, description="Incluir daily_plans y meals en la respuesta (eager loading optimizado)"),
-    max_days: int = Query(3, ge=1, le=30, description="Límite de días a incluir cuando include_details=true (default: 3 para performance)"),
+    page: int = Query(1, ge=1, description="Numero de pagina para paginacion"),
+    per_page: int = Query(20, ge=1, le=100, description="Elementos por pagina (maximo 100)"),
     goal: Optional[NutritionGoal] = Query(None, description="Filtrar por objetivo nutricional (loss, gain, bulk, cut, maintain)"),
     difficulty_level: Optional[DifficultyLevel] = Query(None, description="Filtrar por nivel de dificultad (beginner, intermediate, advanced)"),
     budget_level: Optional[BudgetLevel] = Query(None, description="Filtrar por nivel de presupuesto (low, medium, high)"),
-    dietary_restrictions: Optional[DietaryRestriction] = Query(None, description="Filtrar por restricciones dietéticas (vegetarian, vegan, gluten_free, etc.)"),
-    search_query: Optional[str] = Query(None, description="Buscar por título o descripción del plan"),
+    dietary_restrictions: Optional[DietaryRestriction] = Query(None, description="Filtrar por restricciones dieteticas (vegetarian, vegan, gluten_free, etc.)"),
+    search_query: Optional[str] = Query(None, description="Buscar por titulo o descripcion del plan"),
     creator_id: Optional[int] = Query(None, description="Filtrar por ID del creador del plan"),
-    plan_type: Optional[PlanType] = Query(None, description="Filtrar por tipo: template (individual), live (grupal), archived (histórico)"),
+    plan_type: Optional[PlanType] = Query(None, description="Filtrar por tipo: template (individual), live (grupal), archived (historico)"),
     status: Optional[PlanStatus] = Query(None, description="Filtrar por estado: not_started, running, finished"),
-    is_live_active: Optional[bool] = Query(None, description="Solo planes live que están actualmente activos"),
+    is_live_active: Optional[bool] = Query(None, description="Solo planes live que estan actualmente activos"),
 ):
     """
-    📋 **Listar Planes Nutricionales con Filtros Avanzados**
+    Listar Planes Nutricionales (resumen)
 
-    **Descripción:**
-    Obtiene una lista paginada de planes nutricionales del gimnasio con múltiples filtros.
-    Incluye soporte completo para el sistema híbrido (template, live, archived).
+    Retorna info basica de cada plan para mostrar en listados/cards.
+    Para ver el detalle completo (dias, comidas, ingredientes) usar GET /plans/{plan_id}.
 
-    **NUEVO: Parámetro `include_details`**
-    - ⚡ `include_details=false` (default): Solo info básica de planes (rápido, ~200-300ms)
-    - 🔍 `include_details=true`: Incluye daily_plans y meals completos (optimizado, ~400-500ms)
-    - **Beneficio:** Elimina necesidad de hacer N requests individuales a /plans/{id}
-    - **Optimización:** Eager loading en UNA query + cache Redis independiente
-
-    **Casos de Uso:**
-    - 📱 Pantalla principal de planes disponibles (include_details=false)
-    - 🔍 Vista detallada con navegación de todos los planes (include_details=true)
-    - 👥 Ver planes creados por entrenadores específicos
-    - 🎯 Encontrar planes según objetivos personales
-    - ⚡ Mostrar solo planes live activos para unirse
-
-    **Filtros Disponibles:**
-    - **Tipo de Plan:** template (individual), live (sincronizado), archived (histórico)
-    - **Estado:** not_started (no iniciado), running (activo), finished (terminado)
-    - **Objetivo:** loss (pérdida), gain (ganancia), bulk (volumen), cut (definición)
-    - **Dificultad:** beginner, intermediate, advanced
-    - **Presupuesto:** low, medium, high
-    - **Restricciones:** vegetarian, vegan, gluten_free, dairy_free, etc.
-
-    **Permisos:**
-    - ✅ Cualquier miembro del gimnasio puede ver planes públicos
-    - ✅ Creadores pueden ver sus propios planes privados
-    - ✅ Seguidores pueden ver planes privados que siguen
-
-    **Paginación:**
-    - Página por defecto: 1
-    - Elementos por página: 20 (máximo 100)
-    - Metadatos incluidos: has_next, has_prev, total
-
-    **Ejemplo de Respuesta (include_details=false):**
-    ```json
-    {
-      "plans": [
-        {
-          "id": 1,
-          "title": "Plan de Pérdida de Peso - 30 días",
-          "plan_type": "template",
-          "status": "running",
-          "current_day": 15,
-          "total_followers": 87
-        }
-      ],
-      "total": 150,
-      "page": 1,
-      "per_page": 20,
-      "has_next": true,
-      "has_prev": false
-    }
-    ```
-
-    **Ejemplo de Respuesta (include_details=true):**
-    ```json
-    {
-      "plans": [
-        {
-          "id": 1,
-          "title": "Plan de Pérdida de Peso - 30 días",
-          "plan_type": "template",
-          "daily_plans": [
-            {
-              "id": 1,
-              "day_number": 1,
-              "meals": [
-                {
-                  "id": 1,
-                  "name": "Desayuno Proteico",
-                  "meal_type": "breakfast",
-                  "calories": 350
-                }
-              ]
-            }
-          ],
-          "total_followers": 87
-        }
-      ],
-      "total": 150
-    }
-    ```
-
-    **Performance:**
-    - Sin details: ~200-300ms (cache hit: ~50ms)
-    - Con details: ~400-500ms (cache hit: ~100ms)
-    - **Vs antes:** 15 requests × 350ms = 5250ms → **90% más rápido**
+    Performance: ~200-300ms (cache hit: ~50ms)
     """
-    # Use specialized NutritionPlanService for plan operations
     service = NutritionPlanService(db)
 
-    # Crear filtros
     filters = NutritionPlanFilters(
         goal=goal,
         difficulty_level=difficulty_level,
@@ -193,25 +104,18 @@ async def list_nutrition_plans(
         is_live_active=is_live_active
     )
 
-    # Obtener usuario local
     db_user = user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
     if not db_user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
 
-    # Convertir page/per_page a skip/limit para NutritionPlanService
     skip = (page - 1) * per_page
     limit = per_page
 
-    # OPTIMIZATION: Use cached version to reduce repeated loads
-    # If include_details=true, uses eager loading to fetch all daily_plans and meals in ~2-3 queries
-    # max_days limits response size for better performance (default: 3 days)
     plans, total = await service.list_nutrition_plans_cached(
         gym_id=current_gym.id,
         filters=filters,
         skip=skip,
         limit=limit,
-        include_details=include_details,
-        max_days=max_days
     )
 
     return NutritionPlanListResponse(

@@ -122,7 +122,7 @@ class NutritionPlan(NutritionPlanBase):
     total_followers: Optional[int] = None
     avg_satisfaction: Optional[float] = None
 
-    # OPTIMIZATION: Optional detailed relations (populated when include_details=true)
+    # Only populated in GET /plans/{plan_id} (detail endpoint), not in listing
     daily_plans: Optional[List["DailyNutritionPlanForDetails"]] = None
 
     model_config = {"from_attributes": True}

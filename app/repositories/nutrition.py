@@ -211,32 +211,23 @@ class NutritionPlanRepository(BaseRepository):
         filters: Optional[Dict[str, Any]] = None,
         skip: int = 0,
         limit: int = 20,
-        include_details: bool = False,
-        max_days: int = 3,
         redis_client = None
     ) -> (List[NutritionPlan], int):
         """
-        Get public plans with caching support.
+        Get public plans summary with caching support.
+        Only returns plan metadata (no daily_plans/meals/ingredients).
+        For full details use get_nutrition_plan_with_details(plan_id).
 
-        Cache key includes filters hash for proper cache isolation per filter combination.
-        TTL: 600s (10 minutos)
-
-        OPTIMIZATION: Reduce repeated list loads with pagination from N queries to cache hit
-
-        Args:
-            include_details: If True, includes daily_plans and meals with eager loading
-            max_days: Maximum number of days to include when include_details=True (default: 3 for performance)
+        Cache key includes filters hash for proper cache isolation.
+        TTL: 600s (10 minutes)
         """
         import hashlib
 
-        # Create cache key with filters hash, details flag, and max_days
         filters_str = json.dumps(filters, sort_keys=True) if filters else "{}"
         filters_hash = hashlib.md5(filters_str.encode()).hexdigest()[:8]
         page_num = (skip // limit) + 1 if limit > 0 else 1
-        details_suffix = f":detailed:max{max_days}" if include_details else ""
-        cache_key = f"gym:{gym_id}:plans:page:{page_num}:limit:{limit}:filters:{filters_hash}{details_suffix}"
+        cache_key = f"gym:{gym_id}:plans:page:{page_num}:limit:{limit}:filters:{filters_hash}"
 
-        # Try to get Redis client
         if redis_client is None:
             try:
                 redis_client = await get_redis_client()
@@ -249,11 +240,9 @@ class NutritionPlanRepository(BaseRepository):
             try:
                 cached = await redis_client.get(cache_key)
                 if cached:
-                    logger.debug(f"Cache hit for plans list page {page_num} (details={include_details})")
+                    logger.debug(f"Cache hit for plans list page {page_num}")
                     cached_data = json.loads(cached)
 
-                    # OPTIMIZATION: Reconstruct Pydantic objects from cached dicts
-                    # This is fast and maintains type consistency with DB results
                     from app.schemas.nutrition import NutritionPlan as NutritionPlanSchema
                     plans = [NutritionPlanSchema.model_validate(p) for p in cached_data['plans']]
                     total = cached_data['total']
@@ -261,24 +250,12 @@ class NutritionPlanRepository(BaseRepository):
             except Exception as e:
                 logger.warning(f"Redis cache read error: {e}")
 
-        # Fetch from database with optional eager loading
-        if include_details:
-            plans, total = self.get_public_plans_with_details(db, gym_id, filters, skip, limit, max_days)
+        # Fetch lightweight summaries from database (no eager loading)
+        plans, total = self.get_public_plans_with_total(db, gym_id, filters, skip, limit)
 
-            # OPTIMIZATION: DON'T cache when include_details=true
-            # Reason: Plans with full details (daily_plans + meals + ingredients) are huge
-            # and expensive to serialize/deserialize. These requests are rare and vary by user.
-            # Better to fetch fresh from DB with eager loading (~300ms) than cache conversion (~15s)
-            # However, we limit days to max_days (default: 3) to reduce serialization time
-            logger.debug(f"Skipping cache for include_details=true (fetch took ~300ms with eager loading, limited to {max_days} days)")
-            return plans, total
-        else:
-            plans, total = self.get_public_plans_with_total(db, gym_id, filters, skip, limit)
-
-        # Cache only lightweight plan summaries (without daily_plans/meals)
+        # Cache lightweight plan summaries
         if redis_client and plans:
             try:
-                # For summaries, Pydantic conversion is fast (no nested objects)
                 from app.schemas.nutrition import NutritionPlan as NutritionPlanSchema
                 pydantic_plans = [NutritionPlanSchema.model_validate(p) for p in plans]
                 serialized_plans = [p.model_dump(mode='json') for p in pydantic_plans]
@@ -329,98 +306,6 @@ class NutritionPlanRepository(BaseRepository):
                 plan.days_until_start = None
 
         return plans
-
-    def get_public_plans_with_details(
-        self,
-        db: Session,
-        gym_id: int,
-        filters: Optional[Dict[str, Any]] = None,
-        skip: int = 0,
-        limit: int = 20,
-        max_days: int = 3
-    ) -> (List[NutritionPlan], int):
-        """
-        Get public plans WITH eager loading of daily_plans and meals.
-
-        OPTIMIZATION: Uses selectinload to fetch all relations in minimal queries
-
-        Args:
-            max_days: Maximum number of days to include per plan (default: 3 for performance)
-                     Limiting days drastically reduces serialization time for large plans
-        """
-        from sqlalchemy.orm import selectinload
-
-        # Base query with eager loading
-        base_query = db.query(NutritionPlan).options(
-            selectinload(NutritionPlan.daily_plans).selectinload(DailyNutritionPlan.meals),
-            selectinload(NutritionPlan.followers)
-        ).filter(
-            NutritionPlan.gym_id == gym_id,
-            NutritionPlan.is_public == True,
-            NutritionPlan.is_active == True
-        )
-
-        # Apply same filters as get_public_plans_with_total
-        if filters:
-            if 'goal' in filters:
-                base_query = base_query.filter(NutritionPlan.goal == filters['goal'])
-
-            if 'difficulty_level' in filters:
-                base_query = base_query.filter(NutritionPlan.difficulty_level == filters['difficulty_level'])
-
-            if 'budget_level' in filters:
-                base_query = base_query.filter(NutritionPlan.budget_level == filters['budget_level'])
-
-            if 'dietary_restrictions' in filters:
-                base_query = base_query.filter(NutritionPlan.dietary_restrictions == filters['dietary_restrictions'])
-
-            if 'creator_id' in filters:
-                base_query = base_query.filter(NutritionPlan.creator_id == filters['creator_id'])
-
-            if 'search_query' in filters and filters['search_query']:
-                search_term = f"%{filters['search_query']}%"
-                base_query = base_query.filter(
-                    or_(
-                        NutritionPlan.title.ilike(search_term),
-                        NutritionPlan.description.ilike(search_term)
-                    )
-                )
-
-            if 'plan_type' in filters:
-                base_query = base_query.filter(NutritionPlan.plan_type == filters['plan_type'])
-
-            if 'status' in filters:
-                # Status filtering logic (same as before)
-                pass
-
-            if 'is_live_active' in filters:
-                base_query = base_query.filter(NutritionPlan.is_live_active == filters['is_live_active'])
-
-            if 'min_calories' in filters:
-                base_query = base_query.filter(NutritionPlan.target_calories >= filters['min_calories'])
-
-            if 'max_calories' in filters:
-                base_query = base_query.filter(NutritionPlan.target_calories <= filters['max_calories'])
-
-        # Total BEFORE pagination
-        total = base_query.count()
-
-        # Fetch with pagination - all relations loaded in 2-3 queries via selectinload
-        plans = base_query.order_by(NutritionPlan.updated_at.desc()).offset(skip).limit(limit).all()
-
-        # PERFORMANCE OPTIMIZATION: Limit daily_plans to max_days to reduce serialization time
-        # For 20 plans with 7 days each = 140 daily objects. Limiting to 3 days = 60 objects (-57%)
-        # This drastically reduces Pydantic serialization time from ~15s to ~2-3s
-        for plan in plans:
-            if plan.daily_plans and len(plan.daily_plans) > max_days:
-                # Sort by day_number and keep only first max_days
-                plan.daily_plans = sorted(plan.daily_plans, key=lambda d: d.day_number)[:max_days]
-
-        # OPTIMIZATION: Enrich LIVE plans with calculated metadata (status, current_day, etc.)
-        plans = self._enrich_live_plan_metadata(plans)
-
-        logger.info(f"Fetched {len(plans)} plans WITH details (total: {total}) - eager loaded in ~2-3 queries, limited to {max_days} days/plan")
-        return plans, total
 
     def get_plans_by_creator(
         self,

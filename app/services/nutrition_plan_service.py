@@ -149,7 +149,9 @@ class NutritionPlanService:
             PermissionError: If plan is private and user is not creator
         """
         plan = self.db.query(NutritionPlan).options(
-            selectinload(NutritionPlan.daily_plans).selectinload(DailyNutritionPlan.meals),
+            selectinload(NutritionPlan.daily_plans)
+                .selectinload(DailyNutritionPlan.meals)
+                .selectinload(Meal.ingredients),
             selectinload(NutritionPlan.followers)
         ).filter(
             NutritionPlan.id == plan_id,
@@ -199,21 +201,14 @@ class NutritionPlanService:
         filters: Optional[NutritionPlanFilters] = None,
         skip: int = 0,
         limit: int = 20,
-        include_details: bool = False,
-        max_days: int = 3
     ) -> (List[NutritionPlan], int):
         """
-        List nutrition plans with Redis caching.
-
-        OPTIMIZATION: Cache filtered list for 10 minutes to reduce repeated loads
-
-        Args:
-            include_details: If True, includes daily_plans and meals (eager loaded)
-            max_days: Maximum number of days to include when include_details=True (default: 3 for performance)
+        List nutrition plans (summary only) with Redis caching.
+        For full details use get_nutrition_plan_with_details(plan_id).
         """
         filter_dict = filters.model_dump(exclude_none=True) if filters else {}
         return await self.repository.get_public_plans_with_total_cached(
-            self.db, gym_id, filter_dict, skip, limit, include_details, max_days
+            self.db, gym_id, filter_dict, skip, limit
         )
 
     def update_nutrition_plan(
