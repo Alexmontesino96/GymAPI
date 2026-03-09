@@ -206,6 +206,24 @@ class NutritionAnalyticsService:
         # Get favorite meals
         favorite_meals = self._get_user_favorite_meals(user_id, gym_id)
 
+        # Filter out expired non-recurring plans
+        active_followed = []
+        for f in followed_plans:
+            plan = f.plan
+            days_since_start = (today - f.start_date.date()).days
+
+            if plan.plan_type == PlanType.LIVE:
+                if not plan.live_start_date:
+                    continue
+                days_since_live = (today - plan.live_start_date.date()).days
+                if days_since_live < 0 or (not plan.is_recurring and days_since_live >= plan.duration_days):
+                    continue
+            else:
+                if not plan.is_recurring and days_since_start >= plan.duration_days:
+                    continue
+
+            active_followed.append(f)
+
         # Build dashboard
         dashboard = UserNutritionDashboard(
             user_id=user_id,
@@ -215,7 +233,7 @@ class NutritionAnalyticsService:
                 'start_date': f.start_date,
                 'current_day': self._calculate_current_day(f),
                 'adherence_percentage': self._calculate_user_plan_adherence(f)
-            } for f in followed_plans],
+            } for f in active_followed],
             weekly_summary=weekly_progress,
             monthly_summary=monthly_progress,
             current_streak=streak_data['current'],
