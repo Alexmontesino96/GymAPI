@@ -521,8 +521,7 @@ class NutritionProgressService:
         if redis:
             cached = await redis.get(cache_key)
             if cached:
-                import json
-                return GroupCompletionStats(**json.loads(cached))
+                return GroupCompletionStats.model_validate_json(cached)
 
         # 1. Validar plan pertenece al gym y es LIVE
         plan = db.query(NutritionPlan).filter(
@@ -629,7 +628,6 @@ class NutritionProgressService:
 
         # Cache por 5 minutos
         if redis:
-            import json
-            await redis.setex(cache_key, 300, json.dumps(stats.dict()))
+            await redis.setex(cache_key, 300, stats.model_dump_json())
 
         return stats
