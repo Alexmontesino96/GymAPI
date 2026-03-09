@@ -66,35 +66,75 @@ class NutritionProgressService:
     ) -> Optional[TodayMealPlan]:
         """
         Get today's meal plan for a user with caching support.
-
-        Args:
-            user_id: ID of the user
-            gym_id: ID of the gym
-
-        Returns:
-            Today's meal plan or None if no active plans
-
-        Raises:
-            NotFoundError: If user not found
+        Builds a proper TodayMealPlan from ORM objects returned by the repository.
         """
-        # Use repository's cached method
-        today_data = await self.repository.get_today_meals_cached(
-            self.db,
-            user_id,
-            gym_id
-        )
+        cache_key = f"gym:{gym_id}:user:{user_id}:today_meals"
 
-        if not today_data:
+        # Try cache first
+        redis_client = None
+        try:
+            redis_client = await get_redis_client()
+        except Exception as e:
+            logger.warning(f"Could not get Redis client: {e}")
+
+        if redis_client:
+            try:
+                cached = await redis_client.get(cache_key)
+                if cached:
+                    logger.debug(f"Cache hit for today's meals for user {user_id}")
+                    return TodayMealPlan.model_validate_json(cached)
+            except Exception as e:
+                logger.warning(f"Redis cache read error: {e}")
+
+        # Fetch from database (returns ORM objects)
+        data = self.repository.get_today_meals(self.db, user_id, gym_id)
+
+        if not data:
             return None
 
-        # Convert to schema
-        today_plan = TodayMealPlan(
-            date=today_data['date'],
-            plans=today_data['plans'],
-            total_calories_target=sum(p.get('total_calories', 0) for p in today_data['plans']),
-            total_calories_consumed=sum(p.get('completed_calories', 0) for p in today_data['plans']),
-            overall_completion=sum(p.get('completion_percentage', 0) for p in today_data['plans']) / len(today_data['plans']) if today_data['plans'] else 0
+        # Build TodayMealPlan from ORM objects
+        from app.schemas.nutrition import (
+            NutritionPlan as NutritionPlanSchema,
+            DailyNutritionPlan as DailyPlanSchema,
+            MealWithIngredients,
+            UserMealCompletion as UserMealCompletionSchema,
         )
+
+        plan_schema = NutritionPlanSchema.model_validate(data['plan'])
+        plan_schema.daily_plans = None  # Don't include all days in today response
+
+        daily_plan_schema = DailyPlanSchema.model_validate(data['daily_plan'])
+
+        completion_map = data['completion_map']
+        meals = []
+        for meal_orm in data['daily_plan'].meals:
+            meal_schema = MealWithIngredients.model_validate(meal_orm)
+            if meal_orm.id in completion_map:
+                meal_schema.user_completion = UserMealCompletionSchema.model_validate(
+                    completion_map[meal_orm.id]
+                )
+            meals.append(meal_schema)
+
+        completed_count = sum(1 for m in meals if m.user_completion is not None)
+        completion_pct = (completed_count / len(meals) * 100) if meals else 0.0
+
+        today_plan = TodayMealPlan(
+            date=date.today(),
+            plan=plan_schema,
+            daily_plan=daily_plan_schema,
+            meals=meals,
+            current_day=data['current_day'],
+            status=data['status'],
+            completion_percentage=completion_pct,
+        )
+
+        # Cache the result
+        if redis_client:
+            try:
+                await redis_client.setex(cache_key, 300, today_plan.model_dump_json())
+                logger.debug(f"Cached today's meals for user {user_id}")
+            except Exception as e:
+                logger.warning(f"Redis cache write error: {e}")
 
         return today_plan
 

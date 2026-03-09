@@ -1026,14 +1026,13 @@ async def get_today_meal_plan(
     )
 
     if not meal_plan:
-        # Return empty plan if no active plans
         from datetime import date
         return TodayMealPlan(
             date=date.today(),
-            plans=[],
-            total_calories_target=0,
-            total_calories_consumed=0,
-            overall_completion=0
+            meals=[],
+            completion_percentage=0.0,
+            current_day=0,
+            status=PlanStatus.NOT_STARTED
         )
 
     # NUEVO: Agregar group_stats para planes LIVE

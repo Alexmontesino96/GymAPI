@@ -908,15 +908,11 @@ class NutritionProgressRepository:
     ) -> Optional[Dict[str, Any]]:
         """
         Get today's meal plan for a user with completion status.
-        Optimized query to avoid N+1 problems.
-
-        Args:
-            db: Database session
-            user_id: User ID
-            gym_id: Gym ID
+        Returns ORM objects for proper schema conversion in the service layer.
 
         Returns:
-            Dictionary with today's meals and progress
+            Dict with 'plan' (ORM), 'daily_plan' (ORM), 'current_day', 'status',
+            'completion_map' (meal_id -> UserMealCompletion ORM), or None.
         """
         today = date.today()
 
@@ -935,13 +931,7 @@ class NutritionProgressRepository:
         if not followed_plans:
             return None
 
-        result = {
-            'date': today,
-            'plans': []
-        }
-
-        # OPTIMIZATION: Pre-calculate daily plans and collect all meal IDs
-        # to batch load completions in a single query
+        # Pre-calculate daily plans and collect all meal IDs
         plans_data = []  # Store (follower, plan, current_day, daily_plan)
         all_meal_ids = []
 
@@ -960,7 +950,6 @@ class NutritionProgressRepository:
                         continue  # Plan has ended
                     current_day = days_since_start + 1
             elif plan.plan_type == PlanType.LIVE:
-                # Live plan logic - basado en fecha global del plan
                 if not plan.live_start_date:
                     logger.warning(f"Plan LIVE {plan.id} sin live_start_date")
                     continue
@@ -968,19 +957,10 @@ class NutritionProgressRepository:
                 days_since_live_start = (today - plan.live_start_date.date()).days
 
                 if days_since_live_start < 0:
-                    # Plan no ha empezado
-                    status = PlanStatus.NOT_STARTED
-                    current_day = 0
-                    # No incluir en resultados de hoy pero podría incluirse en dashboard
-                    continue
+                    continue  # Plan not started yet
                 elif days_since_live_start >= plan.duration_days:
-                    # Plan terminado
-                    status = PlanStatus.FINISHED
-                    current_day = plan.duration_days
-                    continue  # No mostrar planes terminados en /today
+                    continue  # Plan finished
                 else:
-                    # Plan en progreso
-                    status = PlanStatus.RUNNING
                     current_day = days_since_live_start + 1
             else:
                 # ARCHIVED plans se tratan como TEMPLATE
@@ -1000,57 +980,37 @@ class NutritionProgressRepository:
             if not daily_plan:
                 continue
 
-            # Store plan data and collect meal IDs
             plans_data.append((follower, plan, current_day, daily_plan))
             all_meal_ids.extend([m.id for m in daily_plan.meals])
 
-        # OPTIMIZATION: Batch load ALL completions in a SINGLE query
+        if not plans_data:
+            return None
+
+        # Batch load ALL completions in a SINGLE query
         all_completions = db.query(UserMealCompletion).filter(
             UserMealCompletion.user_id == user_id,
             UserMealCompletion.meal_id.in_(all_meal_ids),
             func.date(UserMealCompletion.completed_at) == today
         ).all() if all_meal_ids else []
 
-        # Create completion map for fast lookup
         completion_map = {c.meal_id: c for c in all_completions}
 
-        # Build response using pre-calculated data (no additional queries)
-        for follower, plan, current_day, daily_plan in plans_data:
-            plan_data = {
-                'plan_id': plan.id,
-                'plan_name': plan.name,
-                'day_number': current_day,
-                'daily_plan_id': daily_plan.id,
-                'meals': []
-            }
+        # Return first active plan (prioritize LIVE over TEMPLATE)
+        follower, plan, current_day, daily_plan = plans_data[0]
 
-            for meal in daily_plan.meals:
-                meal_data = {
-                    'meal_id': meal.id,
-                    'name': meal.name,
-                    'meal_type': meal.meal_type.value,
-                    'calories': meal.calories,
-                    'protein': meal.protein,
-                    'carbs': meal.carbs,
-                    'fat': meal.fat,
-                    'completed': meal.id in completion_map,
-                    'completed_at': completion_map[meal.id].completed_at if meal.id in completion_map else None
-                }
-                plan_data['meals'].append(meal_data)
+        # Determine status
+        if plan.plan_type == PlanType.LIVE:
+            status = PlanStatus.RUNNING
+        else:
+            status = PlanStatus.RUNNING
 
-            # Calculate totals
-            plan_data['total_calories'] = sum(m['calories'] for m in plan_data['meals'])
-            plan_data['completed_calories'] = sum(
-                m['calories'] for m in plan_data['meals'] if m['completed']
-            )
-            plan_data['completion_percentage'] = (
-                len([m for m in plan_data['meals'] if m['completed']]) / len(plan_data['meals']) * 100
-                if plan_data['meals'] else 0
-            )
-
-            result['plans'].append(plan_data)
-
-        return result if result['plans'] else None
+        return {
+            'plan': plan,
+            'daily_plan': daily_plan,
+            'current_day': current_day,
+            'status': status,
+            'completion_map': completion_map,
+        }
 
     def complete_meal(
         self,
