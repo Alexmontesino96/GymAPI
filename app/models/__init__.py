@@ -26,3 +26,4 @@ from app.models.survey import (
 )
 from app.models.user_follow import UserFollow
 from app.models.nutrition_safety import SafetyScreening, SafetyAuditLog, RiskLevel
+from app.models.class_review import ClassReview

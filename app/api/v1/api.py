@@ -14,6 +14,7 @@ from app.api.v1.endpoints.context import router as context_router
 from app.api.v1.endpoints.stories import router as stories_router
 from app.api.v1.endpoints.posts import router as posts_router
 from app.api.v1.endpoints.activity_feed import router as activity_feed_router
+from app.api.v1.endpoints.class_reviews import router as class_reviews_router
 
 # Import modular packages directly
 from app.api.v1.endpoints.auth import router as auth_router
@@ -93,3 +94,6 @@ api_router.include_router(posts_router, prefix="/posts", tags=["posts"])
 
 # Activity Feed module (anonymous statistics feed)
 api_router.include_router(activity_feed_router, prefix="/activity-feed", tags=["activity-feed"])
+
+# Class Reviews module (star ratings for classes)
+api_router.include_router(class_reviews_router, prefix="/reviews", tags=["class-reviews"])
