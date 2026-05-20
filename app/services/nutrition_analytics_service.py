@@ -719,11 +719,23 @@ class NutritionAnalyticsService:
     def _calculate_current_day(self, follower: NutritionPlanFollower) -> int:
         """Calculate current day for a follower."""
         today = date.today()
+        plan = follower.plan
+
+        # For LIVE plans, use the global live_start_date
+        if plan.plan_type == PlanType.LIVE:
+            if not plan.live_start_date:
+                return 0
+            days_since_start = (today - plan.live_start_date.date()).days
+            if days_since_start < 0:
+                return 0
+            return min(days_since_start + 1, plan.duration_days)
+
+        # For TEMPLATE/ARCHIVED, use follower's individual start_date
         days_since_start = (today - follower.start_date.date()).days
-        if follower.plan.is_recurring:
-            return (days_since_start % follower.plan.duration_days) + 1
+        if plan.is_recurring:
+            return (days_since_start % plan.duration_days) + 1
         else:
-            return min(days_since_start + 1, follower.plan.duration_days)
+            return min(days_since_start + 1, plan.duration_days)
 
     def _calculate_user_plan_adherence(self, follower: NutritionPlanFollower) -> float:
         """Calculate adherence for a specific user-plan combination."""
