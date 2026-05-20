@@ -160,16 +160,23 @@ class NutritionProgressService:
             AlreadyCompletedError: If meal already completed today
         """
         # Use repository method
-        completion = self.repository.complete_meal(
+        result = self.repository.complete_meal(
             self.db,
             user_id,
             meal_id,
             gym_id
         )
 
-        if not completion:
+        if not result:
             raise NotFoundError(
                 f"Meal {meal_id} not found or user {user_id} is not following the plan"
+            )
+
+        completion, already_existed = result
+
+        if already_existed:
+            raise AlreadyCompletedError(
+                f"Meal {meal_id} already completed today"
             )
 
         logger.info(f"User {user_id} completed meal {meal_id}")

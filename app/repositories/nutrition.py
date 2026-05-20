@@ -1057,7 +1057,7 @@ class NutritionProgressRepository:
         ).first()
 
         if existing:
-            return existing
+            return existing, True  # (completion, already_existed)
 
         # Create completion record
         completion = UserMealCompletion(
@@ -1074,7 +1074,7 @@ class NutritionProgressRepository:
         db.commit()
         db.refresh(completion)
 
-        return completion
+        return completion, False  # (completion, already_existed)
 
     def _update_daily_progress(
         self,

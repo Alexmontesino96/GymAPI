@@ -34,7 +34,7 @@ from app.schemas.nutrition_safety import (
 from app.services.nutrition_plan_service import NutritionPlanService
 from app.services.meal_service import MealService
 from app.services.plan_follower_service import PlanFollowerService
-from app.services.nutrition_progress_service import NutritionProgressService
+from app.services.nutrition_progress_service import NutritionProgressService, AlreadyCompletedError
 from app.services.live_plan_service import LivePlanService
 from app.services.nutrition_analytics_service import NutritionAnalyticsService
 from app.services.nutrition_ai_service import NutritionAIService
@@ -896,6 +896,8 @@ async def complete_meal(
         if completion_data.notes:
             completion.notes = completion_data.notes
         return completion
+    except AlreadyCompletedError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except ValidationError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except NotFoundError as e:
