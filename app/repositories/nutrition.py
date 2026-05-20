@@ -1063,7 +1063,6 @@ class NutritionProgressRepository:
         completion = UserMealCompletion(
             user_id=user_id,
             meal_id=meal_id,
-            gym_id=gym_id,
             completed_at=datetime.utcnow()
         )
 
