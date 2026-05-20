@@ -1093,34 +1093,37 @@ class NutritionProgressRepository:
             meal: Completed meal
         """
         today = date.today()
+        daily_plan_id = meal.daily_plan_id
+
+        # Count total meals in this daily plan
+        total_meals = db.query(Meal).filter(
+            Meal.daily_plan_id == daily_plan_id
+        ).count()
 
         # Get or create daily progress
         progress = db.query(UserDailyProgress).filter(
             UserDailyProgress.user_id == user_id,
-            UserDailyProgress.date == today,
+            UserDailyProgress.daily_plan_id == daily_plan_id,
             UserDailyProgress.gym_id == gym_id
         ).first()
 
         if not progress:
             progress = UserDailyProgress(
                 user_id=user_id,
+                daily_plan_id=daily_plan_id,
                 date=today,
                 gym_id=gym_id,
-                calories_consumed=0,
-                protein_consumed=0,
-                carbs_consumed=0,
-                fat_consumed=0,
-                fiber_consumed=0
+                meals_completed=0,
+                total_meals=total_meals,
+                completion_percentage=0.0
             )
             db.add(progress)
 
-        # Update totals
-        progress.calories_consumed = (progress.calories_consumed or 0) + (meal.calories or 0)
-        progress.protein_consumed = (progress.protein_consumed or 0) + (meal.protein or 0)
-        progress.carbs_consumed = (progress.carbs_consumed or 0) + (meal.carbs or 0)
-        progress.fat_consumed = (progress.fat_consumed or 0) + (meal.fat or 0)
-        progress.fiber_consumed = (progress.fiber_consumed or 0) + (meal.fiber or 0)
+        # Update completion tracking
         progress.meals_completed = (progress.meals_completed or 0) + 1
+        progress.total_meals = total_meals
+        if total_meals > 0:
+            progress.completion_percentage = (progress.meals_completed / total_meals) * 100
         progress.updated_at = datetime.utcnow()
 
     async def invalidate_progress_cache(
