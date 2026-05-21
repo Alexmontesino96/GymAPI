@@ -572,7 +572,7 @@ class NutritionProgressService:
 
         active_today = progress_stats.active_today or 0
         completed_fully = progress_stats.completed_fully or 0
-        avg_completion = float(progress_stats.avg_completion or 0.0)
+        avg_completion = min(float(progress_stats.avg_completion or 0.0), 100.0)
 
         # 5. Breakdown por tipo de comida
         meal_completions = []
