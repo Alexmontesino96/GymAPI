@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func, and_, or_, desc
 from datetime import datetime, date, timedelta
 import logging
+from zoneinfo import ZoneInfo
 
 from app.models.nutrition import (
     NutritionPlan, NutritionPlanFollower,
@@ -44,6 +45,17 @@ class NutritionAnalyticsService:
         """
         self.db = db
         self.redis_client = redis_client
+
+    def _get_gym_today(self, gym_id: int) -> date:
+        """Get today's date in the gym's timezone."""
+        from app.models.gym import Gym
+        gym = self.db.query(Gym.timezone).filter(Gym.id == gym_id).first()
+        tz_name = gym.timezone if gym and gym.timezone else 'UTC'
+        try:
+            tz = ZoneInfo(tz_name)
+        except Exception:
+            tz = ZoneInfo('UTC')
+        return datetime.now(tz).date()
 
     def get_plan_analytics(
         self,
@@ -188,7 +200,7 @@ class NutritionAnalyticsService:
         ).all()
 
         # Get recent progress
-        today = date.today()
+        today = self._get_gym_today(gym_id)
         week_ago = today - timedelta(days=7)
         month_ago = today - timedelta(days=30)
 
@@ -231,8 +243,8 @@ class NutritionAnalyticsService:
                 'plan_id': f.plan_id,
                 'plan_name': f.plan.title,
                 'start_date': f.start_date,
-                'current_day': self._calculate_current_day(f),
-                'adherence_percentage': self._calculate_user_plan_adherence(f)
+                'current_day': self._calculate_current_day(f, gym_id),
+                'adherence_percentage': self._calculate_user_plan_adherence(f, gym_id)
             } for f in active_followed],
             weekly_summary=weekly_progress,
             monthly_summary=monthly_progress,
@@ -716,9 +728,9 @@ class NutritionAnalyticsService:
             NutritionPlan.gym_id == gym_id
         ).count()
 
-    def _calculate_current_day(self, follower: NutritionPlanFollower) -> int:
+    def _calculate_current_day(self, follower: NutritionPlanFollower, gym_id: int) -> int:
         """Calculate current day for a follower."""
-        today = date.today()
+        today = self._get_gym_today(gym_id)
         plan = follower.plan
 
         # For LIVE plans, use the global live_start_date
@@ -737,9 +749,9 @@ class NutritionAnalyticsService:
         else:
             return min(days_since_start + 1, plan.duration_days)
 
-    def _calculate_user_plan_adherence(self, follower: NutritionPlanFollower) -> float:
+    def _calculate_user_plan_adherence(self, follower: NutritionPlanFollower, gym_id: int) -> float:
         """Calculate adherence for a specific user-plan combination."""
-        today = date.today()
+        today = self._get_gym_today(gym_id)
         days_following = (today - follower.start_date.date()).days + 1
         # Note: UserDailyProgress doesn't have gym_id field
         days_with_progress = self.db.query(UserDailyProgress).filter(

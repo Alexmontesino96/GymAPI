@@ -10,6 +10,7 @@ from sqlalchemy import func, and_, or_, select, exists
 import json
 import logging
 import asyncio
+from zoneinfo import ZoneInfo
 
 from app.repositories.base import BaseRepository
 from app.models.nutrition import (
@@ -847,6 +848,17 @@ class NutritionProgressRepository:
     def __init__(self):
         self.cache_ttl = 300  # 5 minutes cache for progress data (frequently updated)
 
+    def _get_gym_today(self, db: Session, gym_id: int) -> date:
+        """Get today's date in the gym's timezone."""
+        from app.models.gym import Gym
+        gym = db.query(Gym.timezone).filter(Gym.id == gym_id).first()
+        tz_name = gym.timezone if gym and gym.timezone else 'UTC'
+        try:
+            tz = ZoneInfo(tz_name)
+        except Exception:
+            tz = ZoneInfo('UTC')
+        return datetime.now(tz).date()
+
     async def get_today_meals_cached(
         self,
         db: Session,
@@ -914,7 +926,7 @@ class NutritionProgressRepository:
             Dict with 'plan' (ORM), 'daily_plan' (ORM), 'current_day', 'status',
             'completion_map' (meal_id -> UserMealCompletion ORM), or None.
         """
-        today = date.today()
+        today = self._get_gym_today(db, gym_id)
 
         # Get active followed plans with eager loading (including ingredients)
         followed_plans = db.query(NutritionPlanFollower).options(
@@ -1048,8 +1060,8 @@ class NutritionProgressRepository:
         if not meal:
             return None
 
-        # Check if already completed today
-        today = date.today()
+        # Check if already completed today (gym timezone)
+        today = self._get_gym_today(db, gym_id)
         existing = db.query(UserMealCompletion).filter(
             UserMealCompletion.user_id == user_id,
             UserMealCompletion.meal_id == meal_id,
@@ -1092,7 +1104,7 @@ class NutritionProgressRepository:
             gym_id: Gym ID
             meal: Completed meal
         """
-        today = date.today()
+        today = self._get_gym_today(db, gym_id)
         daily_plan_id = meal.daily_plan_id
 
         # Count total meals in this daily plan
