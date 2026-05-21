@@ -911,6 +911,34 @@ async def complete_meal(
         raise HTTPException(status_code=404, detail=str(e))
 
 
+@router.delete("/meals/{meal_id}/complete")
+async def uncomplete_meal(
+    meal_id: int = Path(..., description="ID de la comida a desmarcar"),
+    db: Session = Depends(get_db),
+    current_gym: Gym = Depends(verify_gym_access),
+    current_user: Auth0User = Depends(get_current_user)
+):
+    """
+    ❌ **Desmarcar Comida Completada**
+
+    Elimina el registro de completación de una comida para el día actual.
+    """
+    service = NutritionProgressService(db)
+    db_user = user_service.get_user_by_auth0_id(db, auth0_id=current_user.id)
+    if not db_user:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+
+    try:
+        await service.uncomplete_meal(
+            meal_id=meal_id,
+            user_id=db_user.id,
+            gym_id=current_gym.id
+        )
+        return {"message": f"Meal {meal_id} uncompleted successfully"}
+    except NotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
 @router.get("/today", response_model=TodayMealPlan)
 async def get_today_meal_plan(
     db: Session = Depends(get_db),

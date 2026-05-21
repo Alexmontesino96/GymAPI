@@ -210,34 +210,27 @@ class NutritionProgressService:
         Raises:
             NotFoundError: If completion not found
         """
-        today = date.today()
+        from app.repositories.nutrition import NutritionProgressRepository
+        repo = NutritionProgressRepository()
+        today = repo._get_gym_today(self.db, gym_id)
 
         # Find today's completion
         completion = self.db.query(UserMealCompletion).filter(
             UserMealCompletion.user_id == user_id,
             UserMealCompletion.meal_id == meal_id,
-            func.date(UserMealCompletion.completed_at) == today,
-            UserMealCompletion.gym_id == gym_id
+            func.date(UserMealCompletion.completed_at) == today
         ).first()
 
         if not completion:
             raise NotFoundError(f"Completion not found for meal {meal_id} today")
 
-        # Get meal details for updating daily progress
-        meal = self.db.query(Meal).filter(Meal.id == meal_id).first()
-
         # Delete completion
         self.db.delete(completion)
-
-        # Update daily progress (subtract the meal's nutrition)
-        if meal:
-            self._update_daily_progress_subtract(user_id, gym_id, meal)
-
         self.db.commit()
 
         logger.info(f"User {user_id} uncompleted meal {meal_id}")
 
-        # Invalidate cache using repository method
+        # Invalidate cache
         await self.repository.invalidate_progress_cache(user_id, gym_id)
 
         return True
