@@ -113,9 +113,13 @@ class NutritionProgressService:
                 meal_schema.user_completion = UserMealCompletionSchema.model_validate(
                     completion_map[meal_orm.id]
                 )
+                meal_schema.is_completed = True
+            else:
+                meal_schema.user_completion = None
+                meal_schema.is_completed = False
             meals.append(meal_schema)
 
-        completed_count = sum(1 for m in meals if m.user_completion is not None)
+        completed_count = sum(1 for m in meals if m.is_completed)
         completion_pct = (completed_count / len(meals) * 100) if meals else 0.0
 
         today_plan = TodayMealPlan(

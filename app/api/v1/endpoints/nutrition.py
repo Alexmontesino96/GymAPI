@@ -888,13 +888,20 @@ async def complete_meal(
             user_id=db_user.id,
             gym_id=current_gym.id
         )
-        # Add additional data if provided
+        # Add additional data if provided and commit
+        has_updates = False
         if completion_data.satisfaction_rating:
             completion.satisfaction_rating = completion_data.satisfaction_rating
+            has_updates = True
         if completion_data.photo_url:
             completion.photo_url = completion_data.photo_url
+            has_updates = True
         if completion_data.notes:
             completion.notes = completion_data.notes
+            has_updates = True
+        if has_updates:
+            db.commit()
+            db.refresh(completion)
         return completion
     except AlreadyCompletedError as e:
         raise HTTPException(status_code=400, detail=str(e))

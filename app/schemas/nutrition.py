@@ -238,6 +238,7 @@ class MealWithIngredients(Meal):
     """Comida con ingredientes incluidos"""
     ingredients: List["MealIngredient"] = []
     user_completion: Optional["UserMealCompletion"] = None
+    is_completed: bool = False
 
 
 # ===== MEAL INGREDIENT SCHEMAS =====
