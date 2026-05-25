@@ -212,13 +212,14 @@ class NutritionProgressService:
         """
         from app.repositories.nutrition import NutritionProgressRepository
         repo = NutritionProgressRepository()
-        today = repo._get_gym_today(self.db, gym_id)
+        start_utc, end_utc = repo._get_gym_today_utc_range(self.db, gym_id)
 
-        # Find today's completion
+        # Find today's completion (using UTC range for gym timezone)
         completion = self.db.query(UserMealCompletion).filter(
             UserMealCompletion.user_id == user_id,
             UserMealCompletion.meal_id == meal_id,
-            func.date(UserMealCompletion.completed_at) == today
+            UserMealCompletion.completed_at >= start_utc,
+            UserMealCompletion.completed_at < end_utc
         ).first()
 
         if not completion:

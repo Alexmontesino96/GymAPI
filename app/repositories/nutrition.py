@@ -859,6 +859,23 @@ class NutritionProgressRepository:
             tz = ZoneInfo('UTC')
         return datetime.now(tz).date()
 
+    def _get_gym_today_utc_range(self, db: Session, gym_id: int):
+        """Get UTC datetime range for 'today' in the gym's timezone.
+        Returns (start_utc, end_utc) where start is inclusive and end is exclusive.
+        """
+        from app.models.gym import Gym
+        gym = db.query(Gym.timezone).filter(Gym.id == gym_id).first()
+        tz_name = gym.timezone if gym and gym.timezone else 'UTC'
+        try:
+            tz = ZoneInfo(tz_name)
+        except Exception:
+            tz = ZoneInfo('UTC')
+        now_local = datetime.now(tz)
+        start_local = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+        end_local = start_local + timedelta(days=1)
+        utc = ZoneInfo('UTC')
+        return start_local.astimezone(utc), end_local.astimezone(utc)
+
     async def get_today_meals_cached(
         self,
         db: Session,
@@ -998,11 +1015,13 @@ class NutritionProgressRepository:
         if not plans_data:
             return None
 
-        # Batch load ALL completions in a SINGLE query
+        # Batch load ALL completions in a SINGLE query (using UTC range for gym timezone)
+        start_utc, end_utc = self._get_gym_today_utc_range(db, gym_id)
         all_completions = db.query(UserMealCompletion).filter(
             UserMealCompletion.user_id == user_id,
             UserMealCompletion.meal_id.in_(all_meal_ids),
-            func.date(UserMealCompletion.completed_at) == today
+            UserMealCompletion.completed_at >= start_utc,
+            UserMealCompletion.completed_at < end_utc
         ).all() if all_meal_ids else []
 
         completion_map = {c.meal_id: c for c in all_completions}
@@ -1060,12 +1079,13 @@ class NutritionProgressRepository:
         if not meal:
             return None
 
-        # Check if already completed today (gym timezone)
-        today = self._get_gym_today(db, gym_id)
+        # Check if already completed today (gym timezone, UTC range)
+        start_utc, end_utc = self._get_gym_today_utc_range(db, gym_id)
         existing = db.query(UserMealCompletion).filter(
             UserMealCompletion.user_id == user_id,
             UserMealCompletion.meal_id == meal_id,
-            func.date(UserMealCompletion.completed_at) == today
+            UserMealCompletion.completed_at >= start_utc,
+            UserMealCompletion.completed_at < end_utc
         ).first()
 
         if existing:
